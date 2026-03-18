@@ -1,35 +1,36 @@
-# SalesOS
+This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
-SalesOS is a **sales intelligence application** built for Coachello, designed to give sales teams a unified workspace to prospect smarter, track deals, and leverage AI to close more.
+## Getting Started
 
-## What it does
+First, run the development server:
 
-- **Unified Search** — search across HubSpot, Slack, Gmail and meeting notes from a single interface
-- **AI Prospecting Writer** — generate personalized outreach emails powered by Claude
-- **Deal Intelligence** — get full context on a deal (interactions, notes, signals) in one view
-- **Meeting Prep Briefing** — auto-generated briefings before each call
-- **Competitive Watch** — real-time monitoring of competitor activity
-- **Relationship Health Score** — detect deals going cold before it's too late
+```bash
+npm run dev
+# or
+yarn dev
+# or
+pnpm dev
+# or
+bun dev
+```
 
-## Tech Stack
+Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-- **Frontend**: Next.js 14 + Tailwind CSS + shadcn/ui — deployed on Vercel
-- **Backend**: Node.js (Hono) — deployed on Railway
-- **Database**: PostgreSQL via Supabase + pgvector for semantic search
-- **AI**: Claude (Anthropic) for generation & analysis, OpenAI embeddings for search
-- **Auth**: Clerk (OAuth 2.0)
-- **Connectors**: HubSpot, Slack, Gmail, Outlook, Granola, LinkedIn (ProxyCurl)
+You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
 
-## Architecture
+This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
 
-3-tier architecture: Next.js frontend → Node.js API → Data/AI layer (PostgreSQL, vector DB, Claude API, external connectors).
+## Learn More
 
-See [SalesOS_TechPitch.md](./SalesOS_TechPitch.md) for the full technical documentation.
+To learn more about Next.js, take a look at the following resources:
 
-## Estimated Cost
+- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
+- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
 
-~$130–$350/month for a 1–5 user MVP (infra + AI + connectors).
+You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
 
----
+## Deploy on Vercel
 
-*Coachello · Internal project · March 2026*
+The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+
+Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
