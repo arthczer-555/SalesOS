@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { ArrowUp, Settings2 } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
+import ReactMarkdown from "react-markdown";
 
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -138,7 +139,7 @@ export default function IntelligencePage() {
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 {m.role === "assistant" && (
-                  <Image src="/logo.png" alt="AI" width={28} height={28} quality={100} className="rounded-lg mr-3 mt-0.5 shrink-0" />
+                  <Image src="/logo.png" alt="AI" width={28} height={28} quality={100} className="rounded-lg mr-3 mt-0.5 shrink-0 self-start" />
                 )}
                 <div
                   className="max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed"
@@ -148,16 +149,22 @@ export default function IntelligencePage() {
                       : { background: "#f5f5f5", color: "#111", borderBottomLeftRadius: 4 }
                   }
                 >
-                  {m.content}
+                  {m.role === "assistant" ? (
+                    <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0 prose-table:text-xs">
+                      <ReactMarkdown>{m.content}</ReactMarkdown>
+                    </div>
+                  ) : m.content}
                 </div>
               </div>
             ))}
             {/* Streaming response */}
             {streamingText && (
               <div className="flex justify-start">
-                <img src="/logo.png" alt="AI" width={28} height={28} className="rounded-lg mr-3 mt-0.5 shrink-0" />
+                <img src="/logo.png" alt="AI" width={28} height={28} className="rounded-lg mr-3 mt-0.5 shrink-0 self-start" />
                 <div className="max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed" style={{ background: "#f5f5f5", color: "#111", borderBottomLeftRadius: 4 }}>
-                  {streamingText}
+                  <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0 prose-table:text-xs">
+                    <ReactMarkdown>{streamingText}</ReactMarkdown>
+                  </div>
                 </div>
               </div>
             )}

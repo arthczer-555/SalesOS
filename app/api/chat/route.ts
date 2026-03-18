@@ -33,13 +33,26 @@ const tools: Anthropic.Tool[] = [
     },
   },
   {
-    name: "get_deals",
+    name: "search_deals",
     description:
-      "Récupère les deals HubSpot. Utilise cet outil pour répondre aux questions sur le pipeline, les opportunités, les montants, les étapes.",
+      "Recherche des deals HubSpot par nom. Utilise cet outil quand on mentionne un deal ou une entreprise spécifique (ex: 'deal Mistral', 'opportunité Decathlon').",
     input_schema: {
       type: "object" as const,
       properties: {
-        limit: { type: "number", description: "Nombre max de résultats (défaut : 20)" },
+        query: { type: "string", description: "Nom du deal ou de l'entreprise à chercher" },
+        limit: { type: "number", description: "Nombre max de résultats (défaut : 10)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "get_deals",
+    description:
+      "Récupère tous les deals HubSpot. Utilise cet outil pour avoir une vue globale du pipeline.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        limit: { type: "number", description: "Nombre max de résultats (défaut : 50)" },
       },
       required: [],
     },
@@ -80,9 +93,17 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       });
       return JSON.stringify(data.results ?? []);
     }
+    case "search_deals": {
+      const data = await hubspot("/crm/v3/objects/deals/search", "POST", {
+        query: input.query,
+        limit: input.limit || 10,
+        properties: ["dealname", "amount", "dealstage", "closedate", "pipeline", "hubspot_owner_id"],
+      });
+      return JSON.stringify(data.results ?? []);
+    }
     case "get_deals": {
       const data = await hubspot(
-        `/crm/v3/objects/deals?limit=${input.limit || 20}&properties=dealname,amount,dealstage,closedate,pipeline,hubspot_owner_id`
+        `/crm/v3/objects/deals?limit=${input.limit || 50}&properties=dealname,amount,dealstage,closedate,pipeline,hubspot_owner_id`
       );
       return JSON.stringify(data.results ?? []);
     }
@@ -120,7 +141,7 @@ export async function POST(req: NextRequest) {
         // Agentic loop
         while (true) {
           const apiStream = client.messages.stream({
-            model: "claude-opus-4-6",
+            model: "claude-haiku-4-5",
             max_tokens: 4096,
             system: customPrompt ?? `Tu es Coachello Intelligence, l'assistant IA de l'équipe commerciale de Coachello.
 Tu as accès en temps réel aux données HubSpot CRM via tes outils (contacts, deals, entreprises).
