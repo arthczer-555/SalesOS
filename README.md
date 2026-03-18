@@ -1,36 +1,62 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SalesOS
 
-## Getting Started
+SalesOS is the **all-in-one AI-powered sales intelligence platform** built for Coachello. It acts as a commercial brain for the sales team — connecting to the existing stack (HubSpot, Slack, Gmail, Granola, LinkedIn, Drive) and amplifying every sales action with AI.
 
-First, run the development server:
+> One place to search, understand, write, track and act. Less tool-switching, more execution.
+
+## The Problem
+
+Sales teams juggle 6–10 tools daily. Context is scattered, signals are missed, and too much time is spent copy-pasting instead of selling. SalesOS fixes that.
+
+## Core Features
+
+| Feature | Role | Description |
+|---|---|---|
+| **Unified Search** | All | Semantic search across HubSpot, Drive, Slack, Gmail, Granola and the web — in one query |
+| **AI Prospecting Writer** | AE | Generate hyper-personalized outreach emails using real CRM and web context. Also suggests follow-up messages based on previous exchanges. |
+| **Deal Intelligence Panel** | AM | Full account view: contacts, exchanges, intent signals, deal stage and next steps recommended by AI |
+| **Competitive Watch** | All | Real-time radar on competitors with AI-generated research reports. Suggests when it's relevant to check LinkedIn directly. |
+| **Slack Command Center** | All | Search, message and create alerts in Slack directly from SalesOS |
+| **Scoring Center** | All | Score deals according to Quentin's scoring system |
+
+## Roadmap (V2+)
+
+- Meeting Prep Briefing — auto-generated before each call
+- Sales Signals Feed — buy signals from LinkedIn, news, CRM
+- Relationship Health Score — detect cold deals automatically
+- Follow-up Autopilot — draft follow-up emails from Granola notes
+- Multi-channel Sequence Builder — email + LinkedIn + Slack sequences
+- Knowledge Base — queryable in natural language (case studies, objections, pricing)
+
+## Integrations
+
+HubSpot · Google Drive · Slack · Gmail · Outlook · Granola · LinkedIn (ProxyCurl) · Exa.ai · Brave Search
+
+## Tech Stack
+
+> Stack à définir — les choix ci-dessous sont des pistes initiales, pas des décisions finales.
+
+- **Frontend**: TBD
+- **Backend**: TBD
+- **Database**: TBD
+- **AI**: TBD
+- **Auth**: TBD
+- **Hosting**: TBD
+
+See [SalesOS_TechPitch.md](./SalesOS_TechPitch.md) for options and trade-offs.
+
+## Run locally
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Docs
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+- [Product Descriptif](./SalesOS_Descriptif.md) — vision, features, use cases & roadmap
+- [Tech Pitch](./SalesOS_TechPitch.md) — full technical architecture & infrastructure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+---
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+*Coachello · Internal project · March 2026 · Confidential*
