@@ -17,6 +17,26 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
   return res.json();
 }
 
+// ── Property cache (module-level, reset on cold start) ────────────────────────
+const propCache: Record<string, string[]> = {};
+
+async function getPropertyNames(objectType: string): Promise<string[]> {
+  if (propCache[objectType]) return propCache[objectType];
+  const data = await hubspot(`/crm/v3/properties/${objectType}`);
+  const names = (data.results ?? [])
+    .filter((p: { hidden?: boolean; calculated?: boolean }) => !p.hidden && !p.calculated)
+    .map((p: { name: string }) => p.name);
+  propCache[objectType] = names;
+  return names;
+}
+
+// Strip null/empty values to keep context manageable
+function stripEmpty(obj: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== null && v !== "" && v !== undefined)
+  );
+}
+
 // ── Tool definitions ──────────────────────────────────────────────────────────
 const tools: Anthropic.Tool[] = [
   {
@@ -119,38 +139,59 @@ const tools: Anthropic.Tool[] = [
 async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
   switch (name) {
     case "search_contacts": {
+      const props = await getPropertyNames("contacts");
       const data = await hubspot("/crm/v3/objects/contacts/search", "POST", {
         query: input.query,
         limit: input.limit || 10,
-        properties: ["firstname", "lastname", "email", "company", "jobtitle", "phone", "hs_lead_status"],
+        properties: props,
       });
-      return JSON.stringify(data.results ?? []);
+      const results = (data.results ?? []).map((r: { id: string; properties: Record<string, unknown> }) => ({
+        id: r.id,
+        properties: stripEmpty(r.properties),
+      }));
+      return JSON.stringify(results);
     }
     case "search_deals": {
+      const props = await getPropertyNames("deals");
       const data = await hubspot("/crm/v3/objects/deals/search", "POST", {
         query: input.query,
         limit: input.limit || 10,
-        properties: ["dealname", "amount", "dealstage", "closedate", "pipeline", "hubspot_owner_id"],
+        properties: props,
       });
-      return JSON.stringify(data.results ?? []);
+      const results = (data.results ?? []).map((r: { id: string; properties: Record<string, unknown> }) => ({
+        id: r.id,
+        properties: stripEmpty(r.properties),
+      }));
+      return JSON.stringify(results);
     }
     case "get_deals": {
+      const props = await getPropertyNames("deals");
       const data = await hubspot(
-        `/crm/v3/objects/deals?limit=${input.limit || 50}&properties=dealname,amount,dealstage,closedate,pipeline,hubspot_owner_id`
+        `/crm/v3/objects/deals?limit=${input.limit || 50}&properties=${props.join(",")}`
       );
-      return JSON.stringify(data.results ?? []);
+      const results = (data.results ?? []).map((r: { id: string; properties: Record<string, unknown> }) => ({
+        id: r.id,
+        properties: stripEmpty(r.properties),
+      }));
+      return JSON.stringify(results);
     }
     case "get_companies": {
+      const props = await getPropertyNames("companies");
       const data = await hubspot(
-        `/crm/v3/objects/companies?limit=${input.limit || 20}&properties=name,domain,industry,numberofemployees,annualrevenue,city`
+        `/crm/v3/objects/companies?limit=${input.limit || 20}&properties=${props.join(",")}`
       );
-      return JSON.stringify(data.results ?? []);
+      const results = (data.results ?? []).map((r: { id: string; properties: Record<string, unknown> }) => ({
+        id: r.id,
+        properties: stripEmpty(r.properties),
+      }));
+      return JSON.stringify(results);
     }
     case "get_contact_details": {
+      const props = await getPropertyNames("contacts");
       const data = await hubspot(
-        `/crm/v3/objects/contacts/${input.contact_id}?properties=firstname,lastname,email,company,jobtitle,phone,notes_last_updated,hs_lead_status`
+        `/crm/v3/objects/contacts/${input.contact_id}?properties=${props.join(",")}`
       );
-      return JSON.stringify(data);
+      return JSON.stringify({ id: data.id, properties: stripEmpty(data.properties) });
     }
     case "get_contact_activity": {
       // Fetch notes, emails, calls, meetings associated with the contact
