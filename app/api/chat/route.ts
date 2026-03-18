@@ -80,6 +80,39 @@ const tools: Anthropic.Tool[] = [
       required: ["contact_id"],
     },
   },
+  {
+    name: "get_contact_activity",
+    description: "Récupère l'historique complet d'un contact : notes, emails loggés, appels, réunions. Utilise cet outil pour comprendre l'historique des échanges avec un contact.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        contact_id: { type: "string", description: "ID HubSpot du contact" },
+      },
+      required: ["contact_id"],
+    },
+  },
+  {
+    name: "get_deal_activity",
+    description: "Récupère les notes, emails, appels et activités associés à un deal spécifique. Utilise cet outil pour comprendre l'historique d'un deal.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        deal_id: { type: "string", description: "ID HubSpot du deal" },
+      },
+      required: ["deal_id"],
+    },
+  },
+  {
+    name: "get_deal_contacts",
+    description: "Récupère les contacts associés à un deal HubSpot.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        deal_id: { type: "string", description: "ID HubSpot du deal" },
+      },
+      required: ["deal_id"],
+    },
+  },
 ];
 
 // ── Tool execution ────────────────────────────────────────────────────────────
@@ -118,6 +151,72 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
         `/crm/v3/objects/contacts/${input.contact_id}?properties=firstname,lastname,email,company,jobtitle,phone,notes_last_updated,hs_lead_status`
       );
       return JSON.stringify(data);
+    }
+    case "get_contact_activity": {
+      // Fetch notes, emails, calls, meetings associated with the contact
+      const [notes, emails, calls, meetings] = await Promise.allSettled([
+        hubspot(`/crm/v3/objects/notes/search`, "POST", {
+          filterGroups: [{ filters: [{ propertyName: "associations.contact", operator: "EQ", value: input.contact_id }] }],
+          properties: ["hs_note_body", "hs_timestamp", "hubspot_owner_id"],
+          limit: 10,
+        }),
+        hubspot(`/crm/v3/objects/emails/search`, "POST", {
+          filterGroups: [{ filters: [{ propertyName: "associations.contact", operator: "EQ", value: input.contact_id }] }],
+          properties: ["hs_email_subject", "hs_email_text", "hs_timestamp", "hs_email_direction"],
+          limit: 10,
+        }),
+        hubspot(`/crm/v3/objects/calls/search`, "POST", {
+          filterGroups: [{ filters: [{ propertyName: "associations.contact", operator: "EQ", value: input.contact_id }] }],
+          properties: ["hs_call_title", "hs_call_body", "hs_timestamp", "hs_call_duration", "hs_call_disposition"],
+          limit: 10,
+        }),
+        hubspot(`/crm/v3/objects/meetings/search`, "POST", {
+          filterGroups: [{ filters: [{ propertyName: "associations.contact", operator: "EQ", value: input.contact_id }] }],
+          properties: ["hs_meeting_title", "hs_meeting_body", "hs_timestamp", "hs_meeting_outcome"],
+          limit: 10,
+        }),
+      ]);
+      return JSON.stringify({
+        notes: notes.status === "fulfilled" ? notes.value.results ?? [] : [],
+        emails: emails.status === "fulfilled" ? emails.value.results ?? [] : [],
+        calls: calls.status === "fulfilled" ? calls.value.results ?? [] : [],
+        meetings: meetings.status === "fulfilled" ? meetings.value.results ?? [] : [],
+      });
+    }
+    case "get_deal_activity": {
+      const [notes, emails, calls] = await Promise.allSettled([
+        hubspot(`/crm/v3/objects/notes/search`, "POST", {
+          filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
+          properties: ["hs_note_body", "hs_timestamp"],
+          limit: 20,
+        }),
+        hubspot(`/crm/v3/objects/emails/search`, "POST", {
+          filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
+          properties: ["hs_email_subject", "hs_email_text", "hs_timestamp", "hs_email_direction"],
+          limit: 10,
+        }),
+        hubspot(`/crm/v3/objects/calls/search`, "POST", {
+          filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
+          properties: ["hs_call_title", "hs_call_body", "hs_timestamp"],
+          limit: 10,
+        }),
+      ]);
+      return JSON.stringify({
+        notes: notes.status === "fulfilled" ? notes.value.results ?? [] : [],
+        emails: emails.status === "fulfilled" ? emails.value.results ?? [] : [],
+        calls: calls.status === "fulfilled" ? calls.value.results ?? [] : [],
+      });
+    }
+    case "get_deal_contacts": {
+      const data = await hubspot(`/crm/v3/objects/deals/${input.deal_id}/associations/contacts`);
+      if (!data.results?.length) return "[]";
+      // Fetch contact details for each associated contact
+      const contacts = await Promise.all(
+        data.results.slice(0, 10).map((a: { id: string }) =>
+          hubspot(`/crm/v3/objects/contacts/${a.id}?properties=firstname,lastname,email,jobtitle,phone`)
+        )
+      );
+      return JSON.stringify(contacts);
     }
     default:
       return "Outil inconnu.";
