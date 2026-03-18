@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect } from "react";
 import { ArrowUp, Settings2 } from "lucide-react";
 import Link from "next/link";
+import Image from "next/image";
 
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -112,7 +113,7 @@ export default function IntelligencePage() {
         {messages.length === 0 ? (
           /* Empty state */
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
-            <img src="/logo.png" alt="Coachello" width={56} height={56} className="rounded-2xl" />
+            <Image src="/logo.png" alt="Coachello" width={56} height={56} quality={100} className="rounded-2xl" />
             <h1 className="text-2xl font-semibold" style={{ color: "#111" }}>Coachello Intelligence</h1>
             <p className="text-sm max-w-sm" style={{ color: "#aaa" }}>
               Pose une question sur tes deals, prospects, concurrents ou ton pipeline.
@@ -137,7 +138,7 @@ export default function IntelligencePage() {
             {messages.map((m, i) => (
               <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
                 {m.role === "assistant" && (
-                  <img src="/logo.png" alt="AI" width={28} height={28} className="rounded-lg mr-3 mt-0.5 shrink-0" />
+                  <Image src="/logo.png" alt="AI" width={28} height={28} quality={100} className="rounded-lg mr-3 mt-0.5 shrink-0" />
                 )}
                 <div
                   className="max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed"
@@ -163,7 +164,7 @@ export default function IntelligencePage() {
             {/* Loading / tool indicator */}
             {loading && !streamingText && (
               <div className="flex justify-start items-center gap-3">
-                <img src="/logo.png" alt="AI" width={28} height={28} className="rounded-lg shrink-0" />
+                <Image src="/logo.png" alt="AI" width={28} height={28} quality={100} className="rounded-lg shrink-0" />
                 <div className="flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background: "#f5f5f5" }}>
                   {activeTool ? (
                     <span className="text-xs" style={{ color: "#888" }}>

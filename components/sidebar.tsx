@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Settings } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import Image from "next/image";
 
 
 const nav = [
@@ -24,7 +25,7 @@ export default function Sidebar() {
     >
       {/* Logo */}
       <div className="flex items-center gap-2.5 px-4 py-5 border-b" style={{ borderColor: "#eeeeee" }}>
-        <img src="/logo.png" alt="Coachello" width={28} height={28} className="rounded-lg" style={{ imageRendering: "crisp-edges" }} />
+        <Image src="/logo.png" alt="Coachello" width={32} height={32} className="rounded-lg" quality={100} />
         <span className="font-semibold text-sm tracking-tight" style={{ color: "#111" }}>SalesOS</span>
       </div>
 
