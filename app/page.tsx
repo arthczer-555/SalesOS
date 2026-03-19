@@ -1,14 +1,13 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { ArrowUp } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { ArrowUp, History, Plus } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
-
+import { ConversationHistoryModal, type Conversation } from "./_components/conversation-history-modal";
 
 type Message = { role: "user" | "assistant"; content: string };
-// Full Anthropic message history including tool calls — kept in sync with the API
 type ApiMessage = { role: "user" | "assistant"; content: unknown };
 
 export default function IntelligencePage() {
@@ -19,19 +18,24 @@ export default function IntelligencePage() {
   const [streamingText, setStreamingText] = useState("");
   const [toolSteps, setToolSteps] = useState<string[]>([]);
 
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+
   const TOOL_LABELS: Record<string, string> = {
-    search_contacts:         "Recherche de contacts…",
-    search_deals:            "Recherche de deals…",
-    get_deals:               "Chargement du pipeline…",
-    get_companies:           "Chargement des entreprises…",
-    get_contact_details:     "Détails du contact…",
-    get_contact_activity:    "Historique des échanges…",
-    get_deal_activity:       "Historique du deal…",
-    get_deal_contacts:       "Contacts associés au deal…",
-    search_slack:            "Recherche dans Slack…",
+    search_contacts:           "Recherche de contacts…",
+    search_deals:              "Recherche de deals…",
+    get_deals:                 "Chargement du pipeline…",
+    get_companies:             "Chargement des entreprises…",
+    get_contact_details:       "Détails du contact…",
+    get_contact_activity:      "Historique des échanges…",
+    get_deal_activity:         "Historique du deal…",
+    get_deal_contacts:         "Contacts associés au deal…",
+    search_slack:              "Recherche dans Slack…",
     get_slack_channel_history: "Lecture du canal Slack…",
-    send_slack_message:      "Envoi du message Slack…",
+    send_slack_message:        "Envoi du message Slack…",
   };
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -46,6 +50,49 @@ export default function IntelligencePage() {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
   }, [input]);
 
+  const loadConversations = useCallback(async () => {
+    try {
+      const r = await fetch("/api/conversations");
+      if (r.ok) {
+        const { conversations: data } = await r.json();
+        setConversations(data ?? []);
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    loadConversations();
+  }, [loadConversations]);
+
+  const startNewConversation = () => {
+    setMessages([]);
+    setApiHistory([]);
+    setStreamingText("");
+    setToolSteps([]);
+    setConversationId(null);
+    setInput("");
+  };
+
+  const loadConversation = async (id: string) => {
+    try {
+      const r = await fetch(`/api/conversations/${id}`);
+      if (!r.ok) return;
+      const { messages: msgs, apiHistory: history } = await r.json();
+      setMessages(msgs ?? []);
+      setApiHistory(history ?? []);
+      setConversationId(id);
+      setShowHistory(false);
+    } catch {}
+  };
+
+  const deleteConversation = async (id: string) => {
+    setConversations((prev) => prev.filter((c) => c.id !== id));
+    if (conversationId === id) startNewConversation();
+    try {
+      await fetch(`/api/conversations/${id}`, { method: "DELETE" });
+    } catch {}
+  };
+
   const send = async () => {
     const text = input.trim();
     if (!text || loading) return;
@@ -56,8 +103,24 @@ export default function IntelligencePage() {
     setStreamingText("");
     setToolSteps([]);
 
+    let convId = conversationId;
+    if (!convId) {
+      try {
+        const r = await fetch("/api/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: text.slice(0, 50) }),
+        });
+        if (r.ok) {
+          const { conversation } = await r.json();
+          convId = conversation.id;
+          setConversationId(convId);
+          setConversations((prev) => [conversation, ...prev]);
+        }
+      } catch {}
+    }
+
     try {
-      // Use full API history (with tool calls) if available, otherwise build from display messages
       const apiMessages: ApiMessage[] = apiHistory.length > 0
         ? [...apiHistory, { role: "user", content: text }]
         : newMessages.map((m) => ({ role: m.role, content: m.content }));
@@ -97,6 +160,18 @@ export default function IntelligencePage() {
               setStreamingText("");
               setToolSteps([]);
               setLoading(false);
+
+              if (convId) {
+                fetch(`/api/conversations/${convId}/messages`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    userContent: text,
+                    assistantContent: fullText,
+                    apiHistory: latestHistory,
+                  }),
+                }).catch(() => {});
+              }
             } else if (event.type === "error") {
               setMessages((prev) => [...prev, { role: "assistant", content: `Erreur : ${event.message}` }]);
               setStreamingText("");
@@ -120,10 +195,35 @@ export default function IntelligencePage() {
 
   return (
     <div className="flex flex-col h-full">
+      {/* Header */}
+      <div className="flex items-center justify-end px-6 py-4 gap-2">
+        {messages.length > 0 && (
+          <button
+            onClick={startNewConversation}
+            className="flex items-center gap-2 text-sm px-4 py-2 rounded-xl border transition-all"
+            style={{ borderColor: "#e5e5e5", color: "#666", background: "#fff" }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#f01563"; e.currentTarget.style.color = "#f01563"; e.currentTarget.style.background = "#fff8fa"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#e5e5e5"; e.currentTarget.style.color = "#666"; e.currentTarget.style.background = "#fff"; }}
+          >
+            <Plus size={14} />
+            Nouveau
+          </button>
+        )}
+        <button
+          onClick={() => setShowHistory(true)}
+          className="flex items-center gap-2 text-sm px-4 py-2 rounded-xl transition-all"
+          style={{ background: "#111", color: "#fff" }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "#333"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "#111"; }}
+        >
+          <History size={14} />
+          Historique
+        </button>
+      </div>
+
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto px-6 py-8">
+      <div className="flex-1 overflow-y-auto px-6 py-4">
         {messages.length === 0 ? (
-          /* Empty state */
           <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
             <Image src="/logo.png" alt="Coachello" width={56} height={56} quality={100} className="rounded-2xl" />
             <h1 className="text-2xl font-semibold" style={{ color: "#111" }}>Coachello Intelligence</h1>
@@ -153,7 +253,6 @@ export default function IntelligencePage() {
             >
               Guide de réponse
             </Link>
-            {/* Advice cards */}
             <div className="w-full max-w-xl flex flex-col gap-2 mt-2">
               <div
                 className="rounded-xl px-5 py-3 text-center"
@@ -190,7 +289,6 @@ export default function IntelligencePage() {
                 </div>
               </div>
             ))}
-            {/* Streaming response */}
             {streamingText && (
               <div className="flex justify-start">
                 <img src="/logo.png" alt="AI" width={28} height={28} className="rounded-lg mr-3 mt-0.5 shrink-0 self-start" />
@@ -201,7 +299,6 @@ export default function IntelligencePage() {
                 </div>
               </div>
             )}
-            {/* Loading / tool indicator */}
             {loading && (
               <div className="flex justify-start items-start gap-3">
                 <Image src="/logo.png" alt="AI" width={28} height={28} quality={100} className="rounded-lg shrink-0 mt-0.5" />
@@ -258,6 +355,16 @@ export default function IntelligencePage() {
           Connecté à HubSpot · Slack · Gmail · Drive — bientôt disponible
         </p>
       </div>
+
+      {showHistory && (
+        <ConversationHistoryModal
+          conversations={conversations}
+          currentId={conversationId}
+          onSelect={loadConversation}
+          onDelete={deleteConversation}
+          onClose={() => setShowHistory(false)}
+        />
+      )}
     </div>
   );
 }

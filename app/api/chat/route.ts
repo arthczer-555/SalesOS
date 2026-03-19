@@ -70,6 +70,7 @@ async function slack(path: string, params?: Record<string, string>) {
   return data;
 }
 
+
 async function slackPost(path: string, body: Record<string, unknown>) {
   const res = await fetch(`https://slack.com/api${path}`, {
     method: "POST",
@@ -399,10 +400,13 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
     case "get_slack_channel_history": {
       // Resolve channel name → ID
       const channelsData = await slack("/conversations.list", { limit: "200", types: "public_channel,private_channel" });
-      const channel = (channelsData.channels ?? []).find(
-        (c: { name: string; id: string }) => c.name === (input.channel_name as string).replace("#", "")
-      );
-      if (!channel) return `Canal "${input.channel_name}" introuvable.`;
+      const allChannels: { name: string; id: string }[] = channelsData.channels ?? [];
+      const searched = (input.channel_name as string).replace("#", "");
+      const channel = allChannels.find((c) => c.name === searched);
+      if (!channel) {
+        const available = allChannels.map((c) => c.name).sort().join(", ");
+        return `Canal "${searched}" introuvable. Canaux accessibles : ${available}`;
+      }
 
       const histData = await slack("/conversations.history", {
         channel: channel.id,
