@@ -156,14 +156,14 @@ export default function IntelligencePage() {
             {/* Advice cards */}
             <div className="w-full max-w-xl flex flex-col gap-2 mt-2">
               <div
-                className="rounded-xl px-5 py-3 text-left"
+                className="rounded-xl px-5 py-3 text-center"
                 style={{ background: "#fff8f0", border: "1px solid #ffe4c4" }}
               >
-                <span className="text-xs font-semibold" style={{ color: "#c2410c" }}>Arthur&apos;s advice — </span>
-                <span className="text-xs leading-relaxed" style={{ color: "#78350f" }}>
+                <p className="text-xs font-semibold mb-1" style={{ color: "#c2410c" }}>Advice</p>
+                <p className="text-xs leading-relaxed" style={{ color: "#78350f" }}>
                   For best results, tell the bot where to look (HubSpot, Drive, or Slack) and be specific about what you need—stages, timelines, deals, or contacts.
-                  <br />Use the <Link href="/prompt" className="underline underline-offset-2">prompt guide</Link> to tailor it to how you sell.
-                </span>
+                  <br />Use the <Link href="/prompt" className="underline underline-offset-2">prompt guide</Link> to tailor it to your needs.
+                </p>
               </div>
             </div>
           </div>
