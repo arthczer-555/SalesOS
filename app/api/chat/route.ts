@@ -1,7 +1,8 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
-
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+import { getAuthenticatedUser } from "@/lib/auth";
+import { db } from "@/lib/db";
+import { decrypt } from "@/lib/crypto";
 
 // ── HubSpot helper ────────────────────────────────────────────────────────────
 async function hubspot(path: string, method = "GET", body?: unknown) {
@@ -68,12 +69,10 @@ const tools: Anthropic.Tool[] = [
   {
     name: "get_deals",
     description:
-      "Récupère tous les deals HubSpot. Utilise cet outil pour avoir une vue globale du pipeline.",
+      "Récupère tous les deals actifs HubSpot (hors closedwon/closedlost), triés par activité récente. Utilise cet outil pour avoir une vue globale du pipeline.",
     input_schema: {
       type: "object" as const,
-      properties: {
-        limit: { type: "number", description: "Nombre max de résultats (défaut : 50)" },
-      },
+      properties: {},
       required: [],
     },
   },
@@ -166,14 +165,29 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
     }
     case "get_deals": {
       const props = await getPropertyNames("deals");
-      const data = await hubspot(
-        `/crm/v3/objects/deals?limit=${input.limit || 50}&properties=${props.join(",")}`
-      );
-      const results = (data.results ?? []).map((r: { id: string; properties: Record<string, unknown> }) => ({
-        id: r.id,
-        properties: stripEmpty(r.properties),
-      }));
-      return JSON.stringify(results);
+      const allResults: { id: string; properties: Record<string, unknown> }[] = [];
+      let after: string | undefined;
+      do {
+        const data = await hubspot("/crm/v3/objects/deals/search", "POST", {
+          filterGroups: [
+            {
+              filters: [
+                { propertyName: "dealstage", operator: "NEQ", value: "closedwon" },
+                { propertyName: "dealstage", operator: "NEQ", value: "closedlost" },
+              ],
+            },
+          ],
+          sorts: [{ propertyName: "hs_lastmodifieddate", direction: "DESCENDING" }],
+          limit: 200,
+          ...(after ? { after } : {}),
+          properties: props,
+        });
+        for (const r of (data.results ?? []) as { id: string; properties: Record<string, unknown> }[]) {
+          allResults.push({ id: r.id, properties: stripEmpty(r.properties) });
+        }
+        after = (data.paging as { next?: { after?: string } } | undefined)?.next?.after;
+      } while (after);
+      return JSON.stringify(allResults);
     }
     case "get_companies": {
       const props = await getPropertyNames("companies");
@@ -266,6 +280,44 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
 
 // ── POST handler ──────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
+  // ── Auth + per-user Claude key ───────────────────────────────────────────────
+  const user = await getAuthenticatedUser();
+  if (!user) {
+    return new Response(
+      `data: ${JSON.stringify({ type: "error", message: "Non authentifié." })}\n\n`,
+      { status: 401, headers: { "Content-Type": "text/event-stream" } }
+    );
+  }
+
+  let claudeApiKey: string;
+
+  if (process.env.SUPABASE_URL) {
+    const { data: keyRow } = await db
+      .from("user_keys")
+      .select("encrypted_key, iv, auth_tag, is_active")
+      .eq("user_id", user.id)
+      .eq("service", "claude")
+      .single();
+
+    if (!keyRow?.is_active) {
+      return new Response(
+        `data: ${JSON.stringify({ type: "error", message: "Ton accès Claude n'est pas encore configuré. Contacte Arthur." })}\n\n`,
+        { status: 402, headers: { "Content-Type": "text/event-stream" } }
+      );
+    }
+
+    claudeApiKey = decrypt({
+      encryptedKey: keyRow.encrypted_key,
+      iv: keyRow.iv,
+      authTag: keyRow.auth_tag,
+    });
+  } else {
+    // Local dev fallback — no Supabase configured
+    claudeApiKey = process.env.ANTHROPIC_API_KEY ?? "";
+  }
+
+  const client = new Anthropic({ apiKey: claudeApiKey });
+
   const { messages, customPrompt } = await req.json();
 
   const encoder = new TextEncoder();
