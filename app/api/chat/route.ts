@@ -180,12 +180,13 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "search_slack",
-    description: "Recherche des messages Slack par mot-clé. Utilise cet outil pour trouver des conversations sur un deal, un contact ou un sujet.",
+    description: "Recherche des messages Slack par mot-clé dans un ou plusieurs canaux. Utilise cet outil pour trouver des conversations sur un deal, un contact ou un sujet.",
     input_schema: {
       type: "object" as const,
       properties: {
-        query: { type: "string", description: "Mots-clés à rechercher dans Slack" },
-        limit: { type: "number", description: "Nombre de résultats (défaut : 10)" },
+        query: { type: "string", description: "Mots-clés à rechercher (insensible à la casse)" },
+        channels: { type: "array", items: { type: "string" }, description: "Canaux où chercher (sans #). Si vide, cherche dans les canaux les plus pertinents." },
+        limit: { type: "number", description: "Nombre de messages à analyser par canal (défaut : 50)" },
       },
       required: ["query"],
     },
@@ -356,23 +357,44 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       return JSON.stringify(contacts);
     }
     case "search_slack": {
-      const data = await slack("/search.messages", {
-        query: input.query as string,
-        count: String(input.limit ?? 10),
-        sort: "timestamp",
-        sort_dir: "desc",
-      });
-      const messages = (data.messages?.matches ?? []).map((m: {
-        text: string; ts: string; username?: string;
-        channel?: { name?: string }; permalink?: string;
-      }) => ({
-        text: m.text,
-        user: m.username,
-        channel: m.channel?.name,
-        timestamp: new Date(parseFloat(m.ts) * 1000).toISOString(),
-        permalink: m.permalink,
+      const query = (input.query as string).toLowerCase();
+      const targetChannels = (input.channels as string[] | undefined)?.length
+        ? input.channels as string[]
+        : ["general", "1y-new-meetings", "1a-new-incoming-leads", "10-sales-intelligence", "11-everything-prospects", "12-everything-clients"];
+      const perChannelLimit = String(input.limit ?? 50);
+
+      // Resolve channel names → IDs
+      const channelsData = await slack("/conversations.list", { limit: "200", types: "public_channel,private_channel,mpim" });
+      const allChannels: { name: string; id: string }[] = channelsData.channels ?? [];
+      const channelMap = new Map(allChannels.map((c) => [c.name, c.id]));
+
+      const results: { channel: string; text: string; user: string; timestamp: string }[] = [];
+
+      await Promise.allSettled(targetChannels.map(async (chName) => {
+        const chId = channelMap.get(chName.replace("#", ""));
+        if (!chId) return;
+        try {
+          const histData = await slack("/conversations.history", { channel: chId, limit: perChannelLimit });
+          const userIds = [...new Set((histData.messages ?? []).map((m: { user?: string }) => m.user).filter(Boolean))] as string[];
+          const userMap: Record<string, string> = {};
+          await Promise.allSettled(userIds.map(async (uid) => {
+            try { const u = await slack("/users.info", { user: uid }); userMap[uid] = u.user?.real_name ?? uid; } catch { userMap[uid] = uid; }
+          }));
+          for (const m of (histData.messages ?? []) as { text: string; ts: string; user?: string }[]) {
+            if (m.text?.toLowerCase().includes(query)) {
+              results.push({
+                channel: chName,
+                text: m.text,
+                user: m.user ? (userMap[m.user] ?? m.user) : "bot",
+                timestamp: new Date(parseFloat(m.ts) * 1000).toISOString(),
+              });
+            }
+          }
+        } catch { /* canal inaccessible, on ignore */ }
       }));
-      return JSON.stringify(messages);
+
+      if (results.length === 0) return `Aucun message contenant "${input.query}" trouvé dans les canaux consultés.`;
+      return JSON.stringify(results);
     }
     case "get_slack_channel_history": {
       // Resolve channel name → ID

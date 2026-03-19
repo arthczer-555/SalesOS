@@ -28,7 +28,7 @@ export default function IntelligencePage() {
     get_contact_activity:    "Historique des échanges…",
     get_deal_activity:       "Historique du deal…",
     get_deal_contacts:       "Contacts associés au deal…",
-    search_slack:            "Recherche Slack…",
+    search_slack:            "Recherche dans Slack…",
     get_slack_channel_history: "Lecture du canal Slack…",
     send_slack_message:      "Envoi du message Slack…",
   };

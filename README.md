@@ -1,49 +1,151 @@
-# SalesOS
+# SalesOS — Coachello Sales Intelligence
 
-SalesOS is the **all-in-one AI-powered sales intelligence platform** built for Coachello. It acts as a commercial brain for the sales team — connecting to the existing stack (HubSpot, Slack, Gmail, Granola, LinkedIn, Drive) and amplifying every sales action with AI.
+Internal tool for the Coachello sales team. Connects to HubSpot, Slack, and Gmail to give sales reps an AI-powered assistant and email composer.
 
-> One place to search, understand, write, track and act. Less tool-switching, more execution.
+---
 
-## The Problem
+## What it does
 
-Sales teams juggle 6–10 tools daily. Context is scattered, signals are missed, and too much time is spent copy-pasting instead of selling. SalesOS fixes that.
+- **Coachello Intelligence** — AI chat agent (Claude) with real-time access to HubSpot CRM and Slack. Answers questions about deals, contacts, pipeline, and company news. Can send Slack messages.
+- **Prospection** — Gmail email composer with To/CC/BCC, attachments, send & save-as-draft.
+- **Settings** — Per-user integrations: Claude API key (admin-managed), Gmail OAuth, HubSpot (shared), Slack (shared).
+- **Admin panel** — User management, Claude API key assignment, token/cost usage per user (monthly + total).
+- **Prompt guide** — Each user can customize the AI system prompt from `/prompt`.
 
-## Core Features
+---
 
-| Feature | Role | Description |
-|---|---|---|
-| **Unified Search** | All | Semantic search across HubSpot, Drive, Slack, Gmail, Granola and the web — in one query |
-| **AI Prospecting Writer** | AE | Generate hyper-personalized outreach emails using real CRM and web context. Also suggests follow-up messages based on previous exchanges. |
-| **Deal Intelligence Panel** | AM | Full account view: contacts, exchanges, intent signals, deal stage and next steps recommended by AI |
-| **Competitive Watch** | All | Real-time radar on competitors with AI-generated research reports. Suggests when it's relevant to check LinkedIn directly. |
-| **Slack Command Center** | All | Search, message and create alerts in Slack directly from SalesOS |
-| **Scoring Center** | All | Score deals according to Quentin's scoring system |
+## Stack
 
-## Roadmap (V2+)
+- **Framework**: Next.js 15 App Router
+- **Auth**: Clerk (Google OAuth)
+- **Database**: Supabase (Postgres)
+- **AI**: Anthropic Claude (Haiku / Sonnet / Opus)
+- **Hosting**: Netlify
 
-- Meeting Prep Briefing — auto-generated before each call
-- Sales Signals Feed — buy signals from LinkedIn, news, CRM
-- Relationship Health Score — detect cold deals automatically
-- Follow-up Autopilot — draft follow-up emails from Granola notes
-- Multi-channel Sequence Builder — email + LinkedIn + Slack sequences
-- Knowledge Base — queryable in natural language (case studies, objections, pricing)
+---
 
 ## Integrations
 
-HubSpot · Google Drive · Slack · Gmail · Outlook · Granola · LinkedIn (ProxyCurl) · Exa.ai · Brave Search
+| Service | Type | Auth |
+|---------|------|------|
+| HubSpot | CRM read | Shared API key (env var) |
+| Slack | Read + write | Shared bot token (env var) |
+| Gmail | Send + draft | Per-user OAuth (refresh token in DB) |
+| Claude | AI | Per-user API key (encrypted in DB) |
 
-## Tech Stack
+---
 
-> Stack à définir — les choix ci-dessous sont des pistes initiales, pas des décisions finales.
+## Project structure
 
-- **Frontend**: TBD
-- **Backend**: TBD
-- **Database**: TBD
-- **AI**: TBD
-- **Auth**: TBD
-- **Hosting**: TBD
+```
+app/
+  page.tsx              # AI chat (Coachello Intelligence)
+  prospecting/          # Gmail composer
+  prompt/               # System prompt editor
+  settings/             # User integrations
+  admin/                # Admin: users + API keys + usage
+  api/
+    chat/               # Streaming AI agent endpoint
+    gmail/              # Gmail OAuth + send + draft
+    prompt/             # Get/save system prompt
+    admin/              # Admin API routes
+    user/               # Current user info
 
-See [SalesOS_TechPitch.md](./SalesOS_TechPitch.md) for options and trade-offs.
+lib/
+  auth.ts               # getAuthenticatedUser() via Clerk + Supabase
+  db.ts                 # Supabase client (service role)
+  crypto.ts             # AES-256-GCM encrypt/decrypt
+  gmail.ts              # Gmail access token refresh + MIME builder
+
+components/
+  sidebar.tsx           # Navigation
+  coming-soon.tsx       # Placeholder for future pages
+
+middleware.ts           # Clerk auth middleware
+prompt-guide.txt        # Default AI system prompt
+```
+
+---
+
+## Environment variables
+
+```env
+# Clerk
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=
+CLERK_SECRET_KEY=
+
+# Supabase
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+
+# Encryption (AES-256 key as 64 hex chars)
+ENCRYPTION_SECRET=
+
+# Anthropic (fallback — real keys are per-user in DB)
+ANTHROPIC_API_KEY=
+
+# HubSpot
+HUBSPOT_ACCESS_TOKEN=
+
+# Slack
+SLACK_BOT_TOKEN=
+
+# Gmail OAuth
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+NEXT_PUBLIC_APP_URL=
+```
+
+---
+
+## Supabase schema
+
+```sql
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  clerk_id TEXT UNIQUE NOT NULL,
+  email TEXT UNIQUE NOT NULL,
+  name TEXT,
+  is_admin BOOLEAN NOT NULL DEFAULT FALSE,
+  user_prompt TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE user_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  service TEXT NOT NULL,
+  encrypted_key TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  auth_tag TEXT NOT NULL,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  UNIQUE(user_id, service)
+);
+
+CREATE TABLE user_integrations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  encrypted_refresh TEXT,
+  refresh_iv TEXT,
+  refresh_auth_tag TEXT,
+  access_token TEXT,
+  token_expiry TIMESTAMPTZ,
+  connected BOOLEAN NOT NULL DEFAULT FALSE,
+  UNIQUE(user_id, provider)
+);
+
+CREATE TABLE usage_logs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  model TEXT NOT NULL,
+  input_tokens INTEGER NOT NULL DEFAULT 0,
+  output_tokens INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+---
 
 ## Run locally
 
@@ -52,11 +154,4 @@ npm install
 npm run dev
 ```
 
-## Docs
-
-- [Product Descriptif](./SalesOS_Descriptif.md) — vision, features, use cases & roadmap
-- [Tech Pitch](./SalesOS_TechPitch.md) — full technical architecture & infrastructure
-
----
-
-*Coachello · Internal project · March 2026 · Confidential*
+*Coachello · Internal · 2026 · Confidential*

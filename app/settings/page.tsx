@@ -85,13 +85,14 @@ export default async function SettingsPage() {
         {/* Slack */}
         <IntegrationCard
           title="Slack"
-          description="Intégration Slack partagée — disponible prochainement."
+          description="Intégration Slack partagée. Accès en lecture et écriture."
           status={
             <span
-              className="text-xs px-2.5 py-1 rounded-full"
-              style={{ background: "#f5f5f5", color: "#aaa" }}
+              className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium"
+              style={{ background: "#f0fdf4", color: "#16a34a" }}
             >
-              Bientôt
+              <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
+              Connecté
             </span>
           }
         />
