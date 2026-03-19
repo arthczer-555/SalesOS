@@ -91,8 +91,9 @@ export default function ProspectingPage() {
   const addBcc = (t: string) => setBcc((p) => p.includes(t) ? p : [...p, t]);
 
   const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) setAttachments((p) => [...p, ...Array.from(e.target.files!)]);
+    const files = Array.from(e.target.files ?? []);
     e.target.value = "";
+    if (files.length > 0) setAttachments((p) => [...p, ...files]);
   };
 
   const buildFormData = () => {
