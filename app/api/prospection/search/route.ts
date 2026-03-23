@@ -12,7 +12,10 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
     },
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
-  if (!res.ok) throw new Error(`HubSpot ${method} ${path} → ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`HubSpot ${res.status}: ${text.slice(0, 200)}`);
+  }
   return res.json();
 }
 
@@ -61,7 +64,7 @@ export async function GET(req: NextRequest) {
 
   const now = Date.now();
   if (contacted === "never") {
-    filters.push({ propertyName: "notes_last_contacted", operator: "NOT_HAS_PROPERTY" });
+    filters.push({ propertyName: "notes_last_contacted", operator: "NOT_HAS_PROPERTY", value: "" });
   } else if (contacted === "lt30") {
     filters.push({ propertyName: "notes_last_contacted", operator: "GTE", value: String(now - 30 * 864e5) });
   } else if (contacted === "30to90") {
@@ -83,30 +86,34 @@ export async function GET(req: NextRequest) {
   if (filters.length) body.filterGroups = [{ filters }];
   if (after) body.after = after;
 
-  const data = await hubspot("/crm/v3/objects/contacts/search", "POST", body);
+  try {
+    const data = await hubspot("/crm/v3/objects/contacts/search", "POST", body);
 
-  const results = (data.results ?? []).map((c: {
-    id: string;
-    properties: Record<string, string>;
-  }) => ({
-    id: c.id,
-    firstName: c.properties.firstname ?? "",
-    lastName: c.properties.lastname ?? "",
-    email: c.properties.email ?? "",
-    jobTitle: c.properties.jobtitle ?? "",
-    company: c.properties.company ?? "",
-    industry: c.properties.industry ?? "",
-    lifecyclestage: c.properties.lifecyclestage ?? "",
-    city: c.properties.city ?? "",
-    country: c.properties.country ?? "",
-    lastContacted: c.properties.notes_last_contacted ?? "",
-    leadStatus: c.properties.hs_lead_status ?? "",
-    employees: c.properties.numberofemployees ?? "",
-    source: c.properties.hs_lead_source ?? "",
-  }));
+    const results = (data.results ?? []).map((c: {
+      id: string;
+      properties: Record<string, string>;
+    }) => ({
+      id: c.id,
+      firstName: c.properties.firstname ?? "",
+      lastName: c.properties.lastname ?? "",
+      email: c.properties.email ?? "",
+      jobTitle: c.properties.jobtitle ?? "",
+      company: c.properties.company ?? "",
+      industry: c.properties.industry ?? "",
+      lifecyclestage: c.properties.lifecyclestage ?? "",
+      city: c.properties.city ?? "",
+      country: c.properties.country ?? "",
+      lastContacted: c.properties.notes_last_contacted ?? "",
+      leadStatus: c.properties.hs_lead_status ?? "",
+      employees: c.properties.numberofemployees ?? "",
+      source: c.properties.hs_lead_source ?? "",
+    }));
 
-  const nextCursor: string | null = (data.paging as { next?: { after?: string } } | undefined)?.next?.after ?? null;
-  const total: number | null = data.total ?? null;
+    const nextCursor: string | null = (data.paging as { next?: { after?: string } } | undefined)?.next?.after ?? null;
+    const total: number | null = data.total ?? null;
 
-  return NextResponse.json({ results, nextCursor, total });
+    return NextResponse.json({ results, nextCursor, total });
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Erreur HubSpot" }, { status: 500 });
+  }
 }

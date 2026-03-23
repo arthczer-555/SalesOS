@@ -5,6 +5,7 @@ import path from "path";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
+import { logUsage } from "@/lib/log-usage";
 
 function getDefaultPrompt(): string {
   const filePath = path.join(process.cwd(), "prompt-guide.txt");
@@ -566,17 +567,7 @@ export async function POST(req: NextRequest) {
             currentMessages = [...currentMessages, { role: "assistant", content: message.content }];
             send({ type: "history", messages: currentMessages });
             send({ type: "done" });
-            // Log usage asynchronously (fire-and-forget)
-            if (process.env.SUPABASE_URL) {
-              void Promise.resolve(
-                db.from("usage_logs").insert({
-                  user_id: user.id,
-                  model,
-                  input_tokens: totalInputTokens,
-                  output_tokens: totalOutputTokens,
-                })
-              );
-            }
+            logUsage(user.id, model, totalInputTokens, totalOutputTokens);
             break;
           }
 
@@ -611,6 +602,7 @@ export async function POST(req: NextRequest) {
             continue;
           }
 
+          logUsage(user.id, model, totalInputTokens, totalOutputTokens);
           send({ type: "done" });
           break;
         }

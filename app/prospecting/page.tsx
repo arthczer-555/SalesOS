@@ -27,6 +27,7 @@ interface SearchResult {
 interface ContactDetails extends SearchResult {
   leadStatus: string;
   crmSummary: string;
+  crmDetails: { type: string; date: string; body: string }[];
 }
 
 // ── Lifecycle helpers ──────────────────────────────────────────────────────
@@ -188,11 +189,11 @@ function FilterSelect({ value, onChange, label, children }: {
 }) {
   const active = !!value;
   return (
-    <div className="relative">
+    <div className="relative flex-1" style={{ minWidth: "120px", maxWidth: "180px" }}>
       <select
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="appearance-none pl-3 pr-7 py-1.5 rounded-lg border text-xs outline-none transition-all cursor-pointer"
+        className="appearance-none w-full pl-3 pr-7 py-1.5 rounded-lg border text-xs outline-none transition-all cursor-pointer"
         style={{
           borderColor: active ? "#f01563" : "#e5e5e5",
           color: active ? "#f01563" : "#888",
@@ -261,6 +262,7 @@ export default function ProspectingPage() {
 
   const [generating, setGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
+  const [showCrmPopup, setShowCrmPopup] = useState(false);
 
   // AI explanation + guide modal
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
@@ -529,7 +531,7 @@ export default function ProspectingPage() {
       if (data.suggestedAngle) setAngle(data.suggestedAngle);
     } catch {
       setContactIndustry(result.industry ?? "");
-      setSelectedContact({ ...result, leadStatus: "", crmSummary: "" });
+      setSelectedContact({ ...result, leadStatus: "", crmSummary: "", crmDetails: [] });
     } finally {
       setLoadingDetails(false);
     }
@@ -869,6 +871,47 @@ export default function ProspectingPage() {
         </div>
       )}
 
+      {/* CRM history popup */}
+      {showCrmPopup && selectedContact && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(0,0,0,0.4)" }}
+          onClick={(e) => { if (e.target === e.currentTarget) setShowCrmPopup(false); }}
+        >
+          <div className="flex flex-col rounded-2xl shadow-2xl w-full max-w-xl mx-4" style={{ background: "#fff", maxHeight: "80vh" }}>
+            <div className="flex items-center justify-between px-5 py-4 border-b shrink-0" style={{ borderColor: "#f0f0f0" }}>
+              <div>
+                <p className="text-sm font-semibold" style={{ color: "#111" }}>Historique CRM</p>
+                <p className="text-xs" style={{ color: "#aaa" }}>
+                  {selectedContact.firstName} {selectedContact.lastName} · {selectedContact.company}
+                </p>
+              </div>
+              <button onClick={() => setShowCrmPopup(false)} style={{ color: "#aaa" }}
+                onMouseEnter={(e) => (e.currentTarget.style.color = "#111")}
+                onMouseLeave={(e) => (e.currentTarget.style.color = "#aaa")}
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {selectedContact.crmDetails.length > 0 ? selectedContact.crmDetails.map((e, i) => (
+                <div key={i} className="rounded-xl border p-3 space-y-1" style={{ borderColor: "#f0f0f0" }}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: "#f0f0f0", color: "#555" }}>
+                      {e.type}
+                    </span>
+                    {e.date && <span className="text-[10px]" style={{ color: "#aaa" }}>{e.date}</span>}
+                  </div>
+                  <p className="text-xs leading-relaxed whitespace-pre-wrap" style={{ color: "#333" }}>{e.body}</p>
+                </div>
+              )) : (
+                <p className="text-xs text-center py-6" style={{ color: "#aaa" }}>{selectedContact.crmSummary}</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Split layout */}
       <div className="flex flex-1 overflow-hidden">
 
@@ -1071,8 +1114,7 @@ export default function ProspectingPage() {
 
                 {/* Filters */}
                 <div className="space-y-2">
-                  {/* Row 1: basic filters */}
-                  <div className="flex items-center gap-2 flex-wrap">
+                  <div className="flex gap-2 flex-wrap">
                     <FilterSelect value={filterLifecycle} onChange={setFilterLifecycle} label="Lifecycle">
                       <option value="subscriber">Abonné</option>
                       <option value="lead">Lead</option>
@@ -1081,25 +1123,55 @@ export default function ProspectingPage() {
                       <option value="opportunity">Opportunité</option>
                       <option value="customer">Client</option>
                     </FilterSelect>
-
                     <FilterSelect value={filterIndustry} onChange={setFilterIndustry} label="Secteur">
                       {[...new Set(searchResults.map((r) => r.industry).filter(Boolean))].sort().map((ind) => (
                         <option key={ind} value={ind}>{ind}</option>
                       ))}
                     </FilterSelect>
-
-                    <button
-                      onClick={() => setShowAdvancedFilters((v) => !v)}
-                      className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg border transition-colors"
-                      style={{
-                        borderColor: showAdvancedFilters ? "#f01563" : "#e5e5e5",
-                        color: showAdvancedFilters ? "#f01563" : "#888",
-                        background: showAdvancedFilters ? "#fff0f5" : "#fff",
-                      }}
-                    >
-                      Filtres <ChevronDown size={10} style={{ transform: showAdvancedFilters ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
-                    </button>
-
+                    <FilterSelect value={filterCountry} onChange={setFilterCountry} label="Pays">
+                      {[...new Set(searchResults.map((r) => r.country).filter(Boolean))].sort().map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </FilterSelect>
+                    <FilterSelect value={filterLeadStatus} onChange={setFilterLeadStatus} label="Statut lead">
+                      <option value="NEW">Nouveau</option>
+                      <option value="OPEN">Ouvert</option>
+                      <option value="IN_PROGRESS">En cours</option>
+                      <option value="ATTEMPTED_TO_CONTACT">Contacté</option>
+                      <option value="CONNECTED">Connecté</option>
+                      <option value="BAD_TIMING">Mauvais timing</option>
+                      <option value="UNQUALIFIED">Non qualifié</option>
+                    </FilterSelect>
+                    <FilterSelect value={filterContacted} onChange={setFilterContacted} label="Dernier contact">
+                      <option value="never">Jamais contacté</option>
+                      <option value="lt30">Il y a moins de 30j</option>
+                      <option value="30to90">Entre 30 et 90j</option>
+                      <option value="gt90">Plus de 90j</option>
+                    </FilterSelect>
+                    <FilterSelect value={filterCompanySize} onChange={setFilterCompanySize} label="Taille">
+                      <option value="1-10">1 – 10</option>
+                      <option value="11-50">11 – 50</option>
+                      <option value="51-200">51 – 200</option>
+                      <option value="201-1000">201 – 1000</option>
+                      <option value="1000+">+ 1000</option>
+                    </FilterSelect>
+                    <FilterSelect value={filterSource} onChange={setFilterSource} label="Source">
+                      <option value="ORGANIC_SEARCH">Recherche organique</option>
+                      <option value="DIRECT_TRAFFIC">Trafic direct</option>
+                      <option value="EMAIL_MARKETING">Email marketing</option>
+                      <option value="PAID_SEARCH">Recherche payante</option>
+                      <option value="REFERRALS">Référence</option>
+                      <option value="SOCIAL_MEDIA">Réseaux sociaux</option>
+                      <option value="OFFLINE">Hors ligne</option>
+                      <option value="OTHER">Autre</option>
+                    </FilterSelect>
+                    <FilterSelect value={filterSort} onChange={setFilterSort} label="Trier par">
+                      <option value="recent">Modifié récemment</option>
+                      <option value="lastcontact">Dernier contact</option>
+                      <option value="alpha">Alphabétique</option>
+                    </FilterSelect>
+                  </div>
+                  <div className="flex items-center gap-2">
                     {(filterLifecycle || filterIndustry || filterCountry || filterLeadStatus || filterContacted || filterCompanySize || filterSource) && (
                       <button
                         onClick={() => { setFilterLifecycle(""); setFilterIndustry(""); setFilterCountry(""); setFilterLeadStatus(""); setFilterContacted(""); setFilterCompanySize(""); setFilterSource(""); setFilterSort(""); }}
@@ -1109,66 +1181,12 @@ export default function ProspectingPage() {
                         <X size={10} /> Reset
                       </button>
                     )}
-
                     {totalResults !== null && (
                       <span className="ml-auto text-xs" style={{ color: "#aaa" }}>
                         {totalResults} prospect{totalResults > 1 ? "s" : ""}
                       </span>
                     )}
                   </div>
-
-                  {/* Row 2: advanced filters */}
-                  {showAdvancedFilters && (
-                    <div className="flex items-center gap-2 flex-wrap p-2.5 rounded-xl" style={{ background: "#f9f9f9", border: "1px solid #f0f0f0" }}>
-                      <FilterSelect value={filterCountry} onChange={setFilterCountry} label="Pays">
-                        {[...new Set(searchResults.map((r) => r.country).filter(Boolean))].sort().map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </FilterSelect>
-
-                      <FilterSelect value={filterLeadStatus} onChange={setFilterLeadStatus} label="Statut lead">
-                        <option value="NEW">Nouveau</option>
-                        <option value="OPEN">Ouvert</option>
-                        <option value="IN_PROGRESS">En cours</option>
-                        <option value="ATTEMPTED_TO_CONTACT">Contacté</option>
-                        <option value="CONNECTED">Connecté</option>
-                        <option value="BAD_TIMING">Mauvais timing</option>
-                        <option value="UNQUALIFIED">Non qualifié</option>
-                      </FilterSelect>
-
-                      <FilterSelect value={filterContacted} onChange={setFilterContacted} label="Dernier contact">
-                        <option value="never">Jamais contacté</option>
-                        <option value="lt30">Il y a moins de 30j</option>
-                        <option value="30to90">Entre 30 et 90j</option>
-                        <option value="gt90">Plus de 90j</option>
-                      </FilterSelect>
-
-                      <FilterSelect value={filterCompanySize} onChange={setFilterCompanySize} label="Taille">
-                        <option value="1-10">1 – 10</option>
-                        <option value="11-50">11 – 50</option>
-                        <option value="51-200">51 – 200</option>
-                        <option value="201-1000">201 – 1000</option>
-                        <option value="1000+">+ 1000</option>
-                      </FilterSelect>
-
-                      <FilterSelect value={filterSource} onChange={setFilterSource} label="Source">
-                        <option value="ORGANIC_SEARCH">Recherche organique</option>
-                        <option value="DIRECT_TRAFFIC">Trafic direct</option>
-                        <option value="EMAIL_MARKETING">Email marketing</option>
-                        <option value="PAID_SEARCH">Recherche payante</option>
-                        <option value="REFERRALS">Référence</option>
-                        <option value="SOCIAL_MEDIA">Réseaux sociaux</option>
-                        <option value="OFFLINE">Hors ligne</option>
-                        <option value="OTHER">Autre</option>
-                      </FilterSelect>
-
-                      <FilterSelect value={filterSort} onChange={setFilterSort} label="Trier par">
-                        <option value="recent">Modifié récemment</option>
-                        <option value="lastcontact">Dernier contact</option>
-                        <option value="alpha">Alphabétique</option>
-                      </FilterSelect>
-                    </div>
-                  )}
                 </div>
 
                 {searchError && (
@@ -1307,7 +1325,17 @@ export default function ProspectingPage() {
                       </div>
                       {selectedContact.crmSummary && (
                         <div className="mt-2">
-                          <Field label="Historique CRM" value={selectedContact.crmSummary} readonly multiline />
+                          <span className="text-[11px] font-medium" style={{ color: "#888" }}>Historique CRM</span>
+                          <button
+                            onClick={() => setShowCrmPopup(true)}
+                            className="w-full text-left mt-1 rounded-lg border px-3 py-2 text-xs transition-all"
+                            style={{ borderColor: "#e5e5e5", color: "#555", background: "#f9f9f9", lineHeight: 1.5 }}
+                            onMouseEnter={(e) => { e.currentTarget.style.borderColor = "#f01563"; e.currentTarget.style.background = "#fff8fb"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = "#e5e5e5"; e.currentTarget.style.background = "#f9f9f9"; }}
+                          >
+                            <span className="line-clamp-2">{selectedContact.crmSummary}</span>
+                            <span className="text-[10px] mt-1 block" style={{ color: "#f01563" }}>Voir tout →</span>
+                          </button>
                         </div>
                       )}
                     </div>
@@ -1452,21 +1480,52 @@ export default function ProspectingPage() {
                   <option key={ind} value={ind}>{ind}</option>
                 ))}
               </FilterSelect>
-              <button
-                onClick={() => setShowBulkAdvancedFilters((v) => !v)}
-                className="flex items-center gap-1 text-xs px-2 py-1.5 rounded-lg border transition-colors"
-                style={{
-                  borderColor: showBulkAdvancedFilters ? "#f01563" : "#e5e5e5",
-                  color: showBulkAdvancedFilters ? "#f01563" : "#888",
-                  background: showBulkAdvancedFilters ? "#fff0f5" : "#fff",
-                }}
-              >
-                Filtres <ChevronDown size={10} style={{ transform: showBulkAdvancedFilters ? "rotate(180deg)" : "none", transition: "transform 0.15s" }} />
-              </button>
+              <FilterSelect value={bulkFilterCountry} onChange={setBulkFilterCountry} label="Pays">
+                {[...new Set(bulkResults.map((r) => r.country).filter(Boolean))].sort().map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </FilterSelect>
+              <FilterSelect value={bulkFilterLeadStatus} onChange={setBulkFilterLeadStatus} label="Statut lead">
+                <option value="NEW">Nouveau</option>
+                <option value="OPEN">Ouvert</option>
+                <option value="IN_PROGRESS">En cours</option>
+                <option value="ATTEMPTED_TO_CONTACT">Contacté</option>
+                <option value="CONNECTED">Connecté</option>
+                <option value="BAD_TIMING">Mauvais timing</option>
+                <option value="UNQUALIFIED">Non qualifié</option>
+              </FilterSelect>
+              <FilterSelect value={bulkFilterContacted} onChange={setBulkFilterContacted} label="Dernier contact">
+                <option value="never">Jamais contacté</option>
+                <option value="lt30">Il y a moins de 30j</option>
+                <option value="30to90">Entre 30 et 90j</option>
+                <option value="gt90">Plus de 90j</option>
+              </FilterSelect>
+              <FilterSelect value={bulkFilterCompanySize} onChange={setBulkFilterCompanySize} label="Taille">
+                <option value="1-10">1 – 10</option>
+                <option value="11-50">11 – 50</option>
+                <option value="51-200">51 – 200</option>
+                <option value="201-1000">201 – 1000</option>
+                <option value="1000+">+ 1000</option>
+              </FilterSelect>
+              <FilterSelect value={bulkFilterSource} onChange={setBulkFilterSource} label="Source">
+                <option value="ORGANIC_SEARCH">Recherche organique</option>
+                <option value="DIRECT_TRAFFIC">Trafic direct</option>
+                <option value="EMAIL_MARKETING">Email marketing</option>
+                <option value="PAID_SEARCH">Recherche payante</option>
+                <option value="REFERRALS">Référence</option>
+                <option value="SOCIAL_MEDIA">Réseaux sociaux</option>
+                <option value="OFFLINE">Hors ligne</option>
+                <option value="OTHER">Autre</option>
+              </FilterSelect>
+              <FilterSelect value={bulkFilterSort} onChange={setBulkFilterSort} label="Trier par">
+                <option value="recent">Modifié récemment</option>
+                <option value="lastcontact">Dernier contact</option>
+                <option value="alpha">Alphabétique</option>
+              </FilterSelect>
               {(bulkFilterLifecycle || bulkFilterIndustry || bulkSearchQuery || bulkFilterCountry || bulkFilterLeadStatus || bulkFilterContacted || bulkFilterCompanySize || bulkFilterSource) && (
                 <button
                   onClick={() => { setBulkSearchQuery(""); setBulkFilterLifecycle(""); setBulkFilterIndustry(""); setBulkFilterCountry(""); setBulkFilterLeadStatus(""); setBulkFilterContacted(""); setBulkFilterCompanySize(""); setBulkFilterSource(""); setBulkFilterSort(""); setBulkResults([]); setBulkNextCursor(null); setBulkSelectedIds(new Set()); }}
-                  className="px-2 py-1.5 rounded-lg text-xs transition-colors"
+                  className="px-2 py-1.5 rounded-lg text-xs transition-colors shrink-0"
                   style={{ color: "#aaa", border: "1px solid #e5e5e5" }}
                   onMouseEnter={(e) => (e.currentTarget.style.color = "#f01563")}
                   onMouseLeave={(e) => (e.currentTarget.style.color = "#aaa")}
@@ -1475,53 +1534,6 @@ export default function ProspectingPage() {
                 </button>
               )}
             </div>
-            {/* Advanced bulk filters */}
-            {showBulkAdvancedFilters && (
-              <div className="flex gap-2 flex-wrap p-2.5 rounded-xl" style={{ background: "#f9f9f9", border: "1px solid #f0f0f0" }}>
-                <FilterSelect value={bulkFilterCountry} onChange={setBulkFilterCountry} label="Pays">
-                  {[...new Set(bulkResults.map((r) => r.country).filter(Boolean))].sort().map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </FilterSelect>
-                <FilterSelect value={bulkFilterLeadStatus} onChange={setBulkFilterLeadStatus} label="Statut lead">
-                  <option value="NEW">Nouveau</option>
-                  <option value="OPEN">Ouvert</option>
-                  <option value="IN_PROGRESS">En cours</option>
-                  <option value="ATTEMPTED_TO_CONTACT">Contacté</option>
-                  <option value="CONNECTED">Connecté</option>
-                  <option value="BAD_TIMING">Mauvais timing</option>
-                  <option value="UNQUALIFIED">Non qualifié</option>
-                </FilterSelect>
-                <FilterSelect value={bulkFilterContacted} onChange={setBulkFilterContacted} label="Dernier contact">
-                  <option value="never">Jamais contacté</option>
-                  <option value="lt30">Il y a moins de 30j</option>
-                  <option value="30to90">Entre 30 et 90j</option>
-                  <option value="gt90">Plus de 90j</option>
-                </FilterSelect>
-                <FilterSelect value={bulkFilterCompanySize} onChange={setBulkFilterCompanySize} label="Taille">
-                  <option value="1-10">1 – 10</option>
-                  <option value="11-50">11 – 50</option>
-                  <option value="51-200">51 – 200</option>
-                  <option value="201-1000">201 – 1000</option>
-                  <option value="1000+">+ 1000</option>
-                </FilterSelect>
-                <FilterSelect value={bulkFilterSource} onChange={setBulkFilterSource} label="Source">
-                  <option value="ORGANIC_SEARCH">Recherche organique</option>
-                  <option value="DIRECT_TRAFFIC">Trafic direct</option>
-                  <option value="EMAIL_MARKETING">Email marketing</option>
-                  <option value="PAID_SEARCH">Recherche payante</option>
-                  <option value="REFERRALS">Référence</option>
-                  <option value="SOCIAL_MEDIA">Réseaux sociaux</option>
-                  <option value="OFFLINE">Hors ligne</option>
-                  <option value="OTHER">Autre</option>
-                </FilterSelect>
-                <FilterSelect value={bulkFilterSort} onChange={setBulkFilterSort} label="Trier par">
-                  <option value="recent">Modifié récemment</option>
-                  <option value="lastcontact">Dernier contact</option>
-                  <option value="alpha">Alphabétique</option>
-                </FilterSelect>
-              </div>
-            )}
             {/* Select all row */}
             {bulkResults.length > 0 && (
               <div className="flex items-center gap-2">

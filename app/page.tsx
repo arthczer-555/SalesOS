@@ -162,6 +162,7 @@ export default function IntelligencePage() {
               setLoading(false);
 
               if (convId) {
+                const isFirst = messages.length === 0;
                 fetch(`/api/conversations/${convId}/messages`, {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
@@ -169,7 +170,14 @@ export default function IntelligencePage() {
                     userContent: text,
                     assistantContent: fullText,
                     apiHistory: latestHistory,
+                    isFirst,
                   }),
+                }).then((r) => r.json()).then((data) => {
+                  if (data.title) {
+                    setConversations((prev) =>
+                      prev.map((c) => c.id === convId ? { ...c, title: data.title } : c)
+                    );
+                  }
                 }).catch(() => {});
               }
             } else if (event.type === "error") {

@@ -4,6 +4,8 @@ import { isAdmin } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { UsersTable } from "./_components/users-table";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminPage() {
   const user = await getAuthenticatedUser();
   if (!user || !isAdmin(user)) redirect("/");

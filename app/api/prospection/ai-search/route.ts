@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAuthenticatedUser } from "@/lib/auth";
+import { logUsage } from "@/lib/log-usage";
 
 export const dynamic = "force-dynamic";
 
@@ -96,18 +97,23 @@ Mets uniquement les IDs des contacts les plus pertinents dans contact_ids (max 2
   // Tool-use loop (max 4 iterations)
   let allContacts: Record<string, ContactResult> = {};
   let iterations = 0;
+  let totalInput = 0, totalOutput = 0;
 
   while (iterations < 4) {
     iterations++;
     const response = await client.messages.create({
-      model: "claude-sonnet-4-6",
+      model: "claude-haiku-4-5-20251001",
       max_tokens: 1024,
       system: systemPrompt,
       tools,
       messages,
     });
 
+    totalInput += response.usage.input_tokens;
+    totalOutput += response.usage.output_tokens;
+
     if (response.stop_reason === "end_turn") {
+      logUsage(user.id, "claude-haiku-4-5-20251001", totalInput, totalOutput);
       // Parse final JSON response
       const text = response.content.find((b) => b.type === "text")?.text ?? "";
       const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -162,5 +168,6 @@ Mets uniquement les IDs des contacts les plus pertinents dans contact_ids (max 2
     }
   }
 
+  logUsage(user.id, "claude-haiku-4-5-20251001", totalInput, totalOutput);
   return NextResponse.json({ results: Object.values(allContacts), explanation: "Voici les contacts trouvés." });
 }

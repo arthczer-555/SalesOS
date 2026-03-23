@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getAuthenticatedUser } from "@/lib/auth";
+import { logUsage } from "@/lib/log-usage";
 
 export const dynamic = "force-dynamic";
 
@@ -37,6 +38,7 @@ export async function GET(req: NextRequest) {
 
   // Fetch last 5 engagements to build CRM summary
   let crmSummary = "";
+  let crmDetails: { type: string; date: string; body: string }[] = [];
   if (engagementsData.status === "fulfilled") {
     const engagementIds: string[] = (engagementsData.value?.results ?? [])
       .slice(0, 5)
@@ -61,6 +63,17 @@ export async function GET(req: NextRequest) {
         if (preview) lines.push(`[${type}${date ? " " + date : ""}] ${preview}`);
       }
       crmSummary = lines.join("\n");
+      crmDetails = engagementDetails
+        .filter((e) => e.status === "fulfilled")
+        .map((e) => {
+          const p = (e as PromiseFulfilledResult<{ properties: Record<string, string> }>).value?.properties ?? {};
+          return {
+            type: p.hs_engagement_type ?? "Activité",
+            date: p.hs_createdate ? new Date(p.hs_createdate).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" }) : "",
+            body: p.hs_body_preview ?? "",
+          };
+        })
+        .filter((e) => e.body);
     }
   }
 
@@ -104,7 +117,7 @@ export async function GET(req: NextRequest) {
     try {
       const client = new Anthropic();
       const message = await client.messages.create({
-        model: "claude-sonnet-4-6",
+        model: "claude-haiku-4-5-20251001",
         max_tokens: 512,
         system: `Tu es un assistant de prospection B2B pour Coachello (coaching professionnel).
 À partir des données HubSpot d'un prospect, tu dois inférer 4 champs pour préparer un email de prospection.
@@ -119,6 +132,7 @@ Ne génère rien si tu n'as pas de base factuelle pour un champ — laisse-le vi
         messages: [{ role: "user", content: contextBlock }],
       });
 
+      logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
       const raw = message.content[0].type === "text" ? message.content[0].text : "";
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -144,6 +158,7 @@ Ne génère rien si tu n'as pas de base factuelle pour un champ — laisse-le vi
     lifecyclestage: props.lifecyclestage ?? "",
     leadStatus: props.hs_lead_status ?? "",
     crmSummary,
+    crmDetails,
     // Pre-filled suggestions (empty string = not found, user fills manually)
     suggestedRecentNews: suggestions.recentNews,
     suggestedCompanyContext: suggestions.companyContext,

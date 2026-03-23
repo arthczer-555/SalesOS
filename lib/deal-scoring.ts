@@ -1,0 +1,241 @@
+// Deal scoring algorithm based on 3 Coachello models (Generic, Human Coaching, AI Coaching)
+
+export type DealModel = "generic" | "human_coaching" | "ai_coaching";
+
+export interface ScoreComponent {
+  name: string;
+  earned: number;
+  max: number;
+  filled: boolean;
+}
+
+export interface DealScore {
+  total: number;
+  components: ScoreComponent[];
+  reliability: 0 | 1 | 2 | 3 | 4 | 5;
+}
+
+// ─── Authority scoring ────────────────────────────────────────────────────────
+// Values from PDF: authority_status HubSpot property
+const AUTHORITY_VALUES: Record<string, number> = {
+  "executive_sponsor": 25,
+  "senior_decision_maker": 20,
+  "middle_manager": 12,
+  "champion_no_authority": 8,
+  "unknown": 0,
+};
+
+// Max points per model
+const AUTHORITY_MAX: Record<DealModel, number> = {
+  generic: 25,
+  human_coaching: 25,
+  ai_coaching: 20,
+};
+
+function scoreAuthority(value: string | null | undefined, model: DealModel): number {
+  if (!value) return 0;
+  const base = AUTHORITY_VALUES[value] ?? 0;
+  // Scale to model's max
+  const max = AUTHORITY_MAX[model];
+  return Math.round((base / 25) * max);
+}
+
+// ─── Budget scoring ───────────────────────────────────────────────────────────
+const BUDGET_VALUES: Record<string, number> = {
+  "confirmed_approved": 15,
+  "identified_not_approved": 10,
+  "budget_discussion": 6,
+  "no_budget": 0,
+};
+
+const BUDGET_MAX: Record<DealModel, number> = {
+  generic: 15,
+  human_coaching: 20,
+  ai_coaching: 15,
+};
+
+function scoreBudget(value: string | null | undefined, model: DealModel): number {
+  if (!value) return 0;
+  const base = BUDGET_VALUES[value] ?? 0;
+  const max = BUDGET_MAX[model];
+  return Math.round((base / 15) * max);
+}
+
+// ─── Timeline scoring ─────────────────────────────────────────────────────────
+const TIMELINE_VALUES: Record<string, number> = {
+  "within_30_days": 15,
+  "within_90_days": 12,
+  "within_6_months": 8,
+  "over_6_months": 4,
+  "unknown": 0,
+};
+
+const TIMELINE_MAX: Record<DealModel, number> = {
+  generic: 15,
+  human_coaching: 15,
+  ai_coaching: 20,
+};
+
+function scoreTimeline(value: string | null | undefined, model: DealModel): number {
+  if (!value) return 0;
+  const base = TIMELINE_VALUES[value] ?? 0;
+  const max = TIMELINE_MAX[model];
+  return Math.round((base / 15) * max);
+}
+
+// ─── Business Need scoring ────────────────────────────────────────────────────
+const NEED_VALUES: Record<string, number> = {
+  "critical_pain": 20,
+  "significant_need": 15,
+  "nice_to_have": 8,
+  "exploratory": 3,
+  "unknown": 0,
+};
+
+const NEED_MAX: Record<DealModel, number> = {
+  generic: 20,
+  human_coaching: 20,
+  ai_coaching: 20,
+};
+
+function scoreBusinessNeed(value: string | null | undefined, model: DealModel): number {
+  if (!value) return 0;
+  const base = NEED_VALUES[value] ?? 0;
+  const max = NEED_MAX[model];
+  return Math.round((base / 20) * max);
+}
+
+// ─── Strategic Fit scoring ────────────────────────────────────────────────────
+const STRATEGIC_VALUES: Record<string, number> = {
+  "perfect_fit": 10,
+  "good_fit": 8,
+  "partial_fit": 5,
+  "poor_fit": 2,
+  "unknown": 0,
+};
+
+function scoreStrategicFit(value: string | null | undefined): number {
+  if (!value) return 0;
+  return STRATEGIC_VALUES[value] ?? 0;
+}
+
+// ─── Engagement (auto-calculated) ────────────────────────────────────────────
+const ENGAGEMENT_MAX: Record<DealModel, number> = {
+  generic: 15,
+  human_coaching: 10,
+  ai_coaching: 15,
+};
+
+export function calcEngagement(
+  lastContactedMs: number | null,
+  lastModifiedMs: number | null,
+  model: DealModel
+): number {
+  const max = ENGAGEMENT_MAX[model];
+  const ref = lastContactedMs ?? lastModifiedMs;
+  const daysSince = ref ? (Date.now() - ref) / 864e5 : 999;
+
+  let ratio: number;
+  if (daysSince > 30) ratio = 0;        // Ghosting
+  else if (daysSince > 15) ratio = 0.3; // No activity
+  else if (daysSince < 7) ratio = 1.0;  // Active
+  else ratio = 0.6;                     // Sporadic
+
+  return Math.round(ratio * max);
+}
+
+// ─── Model detection ──────────────────────────────────────────────────────────
+export function detectModel(dealType: string | null | undefined): DealModel {
+  if (dealType === "human_coaching") return "human_coaching";
+  if (dealType === "ai_coaching") return "ai_coaching";
+  return "generic";
+}
+
+// ─── Dimension labels per model ───────────────────────────────────────────────
+const DIMENSION_NAMES: Record<DealModel, string[]> = {
+  generic: ["Authority & Buying Group", "Budget Clarity", "Timeline Certainty", "Business Need Strength", "Engagement & Momentum", "Strategic Fit"],
+  human_coaching: ["Authority & Governance", "Budget & Procurement", "Timeline", "Business Need Depth", "Engagement", "Strategic Expansion"],
+  ai_coaching: ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Usage Intent", "Strategic AI Fit"],
+};
+
+// ─── Main scoring function ────────────────────────────────────────────────────
+export interface DealForScoring {
+  authority_status?: string | null;
+  budget_status?: string | null;
+  decision_timeline?: string | null;
+  business_need_level?: string | null;
+  strategic_fit?: string | null;
+  deal_type?: string | null;
+  notes_last_contacted?: string | null;
+  hs_lastmodifieddate?: string | null;
+}
+
+export function calcScore(deal: DealForScoring): DealScore {
+  const model = detectModel(deal.deal_type);
+  const names = DIMENSION_NAMES[model];
+
+  const lastContactedMs = deal.notes_last_contacted ? new Date(deal.notes_last_contacted).getTime() : null;
+  const lastModifiedMs = deal.hs_lastmodifieddate ? new Date(deal.hs_lastmodifieddate).getTime() : null;
+
+  const authorityEarned = scoreAuthority(deal.authority_status, model);
+  const budgetEarned = scoreBudget(deal.budget_status, model);
+  const timelineEarned = scoreTimeline(deal.decision_timeline, model);
+  const needEarned = scoreBusinessNeed(deal.business_need_level, model);
+  const engagementEarned = calcEngagement(lastContactedMs, lastModifiedMs, model);
+  const strategicEarned = scoreStrategicFit(deal.strategic_fit);
+
+  const components: ScoreComponent[] = [
+    { name: names[0], earned: authorityEarned, max: AUTHORITY_MAX[model], filled: !!deal.authority_status },
+    { name: names[1], earned: budgetEarned, max: BUDGET_MAX[model], filled: !!deal.budget_status },
+    { name: names[2], earned: timelineEarned, max: TIMELINE_MAX[model], filled: !!deal.decision_timeline },
+    { name: names[3], earned: needEarned, max: NEED_MAX[model], filled: !!deal.business_need_level },
+    { name: names[4], earned: engagementEarned, max: ENGAGEMENT_MAX[model], filled: true }, // auto
+    { name: names[5], earned: strategicEarned, max: 10, filled: !!deal.strategic_fit },
+  ];
+
+  const total = components.reduce((sum, c) => sum + c.earned, 0);
+
+  // Reliability = count of non-null custom properties (exclude auto Engagement)
+  const filledCount = [
+    deal.authority_status,
+    deal.budget_status,
+    deal.decision_timeline,
+    deal.business_need_level,
+    deal.strategic_fit,
+  ].filter(Boolean).length as 0 | 1 | 2 | 3 | 4 | 5;
+
+  return { total, components, reliability: filledCount };
+}
+
+// ─── UI helpers ───────────────────────────────────────────────────────────────
+export function scoreBadge(total: number): { label: string; color: string; bg: string } {
+  if (total >= 80) return { label: "High Priority", color: "#16a34a", bg: "#dcfce7" };
+  if (total >= 60) return { label: "Avançable", color: "#ca8a04", bg: "#fef9c3" };
+  if (total >= 40) return { label: "Fragile", color: "#ea580c", bg: "#ffedd5" };
+  return { label: "À risque", color: "#dc2626", bg: "#fee2e2" };
+}
+
+export function reliabilityLabel(n: number): string {
+  if (n >= 5) return "Fiable";
+  if (n >= 3) return "Partiel";
+  if (n >= 1) return "Incomplet";
+  return "Non scoré";
+}
+
+export function reliabilityColor(n: number): string {
+  if (n >= 5) return "#16a34a";
+  if (n >= 3) return "#ca8a04";
+  if (n >= 1) return "#ea580c";
+  return "#9ca3af";
+}
+
+export function healthIndicator(closeDateMs: number | null, lastContactedMs: number | null): "green" | "yellow" | "red" {
+  const now = Date.now();
+  const daysSinceContact = lastContactedMs ? (now - lastContactedMs) / 864e5 : 999;
+  const daysToClose = closeDateMs ? (closeDateMs - now) / 864e5 : 999;
+
+  if (closeDateMs && closeDateMs < now) return "red";
+  if (daysSinceContact > 14) return "red";
+  if (daysToClose <= 14 || daysSinceContact > 7) return "yellow";
+  return "green";
+}
