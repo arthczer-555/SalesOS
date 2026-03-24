@@ -85,14 +85,6 @@ const TYPE_LABELS: Record<string, string> = {
   content: "Publication",
 };
 
-const TYPE_EMOJI: Record<string, string> = {
-  funding: "💰",
-  hiring: "👥",
-  nomination: "🎯",
-  expansion: "🌍",
-  restructuring: "🔄",
-  content: "📄",
-};
 
 const TYPE_COLORS: Record<string, { background: string; color: string }> = {
   funding: { background: "#fef3c7", color: "#92400e" },
@@ -484,8 +476,7 @@ export default function SignalsPage() {
             filteredSignals.map((signal) => {
               const isActive = activeSignal?.id === signal.id;
               const colors = TYPE_COLORS[signal.signal_type] ?? TYPE_COLORS.content;
-              const emoji = TYPE_EMOJI[signal.signal_type] ?? "📄";
-              const isNew = new Date(signal.created_at).toDateString() === todayStr;
+const isNew = new Date(signal.created_at).toDateString() === todayStr;
 
               return (
                 <div
@@ -496,7 +487,6 @@ export default function SignalsPage() {
                   onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
                 >
                   <div className="flex items-start gap-2">
-                    <span className="text-base mt-0.5 shrink-0">{emoji}</span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5 mb-0.5">
                         <span className="text-xs font-semibold truncate" style={{ color: "#111" }}>

@@ -30,7 +30,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${APP_URL}/settings?gmail=error`);
   }
 
-  const { refresh_token, access_token, expires_in } = await tokenRes.json();
+  const tokenData = await tokenRes.json();
+  const { access_token, expires_in } = tokenData;
+  const refresh_token: string | undefined = tokenData.refresh_token;
 
   // Resolve user from clerk_id
   const { data: user } = await db
@@ -43,21 +45,47 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(`${APP_URL}/settings?gmail=error`);
   }
 
-  const encrypted = encrypt(refresh_token ?? "");
-  const tokenExpiry = new Date(
-    Date.now() + (expires_in ?? 3600) * 1000
-  ).toISOString();
+  const tokenExpiry = new Date(Date.now() + (expires_in ?? 3600) * 1000).toISOString();
 
-  await db.from("user_integrations").upsert({
-    user_id: user.id,
-    provider: "gmail",
-    encrypted_refresh: encrypted.encryptedKey,
-    refresh_iv: encrypted.iv,
-    refresh_auth_tag: encrypted.authTag,
+  // Always update access_token + connected. Only update refresh if Google returned one.
+  const baseUpdate: Record<string, unknown> = {
     access_token,
     token_expiry: tokenExpiry,
     connected: true,
-  });
+  };
+
+  if (refresh_token) {
+    const encrypted = encrypt(refresh_token);
+    baseUpdate.encrypted_refresh = encrypted.encryptedKey;
+    baseUpdate.refresh_iv = encrypted.iv;
+    baseUpdate.refresh_auth_tag = encrypted.authTag;
+  }
+
+  // Try update first (fixes the case where multiple rows exist or row already exists)
+  const { data: updated } = await db
+    .from("user_integrations")
+    .update(baseUpdate)
+    .eq("user_id", user.id)
+    .eq("provider", "gmail")
+    .select("id");
+
+  if (!updated || updated.length === 0) {
+    // No existing row → insert (requires refresh_token)
+    if (!refresh_token) {
+      return NextResponse.redirect(`${APP_URL}/settings?gmail=error`);
+    }
+    const encrypted = encrypt(refresh_token);
+    await db.from("user_integrations").insert({
+      user_id: user.id,
+      provider: "gmail",
+      encrypted_refresh: encrypted.encryptedKey,
+      refresh_iv: encrypted.iv,
+      refresh_auth_tag: encrypted.authTag,
+      access_token,
+      token_expiry: tokenExpiry,
+      connected: true,
+    });
+  }
 
   return NextResponse.redirect(`${APP_URL}/settings?gmail=connected`);
 }

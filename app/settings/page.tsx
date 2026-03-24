@@ -3,6 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { KeyStatus } from "./_components/key-status";
 import { GmailConnect } from "./_components/gmail-connect";
+import { CalendarStatus } from "./_components/calendar-status";
 import { GuideEditor } from "./_components/guide-editor";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/default-guide";
 
@@ -72,6 +73,18 @@ export default async function SettingsPage() {
               <GmailConnect initialConnected={gmailConnected} />
             </Suspense>
           }
+        />
+
+        {/* Google Calendar */}
+        <IntegrationCard
+          title="Google Calendar"
+          description="Accès à ton calendrier pour le Briefing pré-meeting. Utilise le même compte Google que Gmail."
+          status={
+            <Suspense fallback={<span className="text-xs px-2.5 py-1 rounded-full" style={{ background: "#f5f5f5", color: "#aaa" }}>Vérification…</span>}>
+              <CalendarStatus gmailConnected={gmailConnected} />
+            </Suspense>
+          }
+          note={!gmailConnected ? "Connecte d'abord Gmail pour activer Google Calendar." : undefined}
         />
 
         {/* HubSpot */}
