@@ -8,8 +8,9 @@ import Sidebar from "@/components/sidebar";
 const geist = Geist({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "SalesOS — Coachello",
+  title: "Coachello - SalesOS",
   description: "AI-powered sales intelligence platform",
+  icons: { icon: "/icon.png" },
 };
 
 export default function RootLayout({

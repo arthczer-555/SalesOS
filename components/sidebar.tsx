@@ -11,6 +11,7 @@ const nav = [
   { href: "/prospecting", label: "Prospection" },
   { href: "/deals", label: "Deals" },
   { href: "/competitive", label: "Competition" },
+  { href: "/signals", label: "Market Intel" },
 ];
 
 const ADMIN_EMAIL = "arthur@coachello.io";

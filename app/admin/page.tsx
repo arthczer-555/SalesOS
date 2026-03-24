@@ -3,6 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { UsersTable } from "./_components/users-table";
+import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/default-guide";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export default async function AdminPage() {
 
   const { data: users } = await db
     .from("users")
-    .select("id, email, name, created_at, is_admin")
+    .select("id, email, name, created_at, is_admin, prospection_guide")
     .order("created_at", { ascending: true });
 
   const { data: keys } = await db
@@ -67,17 +68,70 @@ export default async function AdminPage() {
     usageMonth: monthMap.get(u.id) ?? { ...EMPTY },
   }));
 
+  const guideCustomCount = (users ?? []).filter((u) => u.prospection_guide).length;
+
   return (
-    <div className="p-8 max-w-4xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold" style={{ color: "#111" }}>
-          Gestion des utilisateurs
-        </h1>
-        <p className="text-sm mt-1" style={{ color: "#888" }}>
-          Configure les clés API Claude pour chaque membre de l&apos;équipe.
-        </p>
+    <div className="p-8 max-w-4xl mx-auto space-y-10">
+      {/* Users */}
+      <div>
+        <div className="mb-6">
+          <h1 className="text-xl font-semibold" style={{ color: "#111" }}>
+            Gestion des utilisateurs
+          </h1>
+          <p className="text-sm mt-1" style={{ color: "#888" }}>
+            Configure les clés API Claude pour chaque membre de l&apos;équipe.
+          </p>
+        </div>
+        <UsersTable users={usersWithStatus} />
       </div>
-      <UsersTable users={usersWithStatus} />
+
+      {/* Prospection guide */}
+      <div>
+        <div className="mb-4">
+          <div className="flex items-center gap-3 mb-1">
+            <h2 className="text-base font-semibold" style={{ color: "#111" }}>
+              Guide de prospection
+            </h2>
+            <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "#f1f5f9", color: "#475569" }}>
+              {guideCustomCount} / {(users ?? []).length} personnalisé(s)
+            </span>
+          </div>
+          <p className="text-xs" style={{ color: "#888" }}>
+            Ce guide par défaut est utilisé par l&apos;IA pour tous les utilisateurs n&apos;ayant pas encore personnalisé le leur. Chaque utilisateur peut modifier son propre guide dans Paramètres.
+          </p>
+        </div>
+
+        <div className="rounded-xl border overflow-hidden" style={{ borderColor: "#eeeeee" }}>
+          <div className="px-4 py-2 border-b flex items-center gap-2" style={{ background: "#f9f9f9", borderColor: "#eeeeee" }}>
+            <span className="text-xs font-medium" style={{ color: "#555" }}>Guide par défaut (hardcodé)</span>
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "#fef3c7", color: "#92400e" }}>
+              Modifier dans lib/default-guide.ts
+            </span>
+          </div>
+          <pre
+            className="p-4 text-xs overflow-x-auto"
+            style={{ color: "#555", lineHeight: "1.7", whiteSpace: "pre-wrap", background: "#fff" }}
+          >
+            {DEFAULT_PROSPECTION_GUIDE}
+          </pre>
+        </div>
+
+        {guideCustomCount > 0 && (
+          <div className="mt-3 space-y-1">
+            {(users ?? []).filter((u) => u.prospection_guide).map((u) => (
+              <div key={u.id} className="flex items-center gap-2 text-xs px-3 py-2 rounded-lg" style={{ background: "#f9f9f9" }}>
+                <span style={{ color: "#111" }}>{u.name ?? u.email}</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "#dbeafe", color: "#1e40af" }}>
+                  Guide personnalisé
+                </span>
+                <span style={{ color: "#aaa" }}>
+                  {u.prospection_guide!.length} chars
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
