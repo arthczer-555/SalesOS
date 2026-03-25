@@ -4,7 +4,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
 import { logUsage } from "@/lib/log-usage";
-import { DEFAULT_BRIEFING_GUIDE } from "@/lib/default-briefing-guide";
+import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -33,15 +33,16 @@ export async function POST(req: NextRequest) {
     let claudeApiKey: string;
     let briefingGuide: string = DEFAULT_BRIEFING_GUIDE;
     if (process.env.SUPABASE_URL) {
-      const [keyRes, userRes] = await Promise.all([
+      const [keyRes, userRes, globalGuide] = await Promise.all([
         db.from("user_keys").select("encrypted_key, iv, auth_tag, is_active").eq("user_id", user.id).eq("service", "claude").single(),
         db.from("users").select("briefing_guide").eq("id", user.id).single(),
+        db.from("guide_defaults").select("content").eq("key", "briefing").single(),
       ]);
       if (!keyRes.data?.is_active) {
         return NextResponse.json({ error: "Clé Claude non configurée" }, { status: 402 });
       }
       claudeApiKey = decrypt({ encryptedKey: keyRes.data.encrypted_key, iv: keyRes.data.iv, authTag: keyRes.data.auth_tag });
-      if (userRes.data?.briefing_guide) briefingGuide = userRes.data.briefing_guide;
+      briefingGuide = userRes.data?.briefing_guide ?? globalGuide.data?.content ?? DEFAULT_BRIEFING_GUIDE;
     } else {
       claudeApiKey = process.env.ANTHROPIC_API_KEY ?? "";
     }
@@ -99,8 +100,12 @@ Si tu manques de données pour une section, dis-le explicitement — ne fabrique
 Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
 {
   "identity": { "name": "...", "role": "...", "company": "...", "hubspotStage": "...", "lastContact": "..." },
+  "objective": "...",
   "relationship": { "summary": "...", "deals": [{ "name": "...", "stage": "...", "amount": "..." }], "lastEngagements": ["..."] },
   "recentNews": { "items": [{ "type": "web|slack|email", "text": "...", "url": "...", "date": "..." }] },
+  "questionsToAsk": ["question 1", "question 2", "question 3"],
+  "likelyObjections": [{ "objection": "...", "response": "..." }],
+  "nextStep": "...",
   "discussionAngles": ["angle 1 spécifique au contexte", "angle 2", "angle 3"],
   "confidence": "high|medium|low"
 }`;

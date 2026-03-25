@@ -19,7 +19,7 @@ export function GuideEditor({
   const [guide, setGuide] = useState(initialGuide ?? defaultGuide);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const isCustom = initialGuide !== null;
+  const [isCustom, setIsCustom] = useState(initialGuide !== null);
 
   async function save() {
     setSaving(true);
@@ -29,6 +29,7 @@ export function GuideEditor({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ guide }),
       });
+      setIsCustom(true);
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } finally {
@@ -38,6 +39,7 @@ export function GuideEditor({
 
   async function resetToDefault() {
     setGuide(defaultGuide);
+    setIsCustom(false);
     await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

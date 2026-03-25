@@ -1,16 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
-import fs from "fs";
-import path from "path";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
 import { logUsage } from "@/lib/log-usage";
-
-function getDefaultPrompt(): string {
-  const filePath = path.join(process.cwd(), "prompt-guide.txt");
-  return fs.readFileSync(filePath, "utf-8");
-}
+import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
 
 // ── HubSpot helper ────────────────────────────────────────────────────────────
 async function hubspot(path: string, method = "GET", body?: unknown) {
@@ -517,17 +511,16 @@ export async function POST(req: NextRequest) {
 
   const client = new Anthropic({ apiKey: claudeApiKey });
 
-  // Fetch user's personal prompt from DB (fallback to default file)
+  // Fetch user's personal prompt, fallback to global default, then hardcoded constant
   let systemPrompt: string;
   if (process.env.SUPABASE_URL) {
-    const { data: userData } = await db
-      .from("users")
-      .select("user_prompt")
-      .eq("id", user.id)
-      .single();
-    systemPrompt = userData?.user_prompt ?? getDefaultPrompt();
+    const [{ data: userData }, { data: globalGuide }] = await Promise.all([
+      db.from("users").select("user_prompt").eq("id", user.id).single(),
+      db.from("guide_defaults").select("content").eq("key", "bot").single(),
+    ]);
+    systemPrompt = userData?.user_prompt ?? globalGuide?.content ?? DEFAULT_BOT_GUIDE;
   } else {
-    systemPrompt = getDefaultPrompt();
+    systemPrompt = DEFAULT_BOT_GUIDE;
   }
 
   const { messages, model: requestedModel } = await req.json();

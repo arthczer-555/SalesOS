@@ -3,10 +3,11 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { UsersTable } from "./_components/users-table";
-import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/default-guide";
-import { DEFAULT_BRIEFING_GUIDE } from "@/lib/default-briefing-guide";
-import fs from "fs";
-import path from "path";
+import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
+import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
+import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
+import { GuideEditor } from "../settings/_components/guide-editor";
+import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,8 @@ export default async function AdminPage() {
     .select("id, email, name, created_at, is_admin, prospection_guide")
     .order("created_at", { ascending: true });
 
-  const defaultBotGuide = fs.readFileSync(path.join(process.cwd(), "prompt-guide.txt"), "utf-8");
+  const { data: globalGuides } = await db.from("guide_defaults").select("key, content");
+  const globalMap = Object.fromEntries((globalGuides ?? []).map((r) => [r.key, r.content as string]));
 
   const { data: keys } = await db
     .from("user_keys")
@@ -96,35 +98,33 @@ export default async function AdminPage() {
             Guides IA
           </h2>
           <p className="text-xs mt-1" style={{ color: "#888" }}>
-            Guides par défaut utilisés par Claude. Chaque utilisateur peut personnaliser les siens dans Paramètres.
+            Ces guides sont les valeurs par défaut pour tous les utilisateurs. Chaque utilisateur peut ensuite personnaliser les siens dans Paramètres.
           </p>
         </div>
         <div className="space-y-3">
-          {[
-            { title: "Guide bot", description: "System prompt du chat Coachello Intelligence.", content: defaultBotGuide },
-            { title: "Guide de prospection", description: "Instructions pour générer les emails dans Prospection et Market Intel.", content: DEFAULT_PROSPECTION_GUIDE },
-            { title: "Guide de briefing", description: "Instructions pour préparer les briefings pré-meeting.", content: DEFAULT_BRIEFING_GUIDE },
-          ].map(({ title, description, content }) => (
-            <details key={title} className="rounded-xl border" style={{ borderColor: "#eeeeee" }}>
-              <summary className="flex items-center justify-between px-5 py-4 cursor-pointer list-none">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold" style={{ color: "#111" }}>{title}</span>
-                    <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "#fef3c7", color: "#92400e" }}>Hardcodé</span>
-                  </div>
-                  <p className="text-xs mt-0.5" style={{ color: "#888" }}>{description}</p>
-                </div>
-                <svg className="shrink-0 ml-4" width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ color: "#aaa" }}>
-                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </summary>
-              <div className="border-t px-5 py-4" style={{ borderColor: "#f5f5f5" }}>
-                <pre className="text-xs overflow-x-auto" style={{ color: "#555", lineHeight: "1.7", whiteSpace: "pre-wrap" }}>
-                  {content}
-                </pre>
-              </div>
-            </details>
-          ))}
+          <Suspense>
+            <GuideEditor
+              initialGuide={globalMap.bot ?? null}
+              defaultGuide={DEFAULT_BOT_GUIDE}
+              endpoint="/api/admin/guides?key=bot"
+              title="Guide bot"
+              description="System prompt du chat Coachello Intelligence."
+            />
+            <GuideEditor
+              initialGuide={globalMap.prospection ?? null}
+              defaultGuide={DEFAULT_PROSPECTION_GUIDE}
+              endpoint="/api/admin/guides?key=prospection"
+              title="Guide de prospection"
+              description="Instructions pour générer les emails dans Prospection et Market Intel."
+            />
+            <GuideEditor
+              initialGuide={globalMap.briefing ?? null}
+              defaultGuide={DEFAULT_BRIEFING_GUIDE}
+              endpoint="/api/admin/guides?key=briefing"
+              title="Guide de briefing"
+              description="Instructions pour préparer les briefings pré-meeting."
+            />
+          </Suspense>
         </div>
       </div>
     </div>

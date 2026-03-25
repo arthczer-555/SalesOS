@@ -5,10 +5,9 @@ import { KeyStatus } from "./_components/key-status";
 import { GmailConnect } from "./_components/gmail-connect";
 import { CalendarStatus } from "./_components/calendar-status";
 import { GuideEditor } from "./_components/guide-editor";
-import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/default-guide";
-import { DEFAULT_BRIEFING_GUIDE } from "@/lib/default-briefing-guide";
-import fs from "fs";
-import path from "path";
+import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
+import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
+import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
 
 
 async function getIntegrationStatus(userId: string) {
@@ -38,13 +37,15 @@ export default async function SettingsPage() {
 
   const { claudeActive, gmailConnected } = await getIntegrationStatus(user.id);
 
-  const { data: guides } = await db
-    .from("users")
-    .select("user_prompt, prospection_guide, briefing_guide")
-    .eq("id", user.id)
-    .single();
+  const [{ data: guides }, { data: globalGuides }] = await Promise.all([
+    db.from("users").select("user_prompt, prospection_guide, briefing_guide").eq("id", user.id).single(),
+    db.from("guide_defaults").select("key, content"),
+  ]);
 
-  const defaultBotGuide = fs.readFileSync(path.join(process.cwd(), "prompt-guide.txt"), "utf-8");
+  const globalMap = Object.fromEntries((globalGuides ?? []).map((r) => [r.key, r.content as string]));
+  const globalBotGuide = globalMap.bot ?? DEFAULT_BOT_GUIDE;
+  const globalProspectionGuide = globalMap.prospection ?? DEFAULT_PROSPECTION_GUIDE;
+  const globalBriefingGuide = globalMap.briefing ?? DEFAULT_BRIEFING_GUIDE;
 
   return (
     <div className="p-8 max-w-2xl mx-auto">
@@ -148,21 +149,21 @@ export default async function SettingsPage() {
         </div>
         <GuideEditor
           initialGuide={guides?.user_prompt ?? null}
-          defaultGuide={defaultBotGuide}
+          defaultGuide={globalBotGuide}
           endpoint="/api/settings/bot-guide"
           title="Guide bot"
           description="System prompt du chat Coachello Intelligence."
         />
         <GuideEditor
           initialGuide={guides?.prospection_guide ?? null}
-          defaultGuide={DEFAULT_PROSPECTION_GUIDE}
+          defaultGuide={globalProspectionGuide}
           endpoint="/api/settings/guide"
           title="Guide de prospection"
           description="Instructions pour générer les emails dans Prospection et Market Intel."
         />
         <GuideEditor
           initialGuide={guides?.briefing_guide ?? null}
-          defaultGuide={DEFAULT_BRIEFING_GUIDE}
+          defaultGuide={globalBriefingGuide}
           endpoint="/api/settings/briefing-guide"
           title="Guide de briefing"
           description="Instructions pour préparer les briefings pré-meeting."

@@ -1,14 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import fs from "fs";
-import path from "path";
+import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
 
 export const dynamic = "force-dynamic";
-
-function getDefaultBotGuide(): string {
-  return fs.readFileSync(path.join(process.cwd(), "prompt-guide.txt"), "utf-8");
-}
 
 export async function GET() {
   const user = await getAuthenticatedUser();
@@ -22,7 +17,7 @@ export async function GET() {
 
   return NextResponse.json({
     guide: data?.user_prompt ?? null,
-    default: getDefaultBotGuide(),
+    default: DEFAULT_BOT_GUIDE,
   });
 }
 
