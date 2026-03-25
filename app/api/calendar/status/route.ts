@@ -11,7 +11,6 @@ export async function GET() {
 
     const accessToken = await getGmailAccessToken(user.id);
 
-    // Test the Calendar API with a minimal call
     const res = await fetch(
       "https://www.googleapis.com/calendar/v3/calendars/primary?fields=id",
       { headers: { Authorization: `Bearer ${accessToken}` } }
@@ -21,15 +20,21 @@ export async function GET() {
 
     const body = await res.json().catch(() => ({}));
     const msg: string = body?.error?.message ?? "";
-    if (res.status === 403 || msg.toLowerCase().includes("scope")) {
-      return NextResponse.json({ connected: false, reason: "scope_missing" });
+
+    // API not enabled in Google Cloud Console
+    if (msg.toLowerCase().includes("disabled") || msg.toLowerCase().includes("has not been used")) {
+      return NextResponse.json({ connected: false, reason: "api_not_enabled", detail: msg });
     }
-    return NextResponse.json({ connected: false, reason: "error" });
+    // Scope / permission issue
+    if (res.status === 403 || msg.toLowerCase().includes("scope") || msg.toLowerCase().includes("insufficient")) {
+      return NextResponse.json({ connected: false, reason: "scope_missing", detail: msg });
+    }
+    return NextResponse.json({ connected: false, reason: "error", detail: msg });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("Gmail non connecté")) {
       return NextResponse.json({ connected: false, reason: "not_connected" });
     }
-    return NextResponse.json({ connected: false, reason: "error" });
+    return NextResponse.json({ connected: false, reason: "error", detail: msg });
   }
 }

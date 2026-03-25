@@ -399,12 +399,19 @@ export default function SignalsPage() {
   const isSelected = (key: string) =>
     selectedContact ? `${selectedContact.firstName} ${selectedContact.lastName}` === key : false;
 
+  const showCenter = !!activeSignal;
+  const showComposer = !!selectedContact;
+
+  const leftWidth = showComposer ? "30%" : showCenter ? "50%" : "100%";
+  const centerWidth = showComposer ? "30%" : showCenter ? "50%" : "0%";
+  const rightWidth = showComposer ? "40%" : "0%";
+
   return (
     <div className="flex h-full overflow-hidden" style={{ background: "#f8f8f8" }}>
       {/* ── LEFT: Signal Feed ──────────────────────────────────────────────── */}
       <div
         className="flex flex-col border-r"
-        style={{ width: 364, flexShrink: 0, background: "#fff", borderColor: "#eee" }}
+        style={{ width: leftWidth, flexShrink: 0, background: "#fff", borderColor: "#eee", transition: "width 0.3s ease", overflow: "hidden" }}
       >
         <div className="px-4 py-4 border-b" style={{ borderColor: "#eee" }}>
           <div className="flex items-center justify-between mb-3">
@@ -530,7 +537,7 @@ const isNew = new Date(signal.created_at).toDateString() === todayStr;
       </div>
 
       {/* ── CENTER: Contacts & Context ─────────────────────────────────────── */}
-      <div className="flex flex-col flex-1 min-w-0 relative">
+      <div className="flex flex-col relative" style={{ width: centerWidth, flexShrink: 0, overflow: "hidden", transition: "width 0.3s ease" }}>
         {/* Background icon */}
         {!searching && !searchingWeb && !loadingContext && !companyContext && hsContacts.length === 0 && webContacts.length === 0 && (
           <div
@@ -720,7 +727,7 @@ const isNew = new Date(signal.created_at).toDateString() === todayStr;
       {/* ── RIGHT: AI Composer ─────────────────────────────────────────────── */}
       <div
         className="flex flex-col border-l"
-        style={{ width: 416, flexShrink: 0, background: "#fff", borderColor: "#eee" }}
+        style={{ width: rightWidth, flexShrink: 0, background: "#fff", borderColor: "#eee", transition: "width 0.3s ease", overflow: "hidden" }}
       >
         <div className="px-4 py-3 border-b" style={{ borderColor: "#eee" }}>
           <div className="flex items-start justify-between">
