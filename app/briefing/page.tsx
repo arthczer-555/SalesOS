@@ -16,6 +16,17 @@ interface GatheredData {
   briefing?: BriefingResult;
 }
 
+interface DealQualification {
+  budget: string | null;
+  estimatedBudget: string | null;
+  authority: string | null;
+  need: string | null;
+  champion: string | null;
+  needDetailed: string | null;
+  timeline: string | null;
+  strategicFit: string | null;
+}
+
 interface BriefingResult {
   identity: { name: string; role: string; company: string; hubspotStage: string; lastContact: string };
   meetingType?: "discovery" | "follow_up";
@@ -27,6 +38,7 @@ interface BriefingResult {
   questionsToAsk?: string[];
   nextStep?: string;
   confidence: "high" | "medium" | "low";
+  dealQualification?: DealQualification;
 }
 
 type LoadState = "idle" | "loading" | "done" | "error";
@@ -708,6 +720,57 @@ export default function BriefingPage() {
                   <p className="text-xs leading-relaxed" style={{ color: "#15803d" }}>{briefing.nextStep}</p>
                 </div>
               )}
+
+              {/* Deal qualification checklist */}
+              {briefing.dealQualification && (() => {
+                const fields: { key: keyof DealQualification; label: string }[] = [
+                  { key: "budget",          label: "Budget" },
+                  { key: "estimatedBudget", label: "Budget estimé" },
+                  { key: "authority",       label: "Autorité (décisionnaire)" },
+                  { key: "need",            label: "Besoin" },
+                  { key: "champion",        label: "Champion interne" },
+                  { key: "needDetailed",    label: "Besoin détaillé" },
+                  { key: "timeline",        label: "Timeline" },
+                  { key: "strategicFit",    label: "Fit stratégique" },
+                ];
+                const known = fields.filter((f) => !!briefing.dealQualification![f.key]);
+                const missing = fields.filter((f) => !briefing.dealQualification![f.key]);
+                return (
+                  <div className="rounded-xl border overflow-hidden" style={{ borderColor: "#e5e5e5" }}>
+                    <div className="px-3.5 py-2.5 border-b" style={{ borderColor: "#f0f0f0", background: "#fafafa" }}>
+                      <p className="text-[10px] font-semibold uppercase tracking-wide" style={{ color: "#aaa" }}>
+                        Qualification deal
+                      </p>
+                      <p className="text-[10px] mt-0.5" style={{ color: "#bbb" }}>
+                        {known.length}/{fields.length} informations collectées
+                      </p>
+                    </div>
+                    <div className="divide-y" style={{ borderColor: "#f5f5f5" }}>
+                      {known.map((f) => (
+                        <div key={f.key} className="flex items-start gap-2.5 px-3.5 py-2.5">
+                          <span className="mt-0.5 shrink-0 text-[11px]">✅</span>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] font-semibold" style={{ color: "#555" }}>{f.label}</p>
+                            <p className="text-[11px] leading-relaxed" style={{ color: "#111" }}>{briefing.dealQualification![f.key]}</p>
+                          </div>
+                        </div>
+                      ))}
+                      {missing.length > 0 && (
+                        <div className="px-3.5 py-2.5" style={{ background: "#fffbfb" }}>
+                          <p className="text-[10px] font-semibold mb-1.5" style={{ color: "#aaa" }}>À collecter</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {missing.map((f) => (
+                              <span key={f.key} className="text-[10px] px-2 py-0.5 rounded-full border" style={{ background: "#fff", borderColor: "#fecaca", color: "#dc2626" }}>
+                                {f.label}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>

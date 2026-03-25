@@ -519,18 +519,21 @@ export async function POST(req: NextRequest) {
 
   // Fetch user's personal prompt, fallback to global default, then hardcoded constant
   let systemPrompt: string;
+  let chatModel = "claude-haiku-4-5-20251001";
   if (process.env.SUPABASE_URL) {
-    const [{ data: userData }, { data: globalGuide }] = await Promise.all([
+    const [{ data: userData }, { data: globalGuide }, { data: globalModelEntry }] = await Promise.all([
       db.from("users").select("user_prompt").eq("id", user.id).single(),
       db.from("guide_defaults").select("content").eq("key", "bot").single(),
+      db.from("guide_defaults").select("content").eq("key", "model_preferences").single(),
     ]);
     systemPrompt = userData?.user_prompt ?? globalGuide?.content ?? DEFAULT_BOT_GUIDE;
+    try { if (globalModelEntry?.content) chatModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).chat ?? chatModel; } catch { /* keep default */ }
   } else {
     systemPrompt = DEFAULT_BOT_GUIDE;
   }
 
-  const { messages, model: requestedModel } = await req.json();
-  const model = requestedModel ?? "claude-haiku-4-5";
+  const { messages } = await req.json();
+  const model = chatModel;
 
   const encoder = new TextEncoder();
 

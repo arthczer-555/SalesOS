@@ -32,17 +32,23 @@ export async function POST(req: NextRequest) {
     // ── Get Claude key + briefing guide ───────────────────────────────────────
     let claudeApiKey: string;
     let briefingGuide: string = DEFAULT_BRIEFING_GUIDE;
+    let briefingModel = "claude-haiku-4-5-20251001";
     if (process.env.SUPABASE_URL) {
-      const [keyRes, userRes, globalGuide] = await Promise.all([
+      const [keyRes, userRes, globalGuide, globalModelPrefs] = await Promise.all([
         db.from("user_keys").select("encrypted_key, iv, auth_tag, is_active").eq("user_id", user.id).eq("service", "claude").single(),
         db.from("users").select("briefing_guide").eq("id", user.id).single(),
         db.from("guide_defaults").select("content").eq("key", "briefing").single(),
+        db.from("guide_defaults").select("content").eq("key", "model_preferences").single(),
       ]);
       if (!keyRes.data?.is_active) {
         return NextResponse.json({ error: "Clé Claude non configurée" }, { status: 402 });
       }
       claudeApiKey = decrypt({ encryptedKey: keyRes.data.encrypted_key, iv: keyRes.data.iv, authTag: keyRes.data.auth_tag });
       briefingGuide = userRes.data?.briefing_guide ?? globalGuide.data?.content ?? DEFAULT_BRIEFING_GUIDE;
+      try {
+        const modelMap = globalModelPrefs.data?.content ? JSON.parse(globalModelPrefs.data.content) as Record<string, string> : {};
+        briefingModel = modelMap.briefing ?? "claude-haiku-4-5-20251001";
+      } catch { /* keep default */ }
     } else {
       claudeApiKey = process.env.ANTHROPIC_API_KEY ?? "";
     }
@@ -108,7 +114,17 @@ Reponds UNIQUEMENT en JSON valide avec exactement cette structure :
   "recentNews": { "items": [{ "type": "web|slack|email", "text": "...", "url": "...", "date": "..." }] },
   "questionsToAsk": ["question 1 adaptée au stade", "question 2", "question 3", "question 4"],
   "nextStep": "...",
-  "confidence": "high|medium|low"
+  "confidence": "high|medium|low",
+  "dealQualification": {
+    "budget": "valeur connue ou null si non identifiée",
+    "estimatedBudget": "estimation chiffrée connue ou null",
+    "authority": "nom/rôle du décisionnaire si identifié, sinon null",
+    "need": "besoin qualifié en une phrase ou null",
+    "champion": "nom du champion interne si identifié, sinon null",
+    "needDetailed": "description détaillée du besoin ou null",
+    "timeline": "horizon temporel (ex: Q3 2025, dans 6 mois...) ou null",
+    "strategicFit": "raison du fit stratégique ou null"
+  }
 }`;
 
     const eventDate = eventStart ? new Date(eventStart).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "";
@@ -122,13 +138,13 @@ Génère le briefing JSON pour cette réunion.`;
 
     const client = new Anthropic({ apiKey: claudeApiKey });
     const message = await client.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: briefingModel,
       max_tokens: 2048,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "briefing");
+    logUsage(user.id, briefingModel, message.usage.input_tokens, message.usage.output_tokens, "briefing");
 
     const raw = message.content[0].type === "text" ? message.content[0].text : "";
     let briefing: Record<string, unknown> = {};

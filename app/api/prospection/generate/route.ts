@@ -31,8 +31,13 @@ export async function POST(req: NextRequest) {
   };
 
   // Fetch the user's personal prospection guide from DB
-  const { data } = await db.from("users").select("prospection_guide").eq("id", user.id).maybeSingle();
+  const [{ data }, { data: globalModelEntry }] = await Promise.all([
+    db.from("users").select("prospection_guide").eq("id", user.id).maybeSingle(),
+    db.from("guide_defaults").select("content").eq("key", "model_preferences").single(),
+  ]);
   const guide = data?.prospection_guide ?? "";
+  let prospectionModel = "claude-haiku-4-5-20251001";
+  try { if (globalModelEntry?.content) prospectionModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).prospection ?? prospectionModel; } catch { /* keep default */ }
 
   const prospectBlock = [
     `Nom : ${contactInfo.firstName} ${contactInfo.lastName}`,
@@ -65,13 +70,13 @@ export async function POST(req: NextRequest) {
 
   const client = new Anthropic();
   const message = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
+    model: prospectionModel,
     max_tokens: 1024,
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
   });
 
-  logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "prospection_generate");
+  logUsage(user.id, prospectionModel, message.usage.input_tokens, message.usage.output_tokens, "prospection_generate");
   const raw = message.content[0].type === "text" ? message.content[0].text : "";
 
   let subject = "";

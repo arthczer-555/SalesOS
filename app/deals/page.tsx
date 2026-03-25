@@ -244,7 +244,7 @@ function DealDrawer({
   const [showComposer, setShowComposer] = useState(false);
   const [showEngagements, setShowEngagements] = useState(false);
   const [rescoring, setRescoring] = useState(false);
-  const [localScore, setLocalScore] = useState<{ score: DealScore; reasoning: string; next_action: string; scoredAt: string } | null>(null);
+  const [localScore, setLocalScore] = useState<{ score: DealScore; reasoning: string; next_action: string; scoredAt: string; qualification: Record<string, string | null> | null } | null>(null);
 
   // Reset when deal changes
   useEffect(() => {
@@ -342,6 +342,7 @@ function DealDrawer({
           reasoning: data.reasoning ?? "",
           next_action: data.next_action ?? "",
           scoredAt: new Date().toISOString(),
+          qualification: data.qualification ?? null,
         });
       }
     } catch { /* ignore */ } finally {
@@ -353,7 +354,7 @@ function DealDrawer({
 
   return (
     <div style={{
-      width: 400, borderLeft: "1px solid #e5e7eb", background: "white",
+      width: 520, borderLeft: "1px solid #e5e7eb", background: "white",
       display: "flex", flexDirection: "column", overflow: "hidden", flexShrink: 0,
     }}>
       {/* Header */}
@@ -512,6 +513,53 @@ function DealDrawer({
                 );
               })()}
             </Section>
+
+            {/* ── Deal qualification ── */}
+            {localScore?.qualification && (() => {
+              const QUAL_FIELDS: { key: string; label: string }[] = [
+                { key: "budget",          label: "Budget" },
+                { key: "estimatedBudget", label: "Budget estimé" },
+                { key: "authority",       label: "Autorité (décisionnaire)" },
+                { key: "need",            label: "Besoin" },
+                { key: "champion",        label: "Champion interne" },
+                { key: "needDetailed",    label: "Besoin détaillé" },
+                { key: "timeline",        label: "Timeline" },
+                { key: "strategicFit",    label: "Fit stratégique" },
+              ];
+              const q = localScore.qualification!;
+              const known = QUAL_FIELDS.filter((f) => !!q[f.key]);
+              const missing = QUAL_FIELDS.filter((f) => !q[f.key]);
+              return (
+                <Section title="Qualification deal">
+                  <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 10 }}>
+                    {known.length}/{QUAL_FIELDS.length} informations collectées
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 0, border: "1px solid #e5e7eb", borderRadius: 8, overflow: "hidden" }}>
+                    {known.map((f, i) => (
+                      <div key={f.key} style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 12px", borderBottom: i < known.length - 1 || missing.length > 0 ? "1px solid #f3f4f6" : undefined }}>
+                        <span style={{ fontSize: 12, lineHeight: 1.2, marginTop: 1 }}>✅</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 10, fontWeight: 600, color: "#6b7280", marginBottom: 2 }}>{f.label}</div>
+                          <div style={{ fontSize: 12, color: "#111827", lineHeight: 1.4 }}>{q[f.key]}</div>
+                        </div>
+                      </div>
+                    ))}
+                    {missing.length > 0 && (
+                      <div style={{ padding: "8px 12px", background: "#fffbfb" }}>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", marginBottom: 6 }}>À collecter</div>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          {missing.map((f) => (
+                            <span key={f.key} style={{ fontSize: 10, padding: "2px 8px", borderRadius: 99, border: "1px solid #fecaca", background: "#fff", color: "#dc2626" }}>
+                              {f.label}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </Section>
+              );
+            })()}
 
             {/* ── Contacts ── */}
             {details.contacts.length > 0 && (

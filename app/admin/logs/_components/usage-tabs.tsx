@@ -137,6 +137,16 @@ function reAggregate(rawLogs: RawLog[], days: number) {
   };
 }
 
+// Maps feature log key → admin model preference key
+const FEATURE_TO_PREF: Record<string, string> = {
+  chat:                 "chat",
+  conversations:        "chat",
+  briefing:             "briefing",
+  deals_score:          "deals_score",
+  prospection_generate: "prospection",
+  prospection_bulk:     "prospection",
+};
+
 export function UsageTabs({
   byUser: initialByUser,
   byFeature: initialByFeature,
@@ -144,6 +154,7 @@ export function UsageTabs({
   byUserFeature: initialUxF,
   rawLogs,
   featureLabels,
+  globalModelPrefs = {},
 }: {
   byUser: UserStat[];
   byFeature: FeatureStat[];
@@ -151,6 +162,7 @@ export function UsageTabs({
   byUserFeature: Record<string, Record<string, number>>;
   rawLogs: RawLog[];
   featureLabels: Record<string, string>;
+  globalModelPrefs?: Record<string, string>;
 }) {
   const [tab, setTab] = useState<"users" | "features" | "grid" | "activity" | "catalog">("users");
   const [days, setDays] = useState(30);
@@ -341,16 +353,21 @@ export function UsageTabs({
       {tab === "catalog" && (
         <div className="space-y-2">
           <p className="text-xs mb-4" style={{ color: "#888" }}>
-            Liste de toutes les features utilisant l&apos;IA, leur onglet, et les modèles observés dans les logs. Les modèles sont dérivés des appels réels — pas de données = feature jamais appelée sur cette période.
+            Modèle actuel = configuré dans Admin. Modèles observés = dérivés des appels réels sur la période sélectionnée.
           </p>
           {Object.entries(FEATURE_DESCRIPTIONS).map(([key, desc]) => {
             const stat = byFeature.find((f) => f.feature === key);
-            const models = featureModels[key] ?? [];
+            const prefKey = FEATURE_TO_PREF[key];
+            const currentModelFull = prefKey
+              ? (globalModelPrefs[prefKey] ?? "claude-haiku-4-5-20251001")
+              : null;
+            const currentModel = currentModelFull ? shortModel(currentModelFull) : null;
+            const currentColor = currentModel ? (MODEL_COLORS[currentModel] ?? { bg: "#f5f5f5", text: "#555" }) : null;
             return (
               <div
                 key={key}
                 className="flex items-start gap-4 rounded-xl border px-4 py-3"
-                style={{ borderColor: "#eee", background: stat ? "#fff" : "#fafafa" }}
+                style={{ borderColor: "#eee", background: "#fff" }}
               >
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-0.5">
@@ -365,17 +382,24 @@ export function UsageTabs({
                   </div>
                   <p className="text-[11px]" style={{ color: "#888" }}>{desc}</p>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  {models.length > 0 ? models.map((m) => {
-                    const c = MODEL_COLORS[m] ?? { bg: "#f5f5f5", text: "#555" };
-                    return (
-                      <span key={m} className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: c.bg, color: c.text }}>
-                        {m}
+                <div className="flex items-center gap-3 shrink-0">
+                  {/* Current model from admin */}
+                  {currentModel && currentColor ? (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px]" style={{ color: "#aaa" }}>actuel</span>
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: currentColor.bg, color: currentColor.text }}>
+                        {currentModel}
                       </span>
-                    );
-                  }) : (
-                    <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "#f5f5f5", color: "#ccc" }}>—</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[10px]" style={{ color: "#aaa" }}>actuel</span>
+                      <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "#f5f5f5", color: "#888" }}>
+                        haiku (fixe)
+                      </span>
+                    </div>
                   )}
+
                   {stat && (
                     <span className="text-[10px] font-medium" style={{ color: "#aaa" }}>
                       {stat.calls} appel{stat.calls > 1 ? "s" : ""}

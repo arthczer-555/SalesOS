@@ -7,6 +7,7 @@ import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
 import { GuideEditor } from "../settings/_components/guide-editor";
+import { ModelPreferencesAdmin } from "./_components/model-preferences-admin";
 import { Suspense } from "react";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,10 @@ export default async function AdminPage() {
     .order("created_at", { ascending: true });
 
   const { data: globalGuides } = await db.from("guide_defaults").select("key, content");
+  const globalModelPrefs = (() => {
+    const entry = (globalGuides ?? []).find((r) => r.key === "model_preferences");
+    try { return entry ? (JSON.parse(entry.content as string) as Record<string, string>) : {}; } catch { return {}; }
+  })();
   const globalMap = Object.fromEntries((globalGuides ?? []).map((r) => [r.key, r.content as string]));
 
   const { data: keys } = await db
@@ -103,6 +108,19 @@ export default async function AdminPage() {
           </p>
         </div>
         <UsersTable users={usersWithStatus} />
+      </div>
+
+      {/* Modèles IA */}
+      <div>
+        <div className="mb-4">
+          <h2 className="text-base font-semibold" style={{ color: "#111" }}>Modèles IA</h2>
+          <p className="text-xs mt-1" style={{ color: "#888" }}>
+            Modèle Claude utilisé par défaut pour chaque feature. S&apos;applique à tous les utilisateurs.
+          </p>
+        </div>
+        <div className="rounded-xl border p-5" style={{ borderColor: "#eeeeee", background: "#fff" }}>
+          <ModelPreferencesAdmin initialPreferences={globalModelPrefs} />
+        </div>
       </div>
 
       {/* Guides IA */}

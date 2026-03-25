@@ -45,7 +45,7 @@ export default async function SettingsPage() {
   const { claudeActive, gmailConnected, slackDisplayName } = await getIntegrationStatus(user.id);
 
   const [{ data: guides }, { data: globalGuides }] = await Promise.all([
-    db.from("users").select("user_prompt, prospection_guide, briefing_guide").eq("id", user.id).single(),
+    db.from("users").select("user_prompt, prospection_guide, briefing_guide, model_preferences").eq("id", user.id).single(),
     db.from("guide_defaults").select("key, content"),
   ]);
 

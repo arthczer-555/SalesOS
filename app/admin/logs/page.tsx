@@ -56,13 +56,17 @@ export default async function AdminLogsPage() {
   const user = await getAuthenticatedUser();
   if (!user || !isAdmin(user)) redirect("/");
 
-  const [{ data: logs }, { data: users }] = await Promise.all([
+  const [{ data: logs }, { data: users }, { data: globalModelEntry }] = await Promise.all([
     db.from("usage_logs")
       .select("id, user_id, model, feature, input_tokens, output_tokens, created_at")
       .order("created_at", { ascending: false })
       .limit(5000),
     db.from("users").select("id, name, email"),
+    db.from("guide_defaults").select("content").eq("key", "model_preferences").single(),
   ]);
+
+  let globalModelPrefs: Record<string, string> = {};
+  try { if (globalModelEntry?.content) globalModelPrefs = JSON.parse(globalModelEntry.content); } catch { /* ignore */ }
 
   const userMap = new Map<string, UserMeta>((users ?? []).map((u) => [u.id, u]));
 
@@ -142,6 +146,7 @@ export default async function AdminLogsPage() {
         byUserFeature={byUserFeature}
         rawLogs={rawLogs}
         featureLabels={FEATURE_LABELS}
+        globalModelPrefs={globalModelPrefs}
       />
     </div>
   );

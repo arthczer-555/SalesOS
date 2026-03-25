@@ -27,12 +27,15 @@ export async function PATCH(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { slack_display_name } = await req.json() as { slack_display_name: string };
+  const body = await req.json() as { slack_display_name?: string; model_preferences?: Record<string, string> };
 
-  const { error } = await db
-    .from("users")
-    .update({ slack_display_name: slack_display_name || null })
-    .eq("id", user.id);
+  const update: Record<string, unknown> = {};
+  if ("slack_display_name" in body) update.slack_display_name = body.slack_display_name || null;
+  if ("model_preferences" in body) update.model_preferences = body.model_preferences;
+
+  if (Object.keys(update).length === 0) return NextResponse.json({ ok: true });
+
+  const { error } = await db.from("users").update(update).eq("id", user.id);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

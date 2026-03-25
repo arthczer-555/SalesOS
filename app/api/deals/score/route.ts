@@ -5,6 +5,8 @@ import { db } from "@/lib/db";
 import { detectModel, type DealScore } from "@/lib/deal-scoring";
 import { logUsage } from "@/lib/log-usage";
 
+const DEFAULT_SCORE_MODEL = "claude-haiku-4-5-20251001";
+
 export const dynamic = "force-dynamic";
 
 async function hubspot(path: string, method = "GET", body?: unknown) {
@@ -36,7 +38,7 @@ const DIMENSION_NAMES = {
   ai_coaching:    ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Usage Intent", "Strategic AI Fit"],
 };
 
-export async function scoreOneDeal(dealId: string, userId: string | null): Promise<DealScore & { reasoning: string; next_action: string }> {
+export async function scoreOneDeal(dealId: string, userId: string | null, claudeModel = DEFAULT_SCORE_MODEL): Promise<DealScore & { reasoning: string; next_action: string; qualification: Record<string, string | null> }> {
   const DEAL_PROPS = [
     "dealname", "dealstage", "amount", "closedate", "description",
     "hs_deal_stage_probability", "deal_type", "notes_last_contacted", "hs_lastmodifieddate",
@@ -215,18 +217,28 @@ Modèle détecté : ${model}.
   "engagement": X,
   "strategic_fit": X,
   "reasoning": "explication globale en 1 phrase mentionnant les points forts et faibles",
-  "next_action": "conseil concret et actionnable en 1-2 phrases pour faire avancer ce deal au prochain stade"
+  "next_action": "conseil concret et actionnable en 1-2 phrases pour faire avancer ce deal au prochain stade",
+  "qualification": {
+    "budget": "valeur/fourchette connue ou null",
+    "estimatedBudget": "estimation chiffrée si disponible ou null",
+    "authority": "nom et rôle du décisionnaire identifié ou null",
+    "need": "besoin principal qualifié en une phrase ou null",
+    "champion": "nom du champion interne si mentionné ou null",
+    "needDetailed": "description détaillée du besoin ou null",
+    "timeline": "horizon temporel identifié (ex: Q3 2025) ou null",
+    "strategicFit": "raison concrète du fit avec Coachello ou null"
+  }
 }`;
 
   const client = new Anthropic();
   const message = await client.messages.create({
-    model: "claude-haiku-4-5-20251001",
+    model: claudeModel,
     max_tokens: 768,
     system: systemPrompt,
     messages: [{ role: "user", content: context }],
   });
 
-  logUsage(userId, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "deals_score");
+  logUsage(userId, claudeModel, message.usage.input_tokens, message.usage.output_tokens, "deals_score");
 
   const raw = message.content[0].type === "text" ? message.content[0].text : "";
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
@@ -259,8 +271,18 @@ Modèle détecté : ${model}.
   const score: DealScore = { total, components, reliability };
   const reasoning: string = ai.reasoning ?? "";
   const next_action: string = ai.next_action ?? "";
+  const qualification: Record<string, string | null> = {
+    budget:         ai.qualification?.budget         ?? null,
+    estimatedBudget: ai.qualification?.estimatedBudget ?? null,
+    authority:      ai.qualification?.authority      ?? null,
+    need:           ai.qualification?.need           ?? null,
+    champion:       ai.qualification?.champion       ?? null,
+    needDetailed:   ai.qualification?.needDetailed   ?? null,
+    timeline:       ai.qualification?.timeline       ?? null,
+    strategicFit:   ai.qualification?.strategicFit  ?? null,
+  };
 
-  return { ...score, reasoning, next_action };
+  return { ...score, reasoning, next_action, qualification };
 }
 
 export async function POST(req: NextRequest) {
@@ -271,7 +293,13 @@ export async function POST(req: NextRequest) {
   if (!dealId) return NextResponse.json({ error: "dealId manquant" }, { status: 400 });
 
   try {
-    const result = await scoreOneDeal(dealId, user.id);
+
+
+
+    const { data: globalModelEntry } = await db.from("guide_defaults").select("content").eq("key", "model_preferences").single();
+    let scoreModel = DEFAULT_SCORE_MODEL;
+    try { if (globalModelEntry?.content) scoreModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).deals_score ?? DEFAULT_SCORE_MODEL; } catch { /* keep default */ }
+    const result = await scoreOneDeal(dealId, user.id, scoreModel);
 
     await db.from("deal_scores").upsert({
       deal_id: dealId,
