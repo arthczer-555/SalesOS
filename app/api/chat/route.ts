@@ -168,7 +168,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "get_deal_activity",
-    description: "Récupère les notes, emails, appels et activités associés à un deal spécifique. Utilise cet outil pour comprendre l'historique d'un deal.",
+    description: "Récupère les notes, emails, appels, réunions et enregistrements Claap associés à un deal spécifique. Utilise cet outil pour comprendre l'historique complet d'un deal.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -332,7 +332,7 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       });
     }
     case "get_deal_activity": {
-      const [notes, emails, calls] = await Promise.allSettled([
+      const [notes, emails, calls, meetings] = await Promise.allSettled([
         hubspot(`/crm/v3/objects/notes/search`, "POST", {
           filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
           properties: ["hs_note_body", "hs_timestamp"],
@@ -345,7 +345,12 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
         }),
         hubspot(`/crm/v3/objects/calls/search`, "POST", {
           filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
-          properties: ["hs_call_title", "hs_call_body", "hs_timestamp"],
+          properties: ["hs_call_title", "hs_call_body", "hs_timestamp", "hs_call_disposition"],
+          limit: 10,
+        }),
+        hubspot(`/crm/v3/objects/meetings/search`, "POST", {
+          filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
+          properties: ["hs_meeting_title", "hs_meeting_body", "hs_timestamp", "hs_meeting_outcome"],
           limit: 10,
         }),
       ]);
@@ -353,6 +358,7 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
         notes: notes.status === "fulfilled" ? notes.value.results ?? [] : [],
         emails: emails.status === "fulfilled" ? emails.value.results ?? [] : [],
         calls: calls.status === "fulfilled" ? calls.value.results ?? [] : [],
+        meetings: meetings.status === "fulfilled" ? meetings.value.results ?? [] : [],
       });
     }
     case "get_deal_contacts": {
@@ -560,7 +566,7 @@ export async function POST(req: NextRequest) {
             currentMessages = [...currentMessages, { role: "assistant", content: message.content }];
             send({ type: "history", messages: currentMessages });
             send({ type: "done" });
-            logUsage(user.id, model, totalInputTokens, totalOutputTokens);
+            logUsage(user.id, model, totalInputTokens, totalOutputTokens, "chat");
             break;
           }
 

@@ -71,25 +71,69 @@ export async function scoreOneDeal(dealId: string, userId: string | null): Promi
     }
   }
 
-  // Engagements
+  // Engagements — fetch ALL via batch read + full meeting/call bodies
   let engagementLines = "";
   if (engagementAssoc.status === "fulfilled") {
-    const ids: string[] = (engagementAssoc.value?.results ?? []).slice(0, 5).map((r: { id: string }) => r.id);
-    if (ids.length > 0) {
-      const details = await Promise.allSettled(
-        ids.map((eid) => hubspot(`/crm/v3/objects/engagements/${eid}?properties=hs_engagement_type,hs_body_preview,hs_createdate`))
-      );
-      engagementLines = details
-        .filter((e) => e.status === "fulfilled")
-        .map((e) => {
-          const ep = (e as PromiseFulfilledResult<{ properties: Record<string, string> }>).value?.properties ?? {};
-          const type = ep.hs_engagement_type ?? "Activité";
-          const date = ep.hs_createdate ? new Date(ep.hs_createdate).toLocaleDateString("fr-FR") : "";
-          const body = (ep.hs_body_preview ?? "").slice(0, 300);
-          return body ? `[${type} ${date}] ${body}` : "";
-        })
-        .filter(Boolean)
-        .join("\n");
+    const allIds: string[] = (engagementAssoc.value?.results ?? []).map((r: { id: string }) => r.id);
+    if (allIds.length > 0) {
+      try {
+        const [batchRes, meetingsRes, callsRes] = await Promise.allSettled([
+          hubspot("/crm/v3/objects/engagements/batch/read", "POST", {
+            inputs: allIds.map((id) => ({ id })),
+            properties: ["hs_engagement_type", "hs_body_preview", "hs_createdate"],
+          }),
+          hubspot("/crm/v3/objects/meetings/search", "POST", {
+            filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: dealId }] }],
+            properties: ["hs_meeting_title", "hs_meeting_body", "hs_timestamp", "hs_meeting_outcome"],
+            limit: 10,
+          }),
+          hubspot("/crm/v3/objects/calls/search", "POST", {
+            filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: dealId }] }],
+            properties: ["hs_call_title", "hs_call_body", "hs_timestamp", "hs_call_disposition"],
+            limit: 10,
+          }),
+        ]);
+
+        const engLines = batchRes.status === "fulfilled"
+          ? (batchRes.value.results ?? [])
+            .map((e: { properties: Record<string, string> }) => {
+              const ep = e.properties ?? {};
+              const type = ep.hs_engagement_type ?? "Activité";
+              const date = ep.hs_createdate ? new Date(ep.hs_createdate).toLocaleDateString("fr-FR") : "";
+              const body = (ep.hs_body_preview ?? "").slice(0, 500);
+              return body ? `[${type} ${date}] ${body}` : "";
+            })
+            .filter(Boolean)
+          : [];
+
+        const meetingLines = meetingsRes.status === "fulfilled"
+          ? (meetingsRes.value.results ?? [])
+            .map((m: { properties: Record<string, string> }) => {
+              const mp = m.properties ?? {};
+              const date = mp.hs_timestamp ? new Date(mp.hs_timestamp).toLocaleDateString("fr-FR") : "";
+              const title = mp.hs_meeting_title ?? "Réunion";
+              const body = (mp.hs_meeting_body ?? "").slice(0, 1500);
+              return body ? `[MEETING ${date}] ${title}\n${body}` : "";
+            })
+            .filter(Boolean)
+          : [];
+
+        const callLines = callsRes.status === "fulfilled"
+          ? (callsRes.value.results ?? [])
+            .map((c: { properties: Record<string, string> }) => {
+              const cp = c.properties ?? {};
+              const date = cp.hs_timestamp ? new Date(cp.hs_timestamp).toLocaleDateString("fr-FR") : "";
+              const title = cp.hs_call_title ?? "Appel";
+              const body = (cp.hs_call_body ?? "").slice(0, 1500);
+              return body ? `[CALL ${date}] ${title}\n${body}` : "";
+            })
+            .filter(Boolean)
+          : [];
+
+        engagementLines = [...meetingLines, ...callLines, ...engLines].join("\n\n");
+      } catch {
+        // fallback: skip engagements if batch fails
+      }
     }
   }
 
@@ -182,7 +226,7 @@ Modèle détecté : ${model}.
     messages: [{ role: "user", content: context }],
   });
 
-  logUsage(userId, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
+  logUsage(userId, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "deals_score");
 
   const raw = message.content[0].type === "text" ? message.content[0].text : "";
   const jsonMatch = raw.match(/\{[\s\S]*\}/);

@@ -132,7 +132,7 @@ Ne génère rien si tu n'as pas de base factuelle pour un champ — laisse-le vi
         messages: [{ role: "user", content: contextBlock }],
       });
 
-      logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
+      logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "prospection_details");
       const raw = message.content[0].type === "text" ? message.content[0].text : "";
       const jsonMatch = raw.match(/\{[\s\S]*\}/);
       if (jsonMatch) {

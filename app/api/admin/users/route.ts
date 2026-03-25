@@ -11,7 +11,7 @@ export async function GET() {
 
   const { data: users } = await db
     .from("users")
-    .select("id, email, name, created_at, is_admin")
+    .select("id, email, name, created_at, is_admin, slack_display_name")
     .order("created_at", { ascending: true });
 
   const { data: keys } = await db

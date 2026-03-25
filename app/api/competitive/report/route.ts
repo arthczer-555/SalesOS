@@ -77,7 +77,7 @@ Sois précis, factuel et orienté impact business. Évite les généralités.`;
     messages: [{ role: "user", content: userPrompt }],
   });
 
-  logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
+  logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "competitive_report");
 
   const content = message.content[0].type === "text" ? message.content[0].text : "";
 

@@ -5,13 +5,14 @@ import { KeyStatus } from "./_components/key-status";
 import { GmailConnect } from "./_components/gmail-connect";
 import { CalendarStatus } from "./_components/calendar-status";
 import { GuideEditor } from "./_components/guide-editor";
+import { SlackNameInput } from "./_components/slack-name-input";
 import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
 
 
 async function getIntegrationStatus(userId: string) {
-  const [keyRes, gmailRes] = await Promise.all([
+  const [keyRes, gmailRes, userRes] = await Promise.all([
     db
       .from("user_keys")
       .select("is_active")
@@ -24,10 +25,16 @@ async function getIntegrationStatus(userId: string) {
       .eq("user_id", userId)
       .eq("provider", "gmail")
       .single(),
+    db
+      .from("users")
+      .select("slack_display_name")
+      .eq("id", userId)
+      .single(),
   ]);
   return {
     claudeActive: keyRes.data?.is_active ?? false,
     gmailConnected: gmailRes.data?.connected ?? false,
+    slackDisplayName: userRes.data?.slack_display_name ?? null,
   };
 }
 
@@ -35,7 +42,7 @@ export default async function SettingsPage() {
   const user = await getAuthenticatedUser();
   if (!user) return null;
 
-  const { claudeActive, gmailConnected } = await getIntegrationStatus(user.id);
+  const { claudeActive, gmailConnected, slackDisplayName } = await getIntegrationStatus(user.id);
 
   const [{ data: guides }, { data: globalGuides }] = await Promise.all([
     db.from("users").select("user_prompt, prospection_guide, briefing_guide").eq("id", user.id).single(),
@@ -121,6 +128,14 @@ export default async function SettingsPage() {
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
               Connecté
             </span>
+          }
+          action={
+            <div>
+              <p className="text-xs" style={{ color: "#888" }}>
+                Ton nom d&apos;affichage Slack — nom exact tel qu&apos;il apparaît sur Slack (pour recevoir les briefings en DM)
+              </p>
+              <SlackNameInput initialValue={slackDisplayName} />
+            </div>
           }
         />
 

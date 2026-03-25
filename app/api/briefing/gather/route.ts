@@ -129,7 +129,7 @@ export async function POST(req: NextRequest) {
           })));
 
           // Engagements
-          const engData = await hs(`/engagements/v1/engagements/associated/contact/${contact.id}/paged?count=8`);
+          const engData = await hs(`/engagements/v1/engagements/associated/contact/${contact.id}/paged?count=25`);
           const contactEngagements = ((engData?.results ?? []) as {
             engagement: { type: string; createdAt: number };
             metadata: { body?: string; subject?: string; durationMilliseconds?: number };
@@ -138,7 +138,7 @@ export async function POST(req: NextRequest) {
               type: e.engagement.type,
               date: new Date(e.engagement.createdAt).toISOString(),
               subject: e.metadata.subject ?? null,
-              body: e.metadata.body?.slice(0, 400) ?? null,
+              body: e.metadata.body?.slice(0, 2000) ?? null,
               duration: e.metadata.durationMilliseconds ? Math.round(e.metadata.durationMilliseconds / 60000) : null,
             }))
             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());

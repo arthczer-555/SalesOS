@@ -94,7 +94,7 @@ Réponds UNIQUEMENT en JSON :
       }],
     });
 
-    logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
+    logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "market_context");
 
     const raw = message.content[0].type === "text" ? message.content[0].text : "";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);

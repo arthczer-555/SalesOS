@@ -63,8 +63,8 @@ export async function POST(req: NextRequest) {
     }
 
     if (rawData.engagements.length > 0) {
-      sections.push("=== HISTORIQUE ÉCHANGES (derniers " + rawData.engagements.length + ") ===\n" +
-        rawData.engagements.slice(0, 8).map((e) => {
+      sections.push("=== HISTORIQUE ÉCHANGES (" + rawData.engagements.length + " échanges) ===\n" +
+        rawData.engagements.map((e) => {
           const date = new Date(e.date).toLocaleDateString("fr-FR");
           return `[${e.type} — ${date}${e.duration ? ` — ${e.duration}min` : ""}]${e.subject ? ` Objet: ${e.subject}` : ""}${e.body ? `\n${e.body}` : ""}`;
         }).join("\n\n"));
@@ -94,19 +94,20 @@ export async function POST(req: NextRequest) {
 
 ---
 
-Tu prépares un briefing de réunion. Suis les instructions du guide ci-dessus.
-Tu reçois des données issues de HubSpot, Gmail, Slack et du web.
-Si tu manques de données pour une section, dis-le explicitement — ne fabrique rien.
-Réponds UNIQUEMENT en JSON valide avec exactement cette structure :
+Tu prepares un briefing de reunion. Suis les instructions du guide ci-dessus.
+Tu recois des donnees issues de HubSpot, Gmail, Slack et du web.
+Si tu manques de donnees pour une section, dis-le explicitement — ne fabrique rien.
+Reponds UNIQUEMENT en JSON valide avec exactement cette structure :
 {
   "identity": { "name": "...", "role": "...", "company": "...", "hubspotStage": "...", "lastContact": "..." },
+  "meetingType": "discovery|follow_up",
   "objective": "...",
-  "relationship": { "summary": "...", "deals": [{ "name": "...", "stage": "...", "amount": "..." }], "lastEngagements": ["..."] },
+  "contextSummary": "texte structuré avec sections markdown (## Situation actuelle, ## Historique des échanges, ## Deals en cours, ## Signaux et points d'attention) — utilise ## pour les titres et - pour les puces",
+  "companyInsights": "2-3 phrases sur l'entreprise : secteur, taille, actualités récentes, enjeux probables",
+  "personInsights": "1-2 phrases sur la personne : ancienneté, background, position dans l'org",
   "recentNews": { "items": [{ "type": "web|slack|email", "text": "...", "url": "...", "date": "..." }] },
-  "questionsToAsk": ["question 1", "question 2", "question 3"],
-  "likelyObjections": [{ "objection": "...", "response": "..." }],
+  "questionsToAsk": ["question 1 adaptée au stade", "question 2", "question 3", "question 4"],
   "nextStep": "...",
-  "discussionAngles": ["angle 1 spécifique au contexte", "angle 2", "angle 3"],
   "confidence": "high|medium|low"
 }`;
 
@@ -127,7 +128,7 @@ Génère le briefing JSON pour cette réunion.`;
       messages: [{ role: "user", content: userPrompt }],
     });
 
-    logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
+    logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "briefing");
 
     const raw = message.content[0].type === "text" ? message.content[0].text : "";
     let briefing: Record<string, unknown> = {};

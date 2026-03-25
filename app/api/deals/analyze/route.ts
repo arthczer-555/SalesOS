@@ -137,7 +137,7 @@ Base-toi uniquement sur les données disponibles. Sois concis et actionnable.`,
       messages: [{ role: "user", content: contextBlock }],
     });
 
-    logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
+    logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "deals_analyze");
     const raw = message.content[0].type === "text" ? message.content[0].text : "";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("Réponse IA invalide");

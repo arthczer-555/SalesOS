@@ -78,6 +78,20 @@ export default async function AdminPage() {
 
   return (
     <div className="p-8 max-w-4xl mx-auto space-y-10">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold" style={{ color: "#111" }}>Admin</h1>
+        </div>
+        <a
+          href="/admin/logs"
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+          style={{ background: "#f4f4f4", color: "#333", border: "1px solid #e5e5e5" }}
+        >
+          Logs &amp; Usage →
+        </a>
+      </div>
+
       {/* Users */}
       <div>
         <div className="mb-6">

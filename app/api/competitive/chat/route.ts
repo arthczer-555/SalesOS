@@ -74,7 +74,7 @@ ${signalContext || "Aucun signal disponible."}`;
         const final = await apiStream.finalMessage();
         inputTokens = final.usage.input_tokens;
         outputTokens = final.usage.output_tokens;
-        logUsage(user.id, "claude-haiku-4-5-20251001", inputTokens, outputTokens);
+        logUsage(user.id, "claude-haiku-4-5-20251001", inputTokens, outputTokens, "competitive_chat");
       } catch (e) {
         send(`\n\nErreur : ${e instanceof Error ? e.message : "inconnue"}`);
       } finally {

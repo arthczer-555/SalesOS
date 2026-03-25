@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
+import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -22,28 +23,51 @@ export async function POST(req: NextRequest) {
     const user = await getAuthenticatedUser();
     if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
-    const { userEmail, briefingText, eventTitle } = await req.json() as {
-      userEmail: string;
+    const { briefingText, eventTitle } = await req.json() as {
       briefingText: string;
       eventTitle: string;
     };
 
-    // Find Slack user by email
-    const res = await fetch(
-      `https://slack.com/api/users.lookupByEmail?email=${encodeURIComponent(userEmail)}`,
-      { headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` } }
-    );
-    const userData = await res.json();
-    if (!userData.ok) {
-      return NextResponse.json({ error: "Utilisateur Slack introuvable" }, { status: 404 });
+    // Get user's slack_display_name from DB
+    const { data: userRow } = await db
+      .from("users")
+      .select("slack_display_name")
+      .eq("id", user.id)
+      .single();
+
+    const slackDisplayName = userRow?.slack_display_name?.trim();
+    if (!slackDisplayName) {
+      return NextResponse.json({ error: "User Slack non défini" }, { status: 400 });
     }
 
-    const dm = await slackPost("/conversations.open", { users: userData.user.id });
+    // Find Slack member by display name or real name
+    const listRes = await fetch(
+      `https://slack.com/api/users.list?limit=200`,
+      { headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` } }
+    );
+    const listData = await listRes.json();
+    if (!listData.ok) {
+      return NextResponse.json({ error: "Impossible de récupérer les utilisateurs Slack" }, { status: 500 });
+    }
+
+    const needle = slackDisplayName.toLowerCase();
+    const member = (listData.members ?? []).find((m: { deleted?: boolean; is_bot?: boolean; profile?: { real_name?: string; display_name?: string } }) => {
+      if (m.deleted || m.is_bot) return false;
+      const realName = (m.profile?.real_name ?? "").toLowerCase();
+      const displayName = (m.profile?.display_name ?? "").toLowerCase();
+      return realName.includes(needle) || displayName.includes(needle);
+    });
+
+    if (!member) {
+      return NextResponse.json({ error: `Utilisateur Slack "${slackDisplayName}" introuvable` }, { status: 404 });
+    }
+
+    const dm = await slackPost("/conversations.open", { users: member.id });
     const channel = dm.channel.id;
 
     await slackPost("/chat.postMessage", {
       channel,
-      text: `📋 *Briefing : ${eventTitle}*\n\n${briefingText}`,
+      text: `*Briefing : ${eventTitle}*\n\n${briefingText}`,
     });
 
     return NextResponse.json({ ok: true });

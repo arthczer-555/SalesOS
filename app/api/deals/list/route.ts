@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { calcScore, type DealForScoring, type DealScore } from "@/lib/deal-scoring";
+import { type DealScore } from "@/lib/deal-scoring";
 import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -25,8 +25,7 @@ const DEAL_PROPS = [
   "dealname", "dealstage", "amount", "closedate", "pipeline",
   "hubspot_owner_id", "hs_lastmodifieddate", "notes_last_contacted",
   "hs_deal_stage_probability", "num_associated_contacts",
-  "deal_type", "authority_status", "budget_status", "decision_timeline",
-  "business_need_level", "strategic_fit", "description",
+  "deal_type", "description",
 ];
 
 export async function GET(req: NextRequest) {
@@ -77,16 +76,6 @@ export async function GET(req: NextRequest) {
 
     const rawDeals = (data.results ?? []).map((d: RawDeal) => {
       const p = d.properties;
-      const scoring: DealForScoring = {
-        authority_status: p.authority_status,
-        budget_status: p.budget_status,
-        decision_timeline: p.decision_timeline,
-        business_need_level: p.business_need_level,
-        strategic_fit: p.strategic_fit,
-        deal_type: p.deal_type,
-        notes_last_contacted: p.notes_last_contacted,
-        hs_lastmodifieddate: p.hs_lastmodifieddate,
-      };
       return {
         id: d.id,
         dealname: p.dealname ?? "",
@@ -99,7 +88,6 @@ export async function GET(req: NextRequest) {
         lastModified: p.hs_lastmodifieddate ?? "",
         numContacts: p.num_associated_contacts ? parseInt(p.num_associated_contacts) : 0,
         dealType: p.deal_type ?? "",
-        _fallbackScore: calcScore(scoring),
       };
     });
 
@@ -120,11 +108,10 @@ export async function GET(req: NextRequest) {
     }
 
     const deals = rawDeals.map((raw: typeof rawDeals[number]) => {
-      const { _fallbackScore, ...d } = raw;
-      const cached = scoreMap[d.id];
+      const cached = scoreMap[raw.id];
       return {
-        ...d,
-        score: cached?.score ?? _fallbackScore,
+        ...raw,
+        score: cached?.score ?? null,
         reasoning: cached?.reasoning ?? null,
         next_action: cached?.next_action ?? null,
         scoredAt: cached?.scored_at ?? null,

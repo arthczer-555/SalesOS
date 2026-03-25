@@ -45,7 +45,7 @@ export async function POST(
         ],
       });
       generatedTitle = msg.content[0].type === "text" ? msg.content[0].text.trim() : null;
-      logUsage(user.id, "claude-haiku-4-5-20251001", msg.usage.input_tokens, msg.usage.output_tokens);
+      logUsage(user.id, "claude-haiku-4-5-20251001", msg.usage.input_tokens, msg.usage.output_tokens, "conversations");
     } catch { /* keep default title */ }
   }
 

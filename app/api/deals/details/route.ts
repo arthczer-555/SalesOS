@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { calcScore, type DealForScoring, type DealScore } from "@/lib/deal-scoring";
+import { type DealScore } from "@/lib/deal-scoring";
 import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -47,19 +47,6 @@ export async function GET(req: NextRequest) {
 
     const deal = dealData.status === "fulfilled" ? dealData.value : null;
     const p = deal?.properties ?? {};
-
-    // Score
-    const scoring: DealForScoring = {
-      authority_status: p.authority_status,
-      budget_status: p.budget_status,
-      decision_timeline: p.decision_timeline,
-      business_need_level: p.business_need_level,
-      strategic_fit: p.strategic_fit,
-      deal_type: p.deal_type,
-      notes_last_contacted: p.notes_last_contacted,
-      hs_lastmodifieddate: p.hs_lastmodifieddate,
-    };
-    const score = calcScore(scoring);
 
     // Contacts
     let contacts: { id: string; name: string; jobTitle: string; email: string }[] = [];
@@ -165,7 +152,7 @@ export async function GET(req: NextRequest) {
       numContacts: p.num_associated_contacts ? parseInt(p.num_associated_contacts) : 0,
       description: p.description ?? "",
       dealType: p.deal_type ?? "",
-      score: cachedScore ?? score,
+      score: cachedScore ?? null,
       reasoning,
       next_action,
       scoredAt,

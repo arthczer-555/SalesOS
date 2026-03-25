@@ -5,7 +5,7 @@ export interface CalendarEvent {
   title: string;
   start: string;
   end: string;
-  attendees: { email: string; displayName?: string; self?: boolean }[];
+  attendees: { email: string; displayName?: string; self?: boolean; resource?: boolean }[];
   meetingLink: string | null;
 }
 
@@ -48,7 +48,7 @@ export async function getCalendarEvents(userId: string, days = 7): Promise<Calen
       summary?: string;
       start?: { dateTime?: string; date?: string };
       end?: { dateTime?: string; date?: string };
-      attendees?: { email: string; displayName?: string; self?: boolean }[];
+      attendees?: { email: string; displayName?: string; self?: boolean; resource?: boolean }[];
       hangoutLink?: string;
       conferenceData?: { entryPoints?: { uri: string }[] };
     }) => ({
@@ -56,7 +56,12 @@ export async function getCalendarEvents(userId: string, days = 7): Promise<Calen
       title: item.summary ?? "(Sans titre)",
       start: item.start?.dateTime ?? item.start?.date ?? "",
       end: item.end?.dateTime ?? item.end?.date ?? "",
-      attendees: item.attendees ?? [],
+      attendees: (item.attendees ?? []).map((a) => ({
+        email: a.email,
+        displayName: a.displayName,
+        self: a.self,
+        resource: a.resource,
+      })),
       meetingLink:
         item.hangoutLink ??
         item.conferenceData?.entryPoints?.[0]?.uri ??

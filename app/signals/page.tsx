@@ -467,7 +467,7 @@ export default function SignalsPage() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1 overflow-y-auto p-4">
           {loadingSignals ? (
             <div className="flex items-center justify-center h-32">
               <span className="text-xs" style={{ color: "#aaa" }}>Chargement...</span>
@@ -480,58 +480,77 @@ export default function SignalsPage() {
               </p>
             </div>
           ) : (
-            filteredSignals.map((signal) => {
-              const isActive = activeSignal?.id === signal.id;
-              const colors = TYPE_COLORS[signal.signal_type] ?? TYPE_COLORS.content;
-const isNew = new Date(signal.created_at).toDateString() === todayStr;
+            <div
+              className="grid gap-3"
+              style={{ gridTemplateColumns: `repeat(${showComposer ? 2 : showCenter ? 3 : 5}, minmax(0, 1fr))` }}
+            >
+              {filteredSignals.map((signal) => {
+                const isActive = activeSignal?.id === signal.id;
+                const colors = TYPE_COLORS[signal.signal_type] ?? TYPE_COLORS.content;
+                const isNew = new Date(signal.created_at).toDateString() === todayStr;
 
-              return (
-                <div
-                  key={signal.id}
-                  className="px-4 py-3 border-b"
-                  style={{ borderColor: "#f0f0f0", background: isActive ? "#fde8ef" : "transparent" }}
-                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "#f8f8f8"; }}
-                  onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "transparent"; }}
-                >
-                  <div className="flex items-start gap-2">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 mb-0.5">
-                        <span className="text-xs font-semibold truncate" style={{ color: "#111" }}>
-                          {signal.company_name}
+                return (
+                  <div
+                    key={signal.id}
+                    className="flex flex-col rounded-xl border p-3 cursor-default"
+                    style={{
+                      borderColor: isActive ? "#f9b4cb" : "#ebebeb",
+                      background: isActive ? "#fde8ef" : "#fff",
+                      transition: "box-shadow 0.15s ease, border-color 0.15s ease",
+                    }}
+                    onMouseEnter={(e) => { if (!isActive) { e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.07)"; e.currentTarget.style.borderColor = "#ddd"; } }}
+                    onMouseLeave={(e) => { if (!isActive) { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.borderColor = "#ebebeb"; } }}
+                  >
+                    <div className="flex items-center gap-1.5 mb-1">
+                      <span className="text-xs font-semibold truncate flex-1" style={{ color: "#111" }}>
+                        {signal.company_name}
+                      </span>
+                      {isNew && (
+                        <span className="text-[9px] px-1 rounded-full font-medium shrink-0" style={{ background: "#fde8ef", color: "#f01563" }}>
+                          NEW
                         </span>
-                        {isNew && (
-                          <span className="text-[9px] px-1 rounded-full font-medium shrink-0" style={{ background: "#fde8ef", color: "#f01563" }}>
-                            NEW
-                          </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] mb-2 line-clamp-2 flex-1" style={{ color: "#666", lineHeight: "1.4" }}>
+                      {signal.title}
+                    </p>
+                    <div className="flex items-center justify-between mb-2.5">
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={colors}>
+                        {TYPE_LABELS[signal.signal_type] ?? signal.signal_type}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {signal.source_url && (
+                          <a
+                            href={signal.source_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] underline underline-offset-2"
+                            style={{ color: "#aaa" }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            Source
+                          </a>
                         )}
-                      </div>
-                      <p className="text-xs mb-1.5 line-clamp-2" style={{ color: "#555" }}>
-                        {signal.title}
-                      </p>
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={colors}>
-                          {TYPE_LABELS[signal.signal_type] ?? signal.signal_type}
-                        </span>
                         <div className="flex gap-0.5">
                           {[1, 2, 3].map((n) => (
                             <div key={n} className="w-1.5 h-1.5 rounded-full" style={{ background: n <= signal.strength ? "#f01563" : "#e5e5e5" }} />
                           ))}
                         </div>
                       </div>
-                      <button
-                        onClick={() => handleProspect(signal)}
-                        className="text-[10px] px-2 py-1 rounded-md w-full text-center transition-colors"
-                        style={{ background: "#f5f5f5", color: "#555" }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = "#f01563"; e.currentTarget.style.color = "#fff"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = "#f5f5f5"; e.currentTarget.style.color = "#555"; }}
-                      >
-                        Prospecter →
-                      </button>
                     </div>
+                    <button
+                      onClick={() => handleProspect(signal)}
+                      className="text-[10px] py-1.5 rounded-lg w-full text-center transition-colors"
+                      style={{ background: "#f5f5f5", color: "#555" }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "#f01563"; e.currentTarget.style.color = "#fff"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "#f5f5f5"; e.currentTarget.style.color = "#555"; }}
+                    >
+                      Prospecter →
+                    </button>
                   </div>
-                </div>
-              );
-            })
+                );
+              })}
+            </div>
           )}
         </div>
       </div>

@@ -113,7 +113,7 @@ Mets uniquement les IDs des contacts les plus pertinents dans contact_ids (max 2
     totalOutput += response.usage.output_tokens;
 
     if (response.stop_reason === "end_turn") {
-      logUsage(user.id, "claude-haiku-4-5-20251001", totalInput, totalOutput);
+      logUsage(user.id, "claude-haiku-4-5-20251001", totalInput, totalOutput, "prospection_search");
       // Parse final JSON response
       const text = response.content.find((b) => b.type === "text")?.text ?? "";
       const jsonMatch = text.match(/\{[\s\S]*\}/);

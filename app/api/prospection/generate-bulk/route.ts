@@ -42,10 +42,13 @@ export async function POST(req: NextRequest) {
     instructions ? `Instructions spécifiques :\n${instructions}` : null,
   ].filter(Boolean).join("\n");
 
+  const senderName = user.name?.trim() || "L'équipe Coachello";
+
   const systemPrompt = [
     "Tu es un expert en prospection B2B pour Coachello, une entreprise de coaching professionnel.",
     "Tu rédiges un email de prospection de groupe — percutant, humain, adapté au profil commun des destinataires.",
     "IMPORTANT : Le corps de l'email NE doit PAS contenir de formule d'accroche (pas de Hi, Bonjour, Cher...). Commence directement par la première phrase de contenu. Le greeting sera ajouté automatiquement pour chaque destinataire.",
+    `L'email doit être signé par : ${senderName}. Termine toujours l'email par une signature avec ce nom.`,
     "Réponds UNIQUEMENT en JSON valide avec exactement ces deux clés : { \"subject\": \"...\", \"body\": \"...\" }",
     "Le body doit être en texte brut (pas de HTML, pas de markdown).",
     guide ? `\n---\nGUIDE DE PROSPECTION :\n${guide}` : "",
@@ -61,7 +64,7 @@ export async function POST(req: NextRequest) {
     messages: [{ role: "user", content: userPrompt }],
   });
 
-  logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
+  logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "prospection_bulk");
   const raw = message.content[0].type === "text" ? message.content[0].text : "";
 
   let subject = "";

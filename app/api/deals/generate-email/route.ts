@@ -119,7 +119,7 @@ export async function POST(req: NextRequest) {
       messages: [{ role: "user", content: `Rédige un email de suivi pour ce deal :\n\n${contextBlock}` }],
     });
 
-    logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
+    logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "deals_email");
     const raw = message.content[0].type === "text" ? message.content[0].text : "";
     let subject = "";
     let body = "";

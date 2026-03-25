@@ -77,7 +77,7 @@ Comment ils vendent (abonnement, à la séance, forfait entreprise…) et estima
     messages: [{ role: "user", content: userPrompt }],
   });
 
-  logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens);
+  logUsage(user.id, "claude-haiku-4-5-20251001", message.usage.input_tokens, message.usage.output_tokens, "competitive_battlecard");
 
   const content = message.content[0].type === "text" ? message.content[0].text : "";
 
