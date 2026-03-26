@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
+import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 
 export const dynamic = "force-dynamic";
 
@@ -21,21 +22,26 @@ export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
-  const { contactInfo, recentNews, companyContext, coachingNeed, angle, userInstructions } = await req.json() as {
+  const { contactInfo, recentNews, companyContext, coachingNeed, angle, userInstructions, qcmType, qcmLength, qcmTone, qcmObjectif } = await req.json() as {
     contactInfo: ContactInfo;
     recentNews?: string;
     companyContext?: string;
     coachingNeed?: string;
     angle?: string;
     userInstructions?: string;
+    qcmType?: string;
+    qcmLength?: string;
+    qcmTone?: string;
+    qcmObjectif?: string;
   };
 
   // Fetch the user's personal prospection guide from DB
-  const [{ data }, { data: globalModelEntry }] = await Promise.all([
+  const [{ data }, { data: globalModelEntry }, { data: globalGuideEntry }] = await Promise.all([
     db.from("users").select("prospection_guide").eq("id", user.id).maybeSingle(),
     db.from("guide_defaults").select("content").eq("key", "model_preferences").single(),
+    db.from("guide_defaults").select("content").eq("key", "prospection").single(),
   ]);
-  const guide = data?.prospection_guide ?? "";
+  const guide = data?.prospection_guide ?? globalGuideEntry?.content ?? DEFAULT_PROSPECTION_GUIDE;
   let prospectionModel = "claude-haiku-4-5-20251001";
   try { if (globalModelEntry?.content) prospectionModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).prospection ?? prospectionModel; } catch { /* keep default */ }
 
@@ -51,6 +57,10 @@ export async function POST(req: NextRequest) {
     companyContext ? `Contexte de l'entreprise :\n${companyContext}` : null,
     coachingNeed ? `Pourquoi pourrait-il avoir besoin de coaching :\n${coachingNeed}` : null,
     angle ? `Angle d'attaque / message clé :\n${angle}` : null,
+    qcmType ? `Type de message : ${qcmType === "intro" ? "Premier contact (intro)" : "Follow-up / relance"}` : null,
+    qcmLength ? `Longueur souhaitée : ${qcmLength}` : null,
+    qcmTone ? `Ton : ${qcmTone}` : null,
+    qcmObjectif ? `Objectif : ${{ rdv: "Obtenir un RDV", ressource: "Partager une ressource", qualifier: "Qualifier le besoin", reactiver: "Réactiver la relation" }[qcmObjectif] ?? qcmObjectif}` : null,
     userInstructions ? `Instructions spécifiques de l'utilisateur :\n${userInstructions}` : null,
   ].filter(Boolean).join("\n\n");
 

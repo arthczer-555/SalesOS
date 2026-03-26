@@ -14,6 +14,7 @@ interface Deal {
   closedate: string;
   probability: string;
   ownerId: string;
+  ownerName: string;
   lastContacted: string;
   lastModified: string;
   numContacts: number;
@@ -133,6 +134,7 @@ function DealCard({ deal, selected, onClick }: { deal: Deal; selected: boolean; 
 
       <div style={{ fontSize: 12, color: "#6b7280", marginBottom: 6 }}>
         {fmt(deal.amount)}{deal.closedate ? ` · ${fmtDate(deal.closedate)}` : ""}
+        {deal.ownerName && <span style={{ color: "#9ca3af" }}> · {deal.ownerName}</span>}
       </div>
 
       {ref && (
@@ -191,9 +193,9 @@ function KanbanColumn({
         padding: "8px 12px", borderRadius: "8px 8px 0 0", marginBottom: 4,
         background: color + "18", borderBottom: `2px solid ${color}`,
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontWeight: 600, fontSize: 12, color: color }}>{stage.label}</span>
-          <span style={{ fontSize: 11, color: "#6b7280", background: "#f3f4f6", padding: "1px 6px", borderRadius: 99 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", minHeight: 34 }}>
+          <span style={{ fontWeight: 600, fontSize: 12, color: color, lineHeight: 1.4 }}>{stage.label}</span>
+          <span style={{ fontSize: 11, color: "#6b7280", background: "#f3f4f6", padding: "1px 6px", borderRadius: 99, flexShrink: 0, marginLeft: 6 }}>
             {deals.length}
           </span>
         </div>
@@ -229,12 +231,14 @@ function DealDrawer({
   details,
   loading,
   onClose,
+  onRescore,
   stageLabel,
   stageColor: color,
 }: {
   details: DealDetails | null;
   loading: boolean;
   onClose: () => void;
+  onRescore: (dealId: string, score: DealScore, reasoning: string, next_action: string) => void;
   stageLabel: string;
   stageColor: string;
 }) {
@@ -345,13 +349,15 @@ function DealDrawer({
       });
       const data = await r.json();
       if (r.ok) {
+        const newScore: DealScore = { total: data.total, components: data.components, reliability: data.reliability };
         setLocalScore({
-          score: { total: data.total, components: data.components, reliability: data.reliability },
+          score: newScore,
           reasoning: data.reasoning ?? "",
           next_action: data.next_action ?? "",
           scoredAt: new Date().toISOString(),
           qualification: data.qualification ?? null,
         });
+        onRescore(details.id, newScore, data.reasoning ?? "", data.next_action ?? "");
       }
     } catch { /* ignore */ } finally {
       setRescoring(false);
@@ -1279,6 +1285,11 @@ export default function DealsPage() {
             details={details}
             loading={loadingDetails}
             onClose={() => { setSelectedDeal(null); setDetails(null); }}
+            onRescore={(dealId, score, reasoning, next_action) => {
+              setDeals((prev) => prev.map((d) =>
+                d.id === dealId ? { ...d, score, reasoning, next_action, scoredAt: new Date().toISOString() } : d
+              ));
+            }}
             stageLabel={selectedStage?.label ?? ""}
             stageColor={stageColor(stageIdx)}
           />

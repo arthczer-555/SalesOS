@@ -139,7 +139,7 @@ Génère le briefing JSON pour cette réunion.`;
     const client = new Anthropic({ apiKey: claudeApiKey });
     const message = await client.messages.create({
       model: briefingModel,
-      max_tokens: 2048,
+      max_tokens: 4000,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
     });

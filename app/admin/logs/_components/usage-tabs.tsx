@@ -137,14 +137,34 @@ function reAggregate(rawLogs: RawLog[], days: number) {
   };
 }
 
-// Maps feature log key → admin model preference key
+// Maps feature log key → admin model preference key (undefined = hardcoded, not configurable)
 const FEATURE_TO_PREF: Record<string, string> = {
-  chat:                 "chat",
-  conversations:        "chat",
-  briefing:             "briefing",
-  deals_score:          "deals_score",
-  prospection_generate: "prospection",
-  prospection_bulk:     "prospection",
+  chat:                    "chat",
+  conversations:           "chat",
+  briefing:                "briefing",
+  deals_score:             "deals_score",
+  deals_analyze:           "deals_analyze",
+  deals_email:             "deals_email",
+  prospection_generate:    "prospection",
+  prospection_bulk:        "prospection",
+  competitive:             "competitive",
+  competitive_chat:        "competitive",
+  competitive_battlecard:  "competitive",
+  competitive_report:      "competitive",
+  market_scan:             "market",
+  market_signals:          "market",
+};
+
+// Default model per admin pref key (matches model-preferences-admin.tsx)
+const PREF_DEFAULTS: Record<string, string> = {
+  chat:           "claude-haiku-4-5-20251001",
+  briefing:       "claude-haiku-4-5-20251001",
+  deals_score:    "claude-haiku-4-5-20251001",
+  deals_analyze:  "claude-sonnet-4-6",
+  deals_email:    "claude-haiku-4-5-20251001",
+  prospection:    "claude-haiku-4-5-20251001",
+  competitive:    "claude-haiku-4-5-20251001",
+  market:         "claude-haiku-4-5-20251001",
 };
 
 export function UsageTabs({
@@ -352,59 +372,63 @@ export function UsageTabs({
       {/* ── TAB 5: Features & Modèles ────────────────────────────────────── */}
       {tab === "catalog" && (
         <div className="space-y-2">
-          <p className="text-xs mb-4" style={{ color: "#888" }}>
-            Modèle actuel = configuré dans Admin. Modèles observés = dérivés des appels réels sur la période sélectionnée.
-          </p>
+          <div className="flex items-center gap-4 mb-4">
+            <div className="flex items-center gap-1.5">
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#16a34a", display: "inline-block" }} />
+              <span className="text-xs" style={{ color: "#888" }}>Modèle configurable dans Admin</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#d1d5db", display: "inline-block" }} />
+              <span className="text-xs" style={{ color: "#888" }}>Modèle fixe (non configurable)</span>
+            </div>
+          </div>
           {Object.entries(FEATURE_DESCRIPTIONS).map(([key, desc]) => {
             const stat = byFeature.find((f) => f.feature === key);
             const prefKey = FEATURE_TO_PREF[key];
+            const configurable = !!prefKey;
             const currentModelFull = prefKey
-              ? (globalModelPrefs[prefKey] ?? "claude-haiku-4-5-20251001")
-              : null;
-            const currentModel = currentModelFull ? shortModel(currentModelFull) : null;
-            const currentColor = currentModel ? (MODEL_COLORS[currentModel] ?? { bg: "#f5f5f5", text: "#555" }) : null;
+              ? (globalModelPrefs[prefKey] ?? PREF_DEFAULTS[prefKey] ?? "claude-haiku-4-5-20251001")
+              : "claude-haiku-4-5-20251001";
+            const currentModel = shortModel(currentModelFull);
+            const currentColor = MODEL_COLORS[currentModel] ?? { bg: "#f5f5f5", text: "#888" };
             return (
               <div
                 key={key}
-                className="flex items-start gap-4 rounded-xl border px-4 py-3"
-                style={{ borderColor: "#eee", background: "#fff" }}
+                className="flex items-center gap-4 rounded-xl border px-4 py-3"
+                style={{ borderColor: "#eee", background: configurable ? "#fff" : "#fafafa" }}
               >
+                {/* Status dot */}
+                <span style={{
+                  width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                  background: configurable ? "#16a34a" : "#d1d5db",
+                }} />
+
+                {/* Label + description */}
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-xs font-semibold" style={{ color: "#111" }}>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold" style={{ color: configurable ? "#111" : "#888" }}>
                       {featureLabels[key] ?? key}
                     </span>
                     {!stat && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "#f5f5f5", color: "#aaa" }}>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "#f5f5f5", color: "#bbb" }}>
                         jamais appelé
                       </span>
                     )}
                   </div>
-                  <p className="text-[11px]" style={{ color: "#888" }}>{desc}</p>
+                  <p className="text-[11px] mt-0.5" style={{ color: "#aaa" }}>{desc}</p>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  {/* Current model from admin */}
-                  {currentModel && currentColor ? (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px]" style={{ color: "#aaa" }}>actuel</span>
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: currentColor.bg, color: currentColor.text }}>
-                        {currentModel}
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[10px]" style={{ color: "#aaa" }}>actuel</span>
-                      <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "#f5f5f5", color: "#888" }}>
-                        haiku (fixe)
-                      </span>
-                    </div>
-                  )}
 
-                  {stat && (
-                    <span className="text-[10px] font-medium" style={{ color: "#aaa" }}>
-                      {stat.calls} appel{stat.calls > 1 ? "s" : ""}
-                    </span>
-                  )}
+                {/* Right side: model badge + call count */}
+                <div className="flex items-center gap-3 shrink-0">
+                  <span
+                    className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                    style={{
+                      background: configurable ? currentColor.bg : "#f3f4f6",
+                      color: configurable ? currentColor.text : "#9ca3af",
+                    }}
+                  >
+                    {currentModel}{!configurable && " — fixe"}
+                  </span>
                 </div>
               </div>
             );

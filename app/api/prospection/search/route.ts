@@ -24,7 +24,7 @@ const PROPS = [
   "firstname", "lastname", "email", "jobtitle", "company",
   "industry", "lifecyclestage", "city", "country",
   "notes_last_contacted", "hs_lead_status", "numberofemployees", "hs_lead_source",
-  "hubspot_owner_id", "linkedin_url",
+  "hubspot_owner_id", "linkedin_url", "createdate",
 ];
 
 type HsFilter = { propertyName: string; operator: string; value?: string; highValue?: string };
@@ -42,6 +42,7 @@ export async function GET(req: NextRequest) {
   const contacted = searchParams.get("contacted")?.trim() ?? "";
   const companysize = searchParams.get("companysize")?.trim() ?? "";
   const source = searchParams.get("source")?.trim() ?? "";
+  const createdyear = searchParams.get("createdyear")?.trim() ?? "";
   const sort = searchParams.get("sort")?.trim() ?? "";
   const after = searchParams.get("after")?.trim() ?? "";
   const ownerParam = searchParams.get("owner"); // null = mine, "all" = no filter, id = specific
@@ -81,17 +82,32 @@ export async function GET(req: NextRequest) {
 
   const now = Date.now();
   if (contacted === "never") {
-    filters.push({ propertyName: "notes_last_contacted", operator: "NOT_HAS_PROPERTY", value: "" });
+    filters.push({ propertyName: "notes_last_contacted", operator: "NOT_HAS_PROPERTY" });
+  } else if (contacted === "lt7") {
+    filters.push({ propertyName: "notes_last_contacted", operator: "GTE", value: String(now - 7 * 864e5) });
   } else if (contacted === "lt30") {
     filters.push({ propertyName: "notes_last_contacted", operator: "GTE", value: String(now - 30 * 864e5) });
-  } else if (contacted === "30to90") {
-    filters.push({ propertyName: "notes_last_contacted", operator: "BETWEEN", value: String(now - 90 * 864e5), highValue: String(now - 30 * 864e5) });
-  } else if (contacted === "gt90") {
-    filters.push({ propertyName: "notes_last_contacted", operator: "LTE", value: String(now - 90 * 864e5) });
+  } else if (contacted === "30to60") {
+    filters.push({ propertyName: "notes_last_contacted", operator: "BETWEEN", value: String(now - 60 * 864e5), highValue: String(now - 30 * 864e5) });
+  } else if (contacted === "60to180") {
+    filters.push({ propertyName: "notes_last_contacted", operator: "BETWEEN", value: String(now - 180 * 864e5), highValue: String(now - 60 * 864e5) });
+  } else if (contacted === "180to365") {
+    filters.push({ propertyName: "notes_last_contacted", operator: "BETWEEN", value: String(now - 365 * 864e5), highValue: String(now - 180 * 864e5) });
+  } else if (contacted === "gt365") {
+    filters.push({ propertyName: "notes_last_contacted", operator: "LTE", value: String(now - 365 * 864e5) });
+  }
+
+  if (createdyear) {
+    const year = parseInt(createdyear);
+    if (!isNaN(year)) {
+      const start = new Date(year, 0, 1).getTime();
+      const end = new Date(year + 1, 0, 1).getTime();
+      filters.push({ propertyName: "createdate", operator: "BETWEEN", value: String(start), highValue: String(end) });
+    }
   }
 
   const sortMap: Record<string, string> = {
-    alpha: "firstname", lastcontact: "notes_last_contacted", recent: "hs_lastmodifieddate",
+    alpha: "firstname", lastcontact: "notes_last_contacted", recent: "hs_lastmodifieddate", created: "createdate",
   };
 
   const body: Record<string, unknown> = {
@@ -125,6 +141,7 @@ export async function GET(req: NextRequest) {
       employees: c.properties.numberofemployees ?? "",
       source: c.properties.hs_lead_source ?? "",
       linkedinUrl: c.properties.linkedin_url ?? null,
+      createdAt: c.properties.createdate ?? "",
     }));
 
     const nextCursor: string | null = (data.paging as { next?: { after?: string } } | undefined)?.next?.after ?? null;

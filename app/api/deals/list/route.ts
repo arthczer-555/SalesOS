@@ -85,7 +85,15 @@ export async function GET(req: NextRequest) {
     };
     if (q) searchBody.query = q;
 
-    const data = await hubspot("/crm/v3/objects/deals/search", "POST", searchBody);
+    const [data, ownersData] = await Promise.all([
+      hubspot("/crm/v3/objects/deals/search", "POST", searchBody),
+      hubspot("/crm/v3/owners?limit=100").catch(() => ({ results: [] })),
+    ]);
+
+    const ownerMap: Record<string, string> = Object.fromEntries(
+      ((ownersData.results ?? []) as { id: string; firstName?: string; lastName?: string }[])
+        .map((o) => [o.id, o.firstName ?? o.lastName ?? ""])
+    );
 
     type RawDeal = { id: string; properties: Record<string, string> };
 
@@ -99,6 +107,7 @@ export async function GET(req: NextRequest) {
         closedate: p.closedate ?? "",
         probability: p.hs_deal_stage_probability ?? "",
         ownerId: p.hubspot_owner_id ?? "",
+        ownerName: ownerMap[p.hubspot_owner_id ?? ""] ?? "",
         lastContacted: p.notes_last_contacted ?? "",
         lastModified: p.hs_lastmodifieddate ?? "",
         numContacts: p.num_associated_contacts ? parseInt(p.num_associated_contacts) : 0,

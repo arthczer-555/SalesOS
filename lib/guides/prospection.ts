@@ -25,6 +25,12 @@ Le sender est une personne, pas une marque. Termine toujours l'email par une sig
 
 ---
 
+Remarques: 
+- Quand tu n'es pas sur du contexte, ne le mentionne pas, vaut miuex un message moins personnamlisé que de se tromper.
+- Ne fais pas de message trop long si tu n'as pas de personnalisation forte, ça perd en impact.
+- Autour de 100/200 mots est une bonne longueur, mais adapte en fonction du contexte et des précédents echanges.
+
+---
 ## Les 4 templates
 
 ---

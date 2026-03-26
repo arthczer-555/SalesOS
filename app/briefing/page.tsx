@@ -116,8 +116,8 @@ function formatBriefingForSlack(briefing: BriefingResult, eventTitle: string): s
   const lines: string[] = [
     `*Briefing — ${eventTitle}*`,
     "",
-    `*${briefing.identity.name}* — ${briefing.identity.role} @ ${briefing.identity.company}`,
-    `Statut CRM : ${briefing.identity.hubspotStage || "—"} | Dernier contact : ${briefing.identity.lastContact || "—"}`,
+    `*${briefing.identity?.name}* — ${briefing.identity?.role} @ ${briefing.identity?.company}`,
+    `Statut CRM : ${briefing.identity?.hubspotStage || "—"} | Dernier contact : ${briefing.identity?.lastContact || "—"}`,
   ];
   if (briefing.meetingType) {
     lines.push("", `Type : ${briefing.meetingType === "discovery" ? "Découverte" : "Point de suivi"}`);
@@ -194,15 +194,15 @@ export default function BriefingPage() {
       const gatherRes = await fetch("/api/briefing/gather", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ eventId: event.id, eventTitle: event.title, attendees: ext, company }),
+        body: JSON.stringify({ eventId: event.id, eventTitle: event.title, attendees: ext, company, forceRefresh }),
       });
       if (!gatherRes.ok) throw new Error("gather failed");
       const gathered: GatheredData = await gatherRes.json();
       setRawData(gathered);
       setGatherState("done");
 
-      // Use cached briefing if available and not forcing refresh
-      if (gathered.cached && gathered.briefing && !forceRefresh) {
+      // Use cached briefing only if complete and not forcing refresh
+      if (gathered.cached && gathered.briefing?.identity && !forceRefresh) {
         setBriefing(gathered.briefing);
         setBriefingState("done");
         return;
@@ -577,7 +577,16 @@ export default function BriefingPage() {
             )}
 
             {/* Briefing sections */}
-            {briefingState === "done" && briefing && (
+            {briefingState === "done" && briefing && !briefing.identity && (
+              <div className="rounded-xl border px-4 py-3 flex items-center gap-3" style={{ borderColor: "#fde68a", background: "#fffbeb" }}>
+                <span style={{ fontSize: 13 }}>⚠️</span>
+                <p className="text-xs" style={{ color: "#92400e" }}>
+                  Le briefing en cache est incomplet. Clique sur <strong>Régénérer</strong> pour relancer l'analyse.
+                </p>
+              </div>
+            )}
+
+            {briefingState === "done" && briefing && briefing.identity && (
               <div className="space-y-4">
 
                 {/* Identity */}
@@ -592,9 +601,9 @@ export default function BriefingPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-1.5">
-                      {briefing.identity.hubspotStage && (
+                      {briefing.identity?.hubspotStage && (
                         <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0" style={{ background: "#f0fdf4", color: "#166534", border: "1px solid #bbf7d0" }}>
-                          {briefing.identity.hubspotStage}
+                          {briefing.identity?.hubspotStage}
                         </span>
                       )}
                       {briefing.confidence && (() => {
@@ -609,15 +618,15 @@ export default function BriefingPage() {
                   </div>
                   <div className="flex items-center gap-2.5">
                     <div className="w-8 h-8 rounded-xl flex items-center justify-center text-xs font-bold uppercase shrink-0" style={{ background: "#fde8ef", color: "#f01563" }}>
-                      {briefing.identity.name.split(" ").map((n) => n[0]).slice(0, 2).join("")}
+                      {briefing.identity?.name?.split(" ").map((n: string) => n[0]).slice(0, 2).join("") ?? "?"}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold truncate" style={{ color: "#111" }}>{briefing.identity.name}</p>
+                      <p className="text-xs font-semibold truncate" style={{ color: "#111" }}>{briefing.identity?.name}</p>
                       <p className="text-[11px] truncate" style={{ color: "#888" }}>
-                        {briefing.identity.role}{briefing.identity.company ? ` · ${briefing.identity.company}` : ""}
+                        {briefing.identity?.role}{briefing.identity?.company ? ` · ${briefing.identity?.company}` : ""}
                       </p>
-                      {briefing.identity.lastContact && (
-                        <p className="text-[10px] mt-0.5" style={{ color: "#bbb" }}>Dernier contact : {briefing.identity.lastContact}</p>
+                      {briefing.identity?.lastContact && (
+                        <p className="text-[10px] mt-0.5" style={{ color: "#bbb" }}>Dernier contact : {briefing.identity?.lastContact}</p>
                       )}
                     </div>
                   </div>

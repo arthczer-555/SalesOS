@@ -3,6 +3,19 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { getGmailAccessToken } from "@/lib/gmail";
 import { db } from "@/lib/db";
 
+function stripHtml(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
@@ -70,11 +83,12 @@ export async function POST(req: NextRequest) {
     const user = await getAuthenticatedUser();
     if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
-    const { eventId, eventTitle, attendees, company } = await req.json() as {
+    const { eventId, eventTitle, attendees, company, forceRefresh } = await req.json() as {
       eventId: string;
       eventTitle: string;
       attendees: { email: string; displayName?: string }[];
       company: string;
+      forceRefresh?: boolean;
     };
 
     // ── Cache check (4h TTL) ──────────────────────────────────────────────────
@@ -85,7 +99,7 @@ export async function POST(req: NextRequest) {
       .eq("event_id", eventId)
       .maybeSingle();
 
-    if (cached?.raw_data && cached?.briefing) {
+    if (!forceRefresh && cached?.raw_data && cached?.briefing) {
       const age = Date.now() - new Date(cached.generated_at).getTime();
       if (age < 4 * 60 * 60 * 1000) {
         return NextResponse.json({ ...cached.raw_data, cached: true, briefing: cached.briefing });
@@ -138,7 +152,7 @@ export async function POST(req: NextRequest) {
               type: e.engagement.type,
               date: new Date(e.engagement.createdAt).toISOString(),
               subject: e.metadata.subject ?? null,
-              body: e.metadata.body?.slice(0, 2000) ?? null,
+              body: e.metadata.body ? stripHtml(e.metadata.body).slice(0, 2000) : null,
               duration: e.metadata.durationMilliseconds ? Math.round(e.metadata.durationMilliseconds / 60000) : null,
             }))
             .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());

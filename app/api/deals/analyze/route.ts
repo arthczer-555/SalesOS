@@ -8,6 +8,19 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_ANALYZE_MODEL = "claude-sonnet-4-6";
 
+function stripHtml(s: string): string {
+  return s
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
 async function hubspot(path: string, method = "GET", body?: unknown) {
   const res = await fetch(`https://api.hubapi.com${path}`, {
     method,
@@ -99,7 +112,7 @@ export async function POST(req: NextRequest) {
                 const ep = e.properties ?? {};
                 const type = ep.hs_engagement_type ?? "Activité";
                 const date = ep.hs_createdate ? new Date(ep.hs_createdate).toLocaleDateString("fr-FR") : "";
-                const body = (ep.hs_body_preview ?? "").slice(0, 500);
+                const body = stripHtml(ep.hs_body_preview ?? "").slice(0, 500);
                 return body ? `[${type} ${date}] ${body}` : "";
               })
               .filter(Boolean)
@@ -111,7 +124,7 @@ export async function POST(req: NextRequest) {
                 const mp = m.properties ?? {};
                 const date = mp.hs_timestamp ? new Date(mp.hs_timestamp).toLocaleDateString("fr-FR") : "";
                 const title = mp.hs_meeting_title ?? "Réunion";
-                const body = (mp.hs_meeting_body ?? "").slice(0, 2000);
+                const body = stripHtml(mp.hs_meeting_body ?? "").slice(0, 2000);
                 return body ? `[MEETING ${date}] ${title}\n${body}` : "";
               })
               .filter(Boolean)
@@ -123,7 +136,7 @@ export async function POST(req: NextRequest) {
                 const cp = c.properties ?? {};
                 const date = cp.hs_timestamp ? new Date(cp.hs_timestamp).toLocaleDateString("fr-FR") : "";
                 const title = cp.hs_call_title ?? "Appel";
-                const body = (cp.hs_call_body ?? "").slice(0, 2000);
+                const body = stripHtml(cp.hs_call_body ?? "").slice(0, 2000);
                 return body ? `[CALL ${date}] ${title}\n${body}` : "";
               })
               .filter(Boolean)
@@ -134,7 +147,7 @@ export async function POST(req: NextRequest) {
               .map((n: { properties: Record<string, string> }) => {
                 const np = n.properties ?? {};
                 const date = np.hs_timestamp ? new Date(np.hs_timestamp).toLocaleDateString("fr-FR") : "";
-                const body = (np.hs_note_body ?? "").slice(0, 3000);
+                const body = stripHtml(np.hs_note_body ?? "").slice(0, 3000);
                 return body ? `[NOTE ${date}] ${body}` : "";
               })
               .filter(Boolean)

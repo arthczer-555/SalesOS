@@ -41,7 +41,6 @@ export async function GET(req: NextRequest) {
   let crmDetails: { type: string; date: string; body: string }[] = [];
   if (engagementsData.status === "fulfilled") {
     const engagementIds: string[] = (engagementsData.value?.results ?? [])
-      .slice(0, 5)
       .map((r: { id: string }) => r.id);
 
     if (engagementIds.length > 0) {
@@ -110,25 +109,26 @@ export async function GET(req: NextRequest) {
     companyProps.website ? `Site web : ${companyProps.website}` : null,
   ].filter(Boolean).join("\n");
 
-  // Ask Claude to infer the 4 suggestion fields
-  let suggestions = { recentNews: "", companyContext: "", coachingNeed: "", angle: "" };
+  // Ask Claude to infer suggestion fields
+  let suggestions = { analysis: "", recentNews: "", companyContext: "", coachingNeed: "", angle: "" };
 
   if (contextBlock.trim()) {
     try {
       const client = new Anthropic();
       const message = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
-        max_tokens: 512,
+        max_tokens: 700,
         system: `Tu es un assistant de prospection B2B pour Coachello (coaching professionnel).
-À partir des données HubSpot d'un prospect, tu dois inférer 4 champs pour préparer un email de prospection.
-Réponds UNIQUEMENT en JSON valide avec ces 4 clés (chaînes vides si tu n'as pas assez d'infos) :
+À partir des données HubSpot d'un prospect, tu dois inférer 5 champs pour préparer un email de prospection.
+Réponds UNIQUEMENT en JSON valide avec ces 5 clés (chaînes vides si tu n'as pas assez d'infos) :
 {
-  "recentNews": "actualité récente ou contexte externe visible depuis les données",
-  "companyContext": "contexte de l'entreprise : taille, stade, enjeux",
+  "analysis": "2-3 phrases synthétisant la relation commerciale : ce qu'on sait du contact/entreprise, état des échanges passés, contexte clé à garder en tête pour l'approche. Basé uniquement sur les données fournies.",
+  "recentNews": "ce que tu sais sur cette entreprise ou ce secteur depuis ta base de connaissance (positionnement, réputation, tendances connues). NE PAS prétendre que c'est récent ou daté — formule comme un contexte général connu.",
+  "companyContext": "contexte de l'entreprise : taille, stade, enjeux, basé sur les données fournies et ta connaissance générale",
   "coachingNeed": "pourquoi cette entreprise ou ce contact pourrait avoir besoin de coaching",
   "angle": "angle d'attaque recommandé pour l'email"
 }
-Ne génère rien si tu n'as pas de base factuelle pour un champ — laisse-le vide plutôt qu'inventer.`,
+IMPORTANT : Ne mentionne jamais de date précise ni d'événement récent que tu ne peux pas vérifier. Laisse un champ vide si tu n'as vraiment rien de pertinent.`,
         messages: [{ role: "user", content: contextBlock }],
       });
 
@@ -138,6 +138,7 @@ Ne génère rien si tu n'as pas de base factuelle pour un champ — laisse-le vi
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
         suggestions = {
+          analysis: parsed.analysis ?? "",
           recentNews: parsed.recentNews ?? "",
           companyContext: parsed.companyContext ?? "",
           coachingNeed: parsed.coachingNeed ?? "",
