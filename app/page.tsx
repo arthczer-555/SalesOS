@@ -5,6 +5,7 @@ import { ArrowUp, History, Plus } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { ConversationHistoryModal, type Conversation } from "./_components/conversation-history-modal";
 
 type Message = { role: "user" | "assistant"; content: string };
@@ -17,6 +18,7 @@ export default function IntelligencePage() {
   const [loading, setLoading] = useState(false);
   const [streamingText, setStreamingText] = useState("");
   const [toolSteps, setToolSteps] = useState<string[]>([]);
+  const [costWarning, setCostWarning] = useState<number | null>(null);
 
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -69,6 +71,7 @@ export default function IntelligencePage() {
     setApiHistory([]);
     setStreamingText("");
     setToolSteps([]);
+    setCostWarning(null);
     setConversationId(null);
     setInput("");
   };
@@ -102,6 +105,7 @@ export default function IntelligencePage() {
     setLoading(true);
     setStreamingText("");
     setToolSteps([]);
+    setCostWarning(null);
 
     let convId = conversationId;
     if (!convId) {
@@ -135,6 +139,7 @@ export default function IntelligencePage() {
       const decoder = new TextDecoder();
       let fullText = "";
       let latestHistory: ApiMessage[] | null = null;
+      let streamDone = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -152,9 +157,14 @@ export default function IntelligencePage() {
               setStreamingText(fullText);
             } else if (event.type === "tool") {
               setToolSteps((prev) => [...prev, TOOL_LABELS[event.name] ?? event.name]);
+            } else if (event.type === "tool_progress") {
+              setToolSteps((prev) => prev.length > 0 ? [...prev.slice(0, -1), event.message] : [event.message]);
+            } else if (event.type === "cost_warning") {
+              setCostWarning(event.cost);
             } else if (event.type === "history") {
               latestHistory = event.messages;
             } else if (event.type === "done") {
+              streamDone = true;
               setMessages((prev) => [...prev, { role: "assistant", content: fullText }]);
               if (latestHistory) setApiHistory(latestHistory);
               setStreamingText("");
@@ -188,6 +198,12 @@ export default function IntelligencePage() {
           } catch {}
         }
       }
+      // Stream closed — fallback only if "done" event was never received (e.g. server timeout)
+      if (!streamDone && fullText) setMessages((prev) => [...prev, { role: "assistant", content: fullText }]);
+      if (latestHistory) setApiHistory(latestHistory);
+      setStreamingText("");
+      setToolSteps([]);
+      setLoading(false);
     } catch {
       setMessages((prev) => [...prev, { role: "assistant", content: "Erreur de connexion. Réessaie." }]);
       setLoading(false);
@@ -291,7 +307,7 @@ export default function IntelligencePage() {
                 >
                   {m.role === "assistant" ? (
                     <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0 prose-table:text-xs">
-                      <ReactMarkdown>{m.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                     </div>
                   ) : m.content}
                 </div>
@@ -302,7 +318,7 @@ export default function IntelligencePage() {
                 <img src="/logo.png" alt="AI" width={28} height={28} className="rounded-lg mr-3 mt-0.5 shrink-0 self-start" />
                 <div className="max-w-[80%] px-4 py-3 rounded-2xl text-sm leading-relaxed" style={{ background: "#f5f5f5", color: "#111", borderBottomLeftRadius: 4 }}>
                   <div className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-li:my-0 prose-table:text-xs">
-                    <ReactMarkdown>{streamingText}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingText}</ReactMarkdown>
                   </div>
                 </div>
               </div>
@@ -317,6 +333,14 @@ export default function IntelligencePage() {
                       <span className="text-xs" style={{ color: "#888" }}>{step}</span>
                     </div>
                   ))}
+                  {costWarning !== null && (
+                    <div className="flex items-center gap-2 mt-1 px-2 py-1 rounded-lg" style={{ background: "#fff7ed", border: "1px solid #fed7aa" }}>
+                      <span className="text-xs">⚠️</span>
+                      <span className="text-xs font-medium" style={{ color: "#c2410c" }}>
+                        Requête coûteuse : ~{(costWarning * 100).toFixed(1)}¢ jusqu'ici
+                      </span>
+                    </div>
+                  )}
                   {!streamingText && (
                     <div className="flex items-center gap-2">
                       <div className="flex gap-1">

@@ -6,6 +6,8 @@ import { decrypt } from "@/lib/crypto";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
 
+export const maxDuration = 300; // 5 minutes — required for large HubSpot fetches
+
 // ── HubSpot helper ────────────────────────────────────────────────────────────
 async function hubspot(path: string, method = "GET", body?: unknown) {
   const res = await fetch(`https://api.hubapi.com${path}`, {
@@ -30,10 +32,9 @@ const PROPS: Record<string, string[]> = {
     "hs_lastmodifieddate", "linkedin_bio", "website", "hs_email_optout",
   ],
   deals: [
-    "dealname", "dealstage", "amount", "closedate", "pipeline",
+    "dealname", "dealstage", "amount", "closedate",
     "hubspot_owner_id", "hs_lastmodifieddate", "createdate",
-    "description", "hs_deal_stage_probability", "hs_is_closed",
-    "hs_is_closed_won", "num_associated_contacts", "notes_last_contacted",
+    "hs_deal_stage_probability", "hs_is_closed_won",
   ],
   companies: [
     "name", "domain", "industry", "city", "country", "phone",
@@ -125,7 +126,7 @@ const tools: Anthropic.Tool[] = [
   {
     name: "get_deals",
     description:
-      "Récupère tous les deals actifs HubSpot (hors closedwon/closedlost), triés par activité récente. Utilise cet outil pour avoir une vue globale du pipeline.",
+      "Récupère TOUS les deals HubSpot en format compact (id, nom, stage, montant, dates, statut won/lost/open). Utilise cet outil pour avoir la liste complète du pipeline et identifier les deals pertinents. Pour accéder aux conversations (notes, appels, réunions, emails) d'un deal identifié, utilise ensuite get_deal_activity avec l'id du deal.",
     input_schema: {
       type: "object" as const,
       properties: {},
@@ -168,7 +169,7 @@ const tools: Anthropic.Tool[] = [
   },
   {
     name: "get_deal_activity",
-    description: "Récupère les notes, emails, appels, réunions et enregistrements Claap associés à un deal spécifique. Utilise cet outil pour comprendre l'historique complet d'un deal.",
+    description: "Récupère les conversations complètes d'un deal : notes, emails, appels, réunions. Utilise cet outil après get_deals pour obtenir le contexte détaillé (ce qui a été dit, les blocages, les prochaines étapes) de chaque deal identifié comme pertinent.",
     input_schema: {
       type: "object" as const,
       properties: {
@@ -228,7 +229,7 @@ const tools: Anthropic.Tool[] = [
 ];
 
 // ── Tool execution ────────────────────────────────────────────────────────────
-async function executeTool(name: string, input: Record<string, unknown>): Promise<string> {
+async function executeTool(name: string, input: Record<string, unknown>, onProgress?: (msg: string) => void): Promise<string> {
   switch (name) {
     case "search_contacts": {
       const props = getPropertyNames("contacts");
@@ -260,27 +261,38 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       const props = getPropertyNames("deals");
       const allResults: { id: string; properties: Record<string, unknown> }[] = [];
       let after: string | undefined;
+      const MAX_PAGES = 50; // 10 000 deals max
+      let pages = 0;
+      let truncated = false;
+      onProgress?.(`Récupération des deals... 0 chargés`);
       do {
         const data = await hubspot("/crm/v3/objects/deals/search", "POST", {
-          filterGroups: [
-            {
-              filters: [
-                { propertyName: "dealstage", operator: "NEQ", value: "closedwon" },
-                { propertyName: "dealstage", operator: "NEQ", value: "closedlost" },
-              ],
-            },
-          ],
           sorts: [{ propertyName: "hs_lastmodifieddate", direction: "DESCENDING" }],
           limit: 200,
           ...(after ? { after } : {}),
           properties: props,
         });
-        for (const r of (data.results ?? []) as { id: string; properties: Record<string, unknown> }[]) {
-          allResults.push({ id: r.id, properties: stripEmpty(r.properties) });
+        for (const r of (data.results ?? []) as { id: string; properties: Record<string, string> }[]) {
+          const p = r.properties;
+          allResults.push({ id: r.id, properties: p } as { id: string; properties: Record<string, unknown> });
         }
         after = (data.paging as { next?: { after?: string } } | undefined)?.next?.after;
+        pages++;
+        onProgress?.(`Récupération des deals... ${allResults.length} chargés${after ? " (suite...)" : ""}`);
+        if (pages >= MAX_PAGES && after) { truncated = true; break; }
       } while (after);
-      return JSON.stringify(allResults);
+      const note = truncated
+        ? `⚠️ Résultats partiels : ${allResults.length} deals (limite atteinte).`
+        : `✅ ${allResults.length} deals récupérés.`;
+      // Compact one-line format per deal to minimize tokens
+      const compact = (allResults as { id: string; properties: Record<string, string> }[]).map((d) => {
+        const p = d.properties;
+        const date = p.createdate ? p.createdate.slice(0, 10) : "";
+        const close = p.closedate ? p.closedate.slice(0, 10) : "";
+        const won = p.hs_is_closed_won === "true" ? "won" : (p.dealstage === "closedlost" ? "lost" : "open");
+        return `${d.id}|${p.dealname ?? ""}|${p.dealstage ?? ""}|${p.amount ?? ""}€|${date}|${close}|${won}`;
+      }).join("\n");
+      return `${note}\nformat: id|nom|stage|montant|createdate|closedate|statut\nPour obtenir les conversations (notes/appels/réunions) d'un deal spécifique, utilise get_deal_activity avec son id.\n${compact}`;
     }
     case "get_companies": {
       const props = getPropertyNames("companies");
@@ -332,33 +344,55 @@ async function executeTool(name: string, input: Record<string, unknown>): Promis
       });
     }
     case "get_deal_activity": {
+      const T = 600; // max chars per field — keeps each deal activity under ~2k tokens
       const [notes, emails, calls, meetings] = await Promise.allSettled([
         hubspot(`/crm/v3/objects/notes/search`, "POST", {
           filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
           properties: ["hs_note_body", "hs_timestamp"],
-          limit: 20,
+          sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
+          limit: 8,
         }),
         hubspot(`/crm/v3/objects/emails/search`, "POST", {
           filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
           properties: ["hs_email_subject", "hs_email_text", "hs_timestamp", "hs_email_direction"],
-          limit: 10,
+          sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
+          limit: 5,
         }),
         hubspot(`/crm/v3/objects/calls/search`, "POST", {
           filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
           properties: ["hs_call_title", "hs_call_body", "hs_timestamp", "hs_call_disposition"],
-          limit: 10,
+          sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
+          limit: 5,
         }),
         hubspot(`/crm/v3/objects/meetings/search`, "POST", {
           filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: input.deal_id }] }],
           properties: ["hs_meeting_title", "hs_meeting_body", "hs_timestamp", "hs_meeting_outcome"],
-          limit: 10,
+          sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
+          limit: 5,
         }),
       ]);
+      const trunc = (s: string | undefined) => (s ?? "").slice(0, T);
+      const fmt = (r: { properties: Record<string, string> }) => {
+        const p = r.properties;
+        const date = p.hs_timestamp ? new Date(p.hs_timestamp).toLocaleDateString("fr-FR") : "";
+        return {
+          date,
+          note: p.hs_note_body ? trunc(p.hs_note_body) : undefined,
+          subject: p.hs_email_subject,
+          text: p.hs_email_text ? trunc(p.hs_email_text) : undefined,
+          direction: p.hs_email_direction,
+          call: p.hs_call_title,
+          body: p.hs_call_body ? trunc(p.hs_call_body) : undefined,
+          meeting: p.hs_meeting_title,
+          outcome: p.hs_meeting_outcome,
+          summary: p.hs_meeting_body ? trunc(p.hs_meeting_body) : undefined,
+        };
+      };
       return JSON.stringify({
-        notes: notes.status === "fulfilled" ? notes.value.results ?? [] : [],
-        emails: emails.status === "fulfilled" ? emails.value.results ?? [] : [],
-        calls: calls.status === "fulfilled" ? calls.value.results ?? [] : [],
-        meetings: meetings.status === "fulfilled" ? meetings.value.results ?? [] : [],
+        notes: notes.status === "fulfilled" ? (notes.value.results ?? []).map(fmt) : [],
+        emails: emails.status === "fulfilled" ? (emails.value.results ?? []).map(fmt) : [],
+        calls: calls.status === "fulfilled" ? (calls.value.results ?? []).map(fmt) : [],
+        meetings: meetings.status === "fulfilled" ? (meetings.value.results ?? []).map(fmt) : [],
       });
     }
     case "get_deal_contacts": {
@@ -546,6 +580,10 @@ export async function POST(req: NextRequest) {
         let currentMessages: Anthropic.MessageParam[] = messages;
         let totalInputTokens = 0;
         let totalOutputTokens = 0;
+        let costWarned = false;
+        const COST_WARNING_USD = 0.5;
+        // Haiku pricing: $0.80/M input, $4/M output (approx)
+        const estimateCost = (inTok: number, outTok: number) => (inTok * 0.0000008 + outTok * 0.000004);
 
         // Agentic loop
         while (true) {
@@ -563,6 +601,13 @@ export async function POST(req: NextRequest) {
           const message = await apiStream.finalMessage();
           totalInputTokens += message.usage.input_tokens;
           totalOutputTokens += message.usage.output_tokens;
+
+          // Cost warning
+          const currentCost = estimateCost(totalInputTokens, totalOutputTokens);
+          if (!costWarned && currentCost >= COST_WARNING_USD) {
+            costWarned = true;
+            send({ type: "cost_warning", cost: currentCost });
+          }
 
           if (message.stop_reason === "end_turn") {
             // Send full message history (with tool calls) back to client for next turn
@@ -588,7 +633,11 @@ export async function POST(req: NextRequest) {
             for (const tool of toolBlocks) {
               send({ type: "tool", name: tool.name });
               try {
-                const result = await executeTool(tool.name, tool.input as Record<string, unknown>);
+                const result = await executeTool(
+                  tool.name,
+                  tool.input as Record<string, unknown>,
+                  (msg) => send({ type: "tool_progress", message: msg }),
+                );
                 results.push({ type: "tool_result", tool_use_id: tool.id, content: result });
               } catch (e) {
                 results.push({
@@ -601,6 +650,24 @@ export async function POST(req: NextRequest) {
             }
 
             currentMessages.push({ role: "user", content: results });
+
+            // Prune oversized tool results from history to stay under 200k token limit.
+            // IMPORTANT: only prune messages that are NOT the last one — the last tool result
+            // must stay intact so Claude can extract IDs/data from it in the next turn.
+            const MAX_RESULT_CHARS = 8000;
+            const lastMsgIndex = currentMessages.length - 1;
+            currentMessages = currentMessages.map((msg, idx) => {
+              if (msg.role !== "user" || !Array.isArray(msg.content)) return msg;
+              if (idx === lastMsgIndex) return msg; // protect most recent result
+              const pruned = (msg.content as Anthropic.ToolResultBlockParam[]).map((block) => {
+                if (block.type !== "tool_result" || typeof block.content !== "string") return block;
+                if (block.content.length <= MAX_RESULT_CHARS) return block;
+                const firstLine = block.content.split("\n")[0];
+                return { ...block, content: `${firstLine}\n[résultat volumineux tronqué — données déjà traitées]` };
+              });
+              return { ...msg, content: pruned };
+            });
+
             continue;
           }
 
