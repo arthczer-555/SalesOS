@@ -66,7 +66,7 @@ export async function GET(req: NextRequest) {
   if (industry) filters.push({ propertyName: "industry", operator: "EQ", value: industry });
   if (country) filters.push({ propertyName: "country", operator: "EQ", value: country });
   if (leadstatus) filters.push({ propertyName: "hs_lead_status", operator: "EQ", value: leadstatus });
-  if (source) filters.push({ propertyName: "hs_lead_source", operator: "EQ", value: source });
+  // hs_lead_source is a system property not indexed for search — filtered client-side below
 
   if (companysize) {
     const ranges: Record<string, [number, number | null]> = {
@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
   try {
     const data = await hubspot("/crm/v3/objects/contacts/search", "POST", body);
 
-    const results = (data.results ?? []).map((c: {
+    const allMapped = (data.results ?? []).map((c: {
       id: string;
       properties: Record<string, string>;
     }) => ({
@@ -143,6 +143,11 @@ export async function GET(req: NextRequest) {
       linkedinUrl: c.properties.linkedin_url ?? null,
       createdAt: c.properties.createdate ?? "",
     }));
+
+    // hs_lead_source is not filterable via HubSpot search API — apply client-side
+    const results = source
+      ? allMapped.filter((r: { source: string }) => r.source === source)
+      : allMapped;
 
     const nextCursor: string | null = (data.paging as { next?: { after?: string } } | undefined)?.next?.after ?? null;
     const total: number | null = data.total ?? null;
