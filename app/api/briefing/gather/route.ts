@@ -293,16 +293,19 @@ export async function POST(req: NextRequest) {
         }
       })(),
 
-      // Tavily: web news about the company
+      // Tavily: web news about the company (targeted queries for buying signals)
       (async () => {
         if (!company) return [];
-        const [r1, r2] = await Promise.allSettled([
-          searchTavily(`${company} actualités récentes`, 30),
-          searchTavily(`${company} ${externalAttendees[0]?.displayName ?? ""}`.trim(), 60),
+        const attendeeName = externalAttendees[0]?.displayName ?? "";
+        const [r1, r2, r3] = await Promise.allSettled([
+          searchTavily(`"${company}" news`, 60),
+          searchTavily(`"${company}" funding OR acquisition OR partnership OR expansion`, 60),
+          searchTavily(`"${company}" ${attendeeName} appointment OR nomination`.trim(), 60),
         ]);
         const results = [
           ...(r1.status === "fulfilled" ? r1.value : []),
           ...(r2.status === "fulfilled" ? r2.value : []),
+          ...(r3.status === "fulfilled" ? r3.value : []),
         ];
         // Deduplicate by URL
         const seen = new Set<string>();

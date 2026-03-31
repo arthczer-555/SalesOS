@@ -95,10 +95,13 @@ Adapte les questions au contexte reel du deal. Sois specifique, pas generique.
 
 ## recentNews
 
-Items d'actualite pertinents (web, Slack, Gmail) :
-- Privilegier les signaux d'achat : levee de fonds, recrutement, nomination, expansion, restructuration
-- Inclure la date et l'URL si disponible
-- Maximum 4-5 items, les plus recents et pertinents
+Items d'actualite EXTERNES uniquement (sources web) :
+- UNIQUEMENT des actualites provenant de sources web externes (presse, blogs, sites d'entreprise)
+- NE PAS inclure de messages Slack internes ni d'emails — ceux-ci vont dans contextSummary
+- Privilegier les signaux d'achat : levee de fonds, recrutement, nomination, expansion, restructuration, partenariat, lancement produit
+- Si aucune actualite web pertinente n'est disponible, retourner un tableau vide — ne pas remplir avec du contenu interne
+- Inclure la date et l'URL source obligatoirement
+- Maximum 3-4 items
 
 ---
 

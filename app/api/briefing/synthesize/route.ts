@@ -83,14 +83,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (rawData.slackMessages.length > 0) {
-      sections.push("=== MENTIONS SLACK ===\n" + rawData.slackMessages.slice(0, 5).map((m) =>
+      sections.push("=== MENTIONS SLACK (conversations internes Coachello — NE PAS utiliser dans recentNews) ===\n" + rawData.slackMessages.slice(0, 5).map((m) =>
         `[#${m.channel}] ${m.text}`
       ).join("\n"));
     }
 
     if (rawData.webResults.length > 0) {
-      sections.push("=== ACTUALITÉS WEB ===\n" + rawData.webResults.slice(0, 5).map((r) =>
-        `${r.title} (${r.published_date ?? "date inconnue"})\n${r.content}`
+      sections.push("=== ACTUALITÉS WEB (sources externes — utiliser pour recentNews) ===\n" + rawData.webResults.slice(0, 5).map((r) =>
+        `${r.title} (${r.published_date ?? "date inconnue"})\nURL: ${r.url}\n${r.content}`
       ).join("\n\n"));
     }
 
