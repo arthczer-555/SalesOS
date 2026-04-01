@@ -783,6 +783,7 @@ export async function POST(req: NextRequest) {
       iv: keyRow.iv,
       authTag: keyRow.auth_tag,
     });
+    console.log(`[Chat] Decrypted key for ${user.email}: starts="${claudeApiKey.slice(0, 10)}" ends="${claudeApiKey.slice(-4)}" len=${claudeApiKey.length}`);
   } else {
     // Local dev fallback — no Supabase configured
     claudeApiKey = process.env.ANTHROPIC_API_KEY ?? "";
