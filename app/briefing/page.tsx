@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import Link from "next/link";
+// import Link from "next/link";
 import { RefreshCw, Calendar, Mail, Send, ExternalLink } from "lucide-react";
 import { scoreBadge } from "@/lib/deal-scoring";
 import type { CalendarEvent } from "@/lib/google-calendar";
@@ -11,9 +11,12 @@ interface GatheredData {
   contacts: Record<string, string>[];
   deals: { name: string; stage: string; amount: string | null; closedate: string | null; scoreTotal: number | null; scoreReliability: number | null; reasoning: string | null; nextAction: string | null; scoredAt: string | null }[];
   engagements: { type: string; date: string; subject: string | null; body: string | null; duration: number | null }[];
+  companyHubspot: Record<string, string> | null;
   gmailMessages: { subject: string; from: string; date: string; snippet: string }[];
   slackMessages: { channel: string; text: string; timestamp: string }[];
   webResults: { title: string; url: string; content: string; published_date: string | null }[];
+  companyProfileResults: { title: string; url: string; content: string; published_date: string | null }[];
+  strategicResults: { title: string; url: string; content: string; published_date: string | null }[];
   cached?: boolean;
   briefing?: BriefingResult;
 }
@@ -29,14 +32,34 @@ interface DealQualification {
   strategicFit: string | null;
 }
 
+interface CompanyProfile {
+  revenue: string | null;
+  headcount: string | null;
+  clients: string | null;
+  businessModel: string | null;
+  industry: string | null;
+  keyFact: string | null;
+}
+
+interface StrategicHistoryItem {
+  year: string | null;
+  type: "acquisition" | "partnership" | "merger" | "divestiture";
+  entity: string;
+  description: string;
+}
+
 interface BriefingResult {
   identity: { name: string; role: string; company: string; hubspotStage: string; lastContact: string };
   meetingType?: "discovery" | "follow_up";
   objective?: string;
   contextSummary?: string;
-  companyInsights?: string;
+  companyProfile?: CompanyProfile;
+  companyInsights?: string; // backward compat for cached briefings
   personInsights?: string;
   recentNews: { items: { type: string; text: string; url?: string; date: string }[] };
+  strategicHistory?: StrategicHistoryItem[];
+  growthDynamics?: { summary: string } | null;
+  meetingTakeaways?: string[];
   questionsToAsk?: string[];
   nextStep?: string;
   confidence: "high" | "medium" | "low";
@@ -174,17 +197,32 @@ function formatBriefingForSlack(briefing: BriefingResult, eventTitle: string): s
   if (briefing.objective) {
     lines.push("", `*Objectif* : ${briefing.objective}`);
   }
-  if (briefing.contextSummary) {
-    lines.push("", `*Contexte de la relation* :`, briefing.contextSummary);
+  if (briefing.meetingTakeaways?.length) {
+    lines.push("", `*Points clés* :`, ...briefing.meetingTakeaways.map((t, i) => `${i + 1}. ${t}`));
   }
-  if (briefing.companyInsights) {
+  if (briefing.companyProfile) {
+    const cp = briefing.companyProfile;
+    const profileLines = [
+      cp.revenue ? `CA : ${cp.revenue}` : null,
+      cp.headcount ? `Effectifs : ${cp.headcount}` : null,
+      cp.clients ? `Clients : ${cp.clients}` : null,
+      cp.businessModel ? `Modèle : ${cp.businessModel}` : null,
+      cp.industry ? `Secteur : ${cp.industry}` : null,
+    ].filter(Boolean);
+    if (profileLines.length > 0) {
+      lines.push("", `*Entreprise* :`, ...profileLines.map((l) => `• ${l}`));
+    }
+  } else if (briefing.companyInsights) {
     lines.push("", `*Entreprise* : ${briefing.companyInsights}`);
+  }
+  if (briefing.contextSummary) {
+    lines.push("", `*Contexte* :`, briefing.contextSummary);
   }
   if (briefing.personInsights) {
     lines.push("", `*Interlocuteur* : ${briefing.personInsights}`);
   }
   if (briefing.recentNews?.items?.length) {
-    lines.push("", `*Actualités* :`, ...briefing.recentNews.items.slice(0, 3).map((i) => `• ${i.text}`));
+    lines.push("", `*Actualités* :`, ...briefing.recentNews.items.slice(0, 4).map((i) => `• [${i.type}] ${i.text}`));
   }
   if (briefing.questionsToAsk?.length) {
     lines.push("", `*Questions à poser* :`, ...briefing.questionsToAsk.map((q, i) => `${i + 1}. ${q}`));
@@ -625,6 +663,23 @@ export default function BriefingPage() {
               </div>
             )}
 
+            {/* Meeting takeaways */}
+            {briefingState === "done" && briefing?.meetingTakeaways && briefing.meetingTakeaways.length > 0 && (
+              <div className="rounded-xl px-4 py-3" style={{ background: "#fef3c7", border: "1px solid #fde68a" }}>
+                <p className="text-[10px] font-semibold uppercase tracking-wide mb-2" style={{ color: "#92400e" }}>Points clés pour le meeting</p>
+                <ol className="space-y-1.5">
+                  {briefing.meetingTakeaways.map((t, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs" style={{ color: "#78350f" }}>
+                      <span className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 mt-0.5" style={{ background: "#fde68a", color: "#92400e" }}>
+                        {i + 1}
+                      </span>
+                      {t}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+
             {/* Deal card (compact) */}
             {gatherState === "done" && rawData && rawData.deals.length > 0 && (() => {
               const deal = rawData.deals[0];
@@ -818,48 +873,70 @@ export default function BriefingPage() {
                 </div>
               </div>
 
-              {/* Deal scoring summary */}
-              {rawData && rawData.deals.filter((d) => d.scoreTotal !== null).length > 0 && (
+              {/* Company profile (structured) */}
+              {(briefing.companyProfile || briefing.companyInsights) && (
                 <div className="rounded-xl border p-4" style={{ borderColor: "#e5e5e5", borderLeft: "2px solid #e5e5e5", background: "#fff" }}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide mb-2.5" style={{ color: "#aaa" }}>Deal</p>
-                  <div className="space-y-3">
-                    {rawData.deals.filter((d) => d.scoreTotal !== null).map((deal, i) => {
-                      const score = deal.scoreTotal!;
-                      const badgeColor = score >= 80 ? "#16a34a" : score >= 60 ? "#ca8a04" : score >= 40 ? "#ea580c" : "#dc2626";
-                      const badgeBg = score >= 80 ? "#dcfce7" : score >= 60 ? "#fef9c3" : score >= 40 ? "#ffedd5" : "#fee2e2";
-                      const badgeLabel = score >= 80 ? "High Priority" : score >= 60 ? "Avançable" : score >= 40 ? "Fragile" : "À risque";
-                      return (
-                        <div key={i}>
-                          <div className="flex items-center justify-between mb-1">
-                            <Link href="/deals" className="text-xs font-semibold truncate underline underline-offset-2 decoration-transparent hover:decoration-current transition-colors" style={{ color: "#111" }}>{deal.name}</Link>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span className="text-[10px] font-semibold" style={{ color: badgeColor }}>{score}/100</span>
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full" style={{ background: badgeBg, color: badgeColor }}>{badgeLabel}</span>
-                            </div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wide mb-2.5" style={{ color: "#aaa" }}>Entreprise</p>
+                  {briefing.companyProfile ? (
+                    <div className="space-y-2.5">
+                      {/* Metrics grid */}
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {[
+                          { label: "CA", value: briefing.companyProfile.revenue },
+                          { label: "Effectifs", value: briefing.companyProfile.headcount },
+                          { label: "Clients", value: briefing.companyProfile.clients },
+                        ].filter((m) => m.value).map((m) => (
+                          <div key={m.label} className="rounded-lg px-2.5 py-1.5" style={{ background: "#fdf2f8" }}>
+                            <p className="text-[9px] font-medium" style={{ color: "#aaa" }}>{m.label}</p>
+                            <p className="text-[11px] font-semibold" style={{ color: "#111" }}>{m.value}</p>
                           </div>
-                          <div className="w-full h-1 rounded-full mb-1.5" style={{ background: "#f0f0f0" }}>
-                            <div className="h-1 rounded-full" style={{ width: `${score}%`, background: badgeColor }} />
-                          </div>
-                          <div className="flex items-center gap-2 text-[10px] mb-1" style={{ color: "#888" }}>
-                            <span>{deal.stage}</span>
-                            {deal.amount && <span>· {Number(deal.amount).toLocaleString("fr-FR")} €</span>}
-                            {deal.closedate && <span>· Clôture {new Date(deal.closedate).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>}
-                          </div>
-                          {deal.reasoning && (
-                            <p className="text-[11px] leading-relaxed" style={{ color: "#555" }}>{deal.reasoning}</p>
-                          )}
+                        ))}
+                      </div>
+                      {/* Structured details */}
+                      <div className="space-y-0.5">
+                        {[
+                          { label: "Secteur", value: briefing.companyProfile.industry },
+                          { label: "Modèle", value: briefing.companyProfile.businessModel },
+                        ].filter((d) => d.value).map((d) => (
+                          <p key={d.label} className="text-[11px]">
+                            <span style={{ color: "#aaa" }}>{d.label} · </span>
+                            <span style={{ color: "#555" }}>{d.value}</span>
+                          </p>
+                        ))}
+                      </div>
+                      {/* Key fact */}
+                      {briefing.companyProfile.keyFact && (
+                        <p className="text-[11px] leading-relaxed pt-1 border-t" style={{ color: "#555", borderColor: "#f0f0f0" }}>
+                          {briefing.companyProfile.keyFact}
+                        </p>
+                      )}
+                      {/* Growth dynamics (inline - 1 phrase) */}
+                      {briefing.growthDynamics?.summary && (
+                        <p className="text-[10px] leading-relaxed pt-1 border-t" style={{ color: "#888", borderColor: "#f0f0f0" }}>
+                          {briefing.growthDynamics.summary}
+                        </p>
+                      )}
+                      {/* Strategic history (inline) */}
+                      {briefing.strategicHistory && briefing.strategicHistory.length > 0 && (
+                        <div className="pt-2 border-t space-y-1" style={{ borderColor: "#f0f0f0" }}>
+                          <p className="text-[9px] font-semibold uppercase tracking-wide" style={{ color: "#aaa" }}>Historique stratégique</p>
+                          {briefing.strategicHistory.map((item, i) => {
+                            const typeLabels: Record<string, string> = { acquisition: "Acq.", partnership: "Part.", merger: "Fusion", divestiture: "Cession" };
+                            return (
+                              <div key={i} className="flex items-start gap-1.5 text-[10px]">
+                                <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-1" style={{ background: "#f01563" }} />
+                                <span style={{ color: "#888" }}>{item.year ?? "—"}</span>
+                                <span className="font-medium" style={{ color: "#888" }}>{typeLabels[item.type] ?? item.type}</span>
+                                <span style={{ color: "#444" }}><strong style={{ color: "#111" }}>{item.entity}</strong> — {item.description}</span>
+                              </div>
+                            );
+                          })}
                         </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Company insights */}
-              {briefing.companyInsights && (
-                <div className="rounded-xl border p-4" style={{ borderColor: "#e5e5e5", borderLeft: "2px solid #e5e5e5", background: "#fff" }}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide mb-2" style={{ color: "#aaa" }}>Entreprise</p>
-                  <p className="text-xs leading-relaxed" style={{ color: "#555" }}>{briefing.companyInsights}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs leading-relaxed" style={{ color: "#555" }}>{briefing.companyInsights}</p>
+                  )}
                 </div>
               )}
 
@@ -867,32 +944,51 @@ export default function BriefingPage() {
               {briefing.personInsights && (
                 <div className="rounded-xl border p-4" style={{ borderColor: "#e5e5e5", borderLeft: "2px solid #e5e5e5", background: "#fff" }}>
                   <p className="text-[10px] font-semibold uppercase tracking-wide mb-2" style={{ color: "#aaa" }}>Interlocuteur</p>
-                  <p className="text-xs leading-relaxed" style={{ color: "#555" }}>{briefing.personInsights}</p>
-                </div>
-              )}
-
-              {/* Recent news */}
-              {briefing.recentNews?.items?.length > 0 && (
-                <div className="rounded-xl border p-4" style={{ borderColor: "#e5e5e5", borderLeft: "2px solid #e5e5e5", background: "#fff" }}>
-                  <p className="text-[10px] font-semibold uppercase tracking-wide mb-2" style={{ color: "#aaa" }}>Actualités récentes</p>
-                  <div className="space-y-2">
-                    {briefing.recentNews.items.map((item, i) => (
-                      <div key={i} className="flex items-start gap-2">
-                        <span className="w-1.5 h-1.5 rounded-full shrink-0 mt-1.5" style={{ background: "#ccc" }} />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-xs" style={{ color: "#444" }}>{item.text}</p>
-                          {item.url && (
-                            <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-[10px] flex items-center gap-0.5 mt-0.5" style={{ color: "#1d4ed8" }}>
-                              Source <ExternalLink size={9} />
-                            </a>
-                          )}
-                        </div>
-                        {item.date && <span className="text-[10px] shrink-0" style={{ color: "#bbb" }}>{item.date}</span>}
-                      </div>
+                  <div className="text-xs leading-relaxed space-y-1" style={{ color: "#555" }}>
+                    {briefing.personInsights.split("\n").filter(Boolean).map((line, i) => (
+                      <p key={i}>{line}</p>
                     ))}
                   </div>
                 </div>
               )}
+
+              {/* Recent news (categorized) */}
+              {briefing.recentNews?.items?.length > 0 && (() => {
+                const categoryConfig: Record<string, { label: string; bg: string; color: string }> = {
+                  strategic: { label: "Stratégique", bg: "#f5f3ff", color: "#7c3aed" },
+                  recognition: { label: "Reconnaissance", bg: "#fef3c7", color: "#d97706" },
+                  partnership: { label: "Partenariat", bg: "#eff6ff", color: "#2563eb" },
+                  growth: { label: "Croissance", bg: "#f0fdf4", color: "#16a34a" },
+                  leadership: { label: "Leadership", bg: "#eef2ff", color: "#4f46e5" },
+                  general: { label: "Actualité", bg: "#f3f4f6", color: "#6b7280" },
+                };
+                return (
+                  <div className="rounded-xl border p-4" style={{ borderColor: "#e5e5e5", borderLeft: "2px solid #e5e5e5", background: "#fff" }}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide mb-2" style={{ color: "#aaa" }}>Actualités récentes</p>
+                    <div className="space-y-2">
+                      {briefing.recentNews.items.map((item, i) => {
+                        const cat = categoryConfig[item.type] ?? categoryConfig.general;
+                        return (
+                          <div key={i} className="flex items-start gap-2">
+                            <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-md shrink-0 mt-0.5" style={{ background: cat.bg, color: cat.color }}>{cat.label}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-[11px]" style={{ color: "#444" }}>{item.text}</p>
+                              <div className="flex items-center gap-2 mt-0.5">
+                                {item.url && (
+                                  <a href={item.url} target="_blank" rel="noopener noreferrer" className="text-[10px] flex items-center gap-0.5" style={{ color: "#1d4ed8" }}>
+                                    Source <ExternalLink size={9} />
+                                  </a>
+                                )}
+                                {item.date && <span className="text-[10px]" style={{ color: "#bbb" }}>{item.date}</span>}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Questions to ask */}
               {briefing.questionsToAsk && briefing.questionsToAsk.length > 0 && (

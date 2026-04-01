@@ -117,6 +117,7 @@ export async function POST(req: NextRequest) {
         const contacts: unknown[] = [];
         const deals: unknown[] = [];
         const engagements: unknown[] = [];
+        let companyHubspot: Record<string, string> | null = null;
 
         for (const email of emails.slice(0, 3)) {
           const searchRes = await hsPost("/crm/v3/objects/contacts/search", {
@@ -127,6 +128,20 @@ export async function POST(req: NextRequest) {
           const contact = searchRes?.results?.[0];
           if (!contact) continue;
           contacts.push({ id: contact.id, ...contact.properties });
+
+          // Company
+          if (!companyHubspot) {
+            try {
+              const companiesAssoc = await hs(`/crm/v3/objects/contacts/${contact.id}/associations/companies`);
+              const companyId = companiesAssoc?.results?.[0]?.id;
+              if (companyId) {
+                const companyData = await hs(
+                  `/crm/v3/objects/companies/${companyId}?properties=name,domain,industry,city,country,numberofemployees,annualrevenue,description,type,website,founded_year`
+                );
+                companyHubspot = companyData?.properties ?? null;
+              }
+            } catch { /* ignore */ }
+          }
 
           // Deals
           const dealsAssoc = await hs(`/crm/v3/objects/contacts/${contact.id}/associations/deals`);
@@ -206,7 +221,7 @@ export async function POST(req: NextRequest) {
           stage: stageMap.get(d.stage as string) ?? d.stage,
         }));
 
-        return { contacts, deals: resolvedDeals, engagements };
+        return { contacts, deals: resolvedDeals, engagements, companyHubspot };
       })(),
 
       // Gmail: recent emails from/to attendees
@@ -295,35 +310,56 @@ export async function POST(req: NextRequest) {
 
       // Tavily: web news about the company (targeted queries for buying signals)
       (async () => {
-        if (!company) return [];
+        if (!company) return { webResults: [], companyProfileResults: [], strategicResults: [] };
         const attendeeName = externalAttendees[0]?.displayName ?? "";
-        const [r1, r2, r3] = await Promise.allSettled([
+        const [r1, r2, r3, r4, r5] = await Promise.allSettled([
           searchTavily(`"${company}" news`, 60),
           searchTavily(`"${company}" funding OR acquisition OR partnership OR expansion`, 60),
           searchTavily(`"${company}" ${attendeeName} appointment OR nomination`.trim(), 60),
+          searchTavily(`"${company}" profil chiffre affaires employés siège modèle`, 180),
+          searchTavily(`"${company}" acquisition partenariat stratégique historique`, 365),
         ]);
-        const results = [
+
+        const newsResults = [
           ...(r1.status === "fulfilled" ? r1.value : []),
           ...(r2.status === "fulfilled" ? r2.value : []),
           ...(r3.status === "fulfilled" ? r3.value : []),
         ];
-        // Deduplicate by URL
         const seen = new Set<string>();
-        return results.filter((r) => {
+        const webResults = newsResults.filter((r) => {
           if (seen.has(r.url)) return false;
           seen.add(r.url);
           return true;
         }).slice(0, 8);
+
+        const companyProfileResults = (r4.status === "fulfilled" ? r4.value : []).filter((r: { url: string }) => {
+          if (seen.has(r.url)) return false;
+          seen.add(r.url);
+          return true;
+        }).slice(0, 5);
+
+        const strategicResults = (r5.status === "fulfilled" ? r5.value : []).filter((r: { url: string }) => {
+          if (seen.has(r.url)) return false;
+          seen.add(r.url);
+          return true;
+        }).slice(0, 5);
+
+        return { webResults, companyProfileResults, strategicResults };
       })(),
     ]);
+
+    const tavilyData = tavilyResult.status === "fulfilled" ? tavilyResult.value : { webResults: [], companyProfileResults: [], strategicResults: [] };
 
     const rawData = {
       contacts: hsResult.status === "fulfilled" ? hsResult.value.contacts : [],
       deals: hsResult.status === "fulfilled" ? hsResult.value.deals : [],
       engagements: hsResult.status === "fulfilled" ? hsResult.value.engagements : [],
+      companyHubspot: hsResult.status === "fulfilled" ? hsResult.value.companyHubspot : null,
       gmailMessages: gmailResult.status === "fulfilled" ? gmailResult.value : [],
       slackMessages: slackResult.status === "fulfilled" ? slackResult.value : [],
-      webResults: tavilyResult.status === "fulfilled" ? tavilyResult.value : [],
+      webResults: tavilyData.webResults ?? [],
+      companyProfileResults: tavilyData.companyProfileResults ?? [],
+      strategicResults: tavilyData.strategicResults ?? [],
       errors: {
         hubspot: hsResult.status === "rejected" ? String(hsResult.reason) : null,
         gmail: gmailResult.status === "rejected" ? String(gmailResult.reason) : null,

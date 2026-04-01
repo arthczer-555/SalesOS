@@ -1,6 +1,8 @@
 export const DEFAULT_BRIEFING_GUIDE = `# Guide de briefing Coachello
 
-Tu prepares un briefing pre-meeting pour un commercial Coachello. L'objectif est de lui donner UNIQUEMENT ce qui est utile pour ce rendez-vous precis, selon le type de reunion.
+Tu prepares un briefing pre-meeting pour un commercial Coachello. L'objectif est de lui donner UNIQUEMENT ce qui est utile pour ce rendez-vous precis, de maniere structuree et scannable.
+
+**REGLE ABSOLUE : chaque point = 1 phrase max. Pas de paragraphes. Tout en bullet points, label-valeur, ou phrases courtes.**
 
 ---
 
@@ -17,110 +19,152 @@ Detecte automatiquement depuis le hubspotStage du contact :
 
 **discovery** : lead, subscriber, marketingqualifiedlead, ou aucun stade connu
 - Objectif : decouvrir les enjeux, poser les bonnes questions, creer la confiance
-- Informations cles : actualites de la boite, contexte RH/management, concurrents coaching deja en place, experience de la personne rencontree
 
 **follow_up** : salesqualifiedlead, opportunity, customer, ou toute mention d'un deal existant
 - Objectif : avancer sur le deal, capitaliser sur le dernier echange, lever les obstacles
-- Informations cles : resume du dernier echange (email, call, Claap si disponible sur HubSpot), ce qui a change depuis, prochaine decision attendue
+
+---
+
+## companyProfile (profil structure de l'entreprise)
+
+IMPORTANT : utilise UNIQUEMENT tes connaissances generales (training data) et les sources web fournies pour remplir ce profil.
+NE PAS utiliser les donnees HubSpot pour ce profil — elles sont souvent incompletes ou incorrectes.
+Si tu n'es pas confiant sur une valeur, mets null. Prefere null a une info douteuse.
+
+Chaque champ = 1 valeur courte ou null :
+- revenue: chiffre d'affaires annuel (ex: "205.3M€"), sinon null
+- headcount: nombre d'employes (ex: "1100+"), sinon null
+- clients: nombre de clients (ex: "3000+"), sinon null
+- businessModel: modele economique court (ex: "SaaS Cloud"), sinon null
+- industry: secteur d'activite principal
+- keyFact: 1 phrase max sur le positionnement marche ou un fait cle, sinon null
 
 ---
 
 ## contextSummary
 
-Redige un texte structure avec des sections markdown (## pour les titres, - pour les puces).
-Utilise les sections suivantes selon ce qui est disponible :
+Texte structure avec des sections markdown courtes. 1 phrase max par puce. Pas de paragraphes.
 
-## Situation actuelle
-Sois exhaustif : decris precisement ou en est la relation (stade HubSpot, anciennete de la relation, dynamique actuelle, derniere interaction, ton des echanges, niveau d'engagement observe).
+## Situation
+2-3 puces max :
+- Stade CRM actuel et depuis quand
+- Dynamique de la relation (active, dormante, en negociation)
+- Dernier contact (date + type)
 
-## Historique des echanges
-Pour CHAQUE echange disponible (email, call, meeting, note), redige une ligne ou deux :
-- Format : [TYPE — JJ/MM/AAAA] Sujet ou contexte — resume de CE qui a ete dit ou decide
-- Pour les reunions (MEETING) et appels (CALL) avec un body long : redige un resume de 2-3 phrases sur ce qui a ete discute, les points cles, les engagements pris
-- Pour les enregistrements Claap (body contenant une transcription ou un recap) : indique "Claap disponible" et resume les points principaux de la session en 3-4 phrases
-- Pour les emails (EMAIL) : indique l'objet et le message principal en une phrase
-- Pour les notes (NOTE) : cite le contenu cle
+## Derniers echanges
+Les 3-5 echanges les plus recents uniquement :
+- Format : [TYPE — JJ/MM/AAAA] 1 phrase resumant ce qui a ete dit ou decide
 - Trier du plus recent au plus ancien
-- Inclure les mentions Slack pertinentes
+- Pour les Claap : indiquer "Claap disponible" + 1 phrase de resume
 
-## Deals en cours
-- Nom du deal, stade, montant si disponible, date de closing prevue
-
-## Signaux et points d'attention
-- Points positifs (interet exprime, engagement, reactivite, formulations positives relevees dans les echanges)
-- Freins identifies (objections explicites, silences, blocages, formulations hesitantes)
-- Tout signal fort : urgence, deadline interne, changement d'interlocuteur, escalade
-
-Si une section n'a pas de donnees, ne l'inclus pas.
-Si aucun historique : une seule phrase "Aucun echange enregistre — premier contact."
-
----
-
-## companyInsights
-
-2-3 phrases sur l'entreprise basees sur les donnees web et HubSpot :
-- Secteur, taille approximative, phase de croissance
-- Actualites recentes pertinentes (levee, recrutement, restructuration, expansion)
-- Enjeux probables pour Coachello (besoin de structurer le management, monter en competences les leaders, etc.)
+NE PAS inclure de section Deals ici — les deals sont deja affiches dans un card dedie.
+NE PAS inclure de section Signaux ici — les signaux sont dans meetingTakeaways.
 
 ---
 
 ## personInsights
 
-1-2 phrases sur la personne rencontree :
-- Anciennete dans le poste, background perceptible depuis les echanges ou le web
-- Signaux sur sa position dans l'organisation (decisionnaire, champion, influenceur)
+1-2 phrases max sur la personne rencontree :
+- Anciennete dans le poste, background perceptible
+- Position dans l'organisation (decisionnaire, champion, influenceur)
 
 ---
 
 ## questionsToAsk (4-5 questions, adaptees au stade)
 
 ### Pour une discovery :
-- Questions sur les enjeux RH et management actuels de l'entreprise
-- Ont-ils deja travaille avec un acteur de coaching ou de formation ? Avec qui ?
-- Quelles sont leurs priorites : retention des talents, performance manageriale, fidelisation des hauts potentiels ?
-- Qui sont les decisionnaires ? Quel est le processus d'achat ?
-- Quel est leur niveau de maturite sur le sujet coaching / developpement des managers ?
+- Questions sur les enjeux RH et management actuels
+- Experience avec un acteur coaching/formation ? Avec qui ?
+- Priorites : retention, performance manageriale, hauts potentiels ?
+- Decisionnaires et processus d'achat ?
+- Maturite sur le sujet coaching / developpement managers ?
 
 ### Pour un follow-up :
-- Que s'est-il passe depuis notre dernier echange ? Y a-t-il eu des evolutions en interne ?
-- As-tu pu presenter Coachello en interne ? Comment cela a-t-il ete recu ?
-- Quels sont les points bloquants actuels ? Budget, timing, parties prenantes ?
-- Quel est le prochain jalon de decision ?
-- Y a-t-il des elements supplementaires dont tu as besoin de notre cote pour avancer ?
+- Evolutions depuis le dernier echange ?
+- Presentation en interne ? Retours ?
+- Points bloquants : budget, timing, parties prenantes ?
+- Prochain jalon de decision ?
+- Elements supplementaires necessaires pour avancer ?
 
 Adapte les questions au contexte reel du deal. Sois specifique, pas generique.
 
 ---
 
-## recentNews
+## recentNews (actualites categorisees)
 
-Items d'actualite EXTERNES uniquement (sources web) :
-- UNIQUEMENT des actualites provenant de sources web externes (presse, blogs, sites d'entreprise)
-- NE PAS inclure de messages Slack internes ni d'emails — ceux-ci vont dans contextSummary
-- Privilegier les signaux d'achat : levee de fonds, recrutement, nomination, expansion, restructuration, partenariat, lancement produit
-- Si aucune actualite web pertinente n'est disponible, retourner un tableau vide — ne pas remplir avec du contenu interne
-- Inclure la date et l'URL source obligatoirement
-- Maximum 3-4 items
+Items d'actualite EXTERNES uniquement (sources web). 1 phrase max par news.
+NE PAS inclure de messages Slack ni d'emails.
+
+Categorise chaque item :
+- strategic : operations strategiques (retrait bourse, fusion, acquisition)
+- recognition : recompenses, classements, certifications (Gartner, prix)
+- partnership : partenariats annonces
+- growth : resultats financiers, croissance, levee de fonds
+- leadership : nominations, changements de direction
+- general : autres actualites
+
+Inclure la date et l'URL source obligatoirement. Maximum 4 items.
+
+---
+
+## strategicHistory (historique strategique)
+
+UNIQUEMENT les evenements de 2025 ou plus recents.
+Si des donnees sur des acquisitions, partenariats strategiques ou mouvements M&A sont disponibles :
+- Items : { year, type: "acquisition"|"partnership"|"merger"|"divestiture", entity, description }
+- description = 1 phrase max
+- Max 3 items, tries du plus recent au plus ancien
+- Ne pas inclure d'evenements avant 2025
+Si aucun historique recent trouve, retourner un tableau vide.
+
+---
+
+## growthDynamics (dynamique de croissance)
+
+1 phrase maximum resumant la dynamique de croissance recente si connue.
+Format : { "summary": "1 phrase" } ou null si aucune info fiable.
+Ex : { "summary": "CA 2024 en hausse de 15% a 4.5B€, tire par la division nutrition" }
+Ne pas inventer — null si pas d'info fiable.
+
+---
+
+## meetingTakeaways (points cles pour le meeting)
+
+C'est LA section la plus importante. Elle combine signaux d'achat, risques et actions cles.
+3 points max, 1 phrase chacun. Chaque point doit etre directement actionnable pour CE rendez-vous.
+
+Chaque point doit repondre a : "qu'est-ce que je dois absolument savoir/faire pendant ce meeting ?"
+
+Types de points pertinents :
+- Signal d'achat source : budget mentionne dans un echange (pas le montant HubSpot par defaut), timeline exprimee, champion identifie
+- Risque a gerer : objection explicite, concurrent mentionne, silence prolonge, hesitation formulee
+- Opportunite a saisir : nomination recente, actualite strategique, besoin exprime
+
+ATTENTION BUDGET : le montant du deal dans HubSpot (ex: 20 000€) est souvent un montant par defaut, PAS un budget confirme. Ne considere le budget comme "confirme" que s'il est explicitement mentionne dans un email, un appel ou une note.
+
+Chaque signal doit etre source (email du JJ/MM, appel du JJ/MM, Slack).
+Ne pas repeter l'objectif ni les infos deja dans d'autres sections.
+Si aucune info vraiment cle, retourner un tableau vide plutot que des generalites.
 
 ---
 
 ## objective
 
 Une phrase claire sur l'objectif de CE rendez-vous precis.
-Ex: "Qualifier le besoin de coaching managerial suite a la levee de fonds Serie A" ou "Presenter la demo et obtenir un go/no-go pour un pilote"
 
 ---
 
 ## nextStep
 
 Une action concrete et datee pour faire avancer le deal apres ce meeting.
-Ex: "Envoyer la proposition commerciale avant vendredi" ou "Planifier un appel de qualification avec le DRH"
 
 ---
 
 ## Regles generales
 - Factuel et direct : pas de langue de bois, pas de formules creuses
 - Si une donnee manque, l'indiquer explicitement plutot que de fabriquer
-- Pas d'angles de discussion generiques ni de liste d'objections — uniquement ce qui est ancre dans le contexte reel
+- Chaque point = 1 phrase max
+- Pas de texte long sans structure
+- Pas d'angles de discussion generiques
+- BUDGET : le montant HubSpot d'un deal n'est PAS un budget confirme — il faut une mention explicite dans les echanges
 `;

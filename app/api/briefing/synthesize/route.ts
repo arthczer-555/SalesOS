@@ -9,6 +9,109 @@ import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
+// ── Tool schema — Anthropic guarantees valid JSON output ─────────────────────
+const briefingTool: Anthropic.Tool = {
+  name: "generate_briefing",
+  description: "Génère le briefing structuré pour la réunion",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      identity: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nom du contact principal" },
+          role: { type: "string", description: "Poste / rôle" },
+          company: { type: "string", description: "Entreprise" },
+          hubspotStage: { type: "string", description: "Stade CRM HubSpot" },
+          lastContact: { type: "string", description: "Date du dernier contact" },
+        },
+        required: ["name", "role", "company", "hubspotStage", "lastContact"],
+      },
+      meetingType: { type: "string", enum: ["discovery", "follow_up"] },
+      objective: { type: "string", description: "1 phrase : objectif de ce rendez-vous" },
+      contextSummary: { type: "string", description: "Markdown structuré : ## Situation, ## Derniers échanges. 1 phrase max par puce. Utiliser \\n pour les retours à la ligne." },
+      companyProfile: {
+        type: "object",
+        properties: {
+          revenue: { type: "string", description: "CA annuel (ex: '205.3M€') ou null" },
+          headcount: { type: "string", description: "Nombre d'employés (ex: '1100+') ou null" },
+          clients: { type: "string", description: "Nombre de clients ou null" },
+          businessModel: { type: "string", description: "Modèle court (ex: 'SaaS Cloud') ou null" },
+          industry: { type: "string", description: "Secteur d'activité" },
+          keyFact: { type: "string", description: "1 phrase max : positionnement marché ou fait clé, ou null" },
+        },
+      },
+      personInsights: { type: "string", description: "Insights sur les interlocuteurs. Utiliser \\n pour séparer chaque personne." },
+      recentNews: {
+        type: "object",
+        properties: {
+          items: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["strategic", "recognition", "partnership", "growth", "leadership", "general"] },
+                text: { type: "string", description: "1 phrase" },
+                url: { type: "string" },
+                date: { type: "string" },
+              },
+              required: ["type", "text", "date"],
+            },
+          },
+        },
+        required: ["items"],
+      },
+      strategicHistory: {
+        type: "array",
+        description: "Uniquement événements 2025+. Max 3.",
+        items: {
+          type: "object",
+          properties: {
+            year: { type: "string", description: "Année (ex: '2025') ou null" },
+            type: { type: "string", enum: ["acquisition", "partnership", "merger", "divestiture"] },
+            entity: { type: "string" },
+            description: { type: "string", description: "1 phrase max" },
+          },
+          required: ["type", "entity", "description"],
+        },
+      },
+      growthDynamics: {
+        type: "object",
+        description: "null si aucune info fiable",
+        properties: {
+          summary: { type: "string", description: "1 phrase résumant la dynamique de croissance" },
+        },
+      },
+      meetingTakeaways: {
+        type: "array",
+        description: "Max 3 points clés actionnables, 1 phrase chacun. Tableau vide si rien de vraiment clé.",
+        items: { type: "string" },
+      },
+      questionsToAsk: {
+        type: "array",
+        description: "4-5 questions adaptées au stade",
+        items: { type: "string" },
+      },
+      nextStep: { type: "string", description: "1 action concrète et datée" },
+      confidence: { type: "string", enum: ["high", "medium", "low"] },
+      dealQualification: {
+        type: "object",
+        properties: {
+          budget: { type: "string", description: "Budget confirmé dans les échanges (PAS le montant HubSpot par défaut) ou null" },
+          estimatedBudget: { type: "string", description: "Estimation chiffrée ou null" },
+          authority: { type: "string", description: "Décisionnaire identifié ou null" },
+          need: { type: "string", description: "Besoin qualifié en 1 phrase ou null" },
+          champion: { type: "string", description: "Champion interne ou null" },
+          needDetailed: { type: "string", description: "Besoin détaillé en 1 phrase ou null" },
+          timeline: { type: "string", description: "Horizon temporel ou null" },
+          strategicFit: { type: "string", description: "Fit stratégique en 1 phrase ou null" },
+        },
+      },
+    },
+    required: ["identity", "meetingType", "objective", "contextSummary", "confidence"],
+  },
+};
+
 export async function POST(req: NextRequest) {
   try {
     const user = await getAuthenticatedUser();
@@ -23,9 +126,12 @@ export async function POST(req: NextRequest) {
         contacts: Record<string, string>[];
         deals: { name: string; stage: string; amount: string | null; closedate: string | null }[];
         engagements: { type: string; date: string; subject: string | null; body: string | null; duration: number | null }[];
+        companyHubspot: Record<string, string> | null;
         gmailMessages: { subject: string; from: string; date: string; snippet: string }[];
         slackMessages: { channel: string; text: string; timestamp: string }[];
         webResults: { title: string; url: string; content: string; published_date: string | null }[];
+        companyProfileResults: { title: string; url: string; content: string; published_date: string | null }[];
+        strategicResults: { title: string; url: string; content: string; published_date: string | null }[];
       };
     };
 
@@ -44,7 +150,11 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Clé Claude non configurée" }, { status: 402 });
       }
       claudeApiKey = decrypt({ encryptedKey: keyRes.data.encrypted_key, iv: keyRes.data.iv, authTag: keyRes.data.auth_tag });
-      briefingGuide = userRes.data?.briefing_guide ?? globalGuide.data?.content ?? DEFAULT_BRIEFING_GUIDE;
+      const adminBriefing = globalGuide.data?.content ?? DEFAULT_BRIEFING_GUIDE;
+      const userBriefingInstructions = userRes.data?.briefing_guide?.trim() ?? "";
+      briefingGuide = userBriefingInstructions
+        ? `${adminBriefing}\n\n--- INSTRUCTIONS PERSONNELLES ---\n${userBriefingInstructions}`
+        : adminBriefing;
       try {
         const modelMap = globalModelPrefs.data?.content ? JSON.parse(globalModelPrefs.data.content) as Record<string, string> : {};
         briefingModel = modelMap.briefing ?? "claude-haiku-4-5-20251001";
@@ -96,6 +206,29 @@ export async function POST(req: NextRequest) {
       ).join("\n\n"));
     }
 
+    if (rawData.companyHubspot) {
+      const c = rawData.companyHubspot;
+      sections.push("=== DONNÉES HUBSPOT ENTREPRISE (contexte seulement — NE PAS utiliser pour companyProfile, préférer tes connaissances et le web) ===\n" +
+        [
+          c.name ? `Nom: ${c.name}` : null,
+          c.industry ? `Secteur: ${c.industry}` : null,
+          c.website ? `Site: ${c.website}` : null,
+          c.description ? `Description: ${c.description}` : null,
+        ].filter(Boolean).join("\n"));
+    }
+
+    if (rawData.companyProfileResults?.length > 0) {
+      sections.push("=== PROFIL ENTREPRISE (sources web — utiliser pour companyProfile) ===\n" + rawData.companyProfileResults.slice(0, 5).map((r) =>
+        `${r.title} (${r.published_date ?? "date inconnue"})\nURL: ${r.url}\n${r.content}`
+      ).join("\n\n"));
+    }
+
+    if (rawData.strategicResults?.length > 0) {
+      sections.push("=== HISTORIQUE STRATÉGIQUE (sources web — utiliser pour strategicHistory) ===\n" + rawData.strategicResults.slice(0, 5).map((r) =>
+        `${r.title} (${r.published_date ?? "date inconnue"})\nURL: ${r.url}\n${r.content}`
+      ).join("\n\n"));
+    }
+
     const contextBlock = sections.join("\n\n");
 
     const systemPrompt = `${briefingGuide}
@@ -105,29 +238,8 @@ export async function POST(req: NextRequest) {
 Tu prepares un briefing de reunion. Suis les instructions du guide ci-dessus.
 Tu recois des donnees issues de HubSpot, Gmail, Slack et du web.
 Si tu manques de donnees pour une section, dis-le explicitement — ne fabrique rien.
-Reponds UNIQUEMENT en JSON valide avec exactement cette structure :
-{
-  "identity": { "name": "...", "role": "...", "company": "...", "hubspotStage": "...", "lastContact": "..." },
-  "meetingType": "discovery|follow_up",
-  "objective": "...",
-  "contextSummary": "texte structuré avec sections markdown (## Situation actuelle, ## Historique des échanges, ## Deals en cours, ## Signaux et points d'attention) — utilise ## pour les titres et - pour les puces",
-  "companyInsights": "2-3 phrases sur l'entreprise : secteur, taille, actualités récentes, enjeux probables",
-  "personInsights": "1-2 phrases sur la personne : ancienneté, background, position dans l'org",
-  "recentNews": { "items": [{ "type": "web|slack|email", "text": "...", "url": "...", "date": "..." }] },
-  "questionsToAsk": ["question 1 adaptée au stade", "question 2", "question 3", "question 4"],
-  "nextStep": "...",
-  "confidence": "high|medium|low",
-  "dealQualification": {
-    "budget": "valeur connue ou null si non identifiée",
-    "estimatedBudget": "estimation chiffrée connue ou null",
-    "authority": "nom/rôle du décisionnaire si identifié, sinon null",
-    "need": "besoin qualifié en une phrase ou null",
-    "champion": "nom du champion interne si identifié, sinon null",
-    "needDetailed": "description détaillée du besoin ou null",
-    "timeline": "horizon temporel (ex: Q3 2025, dans 6 mois...) ou null",
-    "strategicFit": "raison du fit stratégique ou null"
-  }
-}`;
+REGLE ABSOLUE : chaque point = 1 phrase max. Pas de paragraphes. Tout structuré.
+Utilise l'outil generate_briefing pour retourner le briefing.`;
 
     const eventDate = eventStart ? new Date(eventStart).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : "";
 
@@ -136,26 +248,23 @@ Participants externes : ${attendees.map((a) => `${a.displayName ?? ""} <${a.emai
 
 ${contextBlock || "Aucune donnée trouvée dans les sources connectées."}
 
-Génère le briefing JSON pour cette réunion.`;
+Génère le briefing pour cette réunion.`;
 
     const client = new Anthropic({ apiKey: claudeApiKey });
     const message = await client.messages.create({
       model: briefingModel,
-      max_tokens: 4000,
+      max_tokens: 5000,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
+      tools: [briefingTool],
+      tool_choice: { type: "tool" as const, name: "generate_briefing" },
     });
 
     logUsage(user.id, briefingModel, message.usage.input_tokens, message.usage.output_tokens, "briefing");
 
-    const raw = message.content[0].type === "text" ? message.content[0].text : "";
-    let briefing: Record<string, unknown> = {};
-    try {
-      const match = raw.match(/\{[\s\S]*\}/);
-      if (match) briefing = JSON.parse(match[0]);
-    } catch {
-      briefing = { error: "parse_failed", raw };
-    }
+    // Tool use guarantees valid JSON — no parsing needed
+    const toolBlock = message.content.find((b) => b.type === "tool_use");
+    const briefing = (toolBlock && "input" in toolBlock ? toolBlock.input : { error: "no_tool_response" }) as Record<string, unknown>;
 
     // ── Upsert with briefing ──────────────────────────────────────────────────
     await db.from("meeting_briefings").upsert({

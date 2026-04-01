@@ -9,6 +9,70 @@ export const maxDuration = 120;
 
 const DEFAULT_ANALYZE_MODEL = "claude-sonnet-4-6";
 
+const analyzeTool: Anthropic.Tool = {
+  name: "deal_analysis",
+  description: "Retourne l'analyse structurée du deal",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      synthese: { type: "string", description: "2-3 phrases résumant l'état réel du deal" },
+      riskLevel: { type: "string", enum: ["Faible", "Moyen", "Élevé"] },
+      dynamique: {
+        type: "object",
+        properties: {
+          momentum: { type: "string", enum: ["En accélération", "Stable", "En perte de vitesse"] },
+          analyse: { type: "string", description: "Analyse précise de la dynamique" },
+        },
+        required: ["momentum", "analyse"],
+      },
+      qualification: {
+        type: "object",
+        properties: {
+          budget: { type: "string" },
+          authority: { type: "string" },
+          need: { type: "string" },
+          timeline: { type: "string" },
+          fit: { type: "string" },
+        },
+        required: ["budget", "authority", "need", "timeline", "fit"],
+      },
+      signaux: {
+        type: "object",
+        properties: {
+          positifs: { type: "array", items: { type: "string" } },
+          negatifs: { type: "array", items: { type: "string" } },
+        },
+        required: ["positifs", "negatifs"],
+      },
+      risques: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            risque: { type: "string" },
+            severite: { type: "string", enum: ["Faible", "Moyen", "Élevé"] },
+          },
+          required: ["risque", "severite"],
+        },
+      },
+      scoreInsight: { type: "string", description: "Lecture du score IA" },
+      prochaines_etapes: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            action: { type: "string" },
+            priorite: { type: "string", enum: ["Urgent", "Moyen", "Faible"] },
+            impact: { type: "string" },
+          },
+          required: ["action", "priorite", "impact"],
+        },
+      },
+    },
+    required: ["synthese", "riskLevel", "dynamique", "qualification", "signaux", "risques", "scoreInsight", "prochaines_etapes"],
+  },
+};
+
 function stripHtml(s: string): string {
   return s
     .replace(/<[^>]+>/g, " ")
@@ -213,44 +277,17 @@ export async function POST(req: NextRequest) {
       system: `Tu es un expert en vente B2B pour Coachello (coaching professionnel).
 Analyse ce deal commercial en profondeur à partir de TOUTES les données disponibles (score IA, échanges, contacts, contexte).
 Sois hyper précis et factuel — base chaque analyse sur des éléments concrets tirés des échanges.
-
-Retourne UNIQUEMENT un JSON valide avec cette structure :
-{
-  "synthese": "2-3 phrases résumant l'état réel du deal et sa probabilité de close",
-  "riskLevel": "Faible" | "Moyen" | "Élevé",
-  "dynamique": {
-    "momentum": "En accélération" | "Stable" | "En perte de vitesse",
-    "analyse": "analyse précise de la dynamique : fréquence et qualité des échanges récents, réactivité du prospect, signaux de progression ou de stagnation"
-  },
-  "qualification": {
-    "budget": "analyse du budget : confirmé/en discussion/inconnu, montant connu, signaux budgétaires identifiés dans les échanges",
-    "authority": "analyse de l'autorité : qui est le vrai décisionnaire, niveau d'accès réel, composition du buying group, présence d'un sponsor exécutif",
-    "need": "analyse du besoin : urgence réelle, contexte business précis, problème métier que Coachello résout pour ce client",
-    "timeline": "analyse du calendrier : deadline réelle vs indicative, risques de glissement, facteurs d'urgence ou de blocage",
-    "fit": "analyse du fit stratégique : adéquation de l'offre Coachello avec le besoin, points forts et limites du positionnement"
-  },
-  "signaux": {
-    "positifs": ["signal factuel 1", "signal factuel 2", "signal factuel 3"],
-    "negatifs": ["signal factuel 1", "signal factuel 2"]
-  },
-  "risques": [
-    { "risque": "description précise du risque", "severite": "Faible" | "Moyen" | "Élevé" }
-  ],
-  "scoreInsight": "lecture précise du score IA : quelles dimensions sont sous-évaluées ou surévaluées et pourquoi, ce qui ferait progresser le score",
-  "prochaines_etapes": [
-    { "action": "action concrète et précise", "priorite": "Urgent" | "Moyen" | "Faible", "impact": "impact attendu sur le deal" }
-  ]
-}`,
+Utilise l'outil deal_analysis pour retourner ton analyse.`,
       messages: [{ role: "user", content: contextBlock }],
+      tools: [analyzeTool],
+      tool_choice: { type: "tool" as const, name: "deal_analysis" },
     });
 
     logUsage(user.id, analyzeModel, message.usage.input_tokens, message.usage.output_tokens, "deals_analyze");
-    const raw = message.content[0].type === "text" ? message.content[0].text : "";
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("Réponse IA invalide");
+    const toolBlock = message.content.find((b) => b.type === "tool_use");
+    if (!toolBlock || !("input" in toolBlock)) throw new Error("Réponse IA invalide");
 
-    const analysis = JSON.parse(jsonMatch[0]);
-    return NextResponse.json(analysis);
+    return NextResponse.json(toolBlock.input);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Erreur";
     console.error("[analyze] error:", msg);
