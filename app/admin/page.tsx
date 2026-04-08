@@ -38,9 +38,27 @@ export default async function AdminPage() {
   const now = new Date();
   const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
-  const [{ data: allLogs }, { data: monthLogs }] = await Promise.all([
-    db.from("usage_logs").select("user_id, model, input_tokens, output_tokens"),
-    db.from("usage_logs").select("user_id, model, input_tokens, output_tokens").gte("created_at", monthStart),
+  // Supabase returns max 1000 rows by default — paginate to get all logs
+  type LogRow = { user_id: string; model: string; input_tokens: number; output_tokens: number };
+  async function fetchAllLogs(filter?: { gte?: { col: string; val: string } }): Promise<LogRow[]> {
+    const all: LogRow[] = [];
+    const PAGE = 1000;
+    let from = 0;
+    while (true) {
+      let q = db.from("usage_logs").select("user_id, model, input_tokens, output_tokens");
+      if (filter?.gte) q = q.gte(filter.gte.col, filter.gte.val);
+      const { data } = await q.range(from, from + PAGE - 1);
+      if (!data || data.length === 0) break;
+      all.push(...(data as LogRow[]));
+      if (data.length < PAGE) break;
+      from += PAGE;
+    }
+    return all;
+  }
+
+  const [allLogs, monthLogs] = await Promise.all([
+    fetchAllLogs(),
+    fetchAllLogs({ gte: { col: "created_at", val: monthStart } }),
   ]);
 
   const keyMap = new Map((keys ?? []).map((k) => [k.user_id, k.is_active]));
