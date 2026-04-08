@@ -28,21 +28,24 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
 
 // Max points per dimension per model
 const MODEL_MAXES = {
-  generic:        { authority: 25, budget: 15, timeline: 15, business_need: 20, engagement: 15, strategic_fit: 10 },
-  human_coaching: { authority: 25, budget: 20, timeline: 15, business_need: 20, engagement: 10, strategic_fit: 10 },
-  ai_coaching:    { authority: 20, budget: 15, timeline: 20, business_need: 20, engagement: 15, strategic_fit: 10 },
+  generic:        { authority: 20, budget: 15, timeline: 10, business_need: 20, engagement: 25, strategic_fit: 10 },
+  human_coaching: { authority: 20, budget: 15, timeline: 10, business_need: 20, engagement: 25, strategic_fit: 10 },
+  ai_coaching:    { authority: 15, budget: 15, timeline: 10, business_need: 20, engagement: 25, strategic_fit: 15 },
 };
 
 const DIMENSION_NAMES = {
-  generic:        ["Authority & Buying Group", "Budget Clarity", "Timeline Certainty", "Business Need Strength", "Engagement & Momentum", "Strategic Fit"],
-  human_coaching: ["Authority & Governance", "Budget & Procurement", "Timeline", "Business Need Depth", "Engagement", "Strategic Expansion"],
-  ai_coaching:    ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Usage Intent", "Strategic AI Fit"],
+  generic:        ["Authority & Buying Group", "Budget Clarity", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit"],
+  human_coaching: ["Authority & Governance", "Budget", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit"],
+  ai_coaching:    ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Momentum", "Strategic AI Fit"],
 };
 
 export async function scoreOneDeal(dealId: string, userId: string | null, claudeModel = DEFAULT_SCORE_MODEL): Promise<DealScore & { reasoning: string; next_action: string; qualification: Record<string, string | null> }> {
   const DEAL_PROPS = [
     "dealname", "dealstage", "amount", "closedate", "description",
     "hs_deal_stage_probability", "deal_type", "notes_last_contacted", "hs_lastmodifieddate",
+    "createdate",
+    // Custom qualification fields (may or may not be filled)
+    "authority_status", "budget_status", "decision_timeline", "business_need_level", "strategic_fit",
   ];
 
   const [dealData, contactAssoc, engagementAssoc] = await Promise.allSettled([
@@ -140,76 +143,103 @@ export async function scoreOneDeal(dealId: string, userId: string | null, claude
     }
   }
 
+  // CRM qualification fields
+  const crmFields = [
+    p.authority_status ? `authority_status = "${p.authority_status}"` : null,
+    p.budget_status ? `budget_status = "${p.budget_status}"` : null,
+    p.decision_timeline ? `decision_timeline = "${p.decision_timeline}"` : null,
+    p.business_need_level ? `business_need_level = "${p.business_need_level}"` : null,
+    p.strategic_fit ? `strategic_fit = "${p.strategic_fit}"` : null,
+  ].filter(Boolean);
+
+  const dealAge = p.createdate ? Math.floor((Date.now() - new Date(p.createdate).getTime()) / 864e5) : null;
+
   const context = [
     `Deal : ${p.dealname ?? "?"} | Stage : ${p.dealstage ?? "?"} | Probabilité : ${p.hs_deal_stage_probability ?? "?"}%`,
     `Montant : ${p.amount ? `${parseFloat(p.amount).toLocaleString("fr-FR")}€` : "non renseigné"}`,
     `Clôture : ${p.closedate ? new Date(p.closedate).toLocaleDateString("fr-FR") : "non renseignée"}`,
+    dealAge !== null ? `Âge du deal : ${dealAge} jours` : null,
     p.description ? `Description : ${p.description}` : null,
+    crmFields.length > 0 ? `\nChamps CRM renseignés :\n${crmFields.join("\n")}` : "Champs CRM de qualification : aucun renseigné",
     contactLines ? `Contacts : ${contactLines}` : "Contacts : aucun",
     engagementLines ? `\nÉchanges récents :\n${engagementLines}` : "Échanges : aucun enregistré",
   ].filter(Boolean).join("\n");
 
   const systemPrompt = `Tu es un expert en vente B2B pour Coachello (coaching professionnel).
 Analyse le deal ci-dessous et attribue un score entier entre 0 et le maximum pour chaque dimension.
-Tu peux utiliser n'importe quelle valeur entière dans cet intervalle — sois précis et nuancé.
+Tu peux utiliser n'importe quelle valeur entière dans cet intervalle — sois précis et EXIGEANT.
 Modèle détecté : ${model}.
+
+=== MÉTHODE DE SCORING ===
+
+Tu reçois deux sources d'information :
+1. **Champs CRM** : valeurs renseignées manuellement dans HubSpot (peuvent être présentes ou absentes)
+2. **Conversations** : emails, meetings, calls, notes associés au deal
+
+RÈGLE FONDAMENTALE : croise TOUJOURS les deux sources.
+- Champ CRM rempli → utilise-le comme base, mais VÉRIFIE dans les conversations. Si les conversations contredisent le champ, c'est la réalité des conversations qui prime. Signale l'incohérence dans le reasoning.
+- Champ CRM vide → déduis depuis les conversations uniquement.
+- Si AUCUNE information (champ vide + pas de conversation pertinente) → score 0 sur cette dimension. Ne donne JAMAIS un score par défaut ou "au milieu" par manque d'info.
 
 === CRITÈRES DE SCORING ===
 
 1. ${names[0]} (0 à ${maxes.authority} pts)
-Évalue l'autorité du contact principal à partir de son titre/rôle et des échanges.
-- Très élevé (proche de ${maxes.authority}) : sponsor exécutif, C-level, DG, DRH, VP avec pouvoir de décision et budget
-- Élevé : directeur fonctionnel impliqué avec budget propre, décisionnaire identifié
-- Moyen : manager intermédiaire impliqué mais pas décisionnaire final, doit convaincre au-dessus
-- Faible : champion sans autorité budgétaire, employé enthousiaste
-- Nul (0) : aucun contact identifié
-IMPORTANT : Si un DRH, C-level, VP ou directeur fonctionnel est identifié comme signataire ou décisionnaire final dans les échanges (même s'il n'est pas le premier point de contact), le score doit être ≥ 20. Un champion actif qui remonte directement à un DRH/C-level validant = score élevé, pas moyen. Tiens compte du buying group complet, pas seulement du contact principal.
+Évalue qui est dans la boucle et si le décisionnaire final est identifié et engagé.
+- ${maxes.authority} pts : sponsor exécutif (C-level, DG, DRH, VP) identifié ET directement engagé dans les échanges
+- 14 pts : senior decision maker contacté, décisionnaire identifié mais pas encore engagé directement
+- 8 pts : middle manager impliqué, remonte au décisionnaire mais pas de contact direct
+- 4 pts : champion enthousiaste sans aucune autorité budgétaire
+- 0 pts : aucun contact identifié ou interlocuteur inconnu
 
 2. ${names[1]} (0 à ${maxes.budget} pts)
-Évalue la clarté et la disponibilité du budget à partir du montant, des échanges, de la description.
-- Très élevé (proche de ${maxes.budget}) : budget explicitement confirmé et approuvé
-- Élevé : budget identifié, en cours d'approbation, signaux positifs clairs
-- Moyen : discussion budget amorcée, aucune confirmation mais pas de blocage
-- Faible : budget non mentionné, vague, ou sujet sensible
-- Nul (0) : budget refusé ou deal explicitement sans budget
+Évalue la clarté et la disponibilité du budget.
+- ${maxes.budget} pts : budget confirmé, approuvé, montant connu
+- 10 pts : budget identifié, en cours d'approbation, signaux positifs
+- 6 pts : discussion budget amorcée, pas de confirmation
+- 3 pts : budget évoqué vaguement, aucun chiffre
+- 0 pts : budget jamais mentionné ou explicitement refusé
 
 3. ${names[2]} (0 à ${maxes.timeline} pts)
-Évalue l'urgence et la précision du calendrier de décision à partir de la closedate et des échanges.
-- Très élevé (proche de ${maxes.timeline}) : décision attendue dans les 30 jours, deadline ferme
-- Élevé : décision dans les 90 jours, calendrier discuté
-- Moyen : décision dans les 6 mois, horizon mentionné mais flou
-- Faible : délai au-delà de 6 mois ou très incertain
-- Nul (0) : aucune information sur le calendrier
+Évalue la précision du calendrier de décision.
+- ${maxes.timeline} pts : décision dans les 30 jours, deadline ferme confirmée par le prospect
+- 7 pts : décision dans les 90 jours, calendrier discuté concrètement
+- 4 pts : horizon 3-6 mois, mentionné mais flou
+- 1 pt : au-delà de 6 mois
+- 0 pts : aucune information sur le calendrier
 
-4. ${names[3]} (0 à ${maxes.business_need} pts)
-Évalue l'intensité et la clarté du besoin métier à partir de la description et des échanges.
-- Très élevé (proche de ${maxes.business_need}) : douleur critique, blocage business, urgence clairement exprimée
-- Élevé : besoin significatif avec objectifs concrets et ROI attendu articulé
-- Moyen : besoin réel mais projet d'amélioration sans urgence forte
-- Faible : exploration, curiosité initiale, besoin mal défini
-- Nul (0) : aucun besoin identifié
+4. ${names[3]} (0 à ${maxes.business_need} pts) — SCORING DUR
+Évalue l'intensité RÉELLE du besoin, pas ce qu'on voudrait croire.
+- ${maxes.business_need} pts : douleur critique DOCUMENTÉE — le prospect a verbalisé le problème ET son impact chiffré/concret (turnover, perte de productivité, échec de transformation, etc.)
+- 12 pts : besoin significatif et clair, objectifs concrets identifiés, mais pas encore chiffré en impact
+- 5 pts : "nice to have" — intéressé par le coaching mais pas urgent, pas de douleur identifiée
+- 1 pt : exploration pure — le prospect est curieux, aucun problème concret identifié
+- 0 pts : aucun besoin identifié ou pas assez d'info pour juger
+IMPORTANT : Un prospect qui dit "on veut du coaching" sans expliquer POURQUOI = 5 max. Pour aller au-dessus de 12, il faut un impact business articulé.
 
-5. ${names[4]} (0 à ${maxes.engagement} pts)
-Évalue la dynamique relationnelle à partir de la fréquence et qualité des échanges récents.
-- Très élevé (proche de ${maxes.engagement}) : échanges fréquents et récents (< 7 jours), momentum fort, multiples interlocuteurs
-- Élevé : échanges réguliers récents, bonne réactivité
-- Moyen : contact sporadique (7–15 jours), engagement variable
-- Faible : peu d'activité récente (15–30 jours), signaux tièdes
-- Nul (0) : silence total (> 30 jours) ou aucun échange enregistré
+5. ${names[4]} (0 à ${maxes.engagement} pts) — SCORING TRÈS DUR
+Évalue la dynamique RÉELLE du deal à partir de signaux cumulés. Un seul email récent ne vaut PAS 25.
+Additionne les signaux suivants :
+- Recency (dernier échange < 7j = +4, 7-14j = +2, > 14j = 0)
+- Volume (5+ engagements sur 30j = +5, 3-4 = +3, 1-2 = +1, 0 = 0)
+- Variété (au moins 2 types d'échange — ex: email + call, call + meeting = +3)
+- Bilatéral (au moins 1 réponse/email entrant ou meeting initié par le prospect dans les 30j = +4, sinon 0)
+- Multi-threading (2+ contacts/interlocuteurs impliqués = +4, 1 seul = 0)
+- Stagnation (deal créé depuis > 60 jours ET aucun changement de stage récent = −5)
+Le max théorique est 20-22 sur ${maxes.engagement}. Avoir ${maxes.engagement} = deal exceptionnellement actif et engagé bilatéralement.
+IMPORTANT : un seul email envoyé sans réponse la semaine dernière = ~5 pts max. Sois TRÈS strict.
 
 6. ${names[5]} (0 à ${maxes.strategic_fit} pts)
-Évalue l'adéquation de la situation du prospect avec l'offre Coachello (coaching professionnel/managérial).
-- Très élevé (proche de ${maxes.strategic_fit}) : transformation RH, développement du leadership, coaching d'équipes — fit évident
-- Élevé : entreprise en croissance, besoin clair de montée en compétences managériales
-- Moyen : besoin de formation ou de développement, mais pas spécifiquement coaching
-- Faible : secteur ou contexte partiellement aligné
-- Nul (0) : besoin sans rapport avec l'offre Coachello
+Évalue l'adéquation avec l'offre Coachello (coaching professionnel/managérial).
+- ${maxes.strategic_fit} pts : transformation RH, développement du leadership, coaching d'équipes — fit parfait
+- 8 pts : entreprise en croissance, montée en compétences managériales
+- 5 pts : besoin de formation/développement mais pas spécifiquement coaching
+- 2 pts : contexte partiellement aligné
+- 0 pts : besoin sans rapport avec Coachello
 
 === INSTRUCTIONS ===
-- Attribue n'importe quel entier entre 0 et le maximum — pas besoin de valeurs rondes.
-- Nuance ton score selon les signaux spécifiques du deal (ex: 17/25 si l'autorité est forte mais pas encore confirmée).
-- Si une dimension manque totalement d'informations, donne la moitié du maximum arrondie.
-- Sois strict : un score élevé doit être justifié par des éléments concrets dans les échanges ou la description.
+- Sois STRICT et EXIGEANT. Un score élevé doit être justifié par des éléments CONCRETS dans les conversations ou les champs CRM.
+- Si une dimension manque totalement d'informations (pas de champ CRM, pas de conversation), donne 0 — pas un score "par défaut".
+- Si un champ CRM contredit les conversations, mentionne-le dans le reasoning.
 - Réponds UNIQUEMENT en JSON valide :
 {
   "authority": X,
@@ -218,8 +248,8 @@ IMPORTANT : Si un DRH, C-level, VP ou directeur fonctionnel est identifié comme
   "business_need": X,
   "engagement": X,
   "strategic_fit": X,
-  "reasoning": "explication globale en 1 phrase mentionnant les points forts et faibles",
-  "next_action": "conseil concret et actionnable en 1-2 phrases pour faire avancer ce deal au prochain stade",
+  "reasoning": "explication globale en 2-3 phrases : points forts, points faibles, et incohérences CRM/conversations si détectées",
+  "next_action": "conseil concret et actionnable en 1-2 phrases pour faire avancer ce deal",
   "qualification": {
     "budget": "valeur/fourchette connue ou null",
     "estimatedBudget": "estimation chiffrée si disponible ou null",

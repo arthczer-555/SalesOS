@@ -16,28 +16,26 @@ export interface DealScore {
 }
 
 // ─── Authority scoring ────────────────────────────────────────────────────────
-// Values from PDF: authority_status HubSpot property
 const AUTHORITY_VALUES: Record<string, number> = {
-  "executive_sponsor": 25,
-  "senior_decision_maker": 20,
-  "middle_manager": 12,
-  "champion_no_authority": 8,
+  "executive_sponsor": 20,
+  "senior_decision_maker": 14,
+  "middle_manager": 8,
+  "champion_no_authority": 4,
   "unknown": 0,
 };
 
 // Max points per model
 const AUTHORITY_MAX: Record<DealModel, number> = {
-  generic: 25,
-  human_coaching: 25,
-  ai_coaching: 20,
+  generic: 20,
+  human_coaching: 20,
+  ai_coaching: 15,
 };
 
 function scoreAuthority(value: string | null | undefined, model: DealModel): number {
   if (!value) return 0;
   const base = AUTHORITY_VALUES[value] ?? 0;
-  // Scale to model's max
   const max = AUTHORITY_MAX[model];
-  return Math.round((base / 25) * max);
+  return Math.round((base / 20) * max);
 }
 
 // ─── Budget scoring ───────────────────────────────────────────────────────────
@@ -50,7 +48,7 @@ const BUDGET_VALUES: Record<string, number> = {
 
 const BUDGET_MAX: Record<DealModel, number> = {
   generic: 15,
-  human_coaching: 20,
+  human_coaching: 15,
   ai_coaching: 15,
 };
 
@@ -63,32 +61,32 @@ function scoreBudget(value: string | null | undefined, model: DealModel): number
 
 // ─── Timeline scoring ─────────────────────────────────────────────────────────
 const TIMELINE_VALUES: Record<string, number> = {
-  "within_30_days": 15,
-  "within_90_days": 12,
-  "within_6_months": 8,
-  "over_6_months": 4,
+  "within_30_days": 10,
+  "within_90_days": 7,
+  "within_6_months": 4,
+  "over_6_months": 1,
   "unknown": 0,
 };
 
 const TIMELINE_MAX: Record<DealModel, number> = {
-  generic: 15,
-  human_coaching: 15,
-  ai_coaching: 20,
+  generic: 10,
+  human_coaching: 10,
+  ai_coaching: 10,
 };
 
 function scoreTimeline(value: string | null | undefined, model: DealModel): number {
   if (!value) return 0;
   const base = TIMELINE_VALUES[value] ?? 0;
   const max = TIMELINE_MAX[model];
-  return Math.round((base / 15) * max);
+  return Math.round((base / 10) * max);
 }
 
 // ─── Business Need scoring ────────────────────────────────────────────────────
 const NEED_VALUES: Record<string, number> = {
   "critical_pain": 20,
-  "significant_need": 15,
-  "nice_to_have": 8,
-  "exploratory": 3,
+  "significant_need": 12,
+  "nice_to_have": 5,
+  "exploratory": 1,
   "unknown": 0,
 };
 
@@ -119,11 +117,11 @@ function scoreStrategicFit(value: string | null | undefined): number {
   return STRATEGIC_VALUES[value] ?? 0;
 }
 
-// ─── Engagement (auto-calculated) ────────────────────────────────────────────
+// ─── Engagement (auto-calculated — basic fallback, real scoring done by Claude) ─
 const ENGAGEMENT_MAX: Record<DealModel, number> = {
-  generic: 15,
-  human_coaching: 10,
-  ai_coaching: 15,
+  generic: 25,
+  human_coaching: 25,
+  ai_coaching: 25,
 };
 
 export function calcEngagement(
@@ -135,11 +133,13 @@ export function calcEngagement(
   const ref = lastContactedMs ?? lastModifiedMs;
   const daysSince = ref ? (Date.now() - ref) / 864e5 : 999;
 
+  // Basic recency-only fallback — the real engagement scoring is done by Claude
+  // with volume, variety, bilateral signals, multi-threading, and stagnation
   let ratio: number;
-  if (daysSince > 30) ratio = 0;        // Ghosting
-  else if (daysSince > 15) ratio = 0.3; // No activity
-  else if (daysSince < 7) ratio = 1.0;  // Active
-  else ratio = 0.6;                     // Sporadic
+  if (daysSince > 30) ratio = 0;
+  else if (daysSince > 15) ratio = 0.15;
+  else if (daysSince > 7) ratio = 0.3;
+  else ratio = 0.4; // Max 40% from recency alone — need volume+variety for more
 
   return Math.round(ratio * max);
 }
@@ -153,9 +153,9 @@ export function detectModel(dealType: string | null | undefined): DealModel {
 
 // ─── Dimension labels per model ───────────────────────────────────────────────
 const DIMENSION_NAMES: Record<DealModel, string[]> = {
-  generic: ["Authority & Buying Group", "Budget Clarity", "Timeline Certainty", "Business Need Strength", "Engagement & Momentum", "Strategic Fit"],
-  human_coaching: ["Authority & Governance", "Budget & Procurement", "Timeline", "Business Need Depth", "Engagement", "Strategic Expansion"],
-  ai_coaching: ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Usage Intent", "Strategic AI Fit"],
+  generic: ["Authority & Buying Group", "Budget Clarity", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit"],
+  human_coaching: ["Authority & Governance", "Budget", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit"],
+  ai_coaching: ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Momentum", "Strategic AI Fit"],
 };
 
 // ─── Main scoring function ────────────────────────────────────────────────────
@@ -209,9 +209,9 @@ export function calcScore(deal: DealForScoring): DealScore {
 
 // ─── UI helpers ───────────────────────────────────────────────────────────────
 export function scoreBadge(total: number): { label: string; color: string; bg: string } {
-  if (total >= 80) return { label: "High Priority", color: "#16a34a", bg: "#dcfce7" };
-  if (total >= 60) return { label: "Avançable", color: "#ca8a04", bg: "#fef9c3" };
-  if (total >= 40) return { label: "Fragile", color: "#ea580c", bg: "#ffedd5" };
+  if (total >= 75) return { label: "High Priority", color: "#16a34a", bg: "#dcfce7" };
+  if (total >= 55) return { label: "Avançable", color: "#ca8a04", bg: "#fef9c3" };
+  if (total >= 35) return { label: "Fragile", color: "#ea580c", bg: "#ffedd5" };
   return { label: "À risque", color: "#dc2626", bg: "#fee2e2" };
 }
 
