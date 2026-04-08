@@ -4,6 +4,7 @@ import "./globals.css";
 import { ClerkProvider } from "@clerk/nextjs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SWRProvider } from "@/components/swr-provider";
+import { Prefetch } from "@/components/prefetch";
 import Sidebar from "@/components/sidebar";
 
 const geist = Geist({ subsets: ["latin"] });
@@ -27,6 +28,7 @@ export default function RootLayout({
             Aller au contenu principal
           </a>
           <SWRProvider>
+            <Prefetch />
             <TooltipProvider>
               <div className="flex h-screen overflow-hidden">
                 <Sidebar />
