@@ -1040,7 +1040,6 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 
 export default function DealsPage() {
   const [searchQuery, setSearchQuery] = useState("");
-  const [filterRelance, setFilterRelance] = useState(false);
   const [scoring, setScoring] = useState(false);
   const [scoreResult, setScoreResult] = useState<{ scored: number; total: number } | null>(null);
   const [ownerFilter, setOwnerFilter] = useState<"mine" | "all">("mine");
@@ -1097,12 +1096,6 @@ export default function DealsPage() {
       const q = searchQuery.toLowerCase();
       if (!d.dealname.toLowerCase().includes(q)) return false;
     }
-    if (filterRelance) {
-      const ref = d.lastContacted || d.lastModified;
-      if (!ref) return false;
-      const days = (Date.now() - new Date(ref).getTime()) / 864e5;
-      if (days <= 14) return false;
-    }
     return true;
   });
 
@@ -1115,11 +1108,6 @@ export default function DealsPage() {
   const selectedStage = stages.find((s) => s.id === selectedDeal?.dealstage);
   const stageIdx = selectedStage ? stages.indexOf(selectedStage) : 0;
 
-  const relanceCount = deals.filter((d) => {
-    const ref = d.lastContacted || d.lastModified;
-    if (!ref) return false;
-    return (Date.now() - new Date(ref).getTime()) / 864e5 > 14;
-  }).length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", background: "#fafafa" }}>
@@ -1142,27 +1130,6 @@ export default function DealsPage() {
             }}
           />
         </div>
-
-        {/* Relance filter */}
-        <button
-          onClick={() => setFilterRelance((v) => !v)}
-          style={{
-            padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 500,
-            cursor: "pointer", border: "1px solid",
-            borderColor: filterRelance ? "#f97316" : "#e5e7eb",
-            background: filterRelance ? "#fff7ed" : "white",
-            color: filterRelance ? "#c2410c" : "#374151",
-            display: "flex", alignItems: "center", gap: 6,
-          }}
-        >
-          À relancer
-          {relanceCount > 0 && (
-            <span style={{
-              fontSize: 10, fontWeight: 700, padding: "1px 5px", borderRadius: 99,
-              background: "#f97316", color: "white",
-            }}>{relanceCount}</span>
-          )}
-        </button>
 
         {/* Owner filter */}
         <div style={{ display: "flex", borderRadius: 8, border: "1px solid #e5e7eb", overflow: "hidden" }}>
