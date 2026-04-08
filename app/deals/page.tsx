@@ -1052,6 +1052,8 @@ export default function DealsPage() {
   const [details, setDetails] = useState<DealDetails | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
 
+  const { isAdmin } = useUserMe();
+
   // Auto-detect HubSpot owner once
   useEffect(() => { fetch("/api/hubspot/auto-link-owner").catch(() => {}); }, []);
 
@@ -1062,7 +1064,7 @@ export default function DealsPage() {
       const r = await fetch("/api/deals/score-all", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ forceAll: true }),
       });
       const data = await r.json();
       if (r.ok) {
@@ -1160,28 +1162,32 @@ export default function DealsPage() {
           <RefreshCw size={14} />
         </button>
 
-        {/* Score all */}
-        <button
-          onClick={scoreAll}
-          disabled={scoring}
-          style={{
-            padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 500,
-            cursor: scoring ? "not-allowed" : "pointer", border: "1px solid",
-            borderColor: "#6366f1", background: scoring ? "#f3f4f6" : "#eef2ff",
-            color: scoring ? "#9ca3af" : "#4338ca",
-            display: "flex", alignItems: "center", gap: 5,
-          }}
-        >
-          {scoring ? (
-            <><RefreshCw size={12} className="animate-spin" /> Scoring…</>
-          ) : (
-            <><Zap size={12} /> Scorer tous les deals</>
-          )}
-        </button>
-        {scoreResult && !scoring && (
-          <span style={{ fontSize: 11, color: "#6b7280" }}>
-            {scoreResult.scored}/{scoreResult.total} scorés
-          </span>
+        {/* Score all — admin only */}
+        {isAdmin && (
+          <>
+            <button
+              onClick={scoreAll}
+              disabled={scoring}
+              style={{
+                padding: "6px 12px", borderRadius: 8, fontSize: 12, fontWeight: 500,
+                cursor: scoring ? "not-allowed" : "pointer", border: "1px solid",
+                borderColor: "#6366f1", background: scoring ? "#f3f4f6" : "#eef2ff",
+                color: scoring ? "#9ca3af" : "#4338ca",
+                display: "flex", alignItems: "center", gap: 5,
+              }}
+            >
+              {scoring ? (
+                <><RefreshCw size={12} className="animate-spin" /> Scoring…</>
+              ) : (
+                <><Zap size={12} /> Scorer tous les deals</>
+              )}
+            </button>
+            {scoreResult && !scoring && (
+              <span style={{ fontSize: 11, color: "#6b7280" }}>
+                {scoreResult.scored}/{scoreResult.total} scorés
+              </span>
+            )}
+          </>
         )}
 
         {/* Metrics */}
