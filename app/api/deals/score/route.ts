@@ -28,15 +28,15 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
 
 // Max points per dimension per model
 const MODEL_MAXES = {
-  generic:        { authority: 20, budget: 15, timeline: 10, business_need: 20, engagement: 25, strategic_fit: 10 },
-  human_coaching: { authority: 20, budget: 15, timeline: 10, business_need: 20, engagement: 25, strategic_fit: 10 },
-  ai_coaching:    { authority: 15, budget: 15, timeline: 10, business_need: 20, engagement: 25, strategic_fit: 15 },
+  generic:        { authority: 20, budget: 15, timeline: 10, business_need: 15, engagement: 25, strategic_fit: 5, competition: 10 },
+  human_coaching: { authority: 20, budget: 15, timeline: 10, business_need: 15, engagement: 25, strategic_fit: 5, competition: 10 },
+  ai_coaching:    { authority: 15, budget: 15, timeline: 10, business_need: 15, engagement: 25, strategic_fit: 5, competition: 15 },
 };
 
 const DIMENSION_NAMES = {
-  generic:        ["Authority & Buying Group", "Budget Clarity", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit"],
-  human_coaching: ["Authority & Governance", "Budget", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit"],
-  ai_coaching:    ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Momentum", "Strategic AI Fit"],
+  generic:        ["Authority & Buying Group", "Budget Clarity", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit", "Compétition"],
+  human_coaching: ["Authority & Governance", "Budget", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit", "Compétition"],
+  ai_coaching:    ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Momentum", "Strategic AI Fit", "Compétition"],
 };
 
 export async function scoreOneDeal(dealId: string, userId: string | null, claudeModel = DEFAULT_SCORE_MODEL): Promise<DealScore & { reasoning: string; next_action: string; qualification: Record<string, string | null> }> {
@@ -210,11 +210,11 @@ RÈGLE FONDAMENTALE : croise TOUJOURS les deux sources.
 4. ${names[3]} (0 à ${maxes.business_need} pts) — SCORING DUR
 Évalue l'intensité RÉELLE du besoin, pas ce qu'on voudrait croire.
 - ${maxes.business_need} pts : douleur critique DOCUMENTÉE — le prospect a verbalisé le problème ET son impact chiffré/concret (turnover, perte de productivité, échec de transformation, etc.)
-- 12 pts : besoin significatif et clair, objectifs concrets identifiés, mais pas encore chiffré en impact
-- 5 pts : "nice to have" — intéressé par le coaching mais pas urgent, pas de douleur identifiée
+- 9 pts : besoin significatif et clair, objectifs concrets identifiés, mais pas encore chiffré en impact
+- 4 pts : "nice to have" — intéressé par le coaching mais pas urgent, pas de douleur identifiée
 - 1 pt : exploration pure — le prospect est curieux, aucun problème concret identifié
 - 0 pts : aucun besoin identifié ou pas assez d'info pour juger
-IMPORTANT : Un prospect qui dit "on veut du coaching" sans expliquer POURQUOI = 5 max. Pour aller au-dessus de 12, il faut un impact business articulé.
+IMPORTANT : Un prospect qui dit "on veut du coaching" sans expliquer POURQUOI = 4 max. Pour aller au-dessus de 9, il faut un impact business articulé.
 
 5. ${names[4]} (0 à ${maxes.engagement} pts) — SCORING TRÈS DUR
 Évalue la dynamique RÉELLE du deal à partir de signaux cumulés. Un seul email récent ne vaut PAS 25.
@@ -231,10 +231,17 @@ IMPORTANT : un seul email envoyé sans réponse la semaine dernière = ~5 pts ma
 6. ${names[5]} (0 à ${maxes.strategic_fit} pts)
 Évalue l'adéquation avec l'offre Coachello (coaching professionnel/managérial).
 - ${maxes.strategic_fit} pts : transformation RH, développement du leadership, coaching d'équipes — fit parfait
-- 8 pts : entreprise en croissance, montée en compétences managériales
-- 5 pts : besoin de formation/développement mais pas spécifiquement coaching
-- 2 pts : contexte partiellement aligné
+- 4 pts : entreprise en croissance, montée en compétences managériales
+- 2 pts : besoin de formation mais pas spécifiquement coaching
 - 0 pts : besoin sans rapport avec Coachello
+
+7. ${names[6]} (0 à ${maxes.competition} pts)
+Évalue la position compétitive de Coachello sur ce deal.
+- ${maxes.competition} pts : Coachello seul en lice, confirmé par le prospect (pas de benchmark, pas de RFP multi-fournisseurs)
+- 7 pts : aucune mention de concurrent dans les échanges
+- 3 pts : concurrent probable (RFP multi-fournisseurs, benchmark mentionné, comparaison évoquée) mais pas confirmé
+- 0 pts : concurrent(s) identifié(s) et en compétition directe (nommé dans les échanges ou shortlist)
+Indices de compétition : mentions de "benchmark", "autres prestataires", "comparaison", noms de concurrents (BetterUp, CoachHub, Ezra, MentorCity, etc.), RFP envoyé à plusieurs, demande de "références" comparatives.
 
 === INSTRUCTIONS ===
 - Sois STRICT et EXIGEANT. Un score élevé doit être justifié par des éléments CONCRETS dans les conversations ou les champs CRM.
@@ -254,7 +261,8 @@ IMPORTANT : un seul email envoyé sans réponse la semaine dernière = ~5 pts ma
     "weaknesses": ["signal négatif court (5-8 mots max)", "autre signal"],
     "crm_alert": "incohérence CRM en une phrase courte, ou null"
   },
-  "next_action": "conseil concret et actionnable en 1-2 phrases pour faire avancer ce deal",
+  "competition": X,
+  "next_action": "conseil concret et actionnable en 1-2 phrases pour faire avancer ce deal. Si concurrent détecté, inclure une reco de différenciation/urgence/lock-in.",
   "qualification": {
     "budget": "valeur/fourchette connue ou null",
     "estimatedBudget": "estimation chiffrée si disponible ou null",
@@ -290,13 +298,15 @@ IMPORTANT : un seul email envoyé sans réponse la semaine dernière = ~5 pts ma
   const business_need = Math.min(Math.max(Math.round(ai.business_need ?? 0), 0), maxes.business_need);
   const engagement = Math.min(Math.max(Math.round(ai.engagement ?? 0), 0), maxes.engagement);
   const strategic_fit = Math.min(Math.max(Math.round(ai.strategic_fit ?? 0), 0), maxes.strategic_fit);
-  const total = authority + budget + timeline + business_need + engagement + strategic_fit;
+  const competition = Math.min(Math.max(Math.round(ai.competition ?? 0), 0), maxes.competition);
+  const total = authority + budget + timeline + business_need + engagement + strategic_fit + competition;
 
   const components = [
     { name: names[4], earned: engagement, max: maxes.engagement, filled: true },
     { name: names[0], earned: authority, max: maxes.authority, filled: true },
     { name: names[3], earned: business_need, max: maxes.business_need, filled: true },
     { name: names[1], earned: budget, max: maxes.budget, filled: true },
+    { name: names[6], earned: competition, max: maxes.competition, filled: true },
     { name: names[2], earned: timeline, max: maxes.timeline, filled: true },
     { name: names[5], earned: strategic_fit, max: maxes.strategic_fit, filled: true },
   ];

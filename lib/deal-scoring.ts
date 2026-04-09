@@ -83,38 +83,58 @@ function scoreTimeline(value: string | null | undefined, model: DealModel): numb
 
 // ─── Business Need scoring ────────────────────────────────────────────────────
 const NEED_VALUES: Record<string, number> = {
-  "critical_pain": 20,
-  "significant_need": 12,
-  "nice_to_have": 5,
+  "critical_pain": 15,
+  "significant_need": 9,
+  "nice_to_have": 4,
   "exploratory": 1,
   "unknown": 0,
 };
 
 const NEED_MAX: Record<DealModel, number> = {
-  generic: 20,
-  human_coaching: 20,
-  ai_coaching: 20,
+  generic: 15,
+  human_coaching: 15,
+  ai_coaching: 15,
 };
 
 function scoreBusinessNeed(value: string | null | undefined, model: DealModel): number {
   if (!value) return 0;
   const base = NEED_VALUES[value] ?? 0;
   const max = NEED_MAX[model];
-  return Math.round((base / 20) * max);
+  return Math.round((base / 15) * max);
 }
 
 // ─── Strategic Fit scoring ────────────────────────────────────────────────────
 const STRATEGIC_VALUES: Record<string, number> = {
-  "perfect_fit": 10,
-  "good_fit": 8,
-  "partial_fit": 5,
-  "poor_fit": 2,
+  "perfect_fit": 5,
+  "good_fit": 4,
+  "partial_fit": 2,
+  "poor_fit": 1,
   "unknown": 0,
 };
 
 function scoreStrategicFit(value: string | null | undefined): number {
   if (!value) return 0;
   return STRATEGIC_VALUES[value] ?? 0;
+}
+
+// ─── Competition scoring ─────────────────────────────────────────────────────
+const COMPETITION_VALUES: Record<string, number> = {
+  "sole_provider": 10,
+  "no_mention": 7,
+  "probable_competition": 3,
+  "confirmed_competition": 0,
+  "unknown": 7,
+};
+
+const COMPETITION_MAX: Record<DealModel, number> = {
+  generic: 10,
+  human_coaching: 10,
+  ai_coaching: 10,
+};
+
+function scoreCompetition(value: string | null | undefined): number {
+  if (!value) return 7; // default: no mention
+  return COMPETITION_VALUES[value] ?? 7;
 }
 
 // ─── Engagement (auto-calculated — basic fallback, real scoring done by Claude) ─
@@ -153,9 +173,9 @@ export function detectModel(dealType: string | null | undefined): DealModel {
 
 // ─── Dimension labels per model ───────────────────────────────────────────────
 const DIMENSION_NAMES: Record<DealModel, string[]> = {
-  generic: ["Authority & Buying Group", "Budget Clarity", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit"],
-  human_coaching: ["Authority & Governance", "Budget", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit"],
-  ai_coaching: ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Momentum", "Strategic AI Fit"],
+  generic: ["Authority & Buying Group", "Budget Clarity", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit", "Compétition"],
+  human_coaching: ["Authority & Governance", "Budget", "Timeline", "Business Need", "Engagement & Momentum", "Strategic Fit", "Compétition"],
+  ai_coaching: ["Authority", "Budget", "Timeline", "Business Urgency", "Engagement & Momentum", "Strategic AI Fit", "Compétition"],
 };
 
 // ─── Main scoring function ────────────────────────────────────────────────────
@@ -165,6 +185,7 @@ export interface DealForScoring {
   decision_timeline?: string | null;
   business_need_level?: string | null;
   strategic_fit?: string | null;
+  competition_status?: string | null;
   deal_type?: string | null;
   notes_last_contacted?: string | null;
   hs_lastmodifieddate?: string | null;
@@ -183,14 +204,16 @@ export function calcScore(deal: DealForScoring): DealScore {
   const needEarned = scoreBusinessNeed(deal.business_need_level, model);
   const engagementEarned = calcEngagement(lastContactedMs, lastModifiedMs, model);
   const strategicEarned = scoreStrategicFit(deal.strategic_fit);
+  const competitionEarned = scoreCompetition(deal.competition_status);
 
   const components: ScoreComponent[] = [
     { name: names[4], earned: engagementEarned, max: ENGAGEMENT_MAX[model], filled: true }, // auto
     { name: names[0], earned: authorityEarned, max: AUTHORITY_MAX[model], filled: !!deal.authority_status },
     { name: names[3], earned: needEarned, max: NEED_MAX[model], filled: !!deal.business_need_level },
     { name: names[1], earned: budgetEarned, max: BUDGET_MAX[model], filled: !!deal.budget_status },
+    { name: names[6], earned: competitionEarned, max: COMPETITION_MAX[model], filled: !!deal.competition_status },
     { name: names[2], earned: timelineEarned, max: TIMELINE_MAX[model], filled: !!deal.decision_timeline },
-    { name: names[5], earned: strategicEarned, max: 10, filled: !!deal.strategic_fit },
+    { name: names[5], earned: strategicEarned, max: 5, filled: !!deal.strategic_fit },
   ];
 
   const total = components.reduce((sum, c) => sum + c.earned, 0);
