@@ -107,6 +107,82 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
   return res.json();
 }
 
+// ── Slack helpers ─────────────────────────────────────────────────────────────
+async function slackGet(path: string, params?: Record<string, string>) {
+  const url = new URL(`https://slack.com/api${path}`);
+  if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
+  });
+  const data = await res.json();
+  return data.ok ? data : null;
+}
+
+async function searchSlackForCompany(companyName: string): Promise<{ channel: string; text: string; user: string; timestamp: string }[]> {
+  if (!companyName || !process.env.SLACK_BOT_TOKEN) return [];
+  const messages: { channel: string; text: string; user: string; timestamp: string }[] = [];
+
+  try {
+    // Strategy 1: Use search.messages API if a user token is available
+    const userToken = process.env.SLACK_USER_TOKEN;
+    if (userToken) {
+      const url = new URL("https://slack.com/api/search.messages");
+      url.searchParams.set("query", companyName);
+      url.searchParams.set("count", "20");
+      url.searchParams.set("sort", "timestamp");
+      url.searchParams.set("sort_dir", "desc");
+      const res = await fetch(url.toString(), {
+        headers: { Authorization: `Bearer ${userToken}` },
+      });
+      const data = await res.json();
+      if (data.ok) {
+        for (const m of (data.messages?.matches ?? []).slice(0, 20)) {
+          messages.push({
+            channel: m.channel?.name ?? "",
+            text: m.text?.slice(0, 500) ?? "",
+            user: m.user ?? m.username ?? "",
+            timestamp: m.ts ?? "",
+          });
+        }
+        return messages;
+      }
+    }
+
+    // Strategy 2: Fallback — scan channels the bot is in
+    const channels: { name: string; id: string }[] = [];
+    let cursor: string | undefined;
+    do {
+      const params: Record<string, string> = { limit: "200", types: "public_channel,private_channel" };
+      if (cursor) params.cursor = cursor;
+      const data = await slackGet("/conversations.list", params);
+      if (!data) break;
+      channels.push(...(data.channels ?? []));
+      cursor = data.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+
+    const keyword = companyName.toLowerCase();
+    for (const ch of channels) {
+      if (messages.length >= 20) break;
+      const history = await slackGet("/conversations.history", { channel: ch.id, limit: "200" });
+      if (!history) continue;
+      const matched = (history.messages ?? []).filter((m: { text: string }) =>
+        m.text?.toLowerCase().includes(keyword)
+      );
+      for (const m of matched.slice(0, 5)) {
+        messages.push({
+          channel: ch.name,
+          text: m.text?.slice(0, 500) ?? "",
+          user: m.user ?? "",
+          timestamp: m.ts ?? "",
+        });
+      }
+    }
+    return messages;
+  } catch {
+    return [];
+  }
+}
+
 export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
@@ -157,7 +233,10 @@ export async function POST(req: NextRequest) {
       ? (engagementAssoc.value?.results ?? []).map((r: { id: string }) => r.id)
       : [];
 
-    const [engResult, scoreResult, modelResult] = await Promise.allSettled([
+    // Extract company name from deal for Slack search
+    const dealCompanyName = p.dealname?.replace(/\s*[-–—|/].*$/, "").trim() ?? "";
+
+    const [engResult, scoreResult, modelResult, slackResult] = await Promise.allSettled([
       // Engagements HubSpot (all 4 calls in parallel)
       engIds.length > 0
         ? Promise.allSettled([
@@ -188,6 +267,8 @@ export async function POST(req: NextRequest) {
         : Promise.resolve({ data: null }),
       // Supabase: model preferences
       db.from("guide_defaults").select("content").eq("key", "model_preferences").single(),
+      // Slack: search mentions of company
+      searchSlackForCompany(dealCompanyName),
     ]);
 
     // Parse engagements
@@ -269,6 +350,16 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Parse Slack messages
+    const slackMessages = slackResult.status === "fulfilled" ? slackResult.value : [];
+    const slackSection = slackMessages.length > 0
+      ? "\n\nConversations Slack internes mentionnant cette entreprise :\n" +
+        slackMessages.map((m: { channel: string; text: string; timestamp: string }) => {
+          const date = m.timestamp ? new Date(parseFloat(m.timestamp) * 1000).toLocaleDateString("fr-FR") : "";
+          return `[#${m.channel} ${date}] ${m.text}`;
+        }).join("\n\n")
+      : "";
+
     const contextBlock = [
       `Deal : ${p.dealname ?? "?"} | Stage : ${p.dealstage ?? "?"} | Montant : ${p.amount ? `${parseFloat(p.amount).toLocaleString("fr-FR")}€` : "?"}`,
       `Clôture : ${p.closedate ? new Date(p.closedate).toLocaleDateString("fr-FR") : "?"} | Probabilité : ${p.hs_deal_stage_probability ?? "?"}%`,
@@ -276,15 +367,17 @@ export async function POST(req: NextRequest) {
       contactLines ? `Contacts : ${contactLines}` : "Contacts : aucun",
       `\n${scoreContext}`,
       engagementLines ? `\nTous les échanges HubSpot :\n${engagementLines}` : "\nÉchanges : aucun enregistré",
-    ].filter(Boolean).join("\n").slice(0, 12000); // Cap context to avoid slow Claude responses
+      slackSection || null,
+    ].filter(Boolean).join("\n").slice(0, 14000); // Cap context to avoid slow Claude responses
 
     const client = new Anthropic({ timeout: 90_000 });
     const message = await client.messages.create({
       model: analyzeModel,
       max_tokens: 2500,
       system: `Tu es un expert en vente B2B pour Coachello (coaching professionnel).
-Analyse ce deal commercial en profondeur à partir de TOUTES les données disponibles (score IA, échanges, contacts, contexte).
+Analyse ce deal commercial en profondeur à partir de TOUTES les données disponibles (score IA, échanges HubSpot, conversations Slack internes, contacts, contexte).
 Sois hyper précis et factuel — base chaque analyse sur des éléments concrets tirés des échanges.
+Les messages Slack sont des conversations internes de l'équipe Coachello — ils contiennent souvent des insights précieux sur l'avancement du deal, les blocages, et le contexte commercial.
 Utilise l'outil deal_analysis pour retourner ton analyse.`,
       messages: [{ role: "user", content: contextBlock }],
       tools: [analyzeTool],

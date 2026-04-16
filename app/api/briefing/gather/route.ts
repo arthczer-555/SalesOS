@@ -265,6 +265,37 @@ export async function POST(req: NextRequest) {
       (async () => {
         if (!company && emails.length === 0) return [];
         try {
+          const messages: { channel: string; text: string; user: string; timestamp: string }[] = [];
+
+          // Strategy 1: Use search.messages API if a user token is available (searches ALL channels)
+          const userToken = process.env.SLACK_USER_TOKEN;
+          if (userToken && company) {
+            const searchSlack = async (query: string) => {
+              const url = new URL("https://slack.com/api/search.messages");
+              url.searchParams.set("query", query);
+              url.searchParams.set("count", "20");
+              url.searchParams.set("sort", "timestamp");
+              url.searchParams.set("sort_dir", "desc");
+              const res = await fetch(url.toString(), {
+                headers: { Authorization: `Bearer ${userToken}` },
+              });
+              const data = await res.json();
+              return data.ok ? (data.messages?.matches ?? []) : [];
+            };
+
+            const matches = await searchSlack(company);
+            for (const m of matches.slice(0, 20)) {
+              messages.push({
+                channel: m.channel?.name ?? "",
+                text: m.text?.slice(0, 500) ?? "",
+                user: m.user ?? m.username ?? "",
+                timestamp: m.ts ?? "",
+              });
+            }
+            return messages;
+          }
+
+          // Strategy 2: Fallback — scan ALL channels the bot is in (not just named ones)
           const channels = await (async () => {
             const all: { name: string; id: string }[] = [];
             let cursor: string | undefined;
@@ -279,28 +310,33 @@ export async function POST(req: NextRequest) {
             return all;
           })();
 
-          const targetChannels = channels.filter((c) =>
-            ["deals", "sales", "prospection", "crm", "general"].some((k) => c.name.includes(k))
-          ).slice(0, 5);
+          // Search ALL channels (prioritize sales-related ones first, then the rest)
+          const priorityKeywords = ["deals", "sales", "prospection", "crm", "general", "client", "account", "partner"];
+          const priorityChannels = channels.filter((c) =>
+            priorityKeywords.some((k) => c.name.includes(k))
+          );
+          const otherChannels = channels.filter((c) =>
+            !priorityKeywords.some((k) => c.name.includes(k))
+          );
+          const allChannelsSorted = [...priorityChannels, ...otherChannels];
 
-          const messages: { channel: string; text: string; user: string; timestamp: string }[] = [];
           const keywords = [company, ...(externalAttendees[0]?.displayName?.split(" ") ?? [])].filter(Boolean);
 
-          for (const ch of targetChannels) {
-            const history = await slackGet("/conversations.history", { channel: ch.id, limit: "100" });
+          for (const ch of allChannelsSorted) {
+            if (messages.length >= 20) break;
+            const history = await slackGet("/conversations.history", { channel: ch.id, limit: "200" });
             if (!history) continue;
             const msgs = (history.messages ?? []).filter((m: { text: string }) =>
               keywords.some((kw) => m.text?.toLowerCase().includes(kw.toLowerCase()))
             );
-            for (const m of msgs.slice(0, 3)) {
+            for (const m of msgs.slice(0, 5)) {
               messages.push({
                 channel: ch.name,
-                text: m.text?.slice(0, 300) ?? "",
+                text: m.text?.slice(0, 500) ?? "",
                 user: m.user ?? "",
                 timestamp: m.ts ?? "",
               });
             }
-            if (messages.length >= 10) break;
           }
           return messages;
         } catch {
