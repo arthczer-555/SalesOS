@@ -116,23 +116,27 @@ export default function OverviewTab({ onArticleClick }: OverviewTabProps) {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          {ga4Error && (
-            <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: "#fef2f2", color: "#dc2626" }}>
-              GA4: {ga4Error}
-            </span>
-          )}
-          <span
-            className="text-[10px] font-medium px-2 py-0.5 rounded-full"
-            style={{
-              background: source === "ga4" ? "#f0fdf4" : "#f5f5f5",
-              color: source === "ga4" ? "#16a34a" : "#888",
-            }}
-          >
-            {source === "ga4" ? "Live — Google Analytics" : "Mock Data"}
-          </span>
-        </div>
+        <span
+          className="text-[10px] font-medium px-2 py-0.5 rounded-full"
+          style={{
+            background: source === "ga4" ? "#f0fdf4" : "#f5f5f5",
+            color: source === "ga4" ? "#16a34a" : "#888",
+          }}
+        >
+          {source === "ga4" ? "Live — Google Analytics" : "Mock Data"}
+        </span>
       </div>
+
+      {/* GA4 Error Banner */}
+      {ga4Error && (
+        <div className="rounded-xl flex items-start gap-3" style={{ background: "#fef2f2", border: "1px solid #fecaca", padding: "14px 18px" }}>
+          <span className="text-sm shrink-0 mt-0.5">⚠</span>
+          <div>
+            <p className="text-sm font-medium" style={{ color: "#dc2626" }}>Google Analytics connection issue</p>
+            <p className="text-xs mt-1" style={{ color: "#888" }}>{ga4Error}</p>
+          </div>
+        </div>
+      )}
 
       {/* KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">

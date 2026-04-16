@@ -38,8 +38,6 @@ export async function GET(req: NextRequest) {
   }
 
   // Try each GA4 call independently so partial failures don't kill everything
-  const errors: string[] = [];
-
   const [kpiResult, trafficResult, sourcesResult, pagesResult] = await Promise.allSettled([
     fetchKPIs(user.id, validPeriod),
     fetchTrafficData(user.id, validPeriod),
@@ -47,14 +45,17 @@ export async function GET(req: NextRequest) {
     fetchTopPages(user.id, validPeriod, 10),
   ]);
 
-  // Log any failures
-  if (kpiResult.status === "rejected") errors.push(`KPIs: ${kpiResult.reason?.message || kpiResult.reason}`);
-  if (trafficResult.status === "rejected") errors.push(`Traffic: ${trafficResult.reason?.message || trafficResult.reason}`);
-  if (sourcesResult.status === "rejected") errors.push(`Sources: ${sourcesResult.reason?.message || sourcesResult.reason}`);
-  if (pagesResult.status === "rejected") errors.push(`Pages: ${pagesResult.reason?.message || pagesResult.reason}`);
+  // Collect unique error messages (avoid repeating the same message 4 times)
+  const errorSet = new Set<string>();
+  for (const r of [kpiResult, trafficResult, sourcesResult, pagesResult]) {
+    if (r.status === "rejected") {
+      errorSet.add(r.reason?.message || String(r.reason));
+    }
+  }
+  const ga4Errors = Array.from(errorSet);
 
-  if (errors.length > 0) {
-    console.error("[marketing/overview] GA4 errors:", errors.join(" | "));
+  if (ga4Errors.length > 0) {
+    console.error("[marketing/overview] GA4 errors:", ga4Errors.join(" | "));
   }
 
   // If KPIs failed, fall back entirely to mock (KPIs are essential)
@@ -66,7 +67,7 @@ export async function GET(req: NextRequest) {
       topPages: [],
       articleMarkers: MOCK_ARTICLE_MARKERS,
       source: "mock",
-      ga4Error: errors.join(" | "),
+      ga4Error: ga4Errors.join(" | "),
     });
   }
 
@@ -102,6 +103,6 @@ export async function GET(req: NextRequest) {
     topPages: pagesResult.status === "fulfilled" ? pagesResult.value : [],
     articleMarkers: MOCK_ARTICLE_MARKERS,
     source: "ga4",
-    ga4Error: errors.length > 0 ? errors.join(" | ") : undefined,
+    ga4Error: ga4Errors.length > 0 ? ga4Errors.join(" | ") : undefined,
   });
 }

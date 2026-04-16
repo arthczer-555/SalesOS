@@ -9,7 +9,7 @@ export async function getGmailAccessToken(userId: string): Promise<string> {
     .eq("provider", "gmail")
     .single();
 
-  if (!data?.connected) throw new Error("Gmail non connecté");
+  if (!data?.connected) throw new Error("Google not connected. Go to Settings → Connect Google to enable analytics.");
 
   // Still valid (5 min buffer)
   if (new Date(data.token_expiry).getTime() > Date.now() + 5 * 60 * 1000) {
@@ -34,7 +34,7 @@ export async function getGmailAccessToken(userId: string): Promise<string> {
     }),
   });
 
-  if (!res.ok) throw new Error("Échec du refresh token Gmail");
+  if (!res.ok) throw new Error("Google token expired. Go to Settings → Disconnect Google → Reconnect.");
 
   const { access_token, expires_in } = await res.json();
   const tokenExpiry = new Date(Date.now() + (expires_in ?? 3600) * 1000).toISOString();

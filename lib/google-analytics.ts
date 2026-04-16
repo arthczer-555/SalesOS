@@ -85,7 +85,23 @@ async function runReport(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`GA4 API error ${res.status}: ${text.slice(0, 500)}`);
+    // Parse known error patterns into user-friendly messages
+    if (res.status === 403) {
+      if (text.includes("PERMISSION_DENIED")) {
+        throw new Error("Your Google account does not have access to this GA4 property. Go to Google Analytics → Admin → Property Access Management and add your email as Viewer.");
+      }
+      if (text.includes("insufficientPermissions") || text.includes("analytics.readonly")) {
+        throw new Error("Missing analytics permission. Go to Settings → Disconnect Google → Reconnect to grant analytics access.");
+      }
+      throw new Error(`Access denied (403). Check that your Google account has Viewer access to GA4 property ${GA4_PROPERTY_ID}.`);
+    }
+    if (res.status === 401) {
+      throw new Error("Google session expired. Go to Settings → Disconnect Google → Reconnect.");
+    }
+    if (res.status === 404) {
+      throw new Error(`GA4 property ${GA4_PROPERTY_ID} not found. Check GA4_PROPERTY_ID in your environment variables.`);
+    }
+    throw new Error(`GA4 API error ${res.status}: ${text.slice(0, 300)}`);
   }
 
   return res.json();
