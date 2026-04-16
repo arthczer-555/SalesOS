@@ -37,22 +37,12 @@ export interface GA4TopArticle {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatDate(d: Date): string {
-  return d.toISOString().slice(0, 10).replace(/-/g, "");
-}
-
-function dateRange(startDate: string, endDate: string) {
-  return { startDate, endDate };
-}
-
 function daysAgo(n: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return formatDate(d);
+  return `${n}daysAgo`;
 }
 
-function today(): string {
-  return formatDate(new Date());
+function todayStr(): string {
+  return "today";
 }
 
 const SOURCE_COLORS: Record<string, string> = {
@@ -114,8 +104,8 @@ export async function fetchKPIs(
 
   const body = {
     dateRanges: [
-      dateRange(daysAgo(periodDays), today()),
-      dateRange(daysAgo(periodDays * 2), daysAgo(periodDays + 1)),
+      { startDate: daysAgo(periodDays), endDate: todayStr() },
+      { startDate: daysAgo(periodDays * 2), endDate: daysAgo(periodDays + 1) },
     ],
     metrics: [
       { name: "sessions" },
@@ -123,7 +113,7 @@ export async function fetchKPIs(
       { name: "screenPageViews" },
       { name: "bounceRate" },
       { name: "averageSessionDuration" },
-      { name: "conversions" },
+      { name: "eventCount" },
     ],
   };
 
@@ -162,7 +152,7 @@ export async function fetchTrafficData(
   const accessToken = await getGmailAccessToken(userId);
 
   const body = {
-    dateRanges: [dateRange(daysAgo(periodDays), today())],
+    dateRanges: [{ startDate: daysAgo(periodDays), endDate: todayStr() }],
     dimensions: [{ name: "date" }],
     metrics: [
       { name: "sessions" },
@@ -199,7 +189,7 @@ export async function fetchTrafficSources(
   const accessToken = await getGmailAccessToken(userId);
 
   const body = {
-    dateRanges: [dateRange(daysAgo(periodDays), today())],
+    dateRanges: [{ startDate: daysAgo(periodDays), endDate: todayStr() }],
     dimensions: [{ name: "sessionDefaultChannelGroup" }],
     metrics: [{ name: "sessions" }],
     orderBys: [{ metric: { metricName: "sessions" }, desc: true }],
@@ -236,7 +226,7 @@ export async function fetchTopPages(
   const accessToken = await getGmailAccessToken(userId);
 
   const body = {
-    dateRanges: [dateRange(daysAgo(periodDays), today())],
+    dateRanges: [{ startDate: daysAgo(periodDays), endDate: todayStr() }],
     dimensions: [
       { name: "pagePath" },
       { name: "pageTitle" },
