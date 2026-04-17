@@ -5,7 +5,7 @@ import { TrendingUp, TrendingDown } from "lucide-react";
 import { useMarketingOverview } from "@/lib/hooks/use-marketing";
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
-  ResponsiveContainer, PieChart, Pie, Cell, ReferenceDot,
+  ResponsiveContainer, PieChart, Pie, Cell,
 } from "recharts";
 
 interface OverviewTabProps {
@@ -24,12 +24,6 @@ function formatNumber(n: number) {
   return String(n);
 }
 
-function positionBadgeStyle(pos: number) {
-  if (pos <= 3) return { background: "#f0fdf4", color: "#16a34a" };
-  if (pos <= 10) return { background: "#fef9c3", color: "#ca8a04" };
-  if (pos <= 20) return { background: "#ffedd5", color: "#ea580c" };
-  return { background: "#fee2e2", color: "#dc2626" };
-}
 
 const PERIODS = [
   { value: 7 as const, label: "7d" },
@@ -41,7 +35,7 @@ const PERIODS = [
 
 export default function OverviewTab({ onArticleClick }: OverviewTabProps) {
   const [period, setPeriod] = useState<7 | 14 | 30 | 90 | 365>(30);
-  const { kpis, trafficData, articleMarkers, trafficSources, topPages, source, ga4Error, isLoading } = useMarketingOverview(period);
+  const { kpis, trafficData, trafficSources, topPages, source, ga4Error, isLoading } = useMarketingOverview(period);
 
   const kpiCards = useMemo(() => {
     if (!kpis) return [];
@@ -55,23 +49,12 @@ export default function OverviewTab({ onArticleClick }: OverviewTabProps) {
     ];
   }, [kpis]);
 
-  // Merge article markers into traffic data for reference dots
-  const markerDates = useMemo(() => {
-    const set = new Set(articleMarkers.map((m) => m.date));
-    return trafficData
-      .filter((d) => set.has(d.date))
-      .map((d) => {
-        const marker = articleMarkers.find((m) => m.date === d.date);
-        return { ...d, markerTitle: marker?.title || "" };
-      });
-  }, [trafficData, articleMarkers]);
-
-  // Top articles — use real GA4 data if available
   const hasLiveTopPages = topPages.length > 0;
 
   if (isLoading) return <div className="text-sm" style={{ color: "#888" }}>Loading...</div>;
 
   const totalSessions = trafficSources.reduce((s, t) => s + t.sessions, 0);
+  const hasData = kpis !== null;
 
   return (
     <div className="space-y-5">
@@ -181,23 +164,11 @@ export default function OverviewTab({ onArticleClick }: OverviewTabProps) {
             />
             <Area type="monotone" dataKey="sessions" stroke="#f01563" strokeWidth={2} fill="url(#gradSessions)" />
             <Area type="monotone" dataKey="visitors" stroke="#3b82f6" strokeWidth={1.5} fill="url(#gradVisitors)" />
-            {markerDates.map((m) => (
-              <ReferenceDot
-                key={m.date}
-                x={m.date}
-                y={m.sessions}
-                r={4}
-                fill="#f01563"
-                stroke="#fff"
-                strokeWidth={2}
-              />
-            ))}
           </AreaChart>
         </ResponsiveContainer>
         <div className="flex items-center gap-4 mt-3 text-xs" style={{ color: "#888" }}>
           <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 rounded" style={{ background: "#f01563" }} /> Sessions</span>
           <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-0.5 rounded" style={{ background: "#3b82f6" }} /> Visitors</span>
-          <span className="flex items-center gap-1.5"><span className="inline-block w-2 h-2 rounded-full" style={{ background: "#f01563" }} /> Published</span>
         </div>
       </div>
 

@@ -1,28 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { MOCK_KEYWORDS, MOCK_CANNIBALIZATION_ALERTS } from "@/lib/mock/marketing-data";
+import { fetchKeywords, detectCannibalization } from "@/lib/google-search-console";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const user = await getAuthenticatedUser();
-  if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const articleId = req.nextUrl.searchParams.get("articleId");
-  const opportunities = req.nextUrl.searchParams.get("opportunities") === "true";
-
-  let keywords = [...MOCK_KEYWORDS];
-
-  if (articleId) {
-    keywords = keywords.filter((k) => k.articleId === articleId);
+  if (!process.env.SEARCH_CONSOLE_SITE_URL) {
+    return NextResponse.json({
+      keywords: [],
+      cannibalizationAlerts: [],
+      error: "SEARCH_CONSOLE_SITE_URL not set. Add it in your environment variables.",
+    });
   }
 
-  if (opportunities) {
-    keywords = keywords.filter((k) => k.position >= 5 && k.position <= 20 && k.ctr < 3);
-  }
+  const days = parseInt(req.nextUrl.searchParams.get("days") || "28", 10);
+  const opportunitiesOnly = req.nextUrl.searchParams.get("opportunities") === "true";
 
-  return NextResponse.json({
-    keywords,
-    cannibalizationAlerts: MOCK_CANNIBALIZATION_ALERTS,
-  });
+  try {
+    let keywords = await fetchKeywords(user.id, days);
+
+    if (opportunitiesOnly) {
+      keywords = keywords.filter((k) => k.position >= 5 && k.position <= 20 && k.ctr < 3);
+    }
+
+    const cannibalizationAlerts = detectCannibalization(keywords);
+
+    return NextResponse.json({ keywords, cannibalizationAlerts });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[marketing/seo] Search Console error:", msg);
+    return NextResponse.json({
+      keywords: [],
+      cannibalizationAlerts: [],
+      error: msg,
+    });
+  }
 }

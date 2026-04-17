@@ -1,36 +1,41 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import {
-  MOCK_CONTENT_ANALYSIS,
-  MOCK_ARTICLE_RECOMMENDATIONS,
-  MOCK_ARTICLE_DRAFTS,
-} from "@/lib/mock/marketing-data";
 
 export const dynamic = "force-dynamic";
 
-// In-memory state for mock interactions
-let recommendations = MOCK_ARTICLE_RECOMMENDATIONS.map((r) => ({ ...r }));
+// In-memory state for the content factory pipeline (per-session, resets on redeploy)
+let analysisResult: Record<string, unknown> | null = null;
+let recommendations: { id: string; topic: string; targetKeyword: string; justification: string; estimatedTraffic: number; difficulty: string; priority: string; status: string }[] = [];
+let drafts: Record<string, unknown>[] = [];
 
 export async function GET() {
   const user = await getAuthenticatedUser();
-  if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
   return NextResponse.json({
-    analysis: MOCK_CONTENT_ANALYSIS,
+    analysis: analysisResult,
     recommendations,
-    drafts: MOCK_ARTICLE_DRAFTS,
+    drafts,
   });
 }
 
 export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
-  if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
   const body = await req.json();
   const { action, recommendationId } = body;
 
   if (action === "analyze") {
-    return NextResponse.json({ analysis: MOCK_CONTENT_ANALYSIS });
+    // In production: call Claude with GA4 + Search Console data
+    // For now: return empty analysis prompting user to connect data sources
+    analysisResult = {
+      topPerformers: [],
+      risingTrends: [],
+      contentGaps: [],
+      message: "Connect GA4 and Search Console to get AI-powered content analysis.",
+    };
+    return NextResponse.json({ analysis: analysisResult });
   }
 
   if (action === "approve" && recommendationId) {
@@ -47,8 +52,8 @@ export async function POST(req: NextRequest) {
   if (action === "generate" && recommendationId) {
     const rec = recommendations.find((r) => r.id === recommendationId);
     if (rec) rec.status = "writing";
-    const draft = MOCK_ARTICLE_DRAFTS.find((d) => d.recommendationId === recommendationId);
-    return NextResponse.json({ success: true, draft: draft || MOCK_ARTICLE_DRAFTS[0], recommendations });
+    // In production: call Claude to write the article
+    return NextResponse.json({ success: true, draft: null, recommendations });
   }
 
   if (action === "publish" && recommendationId) {
@@ -57,5 +62,5 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true, recommendations });
   }
 
-  return NextResponse.json({ error: "Action invalide" }, { status: 400 });
+  return NextResponse.json({ error: "Invalid action" }, { status: 400 });
 }

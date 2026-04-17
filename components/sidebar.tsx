@@ -13,6 +13,7 @@ const nav = [
   { href: "/briefing", label: "Briefing" },
   { href: "/deals", label: "Deals" },
   { href: "/prospecting", label: "Prospection" },
+  { href: "/mass-prospection", label: "Mass Prospection" },
   { href: "/signals", label: "Market Intel (coming)" },
   //{ href: "/marketing", label: "Marketing" },
   //{ href: "/competitive", label: "Competition ()" },

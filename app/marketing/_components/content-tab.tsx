@@ -3,7 +3,7 @@
 import { useState, useCallback } from "react";
 import { Sparkles, TrendingUp, AlertCircle, Search, Check, Upload, Link2 } from "lucide-react";
 import { useMarketingContent } from "@/lib/hooks/use-marketing";
-import type { ArticleRecommendation, ArticleDraft } from "@/lib/mock/marketing-data";
+import type { ArticleRecommendation, ArticleDraft } from "@/lib/marketing-types";
 
 const PRIORITY_STYLES = {
   high: { bg: "#fee2e2", color: "#dc2626" },

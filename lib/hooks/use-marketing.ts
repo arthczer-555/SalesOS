@@ -2,43 +2,26 @@ import useSWR from "swr";
 import type {
   MarketingKPI,
   TrafficDataPoint,
-  ArticleMarker,
   TrafficSource,
-  ArticlePerformance,
+  GA4TopArticle,
   Keyword,
   CannibalizationAlert,
   ContentAnalysis,
   ArticleRecommendation,
   ArticleDraft,
-  RefreshRecommendation,
-  MergeRecommendation,
-  InternalLinkSuggestion,
-  EditorialCalendarItem,
-  Alert,
-  PublicationHeatmapCell,
-  ArticleROI,
-  SocialPerformance,
-  TitleVariant,
-} from "@/lib/mock/marketing-data";
+  DynamicCompetitorBenchmark,
+} from "@/lib/marketing-types";
 
 const SWR_OPTS = { revalidateOnFocus: false, dedupingInterval: 30_000 } as const;
 
-// ─── Tier 1 — Overview ──────────────────────────────────────────────────────
-
-interface GA4TopArticle {
-  path: string;
-  title: string;
-  sessions: number;
-  pageViews: number;
-}
+// ─── Overview ────────────────────────────────────────────────────────────────
 
 interface OverviewResponse {
-  kpis: MarketingKPI;
+  kpis: MarketingKPI | null;
   trafficData: TrafficDataPoint[];
-  articleMarkers: ArticleMarker[];
   trafficSources: TrafficSource[];
-  topPages?: GA4TopArticle[];
-  source?: "ga4" | "mock";
+  topPages: GA4TopArticle[];
+  source: "ga4" | "mock" | "none";
   ga4Error?: string;
 }
 
@@ -50,26 +33,25 @@ export function useMarketingOverview(period: 7 | 14 | 30 | 90 | 365) {
   return {
     kpis: data?.kpis ?? null,
     trafficData: data?.trafficData ?? [],
-    articleMarkers: data?.articleMarkers ?? [],
     trafficSources: data?.trafficSources ?? [],
     topPages: data?.topPages ?? [],
-    source: data?.source ?? "mock",
+    source: data?.source ?? "none",
     ga4Error: data?.ga4Error ?? null,
     isLoading,
     error: error ? "Loading error" : "",
   };
 }
 
-// ─── Tier 2 — SEO ───────────────────────────────────────────────────────────
+// ─── SEO ─────────────────────────────────────────────────────────────────────
 
 interface SeoResponse {
   keywords: Keyword[];
   cannibalizationAlerts: CannibalizationAlert[];
+  error?: string;
 }
 
-export function useMarketingSeo(articleId?: string, opportunitiesOnly?: boolean) {
-  const params = new URLSearchParams();
-  if (articleId) params.set("articleId", articleId);
+export function useMarketingSeo(days = 28, opportunitiesOnly = false) {
+  const params = new URLSearchParams({ days: String(days) });
   if (opportunitiesOnly) params.set("opportunities", "true");
   const { data, error, isLoading } = useSWR<SeoResponse>(
     `/api/marketing/seo?${params.toString()}`,
@@ -78,41 +60,47 @@ export function useMarketingSeo(articleId?: string, opportunitiesOnly?: boolean)
   return {
     keywords: data?.keywords ?? [],
     cannibalizationAlerts: data?.cannibalizationAlerts ?? [],
+    seoError: data?.error ?? null,
     isLoading,
-    error: error ? "Erreur de chargement" : "",
+    error: error ? "Loading error" : "",
   };
 }
 
-// ─── Tier 3 — Articles ──────────────────────────────────────────────────────
+// ─── Articles ────────────────────────────────────────────────────────────────
 
-interface ArticlesResponse {
-  articles: ArticlePerformance[];
-  article?: ArticlePerformance;
+interface ArticleItem {
+  id: string;
+  title: string;
+  slug: string;
+  publishedDate: string;
+  link: string;
+  sessions: number;
+  pageViews: number;
 }
 
-export function useMarketingArticles(
-  sort: string = "aiScore",
-  order: string = "desc",
-  articleId?: string,
-) {
+interface ArticlesResponse {
+  articles: ArticleItem[];
+  error?: string;
+}
+
+export function useMarketingArticles(sort = "sessions", order = "desc") {
   const params = new URLSearchParams({ sort, order });
-  if (articleId) params.set("id", articleId);
   const { data, error, isLoading } = useSWR<ArticlesResponse>(
     `/api/marketing/articles?${params.toString()}`,
     SWR_OPTS,
   );
   return {
     articles: data?.articles ?? [],
-    article: data?.article ?? null,
+    articlesError: data?.error ?? null,
     isLoading,
-    error: error ? "Erreur de chargement" : "",
+    error: error ? "Loading error" : "",
   };
 }
 
-// ─── Tier 4 — Content Factory ────────────────────────────────────────────────
+// ─── Content Factory ─────────────────────────────────────────────────────────
 
 interface ContentResponse {
-  analysis: ContentAnalysis;
+  analysis: ContentAnalysis | null;
   recommendations: ArticleRecommendation[];
   drafts: ArticleDraft[];
 }
@@ -127,26 +115,19 @@ export function useMarketingContent() {
     recommendations: data?.recommendations ?? [],
     drafts: data?.drafts ?? [],
     isLoading,
-    error: error ? "Erreur de chargement" : "",
+    error: error ? "Loading error" : "",
     reload: () => mutate(),
   };
 }
 
-// ─── Tier 5 — Recommendations ────────────────────────────────────────────────
+// ─── Recommendations ─────────────────────────────────────────────────────────
 
-export interface DynamicCompetitorBenchmark {
-  topic: string;
-  coachello: boolean;
-  competitors: Record<string, boolean>;
-}
+export type { DynamicCompetitorBenchmark };
 
 interface RecommendationsResponse {
-  refresh: RefreshRecommendation[];
-  merge: MergeRecommendation[];
-  internalLinks: InternalLinkSuggestion[];
-  editorialCalendar: EditorialCalendarItem[];
   competitors: DynamicCompetitorBenchmark[];
   competitorNames: string[];
+  error?: string;
 }
 
 export function useMarketingRecommendations() {
@@ -155,39 +136,10 @@ export function useMarketingRecommendations() {
     SWR_OPTS,
   );
   return {
-    refresh: data?.refresh ?? [],
-    merge: data?.merge ?? [],
-    internalLinks: data?.internalLinks ?? [],
-    editorialCalendar: data?.editorialCalendar ?? [],
     competitors: data?.competitors ?? [],
     competitorNames: data?.competitorNames ?? [],
+    recoError: data?.error ?? null,
     isLoading,
-    error: error ? "Erreur de chargement" : "",
-  };
-}
-
-// ─── Tier 6 — Alerts & Bonus ────────────────────────────────────────────────
-
-interface AlertsResponse {
-  alerts: Alert[];
-  heatmap: PublicationHeatmapCell[];
-  roi: ArticleROI[];
-  socialPerformance: SocialPerformance[];
-  titleVariants: TitleVariant[];
-}
-
-export function useMarketingAlerts() {
-  const { data, error, isLoading } = useSWR<AlertsResponse>(
-    `/api/marketing/alerts`,
-    SWR_OPTS,
-  );
-  return {
-    alerts: data?.alerts ?? [],
-    heatmap: data?.heatmap ?? [],
-    roi: data?.roi ?? [],
-    socialPerformance: data?.socialPerformance ?? [],
-    titleVariants: data?.titleVariants ?? [],
-    isLoading,
-    error: error ? "Erreur de chargement" : "",
+    error: error ? "Loading error" : "",
   };
 }

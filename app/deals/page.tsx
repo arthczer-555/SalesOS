@@ -496,28 +496,53 @@ function DealDrawer({
             </>
           ) : null}
         </div>
-        {details && slackName && (
-          slackSent ? (
-            <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#16a34a", flexShrink: 0 }}>
-              <CheckCircle size={13} /> Envoyé
-            </span>
-          ) : (
-            <button
-              onClick={sendToSlack}
-              disabled={slackSending}
-              title="Envoyer le topo en DM Slack"
-              style={{
-                padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600,
-                background: slackSending ? "#f3f4f6" : "#f8fafc",
-                color: slackSending ? "#9ca3af" : "#374151",
-                border: "1px solid #e5e7eb", cursor: slackSending ? "not-allowed" : "pointer",
-                display: "flex", alignItems: "center", gap: 4, flexShrink: 0,
-              }}
-            >
-              {slackSending ? <><RefreshCw size={12} className="animate-spin" /> Envoi…</> : <><Send size={12} /> Slack</>}
-            </button>
-          )
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+          {details && (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+              <button
+                onClick={rescore}
+                disabled={rescoring}
+                title={(localScore?.scoredAt ?? details?.scoredAt) ? `Scoré ${timeAgo((localScore?.scoredAt ?? details?.scoredAt)!)}` : "Rescorer ce deal"}
+                style={{
+                  padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  background: rescoring ? "#eef2ff" : "linear-gradient(135deg, #eef2ff 0%, #e0e7ff 100%)",
+                  color: rescoring ? "#818cf8" : "#4f46e5",
+                  border: "1px solid #c7d2fe", cursor: rescoring ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", gap: 4,
+                }}
+              >
+                {rescoring ? <><RefreshCw size={12} className="animate-spin" /> Scoring…</> : <><Zap size={12} /> Rescorer</>}
+              </button>
+              {(localScore?.scoredAt ?? details?.scoredAt) && (
+                <span style={{ fontSize: 9, color: "#9ca3af" }}>
+                  {timeAgo((localScore?.scoredAt ?? details?.scoredAt)!)}
+                </span>
+              )}
+            </div>
+          )}
+          {details && slackName && (
+            slackSent ? (
+              <span style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "#16a34a", flexShrink: 0 }}>
+                <CheckCircle size={13} /> Envoyé
+              </span>
+            ) : (
+              <button
+                onClick={sendToSlack}
+                disabled={slackSending}
+                title="Envoyer le topo en DM Slack"
+                style={{
+                  padding: "5px 10px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  background: slackSending ? "#f3f4f6" : "#f8fafc",
+                  color: slackSending ? "#9ca3af" : "#374151",
+                  border: "1px solid #e5e7eb", cursor: slackSending ? "not-allowed" : "pointer",
+                  display: "flex", alignItems: "center", gap: 4,
+                }}
+              >
+                {slackSending ? <><RefreshCw size={12} className="animate-spin" /> Envoi…</> : <><Send size={12} /> Slack</>}
+              </button>
+            )
+          )}
+        </div>
         <button onClick={onClose} style={{ padding: 4, color: "#9ca3af", cursor: "pointer", background: "none", border: "none", flexShrink: 0 }}>
           <X size={18} />
         </button>
@@ -638,26 +663,6 @@ function DealDrawer({
                           </div>
                         ))}
 
-                        {/* Rescorer + date */}
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-                          <button
-                            onClick={rescore}
-                            disabled={rescoring}
-                            style={{
-                              padding: "4px 10px", borderRadius: 6, fontSize: 11,
-                              background: "none", border: "1px solid #e5e7eb",
-                              color: "#6b7280", cursor: rescoring ? "not-allowed" : "pointer",
-                              display: "flex", alignItems: "center", gap: 4,
-                            }}
-                          >
-                            {rescoring ? <><RefreshCw size={10} className="animate-spin" /> Scoring…</> : <><RefreshCw size={10} /> Rescorer</>}
-                          </button>
-                          {activeScoredAt && (
-                            <span style={{ fontSize: 10, color: "#9ca3af" }}>
-                              Scoré {timeAgo(activeScoredAt)}
-                            </span>
-                          )}
-                        </div>
                       </div>
                     );
                   })()}
