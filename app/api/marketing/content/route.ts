@@ -638,38 +638,110 @@ STRICT RULES:
 7. End with a CTA section pointing to Coachello (similar pattern to references).
 8. Output valid HTML only for the content (use <h2>, <h3>, <p>, <ul><li>, <table>, <strong>, <a href="...">), no <html>/<body> wrappers.
 
-Return ONLY valid JSON, no markdown, no preamble:
-{
-  "content": {
-    "fr": "<h2>...</h2><p>...</p>...",
-    "en": "<h2>...</h2><p>...</p>..."
-  },
-  "wordpressFormat": {
-    "fr": {"category": "...", "tags": ["..."], "excerpt": "... (max 155 chars)", "slug": "url-slug-fr"},
-    "en": {"category": "...", "tags": ["..."], "excerpt": "... (max 155 chars)", "slug": "url-slug-en"}
-  },
-  "internalLinks": {
-    "fr": [{"anchorText": "...", "targetArticleTitle": "...", "targetUrl": "..."}],
-    "en": [{"anchorText": "...", "targetArticleTitle": "...", "targetUrl": "..."}]
-  },
-  "styleMatchScore": 85,
-  "structureNotes": "1 sentence explaining which reference articles you modeled on and why"
-}`;
+Call the \`write_article\` tool with your complete output.`;
+
+  // Use tool_use to guarantee structured JSON output (no truncation, no parse errors)
+  const articleTool: Anthropic.Tool = {
+    name: "write_article",
+    description: "Writes a complete bilingual blog article with WordPress metadata and internal links",
+    input_schema: {
+      type: "object",
+      properties: {
+        content: {
+          type: "object",
+          properties: {
+            fr: { type: "string", description: "Full article HTML in French" },
+            en: { type: "string", description: "Full article HTML in English" },
+          },
+          required: ["fr", "en"],
+        },
+        wordpressFormat: {
+          type: "object",
+          properties: {
+            fr: {
+              type: "object",
+              properties: {
+                category: { type: "string" },
+                tags: { type: "array", items: { type: "string" } },
+                excerpt: { type: "string", description: "Max 155 characters" },
+                slug: { type: "string" },
+              },
+              required: ["category", "tags", "excerpt", "slug"],
+            },
+            en: {
+              type: "object",
+              properties: {
+                category: { type: "string" },
+                tags: { type: "array", items: { type: "string" } },
+                excerpt: { type: "string", description: "Max 155 characters" },
+                slug: { type: "string" },
+              },
+              required: ["category", "tags", "excerpt", "slug"],
+            },
+          },
+          required: ["fr", "en"],
+        },
+        internalLinks: {
+          type: "object",
+          properties: {
+            fr: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  anchorText: { type: "string" },
+                  targetArticleTitle: { type: "string" },
+                  targetUrl: { type: "string" },
+                },
+                required: ["anchorText", "targetArticleTitle", "targetUrl"],
+              },
+            },
+            en: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  anchorText: { type: "string" },
+                  targetArticleTitle: { type: "string" },
+                  targetUrl: { type: "string" },
+                },
+                required: ["anchorText", "targetArticleTitle", "targetUrl"],
+              },
+            },
+          },
+          required: ["fr", "en"],
+        },
+        styleMatchScore: { type: "number", description: "0-100 score indicating how closely the article matches the reference style" },
+        structureNotes: { type: "string", description: "1 sentence explaining which reference articles were modeled on" },
+      },
+      required: ["content", "wordpressFormat", "internalLinks", "styleMatchScore"],
+    },
+  };
 
   const client = new Anthropic();
   const message = await client.messages.create({
     model: "claude-sonnet-4-6",
-    max_tokens: 8000,
+    max_tokens: 16000,
+    tools: [articleTool],
+    tool_choice: { type: "tool", name: "write_article" },
     messages: [{ role: "user", content: prompt }],
   });
 
   logUsage(userId, "claude-sonnet-4-6", message.usage.input_tokens, message.usage.output_tokens, "marketing_content_generate");
 
-  const raw = message.content[0].type === "text" ? message.content[0].text : "";
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Claude returned invalid JSON");
+  // Extract tool input from response
+  const toolUse = message.content.find((c) => c.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") {
+    throw new Error(`Claude did not return a tool_use block. stop_reason: ${message.stop_reason}`);
+  }
 
-  const parsed = JSON.parse(jsonMatch[0]);
+  const parsed = toolUse.input as {
+    content: { fr: string; en: string };
+    wordpressFormat: Draft["wordpressFormat"];
+    internalLinks: Draft["internalLinks"];
+    styleMatchScore: number;
+    structureNotes?: string;
+  };
 
   // Validate Claude output structure before persisting
   if (!parsed.content?.fr || !parsed.content?.en) {
