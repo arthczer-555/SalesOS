@@ -272,22 +272,167 @@ Return ONLY valid JSON:
 
 // ─── Generation ──────────────────────────────────────────────────────────────
 
+/**
+ * Analyze article structure: count headings, average paragraph length,
+ * detect CTA patterns, word count, key elements.
+ */
+function analyzeStructure(html: string): {
+  wordCount: number;
+  h2Count: number;
+  h3Count: number;
+  paragraphCount: number;
+  bulletLists: number;
+  tables: number;
+  internalLinks: number;
+  hasIntroHook: boolean;
+  hasStatsOrData: boolean;
+  hasCTA: boolean;
+  outline: string[];
+} {
+  const text = html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const wordCount = text.split(" ").filter(Boolean).length;
+
+  const h2Matches = html.match(/<h2[^>]*>(.*?)<\/h2>/gi) || [];
+  const h3Matches = html.match(/<h3[^>]*>(.*?)<\/h3>/gi) || [];
+  const paragraphCount = (html.match(/<p[^>]*>/gi) || []).length;
+  const bulletLists = (html.match(/<ul[^>]*>/gi) || []).length;
+  const tables = (html.match(/<table[^>]*>/gi) || []).length;
+  const internalLinks = (html.match(/href="https:\/\/coachello\.ai/gi) || []).length;
+
+  const outline = [
+    ...h2Matches.map((h) => "H2: " + h.replace(/<[^>]*>/g, "").trim()),
+    ...h3Matches.map((h) => "  H3: " + h.replace(/<[^>]*>/g, "").trim()),
+  ];
+
+  const hasStatsOrData = /\d+%|\d+x|\d+ (sessions|users|ROI|coaches|managers)/i.test(text);
+  const hasCTA = /book a demo|request a demo|talk to|get started|contact us|learn more/i.test(text);
+  const hasIntroHook = /^[^.]{0,200}\?/.test(text.slice(0, 400)) || /\d+%/.test(text.slice(0, 500));
+
+  return {
+    wordCount,
+    h2Count: h2Matches.length,
+    h3Count: h3Matches.length,
+    paragraphCount,
+    bulletLists,
+    tables,
+    internalLinks,
+    hasIntroHook,
+    hasStatsOrData,
+    hasCTA,
+    outline,
+  };
+}
+
 async function runGeneration(userId: string, recommendationId: string) {
   const rec = recommendations.find((r) => r.id === recommendationId);
   if (!rec) return NextResponse.json({ error: "Recommendation not found" }, { status: 404 });
 
   rec.status = "writing";
 
-  const articles = await fetchAllArticles(5);
-  if (articles.length === 0) {
+  // ── Fetch all articles (we'll pick the top performers) ─────────────────────
+  const allArticles = await fetchAllArticles(100);
+  if (allArticles.length === 0) {
     return NextResponse.json({ error: "No WordPress articles available as style reference" }, { status: 400 });
   }
 
-  const styleReference = articles.slice(0, 3).map((a) => {
-    return `--- Article: ${a.title} ---\n${a.contentText.slice(0, 2000)}`;
-  }).join("\n\n");
+  // ── Fetch GA4 top pages to identify BEST performing articles ───────────────
+  let topPerformingSlugs: string[] = [];
+  let ga4Available = false;
+  try {
+    const topPages = await fetchTopPages(userId, 30, 20);
+    topPerformingSlugs = topPages
+      .map((p) => p.path.replace(/^\/blog\//, "").replace(/\/$/, ""))
+      .filter(Boolean);
+    ga4Available = topPages.length > 0;
+  } catch {
+    // GA4 unavailable — fall back to most recent
+  }
 
-  const availableForLinking = articles.map((a) => `- "${a.title}" → ${a.link}`).join("\n");
+  // ── Pick style reference articles: top 3 by GA4 sessions, fallback to recent ─
+  let styleArticles = topPerformingSlugs.length > 0
+    ? topPerformingSlugs
+        .map((slug) => allArticles.find((a) => a.slug === slug))
+        .filter((a): a is NonNullable<typeof a> => !!a)
+        .slice(0, 3)
+    : [];
+
+  if (styleArticles.length < 3) {
+    // Fill with most recent if we don't have enough
+    const existing = new Set(styleArticles.map((a) => a.id));
+    for (const a of allArticles) {
+      if (styleArticles.length >= 3) break;
+      if (!existing.has(a.id)) styleArticles.push(a);
+    }
+  }
+
+  // ── Fetch real metrics for the target keyword ──────────────────────────────
+  let targetKeywordMetrics: { impressions: number; clicks: number; ctr: number; position: number } | null = null;
+  let searchConsoleAvailable = false;
+  try {
+    const keywords = await fetchKeywords(userId, 28, false);
+    searchConsoleAvailable = keywords.length > 0;
+    const matched = keywords.find((k) => k.keyword.toLowerCase() === rec.targetKeyword.toLowerCase());
+    if (matched) {
+      targetKeywordMetrics = {
+        impressions: matched.impressions,
+        clicks: matched.clicks,
+        ctr: matched.ctr,
+        position: matched.position,
+      };
+    }
+  } catch {
+    // Search Console unavailable
+  }
+
+  // ── Build structure analysis for each reference article ────────────────────
+  const structureAnalyses = styleArticles.map((a) => {
+    const s = analyzeStructure(a.contentHtml);
+    return {
+      title: a.title,
+      slug: a.slug,
+      structure: s,
+    };
+  });
+
+  // Average structure across top articles
+  const avgStructure = {
+    wordCount: Math.round(structureAnalyses.reduce((s, a) => s + a.structure.wordCount, 0) / Math.max(structureAnalyses.length, 1)),
+    h2Count: Math.round(structureAnalyses.reduce((s, a) => s + a.structure.h2Count, 0) / Math.max(structureAnalyses.length, 1)),
+    h3Count: Math.round(structureAnalyses.reduce((s, a) => s + a.structure.h3Count, 0) / Math.max(structureAnalyses.length, 1)),
+    paragraphCount: Math.round(structureAnalyses.reduce((s, a) => s + a.structure.paragraphCount, 0) / Math.max(structureAnalyses.length, 1)),
+    bulletLists: Math.round(structureAnalyses.reduce((s, a) => s + a.structure.bulletLists, 0) / Math.max(structureAnalyses.length, 1)),
+    tables: Math.round(structureAnalyses.reduce((s, a) => s + a.structure.tables, 0) / Math.max(structureAnalyses.length, 1)),
+    internalLinks: Math.round(structureAnalyses.reduce((s, a) => s + a.structure.internalLinks, 0) / Math.max(structureAnalyses.length, 1)),
+  };
+
+  // ── Build prompt sections ──────────────────────────────────────────────────
+  const styleReferenceText = styleArticles.slice(0, 3).map((a, i) => {
+    const struct = structureAnalyses[i];
+    return `### Reference article #${i + 1}: ${a.title}
+URL: ${a.link}
+Published: ${new Date(a.date).toLocaleDateString("en-US")}
+Structure: ${struct.structure.wordCount} words, ${struct.structure.h2Count} H2 sections, ${struct.structure.h3Count} H3 subsections, ${struct.structure.paragraphCount} paragraphs, ${struct.structure.bulletLists} bullet lists, ${struct.structure.tables} table(s), ${struct.structure.internalLinks} internal links.
+Outline:
+${struct.structure.outline.join("\n")}
+
+Full content:
+${a.contentText.slice(0, 3500)}
+`;
+  }).join("\n---\n\n");
+
+  const availableForLinking = allArticles.slice(0, 30).map((a) => `- "${a.title}" → ${a.link}`).join("\n");
+
+  const metricsSection = targetKeywordMetrics
+    ? `## REAL Search Console data for the target keyword "${rec.targetKeyword}" (last 28 days)
+- Impressions: ${targetKeywordMetrics.impressions}
+- Clicks: ${targetKeywordMetrics.clicks}
+- CTR: ${targetKeywordMetrics.ctr}%
+- Current ranking position: ${targetKeywordMetrics.position}
+
+This means the keyword already has real search demand. Your article must target this exact keyword and satisfy the search intent behind it.`
+    : searchConsoleAvailable
+      ? `## Note: "${rec.targetKeyword}" is a priority keyword but has no Search Console history yet — it's an emerging opportunity.`
+      : `## Note: Search Console data unavailable — optimize for the target keyword based on topic relevance.`;
 
   const prompt = `You are Coachello's senior content writer. Write a NEW blog article in two languages (French + English).
 
@@ -297,40 +442,60 @@ ${rec.topic}
 ## Target keyword
 ${rec.targetKeyword}
 
-## Data-driven justification (why this article matters)
+## Data-driven justification for this article (from real analytics)
 ${rec.justification}
 
-## Style reference — match this tone, structure, and voice
-${styleReference}
+${metricsSection}
 
-## Available articles for internal linking (use 2-4 links in EACH language version)
+## Source of style reference
+${ga4Available
+  ? `The 3 articles below are Coachello's TOP-PERFORMING articles by GA4 sessions (last 30 days). Match their structure, tone, and voice precisely — this is what works with Coachello's audience.`
+  : `The 3 articles below are recent Coachello articles. Match their structure, tone, and voice.`}
+
+## Reference articles with structure analysis
+
+${styleReferenceText}
+
+## Structural baseline (average of the top articles — your article should match these numbers within ±15%)
+- Target word count: ~${avgStructure.wordCount} words (per language)
+- H2 sections: ~${avgStructure.h2Count}
+- H3 subsections: ~${avgStructure.h3Count}
+- Paragraphs: ~${avgStructure.paragraphCount}
+- Bullet lists: ~${avgStructure.bulletLists}
+- Tables: ~${avgStructure.tables}
+- Internal links: ~${avgStructure.internalLinks}
+
+## All Coachello articles — pick 3-5 for internal links per language
 ${availableForLinking}
 
 ---
 
-Instructions:
-- Write the complete article in both French and English (NOT translations, each language adapted)
-- Match the tone, structure, headings (H2, H3), bullet lists, and CTA patterns of the style reference
-- Natural length: 800-1500 words
-- Include 2-4 internal links per language from the available list (natural placement)
-- Add a CTA section near the end ("Book a demo with Coachello" pattern)
-- Only cite credible industry sources (ICF, PwC, Gartner, HBR, McKinsey) if needed
+STRICT RULES:
+1. Write the complete article in BOTH French and English. Each language must be independently written (not translated) — adapt to the audience.
+2. Follow the structure pattern of the reference articles: same use of H2/H3 heading density, same paragraph rhythm, same presence of bullet lists and tables if the top articles use them.
+3. Match the tone, voice, and opening style of the top references (e.g., do they open with a question? A stat? A provocative statement?).
+4. Use ONLY real numbers. If you cite a statistic, source it from ICF, PwC/ICF study, Gartner, McKinsey, HBR, BCG, or Deloitte — never invent %. If you don't have a verifiable number, use a qualitative statement instead.
+5. Never mention "one in X companies", fake ROI figures, or fabricated study names. Stick to well-known, verifiable industry references.
+6. Include 3-5 internal links per language, picked from the "All Coachello articles" list above. Pick ones that are topically relevant to your article's sections.
+7. End with a CTA section pointing to Coachello (similar pattern to references).
+8. Output valid HTML only for the content (use <h2>, <h3>, <p>, <ul><li>, <table>, <strong>, <a href="...">), no <html>/<body> wrappers.
 
-Return ONLY valid JSON:
+Return ONLY valid JSON, no markdown, no preamble:
 {
   "content": {
     "fr": "<h2>...</h2><p>...</p>...",
     "en": "<h2>...</h2><p>...</p>..."
   },
   "wordpressFormat": {
-    "fr": {"category": "...", "tags": ["..."], "excerpt": "...", "slug": "..."},
-    "en": {"category": "...", "tags": ["..."], "excerpt": "...", "slug": "..."}
+    "fr": {"category": "...", "tags": ["..."], "excerpt": "... (max 155 chars)", "slug": "url-slug-fr"},
+    "en": {"category": "...", "tags": ["..."], "excerpt": "... (max 155 chars)", "slug": "url-slug-en"}
   },
   "internalLinks": {
     "fr": [{"anchorText": "...", "targetArticleTitle": "...", "targetUrl": "..."}],
     "en": [{"anchorText": "...", "targetArticleTitle": "...", "targetUrl": "..."}]
   },
-  "styleMatchScore": 85
+  "styleMatchScore": 85,
+  "structureNotes": "1 sentence explaining which reference articles you modeled on and why"
 }`;
 
   const client = new Anthropic();
