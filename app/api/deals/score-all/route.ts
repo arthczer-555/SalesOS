@@ -29,6 +29,11 @@ export async function POST(req: NextRequest) {
   const cronHeader = req.headers.get("x-cron-secret");
   const isCron = !!cronSecret && cronHeader === cronSecret;
 
+  console.log("[score-all] cronSecret defined:", !!cronSecret, "len:", cronSecret?.length);
+  console.log("[score-all] cronHeader:", cronHeader, "len:", cronHeader?.length);
+  console.log("[score-all] all headers:", JSON.stringify(Object.fromEntries(req.headers.entries())));
+  console.log("[score-all] isCron:", isCron);
+
   let userId: string | null = null;
   if (!isCron) {
     const user = await getAuthenticatedUser();
