@@ -1,6 +1,6 @@
 import type { Config } from "@netlify/functions";
 
-const CHUNK_SIZE = 20;
+const CHUNK_SIZE = 5;
 
 async function hubspotDealIds(): Promise<string[]> {
   const ids: string[] = [];
