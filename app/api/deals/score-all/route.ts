@@ -29,11 +29,6 @@ export async function POST(req: NextRequest) {
   const cronHeader = req.headers.get("x-cron-secret");
   const isCron = !!cronSecret && cronHeader === cronSecret;
 
-  console.log("[score-all] cronSecret defined:", !!cronSecret, "len:", cronSecret?.length);
-  console.log("[score-all] cronHeader:", cronHeader, "len:", cronHeader?.length);
-  console.log("[score-all] all headers:", JSON.stringify(Object.fromEntries(req.headers.entries())));
-  console.log("[score-all] isCron:", isCron);
-
   let userId: string | null = null;
   if (!isCron) {
     const user = await getAuthenticatedUser();
@@ -41,22 +36,24 @@ export async function POST(req: NextRequest) {
     userId = user.id;
   }
 
-  // Optional: only re-score deals not scored in the last N hours
   const body = await req.json().catch(() => ({}));
   const forceAll: boolean = body.forceAll ?? false;
+  const explicitDealIds: string[] | undefined = Array.isArray(body.dealIds) ? body.dealIds : undefined;
 
   try {
-    // Fetch all active deals
-    const data = await hubspot("/crm/v3/objects/deals/search", "POST", {
-      limit: 200,
-      properties: ["dealname", "dealstage", "hs_is_closed"],
-      filterGroups: [{ filters: [{ propertyName: "hs_is_closed", operator: "EQ", value: "false" }] }],
-      sorts: [{ propertyName: "amount", direction: "DESCENDING" }],
-    });
+    let dealIds: string[];
+    if (explicitDealIds && explicitDealIds.length > 0) {
+      dealIds = explicitDealIds;
+    } else {
+      const data = await hubspot("/crm/v3/objects/deals/search", "POST", {
+        limit: 200,
+        properties: ["dealname", "dealstage", "hs_is_closed"],
+        filterGroups: [{ filters: [{ propertyName: "hs_is_closed", operator: "EQ", value: "false" }] }],
+        sorts: [{ propertyName: "amount", direction: "DESCENDING" }],
+      });
+      dealIds = (data.results ?? []).map((d: { id: string }) => d.id);
+    }
 
-    const dealIds: string[] = (data.results ?? []).map((d: { id: string }) => d.id);
-
-    // Unless forced, skip deals scored in the last 7 days
     let toScore = dealIds;
     if (!forceAll) {
       const cutoff = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
