@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/api/gmail/callback(.*)", // Google OAuth callback — user browser has session cookie
+  "/api/deals/score-all(.*)", // Cron endpoint — authenticated via Bearer CRON_SECRET in handler
 ]);
 
 export default clerkMiddleware(async (auth, request) => {
