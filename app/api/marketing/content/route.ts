@@ -592,9 +592,8 @@ This means the keyword already has real search demand. Your article must target 
       ? `## Note: "${rec.targetKeyword}" is a priority keyword but has no Search Console history yet — it's an emerging opportunity.`
       : `## Note: Search Console data unavailable — optimize for the target keyword based on topic relevance.`;
 
-  const prompt = `You are Coachello's senior content writer. Write a NEW blog article in two languages (French + English).
-
-## Topic
+  // Shared context for both languages
+  const sharedContext = `## Topic
 ${rec.topic}
 
 ## Target keyword
@@ -615,7 +614,7 @@ ${ga4Available
 ${styleReferenceText}
 
 ## Structural baseline (average of the top articles — your article should match these numbers within ±15%)
-- Target word count: ~${avgStructure.wordCount} words (per language)
+- Target word count: ~${avgStructure.wordCount} words
 - H2 sections: ~${avgStructure.h2Count}
 - H3 subsections: ~${avgStructure.h3Count}
 - Paragraphs: ~${avgStructure.paragraphCount}
@@ -623,144 +622,119 @@ ${styleReferenceText}
 - Tables: ~${avgStructure.tables}
 - Internal links: ~${avgStructure.internalLinks}
 
-## All Coachello articles — pick 3-5 for internal links per language
+## All Coachello articles — pick 3-5 for internal links
 ${availableForLinking}
 
 ---
 
 STRICT RULES:
-1. Write the complete article in BOTH French and English. Each language must be independently written (not translated) — adapt to the audience.
-2. Follow the structure pattern of the reference articles: same use of H2/H3 heading density, same paragraph rhythm, same presence of bullet lists and tables if the top articles use them.
-3. Match the tone, voice, and opening style of the top references (e.g., do they open with a question? A stat? A provocative statement?).
-4. Use ONLY real numbers. If you cite a statistic, source it from ICF, PwC/ICF study, Gartner, McKinsey, HBR, BCG, or Deloitte — never invent %. If you don't have a verifiable number, use a qualitative statement instead.
-5. Never mention "one in X companies", fake ROI figures, or fabricated study names. Stick to well-known, verifiable industry references.
-6. Include 3-5 internal links per language, picked from the "All Coachello articles" list above. Pick ones that are topically relevant to your article's sections.
-7. End with a CTA section pointing to Coachello (similar pattern to references).
-8. Output valid HTML only for the content (use <h2>, <h3>, <p>, <ul><li>, <table>, <strong>, <a href="...">), no <html>/<body> wrappers.
+1. Follow the structure pattern of the reference articles: same use of H2/H3 heading density, same paragraph rhythm, same presence of bullet lists and tables.
+2. Match the tone, voice, and opening style of the top references.
+3. Use ONLY real numbers. If you cite a statistic, source it from ICF, PwC/ICF study, Gartner, McKinsey, HBR, BCG, or Deloitte — never invent %. If you don't have a verifiable number, use a qualitative statement.
+4. Never mention "one in X companies", fake ROI figures, or fabricated study names.
+5. Include 3-5 internal links picked from the "All Coachello articles" list above.
+6. End with a CTA section pointing to Coachello.
+7. Output valid HTML only (use <h2>, <h3>, <p>, <ul><li>, <table>, <strong>, <a href="...">), no <html>/<body> wrappers.
+`;
 
-Call the \`write_article\` tool with your complete output.`;
-
-  // Use tool_use to guarantee structured JSON output (no truncation, no parse errors)
-  const articleTool: Anthropic.Tool = {
-    name: "write_article",
-    description: "Writes a complete bilingual blog article with WordPress metadata and internal links",
+  // ── Tool schema for writing a single language ──────────────────────────────
+  const writeLanguageTool: Anthropic.Tool = {
+    name: "write_article_language",
+    description: "Writes a complete blog article in one language with WordPress metadata and internal links",
     input_schema: {
       type: "object",
       properties: {
-        content: {
-          type: "object",
-          properties: {
-            fr: { type: "string", description: "Full article HTML in French" },
-            en: { type: "string", description: "Full article HTML in English" },
-          },
-          required: ["fr", "en"],
-        },
+        content: { type: "string", description: "Full article HTML" },
         wordpressFormat: {
           type: "object",
           properties: {
-            fr: {
-              type: "object",
-              properties: {
-                category: { type: "string" },
-                tags: { type: "array", items: { type: "string" } },
-                excerpt: { type: "string", description: "Max 155 characters" },
-                slug: { type: "string" },
-              },
-              required: ["category", "tags", "excerpt", "slug"],
-            },
-            en: {
-              type: "object",
-              properties: {
-                category: { type: "string" },
-                tags: { type: "array", items: { type: "string" } },
-                excerpt: { type: "string", description: "Max 155 characters" },
-                slug: { type: "string" },
-              },
-              required: ["category", "tags", "excerpt", "slug"],
-            },
+            category: { type: "string" },
+            tags: { type: "array", items: { type: "string" } },
+            excerpt: { type: "string", description: "Max 155 characters" },
+            slug: { type: "string" },
           },
-          required: ["fr", "en"],
+          required: ["category", "tags", "excerpt", "slug"],
         },
         internalLinks: {
-          type: "object",
-          properties: {
-            fr: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  anchorText: { type: "string" },
-                  targetArticleTitle: { type: "string" },
-                  targetUrl: { type: "string" },
-                },
-                required: ["anchorText", "targetArticleTitle", "targetUrl"],
-              },
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              anchorText: { type: "string" },
+              targetArticleTitle: { type: "string" },
+              targetUrl: { type: "string" },
             },
-            en: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  anchorText: { type: "string" },
-                  targetArticleTitle: { type: "string" },
-                  targetUrl: { type: "string" },
-                },
-                required: ["anchorText", "targetArticleTitle", "targetUrl"],
-              },
-            },
+            required: ["anchorText", "targetArticleTitle", "targetUrl"],
           },
-          required: ["fr", "en"],
         },
-        styleMatchScore: { type: "number", description: "0-100 score indicating how closely the article matches the reference style" },
-        structureNotes: { type: "string", description: "1 sentence explaining which reference articles were modeled on" },
       },
-      required: ["content", "wordpressFormat", "internalLinks", "styleMatchScore"],
+      required: ["content", "wordpressFormat", "internalLinks"],
     },
   };
 
   const client = new Anthropic();
-  const message = await client.messages.create({
-    model: "claude-sonnet-4-6",
-    max_tokens: 16000,
-    tools: [articleTool],
-    tool_choice: { type: "tool", name: "write_article" },
-    messages: [{ role: "user", content: prompt }],
-  });
 
-  logUsage(userId, "claude-sonnet-4-6", message.usage.input_tokens, message.usage.output_tokens, "marketing_content_generate");
+  // Generate FR and EN in parallel — each gets a full 16k token budget
+  async function writeLanguage(lang: "fr" | "en"): Promise<{
+    content: string;
+    wordpressFormat: { category: string; tags: string[]; excerpt: string; slug: string };
+    internalLinks: InternalLink[];
+  }> {
+    const langInstruction = lang === "fr"
+      ? "Write this article in French, adapted to a French-speaking HR/L&D audience. Do not translate — write natively for this audience."
+      : "Write this article in English, adapted to an English-speaking HR/L&D audience. Do not translate — write natively for this audience.";
 
-  // Extract tool input from response
-  const toolUse = message.content.find((c) => c.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") {
-    throw new Error(`Claude did not return a tool_use block. stop_reason: ${message.stop_reason}`);
+    const langPrompt = `You are Coachello's senior content writer. Write a NEW blog article in ${lang === "fr" ? "French" : "English"}.
+
+${langInstruction}
+
+${sharedContext}
+
+Call the \`write_article_language\` tool with your complete output.`;
+
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 16000,
+      tools: [writeLanguageTool],
+      tool_choice: { type: "tool", name: "write_article_language" },
+      messages: [{ role: "user", content: langPrompt }],
+    });
+
+    logUsage(userId, "claude-sonnet-4-6", response.usage.input_tokens, response.usage.output_tokens, `marketing_content_generate_${lang}`);
+
+    if (response.stop_reason === "max_tokens") {
+      throw new Error(`${lang.toUpperCase()}: Claude hit max_tokens limit. Try a shorter topic or reduce reference article length.`);
+    }
+
+    const toolUse = response.content.find((c) => c.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
+      throw new Error(`${lang.toUpperCase()}: no tool_use block. stop_reason: ${response.stop_reason}`);
+    }
+
+    const out = toolUse.input as {
+      content: string;
+      wordpressFormat: { category: string; tags: string[]; excerpt: string; slug: string };
+      internalLinks: InternalLink[];
+    };
+
+    if (!out.content || out.content.length < 100) {
+      throw new Error(`${lang.toUpperCase()}: content too short (${out.content?.length || 0} chars). stop_reason: ${response.stop_reason}`);
+    }
+
+    return out;
   }
 
-  const parsed = toolUse.input as {
-    content: { fr: string; en: string };
-    wordpressFormat: Draft["wordpressFormat"];
-    internalLinks: Draft["internalLinks"];
-    styleMatchScore: number;
-    structureNotes?: string;
-  };
-
-  // Validate Claude output structure before persisting
-  if (!parsed.content?.fr || !parsed.content?.en) {
-    throw new Error("Claude returned incomplete content (missing fr or en)");
-  }
-  if (!parsed.wordpressFormat?.fr || !parsed.wordpressFormat?.en) {
-    throw new Error("Claude returned incomplete WordPress metadata");
-  }
+  const [frResult, enResult] = await Promise.all([writeLanguage("fr"), writeLanguage("en")]);
 
   const draft: Draft = {
     recommendationId: rec.id,
-    content: parsed.content,
-    wordpressFormat: parsed.wordpressFormat,
-    styleMatchScore: parsed.styleMatchScore || 80,
-    internalLinks: parsed.internalLinks || { fr: [], en: [] },
+    content: { fr: frResult.content, en: enResult.content },
+    wordpressFormat: { fr: frResult.wordpressFormat, en: enResult.wordpressFormat },
+    styleMatchScore: 85,
+    internalLinks: { fr: frResult.internalLinks || [], en: enResult.internalLinks || [] },
   };
 
-  // Persist draft to Supabase (so it survives redeploys)
-  await saveDraft(userId, rec, draft, parsed.structureNotes);
+  await saveDraft(userId, rec, draft);
 
   const recs = await loadRecommendations(userId);
 
