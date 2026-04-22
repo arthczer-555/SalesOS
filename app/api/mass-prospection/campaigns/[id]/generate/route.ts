@@ -4,6 +4,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
+import { createCompanyContextCache } from "@/lib/prospect-enrichment";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   let prospectionModel = "claude-haiku-4-5-20251001";
   try {
     if (globalModelEntry?.content) {
-      prospectionModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).prospection ?? prospectionModel;
+      prospectionModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).mass_prospection ?? prospectionModel;
     }
   } catch { /* keep default */ }
 
@@ -63,12 +64,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     "Tu es un expert en prospection B2B pour Coachello, une entreprise de coaching professionnel.",
     "Tu rédiges des emails de prospection ultra-personnalisés, humains et percutants.",
     "L'email doit sonner vrai, pas comme un template générique.",
+    "Mobilise ta connaissance générale de l'entreprise du prospect (secteur, taille, actualités, enjeux RH connus) pour ancrer l'accroche. Si un bloc CONTEXTE ENTREPRISE est fourni, priorise ces informations récentes. Reste factuel : n'invente jamais un fait, un chiffre ou un nom.",
+    "Varie les accroches d'un prospect à l'autre : si deux prospects se ressemblent, change l'angle (secteur, actualité, douleur).",
     `L'email doit être signé par : ${senderName}. Termine toujours l'email par une signature avec ce nom.`,
     "Réponds UNIQUEMENT en JSON valide avec exactement ces deux clés : { \"subject\": \"...\", \"body\": \"...\" }",
     "Le body doit être en texte brut (pas de HTML, pas de markdown).",
     guide ? `\n---\nGUIDE DE PROSPECTION (exemples et instructions) :\n${guide}` : "",
   ].filter(Boolean).join("\n");
 
+  const getCompanyContext = createCompanyContextCache();
   const client = new Anthropic();
   let generated = 0;
   let errors = 0;
@@ -82,6 +86,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         await db.from("mass_campaign_emails").update({ status: "generating" }).eq("id", email.id);
 
         const extra = (typeof email.extra_data === "object" && email.extra_data) ? email.extra_data as Record<string, string> : {};
+
+        const companyContext = email.company ? await getCompanyContext(email.company) : "";
 
         const prospectBlock = [
           `Nom : ${email.first_name} ${email.last_name}`,
@@ -100,8 +106,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const userPrompt = [
           `OBJECTIF DE LA CAMPAGNE :\n${campaign.objective}`,
           `\nINFORMATIONS SUR LE PROSPECT :\n${prospectBlock}`,
+          companyContext ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyContext}` : "",
           "\nRédige un email de prospection personnalisé pour cette personne.",
-        ].join("\n");
+        ].filter(Boolean).join("\n");
 
         const message = await client.messages.create({
           model: prospectionModel,

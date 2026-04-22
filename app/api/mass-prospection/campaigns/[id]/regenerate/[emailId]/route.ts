@@ -4,6 +4,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
+import { fetchCompanyWebContext } from "@/lib/prospect-enrichment";
 
 export const dynamic = "force-dynamic";
 
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   let prospectionModel = "claude-haiku-4-5-20251001";
   try {
     if (globalModelEntry?.content) {
-      prospectionModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).prospection ?? prospectionModel;
+      prospectionModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).mass_prospection ?? prospectionModel;
     }
   } catch { /* keep default */ }
 
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const systemPrompt = [
     "Tu es un expert en prospection B2B pour Coachello, une entreprise de coaching professionnel.",
     "Tu rédiges des emails de prospection ultra-personnalisés, humains et percutants.",
+    "Mobilise ta connaissance générale de l'entreprise du prospect pour ancrer l'accroche. Si un bloc CONTEXTE ENTREPRISE est fourni, priorise ces informations récentes. Reste factuel : n'invente jamais un fait, un chiffre ou un nom.",
     `L'email doit être signé par : ${senderName}.`,
     "Réponds UNIQUEMENT en JSON valide avec exactement ces deux clés : { \"subject\": \"...\", \"body\": \"...\" }",
     "Le body doit être en texte brut (pas de HTML, pas de markdown).",
@@ -59,6 +61,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   ].filter(Boolean).join("\n");
 
   const extra = (typeof email.extra_data === "object" && email.extra_data) ? email.extra_data : {};
+
+  const companyContext = email.company ? await fetchCompanyWebContext(email.company) : "";
 
   const prospectBlock = [
     `Nom : ${email.first_name} ${email.last_name}`,
@@ -71,6 +75,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const userPrompt = [
     `OBJECTIF DE LA CAMPAGNE :\n${campaign.objective}`,
     `\nINFORMATIONS SUR LE PROSPECT :\n${prospectBlock}`,
+    companyContext ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyContext}` : "",
     `\nEMAIL ACTUEL (à améliorer) :\nObjet : ${email.subject}\n\n${email.body}`,
     instructions ? `\nINSTRUCTIONS DE L'UTILISATEUR POUR LA RÉÉCRITURE :\n${instructions}` : "",
     "\nRéécris cet email en tenant compte des instructions ci-dessus.",

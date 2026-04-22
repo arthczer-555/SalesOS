@@ -1,139 +1,68 @@
 export const DEFAULT_PROSPECTION_GUIDE = `# Guide de prospection Coachello
 
-Voici le guide, basé uniquement sur tes vrais exemples :
 
----
+## 5 principes
 
-# Guide de Prospection Coachello
+1. Partir d'un signal réel (post, initiative, secteur). Jamais générique.
+2. Nommer le problème avant la solution — que le prospect se dise "c'est mon sujet" avant de lire Coachello.
+3. 100-200 mots max. La longueur se justifie par la personnalisation, pas par l'envie d'en dire plus.
+4. Un seul CTA. Une question, pas deux.
+5. Signer d'un prénom, jamais au nom de la marque.
+6. Ne met pas de tiret partout, en surtout pas le long tiret comme tu as l'habitude de mettre !!!
 
-## Ce qui fonctionne — les principes extraits de tes messages
+Pas de contexte fort ? Reste court et générique.
 
-**1. Partir d'un signal ou d'une observation réelle**
-Pas de message générique. Chaque accroche montre que tu as fait un minimum de recherche : un post LinkedIn, une initiative récente, un secteur spécifique, un prénom culturellement ancré.
+## Pitch Coachello (à piocher)
 
-**2. Nommer le problème avant de parler de la solution**
-Les meilleurs messages posent d'abord un constat que le prospect reconnaît immédiatement avant d'introduire Coachello. Le prospect doit se dire "c'est exactement mon sujet" avant de lire la solution.
+Coachello transforme les managers en leaders performants. Coaching humain + IA, directement dans Teams et Slack. 500 coachs certifiés ICF (PCC/MCC), 12 pays, 100+ clients (Enedis, Microsoft, Qonto, Salomon, Sodexo, Engie, Spendesk, Adyen...).
 
-**3. Un chiffre ou un fait surprenant**
-"What usually takes 8-12 hours now happens in about 50 minutes." "Engagement close to 80 percent, outcomes ten times more effective." Un seul suffit, bien placé, il crédibilise sans alourdir.
+Impact typique : jusqu'à -30 % sur les coûts de recrutement externe, x3 sur la mobilité interne, montée en compétences accélérée. Micro-coaching IA + coaching humain = modèle hybride scalable et profondément personnalisé.
 
-**4. Court ou long selon le contexte, mais jamais creux**
-La longueur se justifie par le niveau de personnalisation, pas par l'envie d'en dire plus.
+## Templates
 
-**5. Signer avec son prénom à la fin de l'email**
-Le sender est une personne, pas une marque. Termine toujours l'email par une signature avec le prénom de l'expéditeur.
-
----
-
-Remarques: 
-- Quand tu n'es pas sur du contexte, ne le mentionne pas, vaut miuex un message moins personnamlisé que de se tromper.
-- Ne fais pas de message trop long si tu n'as pas de personnalisation forte, ça perd en impact.
-- Autour de 100/200 mots est une bonne longueur, mais adapte en fonction du contexte et des précédents echanges.
-
----
-## Les 4 templates
-
----
-
-### Template 01 — Accroche sur les 4 douleurs universelles RH
-Contexte : tu ne sais pas grand chose sur le prospect, mais tu veux ouvrir une conversation.
-Canal : Email / LinkedIn | Persona : DRH, L&D
-
+### 1. Signal observé (post, initiative, programme)
 [Prénom],
 
-Quatre besoins reviennent dans la majorité de mes échanges avec des leaders RH sur l'accompagnement talents :
+J'ai vu [votre post / votre initiative X]. [Une phrase sincère sur pourquoi ça t'a frappé.]
 
-- de l'hyper-personnalisation, pour répondre aux enjeux de chaque talent
-- un impact mesurable, au-delà des heures de formation consommées
-- le passage de la théorie à la pratique, pour ancrer les compétences dans la durée
-- la capacité d'accompagner plus de collaborateurs, sans augmenter les budgets
+C'est exactement ce sur quoi on travaille chez Coachello : coaching humain + IA, aligné sur vos compétences et modèles de leadership internes.
 
-Si c'est aussi un sujet pour vous, au plaisir de vous partager des succès clients.
+30 min pour en parler ?
 
 [Prénom expéditeur]
 
----
-
-### Template 02 — Accroche sur le feedback managérial
-Contexte : entreprise en croissance, managers peu outillés.
-Canal : Email en anglais | Persona : DRH, CPO
-
+### 2. Douleurs RH universelles (peu d'info sur le prospect)
 [Prénom],
 
-Are your managers confident when it comes to giving feedback to their teams? In most organizations, only a small group truly is.
+Quatre besoins reviennent chez les leaders RH sur l'accompagnement talents : hyper-personnalisation, impact mesurable, passage de la théorie à la pratique, scaler sans exploser les budgets.
 
-We've built a role play program that lets managers practice real conversations whenever they need, using their own organizational context. They can then rely on their AI coach in real situations to track how they actually perform.
-
-Engagement is close to 80% and outcomes are ten times more effective than traditional training.
-
-Would it make sense to have a quick chat?
+Si c'est un sujet pour vous, ravi de partager quelques succès clients.
 
 [Prénom expéditeur]
 
----
+### 3. Pratique vs formation (EN)
+[First name],
 
-### Template 03 — Accroche sur la pratique vs la formation
-Contexte : entreprise avec un budget L&D existant mais peu de résultats concrets.
-Canal : Email en anglais | Persona : DRH, Directeur L&D
+We've built a different way to help managers grow — less training, more real practice.
 
-[Prénom],
+What usually takes 8-12 hours now happens in ~50 minutes. Engagement close to 80 %, outcomes 10x more effective than traditional training.
 
-We've been experimenting with a different way to help managers grow — less training, more real practice.
+Curious how you're approaching this on your side?
 
-The surprising part? What usually takes 8-12 hours now happens in about 50 minutes, because people rehearse real conversations instead of consuming content.
+[Sender first name]
 
-It's been eye-opening for the teams we work with, and it made me wonder how you're approaching this on your side today.
-
-Always happy to exchange.
-
-[Prénom expéditeur]
-
----
-
-### Template 04 — Accroche sur une initiative observée (post, programme, actualité)
-Contexte : le prospect a publié quelque chose ou lancé une initiative visible publiquement.
-Canal : Email | Persona : CEO, DRH, tout décideur avec une initiative leadership en cours
-
-[Prénom],
-
-J'ai vu [votre post sur / que vous avez lancé] [initiative] — [une phrase sincère sur pourquoi ca t'a frappé].
-
-Cette population de [futurs leaders / managers / cadres dirigeants], vous pensez forcément à comment les élever au mieux. C'est exactement le sujet sur lequel on travaille chez Coachello — combiner coaching humain et IA, aligné sur vos compétences et vos modèles de leadership internes.
-
-Je serais ravi d'avoir 30 min pour vous partager comment on pourrait apporter de la valeur à ce programme.
-
-[Prénom expéditeur]
-
----
-
-## Template 05 — Accroche générale, à personnaliser un peu en fonction du prospect
-Canal : Email | Persona : CEO, DRH, tout décideur avec une initiative leadership en cours
-
+### 4. Accroche générale (personnalise une ligne si possible)
 Bonjour [],
 
-Les entreprises doivent aujourd’hui relever des défis majeurs en matière de ressources humaines : attirer, engager et fidéliser leurs talents. Parmi les enjeux clés : la performance des collaborateurs, la rétention des talents et la qualité de vie au travail.
+Attirer, engager, fidéliser : les enjeux RH n'ont jamais été aussi serrés. Chez Coachello, on combine coaching humain et IA pour accompagner chaque collaborateur dans ses projets d'évolution, directement dans Teams/Slack.
 
-Chez Coachello, nous accompagnons les organisations sur ces sujets grâce à une méthodologie unique combinant Coaching Humain et Coaching IA pour accompagner chaque collaborateur dans ses projets d’évolution.
+Résultats observés : -30 % sur les coûts de recrutement, x3 sur la mobilité interne, montée en compétences accélérée. Déjà en place chez GRDF, Microsoft, Enedis, Salomon, Payfit, Qonto.
 
-Concrètement, cela permet à nos clients de :
-• Réduire jusqu’à 30 % leurs coûts de recrutement externe
-• Tripler les mobilités internes
-• Accélérer la montée en compétences des talents à fort potentiel ou en transition
+Dispo pour échanger sur vos enjeux 2026 ? [lien agenda]
 
-Cette approche a déjà fait ses preuves auprès de plusieurs grands groupes confrontés à ces mêmes enjeux tels que GRDF, Microsoft, Enedis, Salomon, Payfit ou bien Qonto par exemple.
+[Prénom expéditeur]
 
-Seriez-vous disponible dans les prochains jours pour échanger sur vos enjeux et besoins 2026 et vous présenter notre solution ?
-Voici le lien de mon agenda : cliquez ici.
+## À éviter
 
-Belle journée,
-[]
-
----
-## Ce qu'il faut toujours éviter
-
-- "J'espère que vous allez bien" / "Je me permets de vous contacter"
-- Pitcher Coachello avant d'avoir nommé le problème du prospect
-- Ne pas signer du tout ou signer au nom de la marque — toujours une personne, toujours un prénom
-- Envoyer le même message à tout le monde — même une ligne personnalisée change tout
-- Terminer avec deux questions ou deux CTAs — une seule à la fois
+"J'espère que vous allez bien", "Je me permets de vous contacter", pitcher avant d'avoir nommé le problème, signer au nom de la marque, deux CTAs dans le même message, envoyer le même texte à tout le monde.
 `;
