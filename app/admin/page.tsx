@@ -108,13 +108,22 @@ export default async function AdminPage() {
         <div>
           <h1 className="text-xl font-semibold" style={{ color: "#111" }}>Admin</h1>
         </div>
-        <a
-          href="/admin/logs"
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
-          style={{ background: "#f4f4f4", color: "#333", border: "1px solid #e5e5e5" }}
-        >
-          Logs &amp; Usage →
-        </a>
+        <div className="flex items-center gap-2">
+          <a
+            href="/admin/ga4-debug"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+            style={{ background: "#f4f4f4", color: "#333", border: "1px solid #e5e5e5" }}
+          >
+            GA4 Debug →
+          </a>
+          <a
+            href="/admin/logs"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium"
+            style={{ background: "#f4f4f4", color: "#333", border: "1px solid #e5e5e5" }}
+          >
+            Logs &amp; Usage →
+          </a>
+        </div>
       </div>
 
       {/* Users */}

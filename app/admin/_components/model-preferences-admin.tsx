@@ -12,6 +12,7 @@ const FEATURES = [
   { key: "chat",           label: "Assistant commercial (GPT)",         defaultModel: "claude-haiku-4-5-20251001" },
   { key: "briefing",       label: "Briefing réunion",                   defaultModel: "claude-haiku-4-5-20251001" },
   { key: "prospection",    label: "Génération d'emails prospection",    defaultModel: "claude-haiku-4-5-20251001" },
+  { key: "mass_prospection", label: "Mass prospection (campagnes)",     defaultModel: "claude-haiku-4-5-20251001" },
   { key: "deals_score",    label: "Scoring des deals",                  defaultModel: "claude-haiku-4-5-20251001" },
   { key: "deals_analyze",  label: "Analyse approfondie des deals",      defaultModel: "claude-sonnet-4-6" },
   { key: "deals_email",    label: "Email de suivi deal",                defaultModel: "claude-haiku-4-5-20251001" },
