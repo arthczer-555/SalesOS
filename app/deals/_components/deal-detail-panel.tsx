@@ -35,6 +35,7 @@ import { IconButton } from "@/components/ui/icon-button";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import type { Analysis, DealDetails } from "../_helpers";
 import { engagementTypeBadge, formatDealForSlack, timeAgo } from "../_helpers";
+import { DealLinkedinCard } from "./deal-linkedin-card";
 
 interface Props {
   details: DealDetails | null;
@@ -823,6 +824,9 @@ export function DealDetailPanel({
               ))}
             </Card>
           )}
+
+          {/* LinkedIn enrichment (Netrows) */}
+          {details.contacts.length > 0 && details.id && <DealLinkedinCard dealId={details.id} />}
 
           {/* Email composer */}
           {sent && (

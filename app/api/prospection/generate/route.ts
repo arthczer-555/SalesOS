@@ -4,6 +4,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
+import { getProfile, resolveUsername, type LinkedInProfile } from "@/lib/netrows";
 
 export const dynamic = "force-dynamic";
 
@@ -66,17 +67,60 @@ export async function POST(req: NextRequest) {
 
   const senderName = user.name?.trim() || "L'équipe Coachello";
 
+  // ── LinkedIn enrichment via Netrows (best-effort) ─────────────────────────
+  let linkedinBlock = "";
+  let linkedinEnriched = false;
+  if (process.env.NETROWS_API_KEY) {
+    try {
+      const username = await resolveUsername({
+        firstName: contactInfo.firstName,
+        lastName: contactInfo.lastName,
+        company: contactInfo.company,
+        email: contactInfo.email,
+      });
+      if (username) {
+        const profile: LinkedInProfile = await getProfile(username);
+        const positions = (profile.position ?? []).slice(0, 5).map((p) => {
+          const start = p.start ? `${p.start.month ? p.start.month + "/" : ""}${p.start.year}` : "";
+          const end = p.end?.year ? `${p.end.month ? p.end.month + "/" : ""}${p.end.year}` : "présent";
+          return `- ${p.title} @ ${p.companyName} (${start} → ${end})${p.description ? `\n  ${p.description.slice(0, 200)}` : ""}`;
+        }).join("\n");
+        const skills = (profile.skills ?? []).slice(0, 12).map((s) => s.name).join(", ");
+        const educations = (profile.educations ?? []).slice(0, 2).map((e) =>
+          `${e.degree ?? ""} ${e.fieldOfStudy ?? ""} — ${e.schoolName ?? ""}`.trim()
+        ).join(", ");
+        linkedinBlock = [
+          `Headline LinkedIn : ${profile.headline ?? "—"}`,
+          positions ? `Parcours :\n${positions}` : "",
+          skills ? `Compétences : ${skills}` : "",
+          educations ? `Formation : ${educations}` : "",
+          profile.summary ? `Bio LinkedIn :\n${profile.summary.slice(0, 500)}` : "",
+        ].filter(Boolean).join("\n");
+        linkedinEnriched = true;
+      }
+    } catch {
+      /* enrichment optional */
+    }
+  }
+
+  const fullProspectBlock = linkedinBlock
+    ? `${prospectBlock}\n\nProfil LinkedIn enrichi :\n${linkedinBlock}`
+    : prospectBlock;
+
   const systemPrompt = [
     "Tu es un expert en prospection B2B pour Coachello, une entreprise de coaching professionnel.",
     "Tu rédiges des emails de prospection ultra-personnalisés, humains et percutants.",
     "L'email doit sonner vrai, pas comme un template générique.",
+    linkedinEnriched
+      ? "Un profil LinkedIn enrichi est disponible : utilise-le pour personnaliser (mentionne 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé)."
+      : "",
     `L'email doit être signé par : ${senderName}. Termine toujours l'email par une signature avec ce nom.`,
     "Réponds UNIQUEMENT en JSON valide avec exactement ces deux clés : { \"subject\": \"...\", \"body\": \"...\" }",
     "Le body doit être en texte brut (pas de HTML, pas de markdown).",
     guide ? `\n---\nGUIDE DE PROSPECTION (exemples et instructions) :\n${guide}` : "",
   ].filter(Boolean).join("\n");
 
-  const userPrompt = `Voici les informations sur le prospect :\n\n${prospectBlock}\n\nRédige un email de prospection personnalisé pour cette personne.`;
+  const userPrompt = `Voici les informations sur le prospect :\n\n${fullProspectBlock}\n\nRédige un email de prospection personnalisé pour cette personne.`;
 
   const client = new Anthropic();
   const message = await client.messages.create({
@@ -102,5 +146,5 @@ export async function POST(req: NextRequest) {
     body = raw;
   }
 
-  return NextResponse.json({ subject, body });
+  return NextResponse.json({ subject, body, linkedinEnriched });
 }

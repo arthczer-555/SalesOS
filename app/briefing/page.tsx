@@ -26,6 +26,7 @@ import { BriefingContext } from "./_components/briefing-context";
 import { BriefingDealSummary } from "./_components/briefing-deal-summary";
 import { BriefingTakeaways } from "./_components/briefing-takeaways";
 import { BriefingCompanyProfile } from "./_components/briefing-company-profile";
+import { BriefingCompanyLinkedin } from "./_components/briefing-company-linkedin";
 import { BriefingNews } from "./_components/briefing-news";
 import { BriefingPerson } from "./_components/briefing-person";
 
@@ -365,6 +366,7 @@ export default function BriefingPage() {
                       <BriefingTakeaways takeaways={briefing!.meetingTakeaways} />
                     )}
                     <BriefingCompanyProfile briefing={briefing!} />
+                    <BriefingCompanyLinkedin briefing={briefing!} />
                     <BriefingNews briefing={briefing!} />
                     <div id="briefing-person-section">
                       <BriefingPerson briefing={briefing!} />

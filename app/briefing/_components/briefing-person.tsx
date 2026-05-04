@@ -1,11 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { Linkedin } from "lucide-react";
+import { Linkedin, ExternalLink } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
 import type { BriefingResult } from "../_helpers";
+
+function linkedinSearchUrl(name: string, company?: string | null): string {
+  const q = [name, company].filter(Boolean).join(" ");
+  return `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(q)}`;
+}
 
 export function BriefingPerson({ briefing }: { briefing: BriefingResult }) {
   const hasLinkedin = !!briefing.linkedinInsights?.length;
@@ -35,7 +40,26 @@ export function BriefingPerson({ briefing }: { briefing: BriefingResult }) {
       {briefing.linkedinInsights?.map((li, i) => (
         <div key={i} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div>
-            <p style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, margin: 0 }}>{li.name}</p>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <p style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, margin: 0 }}>{li.name}</p>
+              <a
+                href={linkedinSearchUrl(li.name, briefing.identity?.company)}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`Profil LinkedIn de ${li.name}`}
+                title="Ouvrir LinkedIn"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 2,
+                  color: "#0a66c2",
+                  textDecoration: "none",
+                }}
+              >
+                <Linkedin size={13} />
+                <ExternalLink size={9} />
+              </a>
+            </div>
             <p style={{ fontSize: 12, color: "#1d4ed8", margin: 0 }}>{li.currentRole}</p>
           </div>
           {li.keyInsight && (

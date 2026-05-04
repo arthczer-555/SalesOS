@@ -59,6 +59,31 @@ const briefingTool: Anthropic.Tool = {
           required: ["name", "currentRole", "keyInsight"],
         },
       },
+      linkedinCompanyInsights: {
+        type: "object",
+        description: "Insights LinkedIn de la page entreprise (si données LinkedIn disponibles). null si pas de données.",
+        properties: {
+          description: { type: "string", description: "Description courte de l'entreprise (1-2 phrases extraites de la page LinkedIn)" },
+          headcount: { type: "string", description: "Effectifs LinkedIn (ex: '1100+ employés')" },
+          followerCount: { type: "string", description: "Nombre de followers LinkedIn (ex: '125k')" },
+          industry: { type: "string", description: "Secteur" },
+          headquarters: { type: "string", description: "Siège" },
+          recentPosts: {
+            type: "array",
+            description: "2-3 derniers posts marquants (annonces, nominations) — 1 phrase synthétisée par post",
+            items: {
+              type: "object",
+              properties: {
+                summary: { type: "string", description: "Résumé du post en 1 phrase" },
+                postedAt: { type: "string", description: "Date" },
+                url: { type: "string" },
+              },
+              required: ["summary"],
+            },
+          },
+          keyInsight: { type: "string", description: "1 phrase : signal LinkedIn marquant pour cette boîte (croissance, levée, restructuration, focus stratégique...)" },
+        },
+      },
       recentNews: {
         type: "object",
         properties: {
@@ -150,6 +175,11 @@ export async function POST(req: NextRequest) {
         companyProfileResults: { title: string; url: string; content: string; published_date: string | null }[];
         strategicResults: { title: string; url: string; content: string; published_date: string | null }[];
         linkedinProfiles?: { firstName?: string; lastName?: string; headline?: string; summary?: string; position?: { companyName: string; title: string; description?: string; start?: { year?: number; month?: number }; end?: { year?: number; month?: number } }[]; skills?: { name: string }[]; educations?: { schoolName?: string; degree?: string; fieldOfStudy?: string }[] }[];
+        linkedinCompany?: {
+          username: string;
+          details: { name: string; description?: string; industry?: string; companySize?: string; headquarters?: string; employeeCount?: number; followerCount?: number };
+          recentPosts?: { text: string; postedAt: string; likes: number; comments: number; url: string }[];
+        } | null;
       };
     };
 
@@ -247,6 +277,26 @@ export async function POST(req: NextRequest) {
       ).join("\n\n"));
     }
 
+    if (rawData.linkedinCompany) {
+      const c = rawData.linkedinCompany;
+      const postsBlock = (c.recentPosts ?? []).slice(0, 5).map((p) =>
+        `- [${p.postedAt}] (${p.likes} likes, ${p.comments} commentaires) ${p.text.slice(0, 250)}\n  ${p.url}`
+      ).join("\n");
+      sections.push(
+        "=== PAGE ENTREPRISE LINKEDIN (source LinkedIn — utiliser pour linkedinCompanyInsights) ===\n" +
+        [
+          c.details.name ? `Nom : ${c.details.name}` : null,
+          c.details.industry ? `Secteur : ${c.details.industry}` : null,
+          c.details.headquarters ? `Siège : ${c.details.headquarters}` : null,
+          c.details.companySize ? `Taille : ${c.details.companySize}` : null,
+          c.details.employeeCount ? `Effectifs : ${c.details.employeeCount}` : null,
+          c.details.followerCount ? `Followers : ${c.details.followerCount}` : null,
+          c.details.description ? `\nDescription :\n${c.details.description.slice(0, 600)}` : null,
+          postsBlock ? `\nPosts récents :\n${postsBlock}` : null,
+        ].filter(Boolean).join("\n")
+      );
+    }
+
     if (rawData.linkedinProfiles && rawData.linkedinProfiles.length > 0) {
       sections.push("=== PROFILS LINKEDIN (source LinkedIn — utiliser pour personInsights et linkedinInsights) ===\n" + rawData.linkedinProfiles.map((p) => {
         const name = `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim();
@@ -322,6 +372,9 @@ Génère le briefing pour cette réunion.`;
     // Sinon le LLM peut halluciner un profil "LinkedIn" à partir des données HubSpot/Gmail.
     if (!rawData.linkedinProfiles || rawData.linkedinProfiles.length === 0) {
       delete briefing.linkedinInsights;
+    }
+    if (!rawData.linkedinCompany) {
+      delete briefing.linkedinCompanyInsights;
     }
 
     // Garde-fou : le LLM laisse parfois fuiter du JSON brut (ex: `","questionsToAsk":[...]`) dans

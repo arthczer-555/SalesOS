@@ -37,6 +37,15 @@ export interface BriefingResult {
   companyInsights?: string;
   personInsights?: string;
   linkedinInsights?: { name: string; currentRole: string; experience?: string; skills?: string; education?: string; keyInsight: string }[];
+  linkedinCompanyInsights?: {
+    description?: string;
+    headcount?: string;
+    followerCount?: string;
+    industry?: string;
+    headquarters?: string;
+    recentPosts?: { summary: string; postedAt?: string; url?: string }[];
+    keyInsight?: string;
+  };
   recentNews: { items: { type: string; text: string; url?: string; date: string }[] };
   strategicHistory?: StrategicHistoryItem[];
   growthDynamics?: { summary: string } | null;

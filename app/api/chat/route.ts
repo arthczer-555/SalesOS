@@ -6,6 +6,23 @@ import { decrypt } from "@/lib/crypto";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
 import { searchGmailMessages, getGmailMessage } from "@/lib/gmail";
+import {
+  getProfile,
+  searchPeople,
+  reverseLookup,
+  resolveUsername,
+  getPeopleLikes,
+  getPeopleActivity,
+  getSimilarProfiles,
+  getCompanyDetails,
+  getCompanyPosts,
+  getCompanyJobs,
+  searchCompanies,
+  searchPosts as netrowsSearchPosts,
+  getPostReactions,
+  findEmailByLinkedIn,
+  findDecisionMakerEmail,
+} from "@/lib/netrows";
 
 export const maxDuration = 300; // 5 minutes — required for large HubSpot fetches
 
@@ -340,6 +357,189 @@ const tools: Anthropic.Tool[] = [
         limit: { type: "number", description: "Nombre max de fichiers (défaut : 20)" },
       },
       required: [],
+    },
+  },
+  // ── LinkedIn (Netrows) tools ─────────────────────────────────────────────
+  {
+    name: "search_linkedin_people",
+    description:
+      "Recherche des profils LinkedIn par entreprise et/ou titre de poste. Idéal pour trouver le DRH/Head of L&D d'une boîte. Si tu as juste un nom + une entreprise, utilise firstName + lastName + company.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        company: { type: "string", description: "Nom d'entreprise (ex: Danone)" },
+        keywordTitle: { type: "string", description: "Titre cible (ex: 'DRH OR Directeur des Ressources Humaines')" },
+        keywords: { type: "string", description: "Mots-clés libres" },
+        firstName: { type: "string" },
+        lastName: { type: "string" },
+        start: { type: "number", description: "Pagination (0 par défaut)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_linkedin_profile",
+    description:
+      "Récupère le profil LinkedIn complet d'une personne (parcours, compétences, formation, bio) à partir de son username LinkedIn. Si tu n'as pas le username, utilise plutôt search_linkedin_people ou get_linkedin_profile_by_email.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        username: { type: "string", description: "Username LinkedIn (ex: 'jean-dupont')" },
+        firstName: { type: "string", description: "Prénom (fallback si pas d'username)" },
+        lastName: { type: "string", description: "Nom (fallback si pas d'username)" },
+        company: { type: "string", description: "Entreprise (aide la résolution)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_linkedin_profile_by_email",
+    description:
+      "Trouve un profil LinkedIn à partir d'un email professionnel (reverse lookup). Idéal quand tu as un contact HubSpot et veux son LinkedIn.",
+    input_schema: {
+      type: "object" as const,
+      properties: { email: { type: "string", description: "Email pro (pas gmail/yahoo)" } },
+      required: ["email"],
+    },
+  },
+  {
+    name: "get_linkedin_activity",
+    description:
+      "Récupère la dernière activité d'un profil LinkedIn (timestamps, types de posts/likes récents).",
+    input_schema: {
+      type: "object" as const,
+      properties: { username: { type: "string" } },
+      required: ["username"],
+    },
+  },
+  {
+    name: "get_linkedin_likes",
+    description:
+      "Liste les posts récemment likés par un profil LinkedIn. Utile pour identifier ses centres d'intérêt et engagements.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        username: { type: "string" },
+        start: { type: "number", description: "Pagination" },
+      },
+      required: ["username"],
+    },
+  },
+  {
+    name: "get_linkedin_posts",
+    description:
+      "Liste les derniers posts publiés par un profil LinkedIn. Utile pour préparer une accroche personnalisée.",
+    input_schema: {
+      type: "object" as const,
+      properties: { username: { type: "string" } },
+      required: ["username"],
+    },
+  },
+  {
+    name: "get_linkedin_similar_profiles",
+    description:
+      "Trouve des profils LinkedIn similaires à un profil donné. Utile pour étendre une short-list de prospects.",
+    input_schema: {
+      type: "object" as const,
+      properties: { username: { type: "string" } },
+      required: ["username"],
+    },
+  },
+  {
+    name: "get_linkedin_company",
+    description:
+      "Détails d'une entreprise LinkedIn (effectifs, secteur, siège, follower count, description). Username = slug LinkedIn de la page entreprise.",
+    input_schema: {
+      type: "object" as const,
+      properties: { username: { type: "string", description: "Slug LinkedIn (ex: 'danone')" } },
+      required: ["username"],
+    },
+  },
+  {
+    name: "get_linkedin_company_posts",
+    description:
+      "Derniers posts publiés par une page entreprise LinkedIn (annonces, nominations, lancements).",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        username: { type: "string" },
+        start: { type: "number" },
+      },
+      required: ["username"],
+    },
+  },
+  {
+    name: "get_linkedin_company_jobs",
+    description: "Offres d'emploi actives publiées par une entreprise sur LinkedIn.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        company_id: { type: "string", description: "Username/slug ou ID LinkedIn de l'entreprise" },
+        page: { type: "number" },
+      },
+      required: ["company_id"],
+    },
+  },
+  {
+    name: "search_linkedin_companies",
+    description: "Recherche d'entreprises sur LinkedIn par mots-clés / industrie / taille.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        keyword: { type: "string" },
+        industry: { type: "string" },
+        size: { type: "string" },
+      },
+      required: ["keyword"],
+    },
+  },
+  {
+    name: "search_linkedin_posts",
+    description:
+      "Recherche de posts LinkedIn par mot-clé. Utile pour la veille et la détection de signaux (ex: 'coaching managers', 'burnout L&D').",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        keyword: { type: "string" },
+        sortBy: { type: "string", description: "'date_posted' (défaut) ou 'relevance'" },
+        datePosted: { type: "string", description: "Filtre date ('past-week', 'past-month'…)" },
+      },
+      required: ["keyword"],
+    },
+  },
+  {
+    name: "get_linkedin_post_reactions",
+    description: "Liste les profils LinkedIn qui ont réagi à un post donné.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        post_url: { type: "string", description: "URL complète du post LinkedIn" },
+        start: { type: "number" },
+      },
+      required: ["post_url"],
+    },
+  },
+  {
+    name: "find_email_by_linkedin",
+    description:
+      "Trouve l'email professionnel d'une personne à partir de son username LinkedIn (5 crédits). Renvoie l'email + niveau de confiance.",
+    input_schema: {
+      type: "object" as const,
+      properties: { username: { type: "string" } },
+      required: ["username"],
+    },
+  },
+  {
+    name: "find_decision_maker_email",
+    description:
+      "Trouve l'email du décideur (DRH, Head of L&D, etc.) d'une entreprise donnée (10 crédits). Idéal pour ouvrir une approche cold.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        company: { type: "string" },
+        title: { type: "string", description: "Titre du décideur (ex: 'Head of L&D')" },
+      },
+      required: ["company", "title"],
     },
   },
 ];
@@ -815,6 +1015,179 @@ async function executeTool(name: string, input: Record<string, unknown>, onProgr
         return `Erreur Drive : ${e instanceof Error ? e.message : "inconnue"}`;
       }
     }
+    // ── LinkedIn (Netrows) ─────────────────────────────────────────────
+    case "search_linkedin_people": {
+      try {
+        const r = await searchPeople({
+          company: input.company as string | undefined,
+          keywordTitle: input.keywordTitle as string | undefined,
+          keywords: input.keywords as string | undefined,
+          firstName: input.firstName as string | undefined,
+          lastName: input.lastName as string | undefined,
+          start: input.start as number | undefined,
+        });
+        const items = r.data?.items ?? [];
+        if (items.length === 0) return "Aucun profil trouvé.";
+        return JSON.stringify(items.slice(0, 20));
+      } catch (e) {
+        return `Erreur LinkedIn search : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_profile": {
+      try {
+        const username = await resolveUsername({
+          username: input.username as string | undefined,
+          firstName: input.firstName as string | undefined,
+          lastName: input.lastName as string | undefined,
+          company: input.company as string | undefined,
+        });
+        if (!username) return "Aucun username LinkedIn trouvé. Précise le nom complet et l'entreprise.";
+        const profile = await getProfile(username);
+        return JSON.stringify({
+          username: profile.username,
+          name: `${profile.firstName} ${profile.lastName}`,
+          headline: profile.headline,
+          summary: (profile.summary ?? "").slice(0, 600),
+          location: profile.geo?.city ? `${profile.geo.city}, ${profile.geo.country}` : profile.geo?.country,
+          positions: (profile.position ?? []).slice(0, 5).map((p) => ({
+            company: p.companyName,
+            title: p.title,
+            start: p.start ? `${p.start.year}-${String(p.start.month ?? 1).padStart(2, "0")}` : null,
+            end: p.end?.year ? `${p.end.year}-${String(p.end.month ?? 1).padStart(2, "0")}` : "actuel",
+          })),
+          skills: (profile.skills ?? []).slice(0, 15).map((s) => s.name),
+          education: (profile.educations ?? []).slice(0, 3).map((e) => `${e.schoolName} — ${e.degree ?? ""} ${e.fieldOfStudy ?? ""}`.trim()),
+        });
+      } catch (e) {
+        return `Erreur LinkedIn profile : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_profile_by_email": {
+      try {
+        const r = await reverseLookup(input.email as string);
+        if (!r.found) return "Aucun profil LinkedIn associé à cet email.";
+        return JSON.stringify(r.profile);
+      } catch (e) {
+        return `Erreur LinkedIn reverse lookup : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_activity": {
+      try {
+        const r = await getPeopleActivity(input.username as string);
+        return JSON.stringify(r.data ?? []);
+      } catch (e) {
+        return `Erreur LinkedIn activity : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_likes": {
+      try {
+        const r = await getPeopleLikes(input.username as string, (input.start as number | undefined) ?? 0);
+        return JSON.stringify((r.data ?? []).slice(0, 15));
+      } catch (e) {
+        return `Erreur LinkedIn likes : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_posts": {
+      try {
+        // Posts d'une PERSONNE ne sont pas exposés par Netrows ; on retourne ses likes en proxy
+        // si l'API évolue, on basculera ici. Pour les posts d'une page entreprise, voir
+        // get_linkedin_company_posts.
+        const r = await getPeopleActivity(input.username as string);
+        return JSON.stringify(r.data ?? []);
+      } catch (e) {
+        return `Erreur LinkedIn posts : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_similar_profiles": {
+      try {
+        const r = await getSimilarProfiles(input.username as string);
+        return JSON.stringify((r.data ?? []).slice(0, 15));
+      } catch (e) {
+        return `Erreur LinkedIn similar : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_company": {
+      try {
+        const c = await getCompanyDetails(input.username as string);
+        return JSON.stringify(c);
+      } catch (e) {
+        return `Erreur LinkedIn company : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_company_posts": {
+      try {
+        const r = await getCompanyPosts(input.username as string, (input.start as number | undefined) ?? 0);
+        return JSON.stringify((r.data ?? []).slice(0, 10));
+      } catch (e) {
+        return `Erreur LinkedIn company posts : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_company_jobs": {
+      try {
+        const r = await getCompanyJobs(input.company_id as string, (input.page as number | undefined) ?? 1);
+        return JSON.stringify(r.data ?? []);
+      } catch (e) {
+        return `Erreur LinkedIn jobs : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "search_linkedin_companies": {
+      try {
+        const r = await searchCompanies({
+          keyword: input.keyword as string,
+          industry: input.industry as string | undefined,
+          size: input.size as string | undefined,
+        });
+        return JSON.stringify((r.data?.items ?? []).slice(0, 20));
+      } catch (e) {
+        return `Erreur LinkedIn search companies : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "search_linkedin_posts": {
+      try {
+        const r = await netrowsSearchPosts(
+          input.keyword as string,
+          (input.sortBy as string | undefined) ?? "date_posted",
+          (input.datePosted as string | undefined) ?? ""
+        );
+        return JSON.stringify((r.data ?? []).slice(0, 15).map((p) => ({
+          author: p.author?.name,
+          headline: p.author?.headline,
+          posted: p.postedAt,
+          text: (p.text ?? "").slice(0, 400),
+          url: p.postUrl,
+          stats: { likes: p.likes, comments: p.comments },
+        })));
+      } catch (e) {
+        return `Erreur LinkedIn search posts : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_linkedin_post_reactions": {
+      try {
+        const r = await getPostReactions(input.post_url as string, (input.start as number | undefined) ?? 0);
+        return JSON.stringify((r.data ?? []).slice(0, 30));
+      } catch (e) {
+        return `Erreur LinkedIn reactions : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "find_email_by_linkedin": {
+      try {
+        const r = await findEmailByLinkedIn(input.username as string);
+        return JSON.stringify(r.data ?? { email: null });
+      } catch (e) {
+        return `Erreur email finder : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "find_decision_maker_email": {
+      try {
+        const r = await findDecisionMakerEmail({
+          company: input.company as string,
+          title: input.title as string,
+        });
+        return JSON.stringify(r.data ?? { email: null });
+      } catch (e) {
+        return `Erreur decision maker : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
     default:
       return "Outil inconnu.";
   }
@@ -898,6 +1271,9 @@ export async function POST(req: NextRequest) {
   const teamLines = ownersMap.map((o) => `- ${o.name} (owner_id: ${o.id}, ${o.email})`).join("\n");
   const ownerContext = `\n\nCONTEXTE UTILISATEUR\nL'utilisateur connecté est ${user.name ?? user.email}${userOwnerId ? ` (HubSpot owner ID : ${userOwnerId})` : ""}.\nQuand il dit "mes deals" → utilise my_deals_only: true.\nQuand il dit "les deals de [prénom]" → résous le prénom ci-dessous et utilise owner_id.\n\nÉQUIPE COMMERCIALE (owners HubSpot) :\n${teamLines || "Aucun owner trouvé"}\n\nRÈGLES IMPORTANTES :\n- "les deals de Quentin" → trouver l'owner_id de Quentin dans la liste ci-dessus, puis get_deals avec owner_id\n- "deals perdu" ou "deals lost" = stage closedlost\n- "deals gagné" ou "deals won" = stage closedwon\n- Ne JAMAIS chercher un commercial comme un contact — ce sont des owners\n- Ne pose AUCUNE question de clarification — déduis du contexte`;
   systemPrompt += ownerContext;
+
+  const linkedinCapabilities = `\n\nCAPACITÉS LINKEDIN (Netrows)\nTu as accès à l'API LinkedIn pour enrichir tes réponses :\n\n• Profils :\n  - search_linkedin_people : trouver une personne par entreprise + titre (ex: "DRH de Danone")\n  - get_linkedin_profile : profil complet (parcours, skills, formation) — fallback automatique nom+entreprise si pas d'username\n  - get_linkedin_profile_by_email : reverse lookup email → profil\n  - get_linkedin_activity / get_linkedin_likes / get_linkedin_posts : dernière activité\n  - get_linkedin_similar_profiles : profils similaires\n\n• Entreprises :\n  - get_linkedin_company : effectifs, secteur, siège, followers\n  - get_linkedin_company_posts : derniers posts de la page entreprise (annonces, nominations)\n  - get_linkedin_company_jobs : offres actives\n  - search_linkedin_companies : recherche par mots-clés\n\n• Posts :\n  - search_linkedin_posts : posts par mot-clé (veille)\n  - get_linkedin_post_reactions : qui a réagi à un post\n\n• Emails :\n  - find_email_by_linkedin : email d'un profil LinkedIn (5 crédits)\n  - find_decision_maker_email : email du décideur RH/L&D d'une entreprise (10 crédits)\n\nQuand l'utilisateur demande "qu'est-ce que tu peux faire sur LinkedIn", liste ces capacités groupées.`;
+  systemPrompt += linkedinCapabilities;
 
   const { messages } = await req.json();
   const model = chatModel;

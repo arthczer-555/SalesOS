@@ -115,7 +115,7 @@ export async function POST(req: NextRequest) {
     const emails = externalAttendees.map((a) => a.email);
 
     // ── Parallel data fetching ────────────────────────────────────────────────
-    const [hsResult, gmailResult, slackResult, tavilyResult, linkedinResult] = await Promise.allSettled([
+    const [hsResult, gmailResult, slackResult, tavilyResult, linkedinResult, linkedinCompanyResult] = await Promise.allSettled([
 
       // HubSpot: contacts + deals + engagements
       (async () => {
@@ -433,6 +433,55 @@ export async function POST(req: NextRequest) {
         }
         return profiles;
       })(),
+
+      // LinkedIn: enrich the COMPANY (details + last posts) via Netrows
+      (async () => {
+        if (!process.env.NETROWS_API_KEY || !company) return null;
+        const { searchCompanies, getCompanyDetails, getCompanyPosts } = await import("@/lib/netrows");
+        try {
+          // Try direct slug first (lowercased, dashed)
+          const directSlug = company.toLowerCase().replace(/['\s]+/g, "-").replace(/[^a-z0-9-]/g, "");
+          let username: string | null = null;
+          let details: Awaited<ReturnType<typeof getCompanyDetails>> | null = null;
+
+          try {
+            details = await getCompanyDetails(directSlug);
+            username = directSlug;
+          } catch {
+            // Fall back to search
+            try {
+              const search = await searchCompanies({ keyword: company });
+              const first = search.data?.items?.[0];
+              if (first?.username) {
+                username = first.username;
+                details = await getCompanyDetails(username);
+              }
+            } catch { /* nothing else */ }
+          }
+
+          if (!username || !details) return null;
+
+          let posts: { postUrl: string; text: string; postedAt: string; likes: number; comments: number }[] = [];
+          try {
+            const postsRes = await getCompanyPosts(username);
+            posts = (postsRes.data ?? []).slice(0, 5);
+          } catch { /* posts optional */ }
+
+          return {
+            username,
+            details,
+            recentPosts: posts.map((p) => ({
+              text: (p.text ?? "").slice(0, 400),
+              postedAt: p.postedAt,
+              likes: p.likes,
+              comments: p.comments,
+              url: p.postUrl,
+            })),
+          };
+        } catch {
+          return null;
+        }
+      })(),
     ]);
 
     const tavilyData = tavilyResult.status === "fulfilled" ? tavilyResult.value : { webResults: [], companyProfileResults: [], strategicResults: [] };
@@ -448,6 +497,7 @@ export async function POST(req: NextRequest) {
       companyProfileResults: tavilyData.companyProfileResults ?? [],
       strategicResults: tavilyData.strategicResults ?? [],
       linkedinProfiles: linkedinResult.status === "fulfilled" ? linkedinResult.value : [],
+      linkedinCompany: linkedinCompanyResult.status === "fulfilled" ? linkedinCompanyResult.value : null,
       errors: {
         hubspot: hsResult.status === "rejected" ? String(hsResult.reason) : null,
         gmail: gmailResult.status === "rejected" ? String(gmailResult.reason) : null,

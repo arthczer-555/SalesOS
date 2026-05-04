@@ -233,3 +233,174 @@ export const COACHING_KEYWORDS = [
   "engagement collaborateurs",
   "qualité vie travail",
 ];
+
+// ── Wrappers additionnels (Market Intel v2) ─────────────────────────────────
+
+/** Posts likés par un profil (1 crédit) */
+export async function getPeopleLikes(username: string, start = 0): Promise<{
+  success: boolean;
+  data: { postUrl: string; text: string; author: { name: string; username: string }; postedAt: string; likes: number }[];
+}> {
+  return netrows("/people/likes", { username, start: String(start) });
+}
+
+/** Dernière activité d'un profil (1 crédit) */
+export async function getPeopleActivity(username: string): Promise<{
+  success: boolean;
+  data: { type: string; timestamp: string; postUrl?: string }[];
+}> {
+  return netrows("/people/activity-time", { username });
+}
+
+/** Profils similaires (1 crédit) */
+export async function getSimilarProfiles(username: string): Promise<{
+  success: boolean;
+  data: { fullName: string; headline: string; username: string; profileURL: string }[];
+}> {
+  return netrows("/people/similar-profiles", { username });
+}
+
+/** Recherche entreprises (1 crédit) */
+export async function searchCompanies(params: {
+  keyword: string;
+  industry?: string;
+  size?: string;
+  start?: number;
+}): Promise<{
+  data: { items: { name: string; username: string; industry: string; size: string; companyURL: string }[] };
+}> {
+  const query: Record<string, string> = { keyword: params.keyword };
+  if (params.industry) query.industry = params.industry;
+  if (params.size) query.size = params.size;
+  if (params.start !== undefined) query.start = String(params.start);
+  return netrows("/companies/search", query);
+}
+
+/** Insights premium d'une entreprise (10 crédits) */
+export async function getCompanyInsights(username: string): Promise<{
+  success: boolean;
+  data: { headcountGrowth: number; turnover: number; openings: number };
+}> {
+  return netrows("/companies/insights", { username });
+}
+
+/** Pubs LinkedIn actives d'une entreprise (1 crédit) */
+export async function getCompanyAds(username: string): Promise<{
+  success: boolean;
+  data: { adUrl: string; text: string; mediaUrl?: string; postedAt: string }[];
+}> {
+  return netrows("/ads/company", { username });
+}
+
+/** Réactions à un post (1 crédit) */
+export async function getPostReactions(postUrl: string, start = 0): Promise<{
+  success: boolean;
+  data: { fullName: string; headline: string; username: string; reaction: string }[];
+}> {
+  return netrows("/posts/reactions", { postUrl, start: String(start) });
+}
+
+/** Email pro à partir d'un profil LinkedIn (5 crédits) */
+export async function findEmailByLinkedIn(username: string): Promise<{
+  success: boolean;
+  data: { email: string | null; confidence: "high" | "medium" | "low" | null };
+}> {
+  return netrows("/email-finder/by-linkedin", { username });
+}
+
+/** Email du décideur RH/L&D d'une entreprise (10 crédits) */
+export async function findDecisionMakerEmail(params: {
+  company: string;
+  title: string;
+}): Promise<{
+  success: boolean;
+  data: { email: string | null; fullName: string | null; profileUrl: string | null };
+}> {
+  return netrows("/email-finder/decision-maker", {
+    company: params.company,
+    title: params.title,
+  });
+}
+
+// ── Username resolution (fallback nom/prénom + cache DB) ────────────────────
+
+const GENERIC_EMAIL_DOMAINS = /@(gmail|yahoo|hotmail|outlook|icloud|live|aol|protonmail)\./i;
+
+function emailIsPro(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return !GENERIC_EMAIL_DOMAINS.test(email);
+}
+
+function lookupKey(params: { firstName?: string; lastName?: string; company?: string; email?: string }): string | null {
+  if (params.email) return `email:${params.email.trim().toLowerCase()}`;
+  if (params.firstName && params.lastName) {
+    const c = (params.company ?? "").trim().toLowerCase();
+    return `name:${params.firstName.trim().toLowerCase()}|${params.lastName.trim().toLowerCase()}|${c}`;
+  }
+  return null;
+}
+
+/**
+ * Résout un username LinkedIn depuis email OU (firstName + lastName + company).
+ * Utilise le cache DB linkedin_username_cache pour éviter les appels répétés.
+ *
+ * Coût : 0 (cache hit) → 1 (reverseLookup) → 2 (reverseLookup miss + searchPeople)
+ */
+export async function resolveUsername(params: {
+  username?: string;
+  firstName?: string;
+  lastName?: string;
+  company?: string;
+  email?: string;
+}): Promise<string | null> {
+  if (params.username) return params.username;
+
+  const { db } = await import("@/lib/db");
+  const key = lookupKey(params);
+
+  if (key) {
+    const { data: cached } = await db
+      .from("linkedin_username_cache")
+      .select("username")
+      .eq("lookup_key", key)
+      .maybeSingle();
+    if (cached?.username) return cached.username as string;
+  }
+
+  let resolved: string | null = null;
+
+  if (emailIsPro(params.email)) {
+    try {
+      const r = await reverseLookup(params.email!);
+      if (r.found && r.profile?.username) resolved = r.profile.username;
+    } catch {
+      /* fall through */
+    }
+  }
+
+  if (!resolved && params.firstName && params.lastName) {
+    try {
+      const r = await searchPeople({
+        firstName: params.firstName,
+        lastName: params.lastName,
+        company: params.company,
+      });
+      const first = r.data?.items?.[0];
+      if (first?.username) resolved = first.username;
+    } catch {
+      /* nothing else to try */
+    }
+  }
+
+  if (key && resolved !== null) {
+    try {
+      await db
+        .from("linkedin_username_cache")
+        .upsert({ lookup_key: key, username: resolved }, { onConflict: "lookup_key" });
+    } catch {
+      /* cache best-effort */
+    }
+  }
+
+  return resolved;
+}
