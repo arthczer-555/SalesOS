@@ -974,7 +974,15 @@ export function DealDetailPanel({
                           <span style={{ fontSize: 10, color: COLORS.ink4 }}>{e.date}</span>
                         )}
                       </div>
-                      <p style={{ fontSize: 12, color: COLORS.ink2, margin: 0, lineHeight: 1.5 }}>
+                      <p
+                        style={{
+                          fontSize: 12,
+                          color: COLORS.ink2,
+                          margin: 0,
+                          lineHeight: 1.5,
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
                         {e.body}
                       </p>
                     </div>

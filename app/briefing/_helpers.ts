@@ -49,7 +49,7 @@ export interface BriefingResult {
 
 export interface GatheredData {
   contacts: Record<string, string>[];
-  deals: { name: string; stage: string; amount: string | null; closedate: string | null; scoreTotal: number | null; scoreReliability: number | null; reasoning: string | null; nextAction: string | null; scoredAt: string | null }[];
+  deals: { name: string; stage: string; amount: string | null; closedate: string | null; ownerName: string | null; scoreTotal: number | null; scoreReliability: number | null; reasoning: string | null; nextAction: string | null; scoredAt: string | null }[];
   engagements: { type: string; date: string; subject: string | null; body: string | null; duration: number | null }[];
   companyHubspot: Record<string, string> | null;
   gmailMessages: { subject: string; from: string; date: string; snippet: string }[];

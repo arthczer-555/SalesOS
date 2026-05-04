@@ -224,14 +224,26 @@ export async function createHubspotTask(args: {
 
 export function stripHtml(s: string): string {
   return s
-    .replace(/<[^>]+>/g, " ")
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/\s*(p|div|h[1-6]|tr|ul|ol|blockquote|table|section|article|header|footer)\s*>/gi, "\n")
+    .replace(/<\/\s*li\s*>/gi, "\n")
+    .replace(/<\s*li[^>]*>/gi, "• ")
+    .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/\s{2,}/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .split("\n")
+    .map((l) => l.trim())
+    .reduce<string[]>((acc, line) => {
+      if (line === "" && acc[acc.length - 1] === "") return acc;
+      acc.push(line);
+      return acc;
+    }, [])
+    .join("\n")
     .trim();
 }
 

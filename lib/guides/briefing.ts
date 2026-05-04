@@ -54,8 +54,9 @@ Texte structure avec des sections markdown courtes. 1 phrase max par puce. Pas d
 ## Derniers echanges
 Les 3-5 echanges les plus recents uniquement :
 - Format : [TYPE — JJ/MM/AAAA] 1 phrase resumant ce qui a ete dit ou decide
+- TYPE est UN seul mot en majuscules (sans espace) parmi : EMAIL, MEETING, CALL, NOTE, CLAAP
 - Trier du plus recent au plus ancien
-- Pour les Claap : indiquer "Claap disponible" + 1 phrase de resume
+- Pour les Claap : utiliser [CLAAP — JJ/MM/AAAA] + 1 phrase de resume du contenu
 
 NE PAS inclure de section Deals ici — les deals sont deja affiches dans un card dedie.
 NE PAS inclure de section Signaux ici — les signaux sont dans meetingTakeaways.

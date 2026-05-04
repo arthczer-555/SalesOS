@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { type DealScore } from "@/lib/deal-scoring";
 import { db } from "@/lib/db";
+import { stripHtml } from "@/lib/hubspot";
 
 export const dynamic = "force-dynamic";
 
@@ -38,12 +39,39 @@ export async function GET(req: NextRequest) {
 
   try {
     const propsQuery = DEAL_PROPS.join(",");
-    const [dealData, contactAssoc, companyAssoc, engagementAssoc] = await Promise.allSettled([
-      hubspot(`/crm/v3/objects/deals/${id}?properties=${propsQuery}`),
-      hubspot(`/crm/v3/objects/deals/${id}/associations/contacts`),
-      hubspot(`/crm/v3/objects/deals/${id}/associations/companies`),
-      hubspot(`/crm/v3/objects/deals/${id}/associations/engagements`),
-    ]);
+    const ENGAGEMENT_LIMIT = 50;
+    const dealFilter = {
+      filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: id }] }],
+      sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
+      limit: ENGAGEMENT_LIMIT,
+    };
+
+    const [dealData, contactAssoc, companyAssoc, emailsRes, meetingsRes, callsRes, notesRes, tasksRes] =
+      await Promise.allSettled([
+        hubspot(`/crm/v3/objects/deals/${id}?properties=${propsQuery}`),
+        hubspot(`/crm/v3/objects/deals/${id}/associations/contacts`),
+        hubspot(`/crm/v3/objects/deals/${id}/associations/companies`),
+        hubspot("/crm/v3/objects/emails/search", "POST", {
+          ...dealFilter,
+          properties: ["hs_email_subject", "hs_email_text", "hs_email_html", "hs_email_direction", "hs_timestamp"],
+        }),
+        hubspot("/crm/v3/objects/meetings/search", "POST", {
+          ...dealFilter,
+          properties: ["hs_meeting_title", "hs_meeting_body", "hs_timestamp"],
+        }),
+        hubspot("/crm/v3/objects/calls/search", "POST", {
+          ...dealFilter,
+          properties: ["hs_call_title", "hs_call_body", "hs_timestamp"],
+        }),
+        hubspot("/crm/v3/objects/notes/search", "POST", {
+          ...dealFilter,
+          properties: ["hs_note_body", "hs_timestamp"],
+        }),
+        hubspot("/crm/v3/objects/tasks/search", "POST", {
+          ...dealFilter,
+          properties: ["hs_task_subject", "hs_task_body", "hs_timestamp"],
+        }),
+      ]);
 
     const deal = dealData.status === "fulfilled" ? dealData.value : null;
     const p = deal?.properties ?? {};
@@ -93,33 +121,83 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Engagements
-    let engagements: { type: string; date: string; body: string }[] = [];
-    if (engagementAssoc.status === "fulfilled") {
-      const engagementIds: string[] = (engagementAssoc.value?.results ?? [])
-        .slice(0, 10)
-        .map((r: { id: string }) => r.id);
-      if (engagementIds.length > 0) {
-        const engDetails = await Promise.allSettled(
-          engagementIds.map((eid) =>
-            hubspot(`/crm/v3/objects/engagements/${eid}?properties=hs_engagement_type,hs_body_preview,hs_createdate`)
-          )
-        );
-        engagements = engDetails
-          .filter((e) => e.status === "fulfilled")
-          .map((e) => {
-            const ep = (e as PromiseFulfilledResult<{ properties: Record<string, string> }>).value?.properties ?? {};
-            return {
-              type: ep.hs_engagement_type ?? "Activité",
-              date: ep.hs_createdate
-                ? new Date(ep.hs_createdate).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })
-                : "",
-              body: ep.hs_body_preview ?? "",
-            };
-          })
-          .filter((e) => e.body);
-      }
+    // Engagements (emails, meetings, calls, notes, tasks) — sorted desc by timestamp
+    type RawEngagement = { type: string; ts: number; date: string; body: string };
+    const fmtDate = (ts?: string | null) =>
+      ts
+        ? new Date(ts).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" })
+        : "";
+    const tsNum = (ts?: string | null) => (ts ? new Date(ts).getTime() : 0);
+    const collected: RawEngagement[] = [];
+    type SearchRow = { properties?: Record<string, string> };
+    const rowsOf = (r: PromiseSettledResult<{ results?: SearchRow[] }>): SearchRow[] =>
+      r.status === "fulfilled" ? r.value?.results ?? [] : [];
+
+    for (const row of rowsOf(emailsRes)) {
+      const ep = row.properties ?? {};
+      const subject = ep.hs_email_subject?.trim();
+      const rawBody = ep.hs_email_text?.trim() || stripHtml(ep.hs_email_html ?? "");
+      const body = [subject, rawBody].filter(Boolean).join("\n").trim();
+      if (!body) continue;
+      collected.push({
+        type: "EMAIL",
+        ts: tsNum(ep.hs_timestamp),
+        date: fmtDate(ep.hs_timestamp),
+        body: body.slice(0, 4000),
+      });
     }
+    for (const row of rowsOf(meetingsRes)) {
+      const mp = row.properties ?? {};
+      const title = mp.hs_meeting_title?.trim();
+      const body = [title, stripHtml(mp.hs_meeting_body ?? "")].filter(Boolean).join("\n").trim();
+      if (!body) continue;
+      collected.push({
+        type: "MEETING",
+        ts: tsNum(mp.hs_timestamp),
+        date: fmtDate(mp.hs_timestamp),
+        body: body.slice(0, 4000),
+      });
+    }
+    for (const row of rowsOf(callsRes)) {
+      const cp = row.properties ?? {};
+      const title = cp.hs_call_title?.trim();
+      const body = [title, stripHtml(cp.hs_call_body ?? "")].filter(Boolean).join("\n").trim();
+      if (!body) continue;
+      collected.push({
+        type: "CALL",
+        ts: tsNum(cp.hs_timestamp),
+        date: fmtDate(cp.hs_timestamp),
+        body: body.slice(0, 4000),
+      });
+    }
+    for (const row of rowsOf(notesRes)) {
+      const np = row.properties ?? {};
+      const body = stripHtml(np.hs_note_body ?? "").trim();
+      if (!body) continue;
+      collected.push({
+        type: "NOTE",
+        ts: tsNum(np.hs_timestamp),
+        date: fmtDate(np.hs_timestamp),
+        body: body.slice(0, 4000),
+      });
+    }
+    for (const row of rowsOf(tasksRes)) {
+      const tp = row.properties ?? {};
+      const subject = tp.hs_task_subject?.trim();
+      const body = [subject, stripHtml(tp.hs_task_body ?? "")].filter(Boolean).join("\n").trim();
+      if (!body) continue;
+      collected.push({
+        type: "TASK",
+        ts: tsNum(tp.hs_timestamp),
+        date: fmtDate(tp.hs_timestamp),
+        body: body.slice(0, 4000),
+      });
+    }
+
+    collected.sort((a, b) => b.ts - a.ts);
+    const engagements = collected
+      .slice(0, ENGAGEMENT_LIMIT)
+      .map((e) => ({ type: e.type, date: e.date, body: e.body }));
 
     // Fetch cached AI score
     let cachedScore: DealScore | null = null;

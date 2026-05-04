@@ -133,10 +133,12 @@ export function BriefingDealSummary({ rawData }: { rawData: GatheredData | null 
   const deal = rawData?.deals?.[0];
   if (!deal) return null;
 
-  const dealAmount = deal.amount ? `${Number(deal.amount).toLocaleString("fr-FR")} €` : null;
+  const amountNum = deal.amount ? Number(deal.amount) : 0;
+  const dealAmount = amountNum > 0 ? `${amountNum.toLocaleString("fr-FR")} €` : null;
   const closureLabel = deal.closedate
     ? new Date(deal.closedate).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" })
     : null;
+  const isClosedWon = /closed\s*won/i.test(deal.stage) || deal.stage.toLowerCase() === "closedwon";
 
   const signals = deal.reasoning ? parseSignals(deal.reasoning) : [];
   const pos = signals.filter((s) => s.kind === "pos").map((s) => s.text);
@@ -178,9 +180,10 @@ export function BriefingDealSummary({ rawData }: { rawData: GatheredData | null 
             <MetaChip label="Stade" value={deal.stage} />
             {dealAmount && <MetaChip label="Montant" value={dealAmount} />}
             {closureLabel && <MetaChip label="Clôture" value={closureLabel} />}
+            {deal.ownerName && <MetaChip label="Owner" value={deal.ownerName} />}
           </div>
         </div>
-        {deal.scoreTotal !== null && <ScoreBadge value={deal.scoreTotal} scale={100} size="sm" />}
+        {deal.scoreTotal !== null && !isClosedWon && <ScoreBadge value={deal.scoreTotal} scale={100} size="sm" />}
       </div>
 
       {hasBoxes && (

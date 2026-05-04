@@ -7,11 +7,20 @@ const BADGE_COLORS: Record<string, { bg: string; color: string }> = {
   EMAIL: { bg: "#eff6ff", color: "#2563eb" },
   CALL: { bg: "#fffbeb", color: "#d97706" },
   NOTE: { bg: "#f3f4f6", color: "#6b7280" },
+  CLAAP: { bg: "#ecfdf5", color: "#059669" },
+};
+
+const BADGE_LABELS: Record<string, string> = {
+  MEETING: "Réunion",
+  EMAIL: "Email",
+  CALL: "Appel",
+  NOTE: "Note",
+  CLAAP: "Claap",
 };
 
 export function RichText({ text }: { text: string }) {
   const parts: React.ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*)|(\[([A-Z_]+)\s*[—–-]\s*([^\]]+)\])/g;
+  const regex = /(\*\*(.+?)\*\*)|(\[([A-Z_][A-Z_ ]*?)\s*[—–-]\s*([^\]]+)\])/g;
   let last = 0;
   let match: RegExpExecArray | null;
   let key = 0;
@@ -21,13 +30,15 @@ export function RichText({ text }: { text: string }) {
     if (match[1]) {
       parts.push(<strong key={key++} style={{ color: "#111", fontWeight: 600 }}>{match[2]}</strong>);
     } else if (match[3]) {
-      const type = match[4];
+      const rawType = match[4].trim();
+      const typeKey = rawType.split(/\s+/)[0].toUpperCase();
       const date = match[5].trim();
-      const colors = BADGE_COLORS[type] ?? { bg: "#f3f4f6", color: "#6b7280" };
+      const colors = BADGE_COLORS[typeKey] ?? { bg: "#f3f4f6", color: "#6b7280" };
+      const label = BADGE_LABELS[typeKey] ?? rawType;
       parts.push(
         <span key={key++} className="inline-flex items-center gap-1.5 mr-1">
           <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md" style={{ background: colors.bg, color: colors.color }}>
-            {type === "MEETING" ? "Réunion" : type === "EMAIL" ? "Email" : type === "CALL" ? "Appel" : type}
+            {label}
           </span>
           <span className="text-[10px]" style={{ color: "#999" }}>{date}</span>
         </span>

@@ -152,7 +152,7 @@ export async function POST(req: NextRequest) {
           const dealsAssoc = await hs(`/crm/v3/objects/contacts/${contact.id}/associations/deals`);
           const dealIds: string[] = (dealsAssoc?.results ?? []).slice(0, 3).map((r: { id: string }) => r.id);
           const dealDetails = await Promise.all(
-            dealIds.map((did) => hs(`/crm/v3/objects/deals/${did}?properties=dealname,dealstage,amount,closedate`))
+            dealIds.map((did) => hs(`/crm/v3/objects/deals/${did}?properties=dealname,dealstage,amount,closedate,hubspot_owner_id`))
           );
           const validDeals = dealDetails.filter(Boolean);
 
@@ -175,6 +175,8 @@ export async function POST(req: NextRequest) {
               stage: d.properties.dealstage ?? "",
               amount: d.properties.amount ?? null,
               closedate: d.properties.closedate ?? null,
+              ownerId: d.properties.hubspot_owner_id ?? null,
+              ownerName: null as string | null,
               scoreTotal: scoreRow?.score?.total ?? null,
               scoreReliability: scoreRow?.score?.reliability ?? null,
               reasoning: scoreRow?.reasoning ?? null,
@@ -221,9 +223,29 @@ export async function POST(req: NextRequest) {
           }
         } catch { /* continue with raw stage ids */ }
 
+        // Resolve owner IDs to names
+        const ownerMap = new Map<string, string>();
+        const ownerIds = Array.from(
+          new Set(
+            (uniqueDeals as unknown as { ownerId: string | null }[])
+              .map((d) => d.ownerId)
+              .filter((v): v is string => Boolean(v))
+          )
+        );
+        if (ownerIds.length > 0) {
+          try {
+            const ownersData = await hs("/crm/v3/owners?limit=100");
+            for (const o of (ownersData?.results ?? []) as { id: string; firstName?: string; lastName?: string; email?: string }[]) {
+              const name = `${o.firstName ?? ""} ${o.lastName ?? ""}`.trim() || o.email || "";
+              if (name) ownerMap.set(o.id, name);
+            }
+          } catch { /* ignore */ }
+        }
+
         const resolvedDeals = uniqueDeals.map((d: Record<string, unknown>) => ({
           ...d,
           stage: stageMap.get(d.stage as string) ?? d.stage,
+          ownerName: d.ownerId ? ownerMap.get(d.ownerId as string) ?? null : null,
         }));
 
         return { contacts, deals: resolvedDeals, engagements, companyHubspot };

@@ -344,9 +344,9 @@ function safeScore(x: { score?: number } | undefined | null): number {
 
 /**
  * Weighted global score (0-10) :
- * - 6 axes coaching : 40%
- * - MEDDIC (moyenne des 6 dimensions, en ignorant les 0 marqués N/A) : 40%
- * - BOSCHE : 20% (si discovery ET exit_criteria_met, sinon redistribué 50/50 sur axes + MEDDIC)
+ * - 6 axes coaching : 50%
+ * - MEDDIC (moyenne des 6 dimensions, en ignorant les 0 marqués N/A) : 30%
+ * - BOSCHE : 20% (si discovery ET exit_criteria_met, sinon redistribué 60/40 sur axes + MEDDIC)
  *
  * Defensive against partial outputs from the model (missing meddic/bosche/axis).
  */
