@@ -3,10 +3,15 @@ import crypto from "crypto";
 import { fetchDealContext, hubspotFetch, type DealSnapshot } from "@/lib/hubspot";
 import { companyFromEmail } from "@/lib/claap";
 import { findChannelId } from "@/lib/slack-leads";
-import { isClaapNote, parseClaapNote, type ParsedClaapNote } from "@/lib/claap-note-parser";
+import { isClaapNote, parseClaapNote, htmlToText, type ParsedClaapNote } from "@/lib/claap-note-parser";
+import { scoreOneDeal } from "@/app/api/deals/score/route";
+import { formatBantParagraph, generateMeetingSummary, type MeetingSummary } from "@/lib/claap-meeting-summary";
+import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+// Two LLM calls (deal scoring + meeting summary) — give it room.
+// Idempotency by noteId protects against HubSpot retries while we work.
+export const maxDuration = 120;
 
 const SECTION_MAX_LEN = 2900;
 const NOTE_OBJECT_TYPE_ID = "0-46";
@@ -195,14 +200,21 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max - 1).trimEnd() + "…";
 }
 
+type ScoreSummary = {
+  total: number;
+  qualification: Record<string, string | null>;
+} | null;
+
 function buildBlocks(args: {
   parsed: ParsedClaapNote;
+  summary: MeetingSummary;
+  score: ScoreSummary;
   dealName: string;
   ownerName: string | null;
   companyName: string | null;
   testPrefix: boolean;
 }): Array<Record<string, unknown>> {
-  const { parsed, dealName, ownerName, companyName, testPrefix } = args;
+  const { parsed, summary, score, dealName, ownerName, companyName, testPrefix } = args;
   const dateStr = parsed.meetingDate ?? "—";
   const headerText = `${testPrefix ? "[TEST] " : ""}Rencontre ${dealName} — ${dateStr}`;
 
@@ -223,24 +235,58 @@ function buildBlocks(args: {
       elements: [{ type: "mrkdwn", text: contextParts.join("  •  ") }],
     });
   }
+
+  // 💡 Key takeaways — version compressée si dispo, sinon brute
+  const takeaways = summary.keyTakeawaysCompressed || parsed.keyTakeaways;
   blocks.push({
     type: "section",
     text: {
       type: "mrkdwn",
-      text: `*💡 Key takeaways*\n${parsed.keyTakeaways ? truncate(parsed.keyTakeaways, SECTION_MAX_LEN) : "_Aucun élément_"}`,
+      text: `*💡 Key takeaways*\n${takeaways ? truncate(takeaways, SECTION_MAX_LEN) : "_Aucun élément_"}`,
     },
   });
+
+  // 🎯 BANT+ qualification — uniquement si le rescoring a marché
+  if (score) {
+    const bantLine = formatBantParagraph(score.qualification);
+    const bantText = [
+      `*🎯 BANT+ qualification* — score *${score.total}/100*`,
+      bantLine || "_Qualification non renseignée_",
+    ].join("\n");
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: truncate(bantText, SECTION_MAX_LEN) },
+    });
+  }
+
+  // ⏭️ Next Steps — paragraphe unifié (scorer + action items)
+  const nextSteps = summary.nextStepsUnified || parsed.actionItems;
   blocks.push({
     type: "section",
     text: {
       type: "mrkdwn",
-      text: `*✅ Action items*\n${parsed.actionItems ? truncate(parsed.actionItems, SECTION_MAX_LEN) : "_Aucune action_"}`,
+      text: `*⏭️ Next Steps*\n${nextSteps ? truncate(nextSteps, SECTION_MAX_LEN) : "_Aucune action_"}`,
     },
   });
+
   return blocks;
 }
 
 async function processNote(noteId: string): Promise<ProcessResult> {
+  // ── Idempotence ──────────────────────────────────────────────────────
+  // HubSpot retries the webhook if we don't reply in ~5s; we take 10-20s.
+  // Claim the noteId as the very first step. PK violation = retry → skip.
+  const claim = await db.from("claap_notes_processed").insert({ note_id: noteId });
+  if (claim.error) {
+    if (claim.error.code === "23505") {
+      console.log(`[hubspot-claap-note] ignored: duplicate (noteId=${noteId})`);
+      return { ok: true, status: "ignored", reason: "duplicate", dealId: null, mode: "n/a", destination: null };
+    }
+    // Any other DB error: log but proceed. Better one duplicate message
+    // than no message at all.
+    console.warn(`[hubspot-claap-note] idempotency claim failed (noteId=${noteId}):`, claim.error);
+  }
+
   let note: HubspotNoteResponse;
   try {
     note = await hubspotFetch<HubspotNoteResponse>(
@@ -339,7 +385,63 @@ async function processNote(noteId: string): Promise<ProcessResult> {
     }
   }
 
-  const blocks = buildBlocks({ parsed, dealName, ownerName, companyName, testPrefix: mode === "dm" });
+  // Re-score the deal with this new meeting included. Best-effort: failure
+  // just means we skip the BANT+ block.
+  let score: ScoreSummary = null;
+  let nextAction = "";
+  if (dealId) {
+    try {
+      const result = await scoreOneDeal(dealId, null);
+      score = { total: result.total, qualification: result.qualification };
+      nextAction = result.next_action;
+      try {
+        await db.from("deal_scores").upsert(
+          {
+            deal_id: dealId,
+            score: { total: result.total, components: result.components, reliability: result.reliability },
+            reasoning: result.reasoning,
+            next_action: result.next_action,
+            qualification: result.qualification ?? null,
+            scored_at: new Date().toISOString(),
+          },
+          { onConflict: "deal_id" },
+        );
+      } catch (e) {
+        console.warn("[hubspot-claap-note] deal_scores upsert failed:", e);
+      }
+    } catch (e) {
+      console.warn("[hubspot-claap-note] scoreOneDeal failed:", e);
+    }
+  }
+
+  // Generate compressed Key takeaways + unified Next Steps. Best-effort:
+  // fallback to raw parsed sections.
+  let summary: MeetingSummary;
+  try {
+    summary = await generateMeetingSummary({
+      rawClaapText: htmlToText(noteBody),
+      parsedTakeaways: parsed.keyTakeaways,
+      parsedActionItems: parsed.actionItems,
+      nextAction,
+      userId: null,
+    });
+  } catch (e) {
+    console.warn("[hubspot-claap-note] generateMeetingSummary failed:", e);
+    summary = {
+      keyTakeawaysCompressed: parsed.keyTakeaways,
+      nextStepsUnified: parsed.actionItems,
+    };
+  }
+
+  const blocks = buildBlocks({
+    parsed,
+    summary,
+    score,
+    dealName,
+    ownerName,
+    companyName,
+    testPrefix: mode === "dm",
+  });
   const fallbackText = `${mode === "dm" ? "[TEST CLAAP→SLACK] " : ""}Rencontre ${dealName} (${parsed.meetingDate ?? "—"}) — résumé Claap`;
 
   try {
@@ -364,8 +466,11 @@ async function processNote(noteId: string): Promise<ProcessResult> {
     dealClosed: dealSnap?.is_closed ?? null,
     dealClosedWon: dealSnap?.is_closed_won ?? null,
     companyLifecycleStage,
-    takeawaysLen: parsed.keyTakeaways.length,
-    actionsLen: parsed.actionItems.length,
+    rescoredTotal: score?.total ?? null,
+    takeawaysRawLen: parsed.keyTakeaways.length,
+    actionsRawLen: parsed.actionItems.length,
+    takeawaysCompressedLen: summary.keyTakeawaysCompressed.length,
+    nextStepsUnifiedLen: summary.nextStepsUnified.length,
   });
 
   return { ok: true, status: "posted", dealId, mode, destination };
