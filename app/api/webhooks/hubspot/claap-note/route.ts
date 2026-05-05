@@ -322,6 +322,17 @@ function buildBlocks(args: {
       text: `*✅ Action items*\n${actions ? truncate(actions, SECTION_MAX_LEN) : "_Aucune action_"}`,
     },
   });
+
+  blocks.push({
+    type: "context",
+    elements: [
+      {
+        type: "mrkdwn",
+        text: "🔍 <https://coachello-sales.netlify.app/sales-coach|To see the full scoring of the meeting>",
+      },
+    ],
+  });
+
   return blocks;
 }
 
