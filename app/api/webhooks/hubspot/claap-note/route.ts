@@ -3,10 +3,14 @@ import crypto from "crypto";
 import { fetchDealContext, hubspotFetch, type DealSnapshot } from "@/lib/hubspot";
 import { companyFromEmail } from "@/lib/claap";
 import { findChannelId } from "@/lib/slack-leads";
-import { isClaapNote, parseClaapNote, type ParsedClaapNote } from "@/lib/claap-note-parser";
+import { isClaapNote, parseClaapNote, htmlToText, type ParsedClaapNote } from "@/lib/claap-note-parser";
+import { scoreOneDeal } from "@/app/api/deals/score/route";
+import { fallbackBrief, generateMeetingBrief, type MeetingBrief } from "@/lib/claap-meeting-brief";
+import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+// Two LLM calls (deal scoring + meeting brief) — give it room.
+export const maxDuration = 120;
 
 const SECTION_MAX_LEN = 2900;
 const NOTE_OBJECT_TYPE_ID = "0-46";
@@ -195,18 +199,45 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max - 1).trimEnd() + "…";
 }
 
+type ScoreSummary = {
+  total: number;
+  qualification: Record<string, string | null>;
+  nextAction: string;
+} | null;
+
+function formatQualificationLine(q: Record<string, string | null>): string {
+  const order: Array<[keyof typeof q, string]> = [
+    ["budget", "Budget"],
+    ["authority", "Authority"],
+    ["need", "Need"],
+    ["timeline", "Timeline"],
+    ["champion", "Champion"],
+    ["strategicFit", "Fit"],
+  ];
+  const parts: string[] = [];
+  for (const [key, label] of order) {
+    const v = q[key as string];
+    if (v && v !== "null") parts.push(`*${label}:* ${v}`);
+  }
+  return parts.join("  ·  ");
+}
+
 function buildBlocks(args: {
   parsed: ParsedClaapNote;
+  brief: MeetingBrief;
+  score: ScoreSummary;
   dealName: string;
+  stageLabel: string | null;
   ownerName: string | null;
   companyName: string | null;
   testPrefix: boolean;
 }): Array<Record<string, unknown>> {
-  const { parsed, dealName, ownerName, companyName, testPrefix } = args;
-  const dateStr = parsed.meetingDate ?? "—";
-  const headerText = `${testPrefix ? "[TEST] " : ""}Rencontre ${dealName} — ${dateStr}`;
+  const { parsed, brief, score, dealName, stageLabel, ownerName, companyName, testPrefix } = args;
+  const stagePart = stageLabel ? ` — ${stageLabel}` : "";
+  const headerText = `${testPrefix ? "[TEST] " : ""}${dealName}${stagePart}`;
 
   const contextParts: string[] = [];
+  if (parsed.meetingDate) contextParts.push(`📅 ${parsed.meetingDate}`);
   if (ownerName) contextParts.push(`👤 ${ownerName}`);
   if (companyName) contextParts.push(`🏢 ${companyName}`);
   if (parsed.claapUrl) contextParts.push(`<${parsed.claapUrl}|Voir le meeting Claap>`);
@@ -223,18 +254,72 @@ function buildBlocks(args: {
       elements: [{ type: "mrkdwn", text: contextParts.join("  •  ") }],
     });
   }
+
+  if (score) {
+    const qualLine = formatQualificationLine(score.qualification);
+    const scoreText = [
+      `*📊 Deal score :* ${score.total}/100  _(rescoré avec ce meeting)_`,
+      qualLine ? qualLine : null,
+      score.nextAction ? `*➡️ Next action :* ${score.nextAction}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: truncate(scoreText, SECTION_MAX_LEN) },
+    });
+  }
+
+  blocks.push({ type: "divider" });
+
+  // Brief structuré — une section par bloc pour rester lisible
+  const briefSections: Array<[string, string]> = [
+    ["🏢 Company", brief.company],
+    ["👤 Contact & DM", brief.contactDm],
+    ["🎯 Context", brief.context],
+    ["⚠️ Pain / Opportunity", brief.painOpportunity],
+    ["⚔️ Competition", brief.competition],
+    ["💰 Budget & Timing", brief.budgetTiming],
+    ["📈 Deal Dynamics", brief.dealDynamics],
+  ];
+  for (const [title, body] of briefSections) {
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `*${title}*\n${truncate(body || "_Non mentionné_", SECTION_MAX_LEN)}`,
+      },
+    });
+  }
+
+  // Next Steps — Us / Them
+  const nextStepsText = [
+    `*⏭️ Next Steps*`,
+    `*Us:* ${brief.nextSteps.us || "_Non mentionné_"}`,
+    `*Them:* ${brief.nextSteps.them || "_Non mentionné_"}`,
+  ].join("\n");
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: truncate(nextStepsText, SECTION_MAX_LEN) },
+  });
+
+  blocks.push({ type: "divider" });
+
+  // Résumés compressés (fallback sur les bruts si la compression a échoué)
+  const takeaways = brief.keyTakeawaysCompressed || parsed.keyTakeaways;
+  const actions = brief.actionItemsCompressed || parsed.actionItems;
   blocks.push({
     type: "section",
     text: {
       type: "mrkdwn",
-      text: `*💡 Key takeaways*\n${parsed.keyTakeaways ? truncate(parsed.keyTakeaways, SECTION_MAX_LEN) : "_Aucun élément_"}`,
+      text: `*💡 Key takeaways*\n${takeaways ? truncate(takeaways, SECTION_MAX_LEN) : "_Aucun élément_"}`,
     },
   });
   blocks.push({
     type: "section",
     text: {
       type: "mrkdwn",
-      text: `*✅ Action items*\n${parsed.actionItems ? truncate(parsed.actionItems, SECTION_MAX_LEN) : "_Aucune action_"}`,
+      text: `*✅ Action items*\n${actions ? truncate(actions, SECTION_MAX_LEN) : "_Aucune action_"}`,
     },
   });
   return blocks;
@@ -296,6 +381,64 @@ async function processNote(noteId: string): Promise<ProcessResult> {
 
   const dealName = dealSnap?.name?.trim() || parsed.title || "Meeting Claap";
   const ownerName = dealSnap?.owner_name ?? null;
+  const stageLabel = dealSnap?.stage_label ?? dealSnap?.stage ?? null;
+
+  // Re-score the deal with this new meeting included, then generate the
+  // structured brief. Both are best-effort: failures degrade gracefully.
+  let score: ScoreSummary = null;
+  if (dealId) {
+    try {
+      const result = await scoreOneDeal(dealId, null);
+      score = {
+        total: result.total,
+        qualification: result.qualification,
+        nextAction: result.next_action,
+      };
+      try {
+        await db.from("deal_scores").upsert(
+          {
+            deal_id: dealId,
+            score: { total: result.total, components: result.components, reliability: result.reliability },
+            reasoning: result.reasoning,
+            next_action: result.next_action,
+            qualification: result.qualification ?? null,
+            scored_at: new Date().toISOString(),
+          },
+          { onConflict: "deal_id" },
+        );
+      } catch (e) {
+        console.warn("[hubspot-claap-note] deal_scores upsert failed:", e);
+      }
+    } catch (e) {
+      console.warn("[hubspot-claap-note] scoreOneDeal failed:", e);
+    }
+  }
+
+  let brief: MeetingBrief;
+  if (dealSnap) {
+    try {
+      brief = await generateMeetingBrief({
+        rawClaapText: htmlToText(noteBody),
+        parsedTakeaways: parsed.keyTakeaways,
+        parsedActionItems: parsed.actionItems,
+        dealSnap,
+        qualification: score?.qualification ?? {},
+        nextAction: score?.nextAction ?? "",
+        userId: null,
+      });
+    } catch (e) {
+      console.warn("[hubspot-claap-note] generateMeetingBrief failed:", e);
+      brief = fallbackBrief({
+        parsedTakeaways: parsed.keyTakeaways,
+        parsedActionItems: parsed.actionItems,
+      });
+    }
+  } else {
+    brief = fallbackBrief({
+      parsedTakeaways: parsed.keyTakeaways,
+      parsedActionItems: parsed.actionItems,
+    });
+  }
 
   let companyName: string | null = null;
   let companyLifecycleStage: string | null = null;
@@ -339,7 +482,16 @@ async function processNote(noteId: string): Promise<ProcessResult> {
     }
   }
 
-  const blocks = buildBlocks({ parsed, dealName, ownerName, companyName, testPrefix: mode === "dm" });
+  const blocks = buildBlocks({
+    parsed,
+    brief,
+    score,
+    dealName,
+    stageLabel,
+    ownerName,
+    companyName,
+    testPrefix: mode === "dm",
+  });
   const fallbackText = `${mode === "dm" ? "[TEST CLAAP→SLACK] " : ""}Rencontre ${dealName} (${parsed.meetingDate ?? "—"}) — résumé Claap`;
 
   try {
@@ -364,8 +516,13 @@ async function processNote(noteId: string): Promise<ProcessResult> {
     dealClosed: dealSnap?.is_closed ?? null,
     dealClosedWon: dealSnap?.is_closed_won ?? null,
     companyLifecycleStage,
-    takeawaysLen: parsed.keyTakeaways.length,
-    actionsLen: parsed.actionItems.length,
+    stageLabel,
+    rescoredTotal: score?.total ?? null,
+    nextActionLen: score?.nextAction.length ?? 0,
+    takeawaysRawLen: parsed.keyTakeaways.length,
+    actionsRawLen: parsed.actionItems.length,
+    takeawaysCompressedLen: brief.keyTakeawaysCompressed.length,
+    actionsCompressedLen: brief.actionItemsCompressed.length,
   });
 
   return { ok: true, status: "posted", dealId, mode, destination };
