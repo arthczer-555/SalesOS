@@ -214,8 +214,9 @@ function buildBlocks(args: {
   ownerName: string | null;
   companyName: string | null;
   testPrefix: boolean;
+  isClosedWon: boolean;
 }): Array<Record<string, unknown>> {
-  const { parsed, summary, score, dealId, dealName, ownerName, companyName, testPrefix } = args;
+  const { parsed, summary, score, dealId, dealName, ownerName, companyName, testPrefix, isClosedWon } = args;
   const dateStr = parsed.meetingDate ?? "—";
   const headerText = `${testPrefix ? "[TEST] " : ""}Rencontre ${dealName} — ${dateStr}`;
 
@@ -270,8 +271,9 @@ function buildBlocks(args: {
     },
   });
 
-  // Lien vers la fiche deal dans SalesOS
-  if (dealId) {
+  // Lien vers la fiche deal dans SalesOS — pas pour les clients (closed-won)
+  // car le deal n'est plus analysé (pas de re-scoring, pas de BANT+).
+  if (dealId && !isClosedWon) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://coachello-sales.netlify.app";
     const dealUrl = `${appUrl}/deals?dealId=${encodeURIComponent(dealId)}`;
     blocks.push({
@@ -373,6 +375,7 @@ async function processNote(noteId: string): Promise<ProcessResult> {
   }
 
   const audience = resolveAudience({ dealSnap, companyLifecycleStage });
+  const isClosedWon = dealSnap?.is_closed_won === true;
 
   const mode = process.env.CLAAP_NOTE_SLACK_MODE === "channels" ? "channels" : "dm";
   let channelId: string;
@@ -417,10 +420,12 @@ async function processNote(noteId: string): Promise<ProcessResult> {
   }
 
   // Re-score the deal with this new meeting included. Best-effort: failure
-  // just means we skip the BANT+ block.
+  // just means we skip the BANT+ block. Skip entirely for closed-won deals
+  // (clients) — qualification ne s'applique plus, on garde uniquement
+  // takeaways + next steps.
   let score: ScoreSummary = null;
   let nextAction = "";
-  if (dealId) {
+  if (dealId && !isClosedWon) {
     try {
       const result = await scoreOneDeal(dealId, attributedUserId);
       score = { total: result.total, qualification: result.qualification };
@@ -473,6 +478,7 @@ async function processNote(noteId: string): Promise<ProcessResult> {
     ownerName,
     companyName,
     testPrefix: mode === "dm",
+    isClosedWon,
   });
   const fallbackText = `${mode === "dm" ? "[TEST CLAAP→SLACK] " : ""}Rencontre ${dealName} (${parsed.meetingDate ?? "—"}) — résumé Claap`;
 
