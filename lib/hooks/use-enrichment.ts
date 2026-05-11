@@ -1,0 +1,143 @@
+import useSWR from "swr";
+import type { EnrichmentList, EnrichmentProfile, NetrowsCriteria, HubspotCriteria } from "@/lib/intel-types";
+
+interface ListsResponse {
+  lists: EnrichmentList[];
+}
+
+export function useEnrichmentLists() {
+  const { data, error, isLoading, mutate } = useSWR<ListsResponse>("/api/intel/enrich/lists", {
+    revalidateOnFocus: false,
+    dedupingInterval: 30_000,
+  });
+  return {
+    lists: data?.lists ?? [],
+    isLoading,
+    error: error ? (error instanceof Error ? error.message : "") : "",
+    reload: () => mutate(),
+  };
+}
+
+export async function searchNetrows(criteria: NetrowsCriteria & { start?: number }): Promise<{ profiles: EnrichmentProfile[]; total: number }> {
+  const r = await fetch("/api/intel/enrich/netrows-search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(criteria),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur Netrows");
+  return data;
+}
+
+export async function searchHubspot(criteria: HubspotCriteria): Promise<{ profiles: EnrichmentProfile[] }> {
+  const r = await fetch("/api/intel/enrich/hubspot-search", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(criteria),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur HubSpot");
+  return data;
+}
+
+export async function resolveUsernames(profiles: { hubspotId?: string; email?: string; firstName?: string; lastName?: string; company?: string }[]) {
+  const r = await fetch("/api/intel/enrich/resolve-username", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ profiles }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur");
+  return data.results as { hubspotId?: string; username: string | null }[];
+}
+
+export async function findEmails(usernames: string[]) {
+  const r = await fetch("/api/intel/enrich/email", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ usernames }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur");
+  return data.results as { username: string; email: string | null; confidence: string | null }[];
+}
+
+export async function addToRadarBulk(profiles: EnrichmentProfile[]) {
+  const r = await fetch("/api/intel/enrich/add-to-radar", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      profiles: profiles.map((p) => ({
+        username: p.username ?? null,
+        fullName: p.fullName,
+        firstName: p.firstName,
+        lastName: p.lastName,
+        email: p.email,
+        headline: p.headline,
+        company: p.company,
+        profileUrl: p.profileUrl,
+        source: p.source ?? "manual",
+      })),
+    }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur");
+  return data as {
+    added: string[];
+    skipped: string[];
+    failed: { name: string; error: string }[];
+    unresolved: { name: string; reason: string }[];
+    resolvedCount: number;
+  };
+}
+
+export async function removeFromRadar(username: string) {
+  const r = await fetch(`/api/intel/enrich/radar/${encodeURIComponent(username)}`, { method: "DELETE" });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur");
+  return data;
+}
+
+export interface RadarRefreshResult {
+  updated_count: number;
+  updated: string[];
+  diffs: {
+    username: string;
+    fields: { field: "headline" | "company" | "full_name"; old: string | null; new: string | null }[];
+  }[];
+  errors: { username: string; error: string }[];
+  credits_used: number;
+}
+
+export async function refreshRadarProfiles(usernames: string[]): Promise<RadarRefreshResult> {
+  const r = await fetch("/api/intel/enrich/radar/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ usernames }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur refresh");
+  return data;
+}
+
+export async function saveList(input: {
+  id?: string;
+  name: string;
+  source: "netrows" | "hubspot" | "mixed";
+  criteria?: unknown;
+  results: EnrichmentProfile[];
+}): Promise<EnrichmentList> {
+  const r = await fetch("/api/intel/enrich/lists", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur");
+  return data.list as EnrichmentList;
+}
+
+export async function deleteList(id: string) {
+  const r = await fetch(`/api/intel/enrich/lists/${id}`, { method: "DELETE" });
+  if (!r.ok) throw new Error("Suppression échouée");
+}

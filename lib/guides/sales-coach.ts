@@ -407,6 +407,29 @@ export function computeGlobalScore(analysis: Partial<SalesCoachAnalysis>): numbe
   return Math.round(global * 10) / 10;
 }
 
+/**
+ * Repairs a known malformed shape where Haiku 4.5 dumps the tail of the tool
+ * input (priorities + key_moments + risks + strengths + weaknesses) as one
+ * giant string into coaching_priorities[0] instead of structuring it.
+ *
+ * The string looks like: `[ "a", "b", "c" ], "key_moments": [...], ...` —
+ * which becomes valid JSON when wrapped in `{"coaching_priorities":<blob>}`.
+ */
+export function repairAnalysis<T extends Partial<SalesCoachAnalysis>>(analysis: T): T {
+  const cp = analysis.coaching_priorities;
+  if (!Array.isArray(cp) || cp.length !== 1) return analysis;
+  const blob = cp[0];
+  if (typeof blob !== "string" || !blob.trimStart().startsWith("[")) return analysis;
+  if (!/"(key_moments|strengths|weaknesses|risks)"\s*:/.test(blob)) return analysis;
+  try {
+    const parsed = JSON.parse(`{"coaching_priorities":${blob}}`) as Partial<SalesCoachAnalysis>;
+    if (Array.isArray(parsed.coaching_priorities)) {
+      return { ...analysis, ...parsed };
+    }
+  } catch { /* malformed beyond simple wrap — give up, leave as-is */ }
+  return analysis;
+}
+
 export const MEETING_KIND_LABELS: Record<MeetingKind, string> = {
   discovery_r1: "Discovery R1",
   discovery_deeper: "Discovery approfondie",

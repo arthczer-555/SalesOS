@@ -26,7 +26,7 @@ import { MeddicBadge } from "@/components/ui/meddic-badge";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { useSalesCoachDetail, useSalesCoachDealHistory } from "@/lib/hooks/use-sales-coach";
 import type { SalesCoachAnalysis, AxisScore, MeddicScore } from "@/lib/guides/sales-coach";
-import { MEETING_KIND_LABELS, isDiscoveryKind } from "@/lib/guides/sales-coach";
+import { MEETING_KIND_LABELS, isDiscoveryKind, repairAnalysis } from "@/lib/guides/sales-coach";
 import { SynthesisTab } from "./synthesis-tab";
 import { EmailDraftModal } from "./email-draft-modal";
 import { Sparkles } from "lucide-react";
@@ -611,7 +611,9 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
     );
   }
 
-  const a = detail.analysis;
+  // Defensive repair for the malformed shape Haiku 4.5 occasionally produces
+  // (everything from `coaching_priorities` onwards stuffed as one string).
+  const a = repairAnalysis(detail.analysis);
   const meetingDate = detail.meeting_started_at
     ? new Date(detail.meeting_started_at).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })
     : "";

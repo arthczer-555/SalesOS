@@ -185,9 +185,18 @@ export async function POST(req: NextRequest) {
         const userIds = (allUsers ?? []).map((u: { id: string }) => u.id);
 
         for (const signal of signals) {
+          const agentId =
+            signal.signal_type === "job_change"
+              ? "job-change"
+              : signal.signal_type === "hiring"
+                ? "hiring-spike"
+                : signal.signal_type === "content"
+                  ? "intent-content"
+                  : "company-news";
           const { error } = await db.from("market_signals").insert(
             userIds.map((userId) => ({
               user_id: userId,
+              agent_id: agentId,
               company_name: signal.company_name,
               signal_type: signal.signal_type,
               title: signal.title,

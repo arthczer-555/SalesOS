@@ -9,6 +9,7 @@ import {
   SALES_COACH_SYSTEM_PROMPT,
   salesCoachTool,
   computeGlobalScore,
+  repairAnalysis,
   type SalesCoachAnalysis,
 } from "../guides/sales-coach";
 
@@ -217,7 +218,7 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
     const toolBlock = message.content.find((b) => b.type === "tool_use");
     if (!toolBlock || !("input" in toolBlock)) throw new Error("No tool_use block in response");
 
-    const analysis = toolBlock.input as SalesCoachAnalysis;
+    const analysis = repairAnalysis(toolBlock.input as SalesCoachAnalysis);
     const scoreGlobal = computeGlobalScore(analysis);
 
     await db
