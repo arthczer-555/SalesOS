@@ -346,13 +346,23 @@ async function processNote(noteId: string): Promise<ProcessResult> {
   }
 
   const dealId = getFirstAssociationId(note.associations?.deals?.results);
+  if (!dealId) {
+    console.log(`[hubspot-claap-note] ignored: no_deal_association (noteId=${noteId})`);
+    return {
+      ok: true,
+      status: "ignored",
+      reason: "no_deal_association",
+      dealId: null,
+      mode: "n/a",
+      destination: null,
+    };
+  }
+
   let dealSnap: DealSnapshot | null = null;
-  if (dealId) {
-    try {
-      dealSnap = await fetchDealContext(dealId);
-    } catch (e) {
-      console.warn("[hubspot-claap-note] fetchDealContext failed:", e);
-    }
+  try {
+    dealSnap = await fetchDealContext(dealId);
+  } catch (e) {
+    console.warn("[hubspot-claap-note] fetchDealContext failed:", e);
   }
 
   const dealName = dealSnap?.name?.trim() || parsed.title || "Meeting Claap";
@@ -425,7 +435,7 @@ async function processNote(noteId: string): Promise<ProcessResult> {
   // takeaways + next steps.
   let score: ScoreSummary = null;
   let nextAction = "";
-  if (dealId && !isClosedWon) {
+  if (!isClosedWon) {
     try {
       const result = await scoreOneDeal(dealId, attributedUserId);
       score = { total: result.total, qualification: result.qualification };
