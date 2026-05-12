@@ -8,6 +8,7 @@ import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
 import { GuideEditor } from "../settings/_components/guide-editor";
 import { ModelPreferencesAdmin } from "./_components/model-preferences-admin";
+import { AlertConfigAdmin } from "./_components/alert-config-admin";
 import { ResetGuidesButton } from "./_components/reset-guides-button";
 import { Suspense } from "react";
 
@@ -26,6 +27,21 @@ export default async function AdminPage() {
   const globalModelPrefs = (() => {
     const entry = (globalGuides ?? []).find((r) => r.key === "model_preferences");
     try { return entry ? (JSON.parse(entry.content as string) as Record<string, string>) : {}; } catch { return {}; }
+  })();
+  const globalAlertConfig = (() => {
+    const entry = (globalGuides ?? []).find((r) => r.key === "alert_config");
+    const fallback = { enabled: true, slack_channel: "", min_score: 70 };
+    if (!entry) return fallback;
+    try {
+      const parsed = JSON.parse(entry.content as string) as Partial<typeof fallback>;
+      return {
+        enabled: parsed.enabled ?? fallback.enabled,
+        slack_channel: parsed.slack_channel ?? fallback.slack_channel,
+        min_score: parsed.min_score ?? fallback.min_score,
+      };
+    } catch {
+      return fallback;
+    }
   })();
   const globalMap = Object.fromEntries((globalGuides ?? []).map((r) => [r.key, r.content as string]));
 
@@ -151,6 +167,19 @@ export default async function AdminPage() {
         </div>
         <div className="rounded-xl border p-5" style={{ borderColor: "#eeeeee", background: "#fff" }}>
           <ModelPreferencesAdmin initialPreferences={globalModelPrefs} />
+        </div>
+      </div>
+
+      {/* Alertes Slack — signaux LinkedIn */}
+      <div>
+        <div className="mb-4">
+          <h2 className="text-base font-semibold" style={{ color: "#111" }}>Alertes Slack — signaux Market Intel</h2>
+          <p className="text-xs mt-1" style={{ color: "#888" }}>
+            Quand un signal LinkedIn (job change, hiring spike, ICP match) dépasse le seuil, on ping le canal sélectionné.
+          </p>
+        </div>
+        <div className="rounded-xl border p-5" style={{ borderColor: "#eeeeee", background: "#fff" }}>
+          <AlertConfigAdmin initialConfig={globalAlertConfig} />
         </div>
       </div>
 
