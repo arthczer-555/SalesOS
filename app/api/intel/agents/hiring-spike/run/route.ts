@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedUser } from "@/lib/auth";
+import { authenticateCronOrUser } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
 import { getCompanyJobs, listRadarCompanies } from "@/lib/netrows";
 
@@ -33,9 +33,9 @@ function isIcpRole(title: string): boolean {
   return ICP_KEYWORDS.some((k) => t.includes(k));
 }
 
-export async function POST(_req: NextRequest) {
-  const user = await getAuthenticatedUser();
-  if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+export async function POST(req: NextRequest) {
+  const auth = await authenticateCronOrUser(req);
+  if (!auth) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
   if (!process.env.NETROWS_API_KEY) {
     return NextResponse.json({ error: "Netrows non configuré" }, { status: 500 });

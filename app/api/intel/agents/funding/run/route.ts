@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedUser } from "@/lib/auth";
+import { authenticateCronOrUser } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
 import { searchTavily } from "@/lib/tavily";
 import { getTargetCompanies } from "@/lib/target-companies";
@@ -7,9 +7,9 @@ import { getTargetCompanies } from "@/lib/target-companies";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-export async function POST(_req: NextRequest) {
-  const user = await getAuthenticatedUser();
-  if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+export async function POST(req: NextRequest) {
+  const auth = await authenticateCronOrUser(req);
+  if (!auth) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
   if (!process.env.TAVILY_API_KEY) {
     return NextResponse.json({ error: "Tavily non configuré" }, { status: 500 });
@@ -41,7 +41,7 @@ export async function POST(_req: NextRequest) {
           .from("market_signals")
           .select("id")
           .eq("source_url", r.url)
-          .eq("user_id", userIds[0] ?? user.id)
+          .eq("user_id", userIds[0] ?? auth.userId)
           .maybeSingle();
         if (existing) continue;
 

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
-import { addCompanyToRadar, listRadarCompanies } from "@/lib/netrows";
+import { addCompanyToRadar, listRadarCompanies, slugifyCompany } from "@/lib/netrows";
 import { getTargetCompanies } from "@/lib/target-companies";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
   if (body.useTargets) {
     const targets = await getTargetCompanies();
     const limit = body.limit ?? 5; // Default 5 for safety
-    companies = targets.slice(0, limit).map((c) => c.toLowerCase().replace(/['\s]+/g, "-").replace(/[^a-z0-9-]/g, ""));
+    companies = targets.slice(0, limit).map(slugifyCompany);
   } else if (body.companies?.length) {
     companies = body.companies;
   } else {

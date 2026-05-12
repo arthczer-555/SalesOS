@@ -437,10 +437,9 @@ export async function POST(req: NextRequest) {
       // LinkedIn: enrich the COMPANY (details + last posts) via Netrows
       (async () => {
         if (!process.env.NETROWS_API_KEY || !company) return null;
-        const { searchCompanies, getCompanyDetails, getCompanyPosts } = await import("@/lib/netrows");
+        const { searchCompanies, getCompanyDetails, getCompanyPosts, slugifyCompany } = await import("@/lib/netrows");
         try {
-          // Try direct slug first (lowercased, dashed)
-          const directSlug = company.toLowerCase().replace(/['\s]+/g, "-").replace(/[^a-z0-9-]/g, "");
+          const directSlug = slugifyCompany(company);
           let username: string | null = null;
           let details: Awaited<ReturnType<typeof getCompanyDetails>> | null = null;
 

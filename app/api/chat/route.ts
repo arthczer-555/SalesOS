@@ -20,7 +20,7 @@ import {
   searchCompanies,
   searchPosts as netrowsSearchPosts,
   getPostReactions,
-  findEmailByLinkedIn,
+  findEmailByLinkedInCached,
   findDecisionMakerEmail,
 } from "@/lib/netrows";
 
@@ -1171,8 +1171,8 @@ async function executeTool(name: string, input: Record<string, unknown>, onProgr
     }
     case "find_email_by_linkedin": {
       try {
-        const r = await findEmailByLinkedIn(input.username as string);
-        return JSON.stringify(r.data ?? { email: null });
+        const r = await findEmailByLinkedInCached(input.username as string);
+        return JSON.stringify({ email: r.email, confidence: r.confidence });
       } catch (e) {
         return `Erreur email finder : ${e instanceof Error ? e.message : "inconnue"}`;
       }

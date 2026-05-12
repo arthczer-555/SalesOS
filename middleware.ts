@@ -9,6 +9,12 @@ const isPublicRoute = createRouteMatcher([
   "/api/webhooks/hubspot(.*)", // HubSpot webhook — authenticated via HMAC v3 / shared secret in handler
   "/api/webhooks/netrows(.*)", // Netrows webhook — authenticated via HMAC SHA-256 (x-netrows-signature) in handler
   "/api/sales-coach/analyze(.*)", // Fire-and-forget internal trigger — authenticated via x-internal-secret in handler
+  "/api/linkedin/weekly-scan(.*)", // Cron / UI — accepts Bearer CRON_SECRET OR Clerk session
+  "/api/intel/agents/ads/run(.*)", // Cron / UI — accepts Bearer CRON_SECRET OR Clerk session
+  "/api/intel/agents/hiring-spike/run(.*)", // Cron / UI — accepts Bearer CRON_SECRET OR Clerk session
+  "/api/intel/agents/competitor-activity/run(.*)", // Cron / UI — accepts Bearer CRON_SECRET OR Clerk session
+  "/api/intel/agents/champion-tracker/run(.*)", // Cron / UI — accepts Bearer CRON_SECRET OR Clerk session
+  "/api/intel/agents/funding/run(.*)", // Cron / UI — accepts Bearer CRON_SECRET OR Clerk session
 ]);
 
 export default clerkMiddleware(async (auth, request) => {

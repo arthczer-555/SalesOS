@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedUser } from "@/lib/auth";
+import { authenticateCronOrUser } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
 import { getCompanyAds, listRadarCompanies } from "@/lib/netrows";
 
@@ -12,9 +12,9 @@ interface AdItem {
   postedAt: string;
 }
 
-export async function POST(_req: NextRequest) {
-  const user = await getAuthenticatedUser();
-  if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+export async function POST(req: NextRequest) {
+  const auth = await authenticateCronOrUser(req);
+  if (!auth) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
   if (!process.env.NETROWS_API_KEY) {
     return NextResponse.json({ error: "Netrows non configuré" }, { status: 500 });

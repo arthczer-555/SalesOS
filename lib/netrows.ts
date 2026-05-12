@@ -4,6 +4,24 @@
 
 const BASE = "https://api.netrows.com/v1";
 
+/**
+ * Convertit un nom d'entreprise en username LinkedIn plausible.
+ * Gère les accents ("Crédit Agricole" → "credit-agricole"), apostrophes
+ * ("L'Oréal" → "l-oreal"), espaces multiples, et symboles.
+ *
+ * ⚠️ Heuristique : le vrai slug LinkedIn peut différer (ex: "totalenergies").
+ * À utiliser comme fallback quand on n'a pas le vrai username.
+ */
+export function slugifyCompany(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[‘’']/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function getApiKey(): string {
   const key = process.env.NETROWS_API_KEY;
   if (!key) throw new Error("NETROWS_API_KEY not set");
@@ -147,12 +165,15 @@ export async function getCompanyDetails(username: string): Promise<{
   return netrows("/companies/details", { username });
 }
 
-/** Get company posts (1 credit) */
-export async function getCompanyPosts(username: string, start = 0): Promise<{
+/** Get company posts (1 credit). Accepts either a LinkedIn username or full URL. */
+export async function getCompanyPosts(usernameOrUrl: string, start = 0): Promise<{
   success: boolean;
   data: CompanyPost[];
 }> {
-  return netrows("/companies/posts", { url: username, start: String(start) });
+  const url = usernameOrUrl.startsWith("http")
+    ? usernameOrUrl
+    : `https://www.linkedin.com/company/${usernameOrUrl}/`;
+  return netrows("/companies/posts", { url, start: String(start) });
 }
 
 /** Get company job listings (1 credit) */
@@ -300,12 +321,55 @@ export async function getPostReactions(postUrl: string, start = 0): Promise<{
   return netrows("/posts/reactions", { postUrl, start: String(start) });
 }
 
-/** Email pro à partir d'un profil LinkedIn (5 crédits) */
+/** Email pro à partir d'un profil LinkedIn (5 crédits) — sans cache. */
 export async function findEmailByLinkedIn(username: string): Promise<{
   success: boolean;
   data: { email: string | null; confidence: "high" | "medium" | "low" | null };
 }> {
   return netrows("/email-finder/by-linkedin", { username });
+}
+
+/**
+ * Variante cachée 30 jours. Stocke aussi les misses (email=null) pour
+ * éviter de repayer 5 crédits sur les mêmes profils introuvables.
+ */
+export async function findEmailByLinkedInCached(username: string): Promise<{
+  email: string | null;
+  confidence: "high" | "medium" | "low" | null;
+  cached: boolean;
+}> {
+  const { db } = await import("@/lib/db");
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 86_400_000).toISOString();
+
+  const { data: cached } = await db
+    .from("linkedin_email_cache")
+    .select("email, confidence, resolved_at")
+    .eq("username", username)
+    .gte("resolved_at", thirtyDaysAgo)
+    .maybeSingle();
+
+  if (cached) {
+    return {
+      email: cached.email as string | null,
+      confidence: cached.confidence as "high" | "medium" | "low" | null,
+      cached: true,
+    };
+  }
+
+  const result = await findEmailByLinkedIn(username);
+  const email = result.data?.email ?? null;
+  const confidence = result.data?.confidence ?? null;
+
+  try {
+    await db.from("linkedin_email_cache").upsert(
+      { username, email, confidence, resolved_at: new Date().toISOString() },
+      { onConflict: "username" }
+    );
+  } catch {
+    /* cache best-effort */
+  }
+
+  return { email, confidence, cached: false };
 }
 
 /** Email du décideur RH/L&D d'une entreprise (10 crédits) */
@@ -361,10 +425,16 @@ export async function resolveUsername(params: {
   if (key) {
     const { data: cached } = await db
       .from("linkedin_username_cache")
-      .select("username")
+      .select("username, resolved_at")
       .eq("lookup_key", key)
       .maybeSingle();
-    if (cached?.username) return cached.username as string;
+    if (cached) {
+      if (cached.username) return cached.username as string;
+      // Negative hit: don't retry the API if we tried recently.
+      const resolvedAt = cached.resolved_at ? new Date(cached.resolved_at).getTime() : 0;
+      const thirtyDaysAgo = Date.now() - 30 * 86_400_000;
+      if (resolvedAt > thirtyDaysAgo) return null;
+    }
   }
 
   let resolved: string | null = null;
@@ -392,11 +462,15 @@ export async function resolveUsername(params: {
     }
   }
 
-  if (key && resolved !== null) {
+  if (key) {
+    // Cache both hits and misses — misses are checked above with a 30-day TTL.
     try {
       await db
         .from("linkedin_username_cache")
-        .upsert({ lookup_key: key, username: resolved }, { onConflict: "lookup_key" });
+        .upsert(
+          { lookup_key: key, username: resolved, resolved_at: new Date().toISOString() },
+          { onConflict: "lookup_key" }
+        );
     } catch {
       /* cache best-effort */
     }

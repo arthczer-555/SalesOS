@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
-import { searchPosts, getCompanyPosts, COACHING_KEYWORDS, JOB_CHANGE_KEYWORDS } from "@/lib/netrows";
+import { searchPosts, getCompanyPosts, slugifyCompany, COACHING_KEYWORDS, JOB_CHANGE_KEYWORDS } from "@/lib/netrows";
 import { getTargetCompanies, getAlertConfig } from "@/lib/target-companies";
 import { signalScoringTool, SIGNAL_ANALYSIS_PROMPT } from "@/lib/signal-scoring";
 
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
 
     for (let i = 0; i < Math.min(targetCompanies.length, companiesLimit); i++) {
       const company = targetCompanies[i];
-      const username = company.toLowerCase().replace(/['\s]+/g, "-").replace(/[^a-z0-9-]/g, "");
+      const username = slugifyCompany(company);
 
       try {
         const result = await getCompanyPosts(username);

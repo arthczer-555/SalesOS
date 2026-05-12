@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getAuthenticatedUser } from "@/lib/auth";
+import { authenticateCronOrUser } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
 import { getPeopleLikes } from "@/lib/netrows";
 import { getTargetCompanies } from "@/lib/target-companies";
@@ -24,9 +24,9 @@ interface PostLike {
   likes: number;
 }
 
-export async function POST(_req: NextRequest) {
-  const user = await getAuthenticatedUser();
-  if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
+export async function POST(req: NextRequest) {
+  const auth = await authenticateCronOrUser(req);
+  if (!auth) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
   if (!process.env.NETROWS_API_KEY) {
     return NextResponse.json({ error: "Netrows non configuré" }, { status: 500 });
@@ -66,7 +66,7 @@ export async function POST(_req: NextRequest) {
           .from("market_signals")
           .select("id")
           .eq("source_url", like.postUrl)
-          .eq("user_id", userIds[0] ?? user.id)
+          .eq("user_id", userIds[0] ?? auth.userId)
           .maybeSingle();
         if (existing) continue;
 
