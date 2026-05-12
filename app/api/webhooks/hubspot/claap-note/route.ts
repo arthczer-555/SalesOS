@@ -213,14 +213,18 @@ function buildBlocks(args: {
   dealName: string;
   ownerName: string | null;
   companyName: string | null;
+  stageLabel: string | null;
   testPrefix: boolean;
   isClosedWon: boolean;
 }): Array<Record<string, unknown>> {
-  const { parsed, summary, score, dealId, dealName, ownerName, companyName, testPrefix, isClosedWon } = args;
+  const { parsed, summary, score, dealId, dealName, ownerName, companyName, stageLabel, testPrefix, isClosedWon } = args;
   const dateStr = parsed.meetingDate ?? "—";
   const headerText = `${testPrefix ? "[TEST] " : ""}Rencontre ${dealName} — ${dateStr}`;
 
+  const stageDisplay = isClosedWon ? "Client" : stageLabel?.trim() || null;
+
   const contextParts: string[] = [];
+  if (stageDisplay) contextParts.push(`📊 *${stageDisplay}*`);
   if (ownerName) contextParts.push(`👤 ${ownerName}`);
   if (companyName) contextParts.push(`🏢 ${companyName}`);
   if (parsed.claapUrl) contextParts.push(`<${parsed.claapUrl}|Voir le meeting Claap>`);
@@ -487,6 +491,7 @@ async function processNote(noteId: string): Promise<ProcessResult> {
     dealName,
     ownerName,
     companyName,
+    stageLabel: dealSnap?.stage_label ?? null,
     testPrefix: mode === "dm",
     isClosedWon,
   });
