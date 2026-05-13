@@ -4,7 +4,11 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
-import { fetchCompanyWebContext } from "@/lib/prospect-enrichment";
+import {
+  fetchCompanyLinkedInContext,
+  fetchCompanyWebContext,
+  fetchLinkedInContext,
+} from "@/lib/prospect-enrichment";
 
 export const dynamic = "force-dynamic";
 
@@ -53,16 +57,28 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const systemPrompt = [
     "Tu es un expert en prospection B2B pour Coachello, une entreprise de coaching professionnel.",
     "Tu rédiges des emails de prospection ultra-personnalisés, humains et percutants.",
-    "Mobilise ta connaissance générale de l'entreprise du prospect pour ancrer l'accroche. Si un bloc CONTEXTE ENTREPRISE est fourni, priorise ces informations récentes. Reste factuel : n'invente jamais un fait, un chiffre ou un nom.",
+    "Mobilise ta connaissance générale de l'entreprise du prospect pour ancrer l'accroche. Si des blocs CONTEXTE ENTREPRISE ou FICHE LINKEDIN ENTREPRISE sont fournis, priorise ces informations. Reste factuel : n'invente jamais un fait, un chiffre ou un nom.",
     `L'email doit être signé par : ${senderName}.`,
     "Réponds UNIQUEMENT en JSON valide avec exactement ces deux clés : { \"subject\": \"...\", \"body\": \"...\" }",
     "Le body doit être en texte brut (pas de HTML, pas de markdown).",
     guide ? `\n---\nGUIDE DE PROSPECTION :\n${guide}` : "",
   ].filter(Boolean).join("\n");
 
-  const extra = (typeof email.extra_data === "object" && email.extra_data) ? email.extra_data : {};
+  const extra = (typeof email.extra_data === "object" && email.extra_data) ? email.extra_data as Record<string, string> : {};
 
-  const companyContext = email.company ? await fetchCompanyWebContext(email.company) : "";
+  const [companyContext, linkedin] = await Promise.all([
+    email.company ? fetchCompanyWebContext(email.company) : Promise.resolve(""),
+    fetchLinkedInContext({
+      firstName: email.first_name,
+      lastName: email.last_name,
+      email: email.email,
+      company: email.company,
+      linkedinUrl: extra.linkedinUrl ?? null,
+    }),
+  ]);
+  const companyLinkedIn = email.company
+    ? await fetchCompanyLinkedInContext(email.company, linkedin.currentCompanyUsername)
+    : "";
 
   const prospectBlock = [
     `Nom : ${email.first_name} ${email.last_name}`,
@@ -75,6 +91,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const userPrompt = [
     `OBJECTIF DE LA CAMPAGNE :\n${campaign.objective}`,
     `\nINFORMATIONS SUR LE PROSPECT :\n${prospectBlock}`,
+    linkedin.text ? `\nPROFIL LINKEDIN ENRICHI (utilise-le pour personnaliser : 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé) :\n${linkedin.text}` : "",
+    companyLinkedIn ? `\nFICHE LINKEDIN ENTREPRISE :\n${companyLinkedIn}` : "",
     companyContext ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyContext}` : "",
     `\nEMAIL ACTUEL (à améliorer) :\nObjet : ${email.subject}\n\n${email.body}`,
     instructions ? `\nINSTRUCTIONS DE L'UTILISATEUR POUR LA RÉÉCRITURE :\n${instructions}` : "",

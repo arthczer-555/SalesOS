@@ -66,11 +66,19 @@ export async function POST(req: NextRequest) {
 
       const { data: existing } = await db
         .from("linkedin_monitored_profiles")
-        .select("radar_active")
+        .select("radar_active, is_champion")
         .eq("username", username)
         .maybeSingle();
 
       if (existing?.radar_active) {
+        // Déjà au Radar : on s'assure simplement qu'il porte le flag champion
+        // sans écraser sa source d'origine (netrows-search, manual, …).
+        if (existing.is_champion !== true) {
+          await db
+            .from("linkedin_monitored_profiles")
+            .update({ is_champion: true })
+            .eq("username", username);
+        }
         alreadyOnRadar++;
         continue;
       }
@@ -89,6 +97,7 @@ export async function POST(req: NextRequest) {
           profile_url: p.linkedin_url ?? `https://www.linkedin.com/in/${username}/`,
           source: "champion",
           radar_active: true,
+          is_champion: true,
         },
         { onConflict: "username" }
       );

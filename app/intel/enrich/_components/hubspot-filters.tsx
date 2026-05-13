@@ -114,11 +114,13 @@ export function HubspotFilters({
   onSubmit: (c: HubspotCriteria) => void;
   isLoading: boolean;
 }) {
-  const [c, setC] = React.useState<HubspotCriteria>(initial ?? { createdRange: "all", sort: "createdate-desc", limit: 100, dealStatus: "any" });
+  const [c, setC] = React.useState<HubspotCriteria>(initial ?? { createdRange: "all", sort: "createdate-desc", limit: 100, dealStatus: "any", excludeRadar: true });
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const [count, setCount] = React.useState<number | null>(null);
   const [dealCount, setDealCount] = React.useState<number | null>(null);
   const [truncated, setTruncated] = React.useState(false);
+  const [radarCount, setRadarCount] = React.useState<number | null>(null);
+  const [radarApproximated, setRadarApproximated] = React.useState(false);
   const [counting, setCounting] = React.useState(false);
   const [countErr, setCountErr] = React.useState<string | null>(null);
   const [previewProfiles, setPreviewProfiles] = React.useState<{ hubspotId: string; fullName: string; jobTitle: string | null; company: string | null; lifecyclestage: string | null }[]>([]);
@@ -167,16 +169,22 @@ export function HubspotFilters({
           if (typeof countData.error === "string") {
             setCountErr(countData.error);
             setCount(null);
+            setRadarCount(null);
+            setRadarApproximated(false);
           } else {
             setCount(typeof countData.count === "number" ? countData.count : null);
             setDealCount(typeof countData.dealCount === "number" ? countData.dealCount : null);
             setTruncated(!!countData.truncated);
+            setRadarCount(typeof countData.radarCount === "number" ? countData.radarCount : null);
+            setRadarApproximated(!!countData.radarApproximated);
           }
           setPreviewProfiles(previewData.profiles ?? []);
         })
         .catch(() => {
           setCount(null);
           setPreviewProfiles([]);
+          setRadarCount(null);
+          setRadarApproximated(false);
         })
         .finally(() => setCounting(false));
     }, 600);
@@ -550,12 +558,12 @@ export function HubspotFilters({
               </select>
             </div>
             <div>
-              <Label>Limite</Label>
+              <Label>Limite (par requête)</Label>
               <input
                 type="number"
                 min={10}
-                max={200}
-                step={10}
+                max={500}
+                step={50}
                 value={c.limit ?? 100}
                 onChange={(e) => setC({ ...c, limit: parseInt(e.target.value, 10) || 100 })}
                 style={inp()}
@@ -649,6 +657,16 @@ export function HubspotFilters({
         <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.ink2, cursor: "pointer" }}>
           <input
             type="checkbox"
+            checked={c.excludeRadar !== false}
+            onChange={(e) => setC({ ...c, excludeRadar: e.target.checked })}
+            style={{ accentColor: COLORS.brand, width: 14, height: 14 }}
+          />
+          Exclure les profils déjà au Radar
+        </label>
+
+        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.ink2, cursor: "pointer" }}>
+          <input
+            type="checkbox"
             checked={!!c.autoResolveLinkedin}
             onChange={(e) => setC({ ...c, autoResolveLinkedin: e.target.checked })}
             style={{ accentColor: COLORS.brand, width: 14, height: 14 }}
@@ -676,6 +694,18 @@ export function HubspotFilters({
                 <span style={{ color: COLORS.ink3 }}>
                   {" "}
                   · {dealCount}{truncated ? "+" : ""} deal{dealCount > 1 ? "s" : ""}
+                </span>
+              )}
+              {radarCount !== null && (
+                <span
+                  style={{ color: COLORS.ink3 }}
+                  title={
+                    radarApproximated
+                      ? "Estimation extrapolée à partir d'un échantillon — l'import exclura tous les profils déjà au Radar."
+                      : "Ces profils seront exclus de l'import (déjà suivis dans votre Radar)."
+                  }
+                >
+                  {" "}· <strong style={{ color: COLORS.ink2 }}>{radarApproximated ? "~" : ""}{radarCount}</strong> déjà au Radar
                 </span>
               )}
             </>

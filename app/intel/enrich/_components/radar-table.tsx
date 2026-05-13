@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Search, ExternalLink, Trash2, RefreshCw, ChevronUp, ChevronDown, X, Filter } from "lucide-react";
+import { Search, ExternalLink, Trash2, RefreshCw, ChevronUp, ChevronDown, X, Filter, Crown } from "lucide-react";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { COLORS } from "@/lib/design/tokens";
 import { useRadarStatus } from "@/lib/hooks/use-radar-status";
@@ -14,9 +14,16 @@ const SOURCE_LABELS: Record<string, string> = {
   init: "Init",
   hubspot: "HubSpot",
   "netrows-search": "Netrows",
-  champion: "Champion",
   competitor: "Concurrent",
 };
+
+// Legacy : avant l'introduction du flag `is_champion`, la source était écrasée
+// en "champion" lors de l'import HubSpot. On remappe pour l'affichage afin que
+// la couronne reste la seule indication "champion".
+function displaySource(source: string): string {
+  if (source === "champion") return "hubspot";
+  return source;
+}
 
 type SortKey = "name" | "company" | "source" | "created" | "changed" | "refreshed";
 type SortDir = "asc" | "desc";
@@ -58,7 +65,7 @@ export function RadarTable() {
   const [detail, setDetail] = React.useState<RadarProfile | null>(null);
 
   const sources = React.useMemo(
-    () => Array.from(new Set(profiles.map((p) => p.source).filter(Boolean))).sort(),
+    () => Array.from(new Set(profiles.map((p) => displaySource(p.source)).filter(Boolean))).sort(),
     [profiles]
   );
   const companies = React.useMemo(
@@ -69,7 +76,7 @@ export function RadarTable() {
   const filtered = React.useMemo(() => {
     const needle = q.trim().toLowerCase();
     return profiles.filter((p) => {
-      if (sourceFilter.size > 0 && !sourceFilter.has(p.source)) return false;
+      if (sourceFilter.size > 0 && !sourceFilter.has(displaySource(p.source))) return false;
       if (companyFilter.size > 0 && !(p.company && companyFilter.has(p.company))) return false;
       if (staleOnly && !isStale(p)) return false;
       if (!needle) return true;
@@ -86,7 +93,7 @@ export function RadarTable() {
         case "company":
           return compareNullable(a.company, b.company, sortDir);
         case "source":
-          return compareNullable(a.source, b.source, sortDir);
+          return compareNullable(displaySource(a.source), displaySource(b.source), sortDir);
         case "created":
           return compareDate(a.created_at, b.created_at, sortDir);
         case "changed":
@@ -396,9 +403,28 @@ export function RadarTable() {
                   </td>
                   <td style={{ padding: "10px 12px", fontSize: 12, color: COLORS.ink1 }}>{p.company ?? "—"}</td>
                   <td style={{ padding: "10px 12px" }}>
-                    <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 99, background: COLORS.bgSoft, color: COLORS.ink2, fontWeight: 500 }}>
-                      {SOURCE_LABELS[p.source] ?? p.source}
-                    </span>
+                    <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                      <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 99, background: COLORS.bgSoft, color: COLORS.ink2, fontWeight: 500 }}>
+                        {SOURCE_LABELS[displaySource(p.source)] ?? displaySource(p.source)}
+                      </span>
+                      {p.is_champion && (
+                        <span
+                          title="Champion"
+                          aria-label="Champion"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            padding: "2px 4px",
+                            borderRadius: 99,
+                            background: COLORS.warnBg,
+                            color: COLORS.warn,
+                          }}
+                        >
+                          <Crown size={11} fill="currentColor" />
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td style={{ padding: "10px 12px", fontSize: 12, color: COLORS.ink2 }}>
                     {p.created_at ? timeAgo(p.created_at) : "—"}

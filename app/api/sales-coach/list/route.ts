@@ -24,6 +24,9 @@ export async function GET(req: NextRequest) {
     )
     .neq("meeting_type", "internal")
     .neq("status", "skipped")
+    // Client recaps (closed-won / Customer Success deals) skip the coaching
+    // analysis — they live only in the Slack recap. Don't surface them here.
+    .or("audience.is.null,audience.eq.prospect")
     .order("meeting_started_at", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(200);

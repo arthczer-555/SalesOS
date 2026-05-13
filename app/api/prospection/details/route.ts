@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
 
   const [contactData, engagementsData, companiesData] = await Promise.allSettled([
     hubspot(
-      `/crm/v3/objects/contacts/${id}?properties=firstname,lastname,email,jobtitle,company,industry,lifecyclestage,hs_lead_status,notes_last_contacted,phone,city,country,website,linkedin_bio`
+      `/crm/v3/objects/contacts/${id}?properties=firstname,lastname,email,jobtitle,company,industry,lifecyclestage,hs_lead_status,notes_last_contacted,phone,city,country,website,linkedin_bio,linkedin_url`
     ),
     hubspot(`/crm/v3/objects/contacts/${id}/associations/engagements`),
     hubspot(`/crm/v3/objects/contacts/${id}/associations/companies`),
@@ -158,6 +158,7 @@ IMPORTANT : Ne mentionne jamais de date précise ni d'événement récent que tu
     industry: props.industry ?? "",
     lifecyclestage: props.lifecyclestage ?? "",
     leadStatus: props.hs_lead_status ?? "",
+    linkedinUrl: props.linkedin_url ?? null,
     crmSummary,
     crmDetails,
     // Pre-filled suggestions (empty string = not found, user fills manually)

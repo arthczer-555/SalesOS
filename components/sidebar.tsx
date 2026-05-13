@@ -36,8 +36,7 @@ const nav: NavEntry[] = [
   { href: "/prospecting", label: "Prospection", icon: Crosshair },
   { href: "/mass-prospection", label: "Mass Prospection", icon: Target },
   { href: "/marketing", label: "Marketing", icon: Megaphone },
-  { href: "/intel", label: "Market Intel", icon: Radar },
-  //{ href: "/competitive", label: "Competition", icon: Swords },
+  //{ href: "/intel", label: "Market Intel", icon: Radar },
 ];
 
 export default function Sidebar() {

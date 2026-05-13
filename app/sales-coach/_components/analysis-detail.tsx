@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Send,
   CheckCircle2,
@@ -179,6 +179,8 @@ function CompactScoreCard({
 }) {
   const score = typeof axis.score === "number" ? axis.score : 0;
   const notes = typeof axis.notes === "string" ? axis.notes : "";
+  const recommendation =
+    "recommendation" in axis && typeof axis.recommendation === "string" ? axis.recommendation : "";
   const na = score === 0 && /n\/?a/i.test(notes);
   const sc = scoreToColor(score, 10);
   return (
@@ -233,6 +235,21 @@ function CompactScoreCard({
           {notes}
         </p>
       )}
+      {recommendation && (
+        <div
+          style={{
+            marginTop: 2,
+            paddingTop: 6,
+            borderTop: `1px dashed ${COLORS.line}`,
+            fontSize: 12,
+            color: COLORS.ink1,
+            lineHeight: 1.4,
+          }}
+        >
+          <span style={{ fontWeight: 600, color: COLORS.ink0 }}>Reco : </span>
+          {recommendation}
+        </div>
+      )}
       {!na && <ProgressBar value={score * 10} max={100} height={4} variant="auto" scale={100} />}
     </div>
   );
@@ -255,6 +272,24 @@ function DealTopo({
   const [reanalyzing, setReanalyzing] = useState(false);
   const [autoResolving, setAutoResolving] = useState(false);
   const [autoResolveMsg, setAutoResolveMsg] = useState<string | null>(null);
+  const [refreshingSnapshot, setRefreshingSnapshot] = useState(false);
+  const snapshotFetchedRef = useRef<string | null>(null);
+
+  // When the analysis has a deal but no snapshot yet (e.g. row created before
+  // deal_snapshot was captured), silently backfill it so the UI shows the deal
+  // name instead of the raw HubSpot ID. Guarded by a ref to avoid retry loops.
+  useEffect(() => {
+    if (!dealId || snapshot) return;
+    if (snapshotFetchedRef.current === dealId) return;
+    snapshotFetchedRef.current = dealId;
+    setRefreshingSnapshot(true);
+    fetch(`/api/sales-coach/${analysisId}/refresh-snapshot`, { method: "POST" })
+      .then((res) => {
+        if (res.ok) onDealUpdated();
+      })
+      .catch(() => {})
+      .finally(() => setRefreshingSnapshot(false));
+  }, [analysisId, dealId, snapshot, onDealUpdated]);
 
   async function autoResolve() {
     setAutoResolving(true);
@@ -383,12 +418,22 @@ function DealTopo({
     );
   }
 
-  // Deal linked but no snapshot yet (ancienne analyse ou HubSpot injoignable)
+  // Deal linked but no snapshot yet (ancienne analyse ou HubSpot injoignable).
+  // The useEffect above auto-backfills via /refresh-snapshot; show a spinner
+  // while in flight, otherwise the failure message + manual ré-analyse fallback.
   if (!snapshot) {
+    if (refreshingSnapshot) {
+      return (
+        <div className="rounded-lg p-3 flex items-center gap-2 text-xs" style={{ background: "#fff", border: "1px solid #eeeeee", color: "#888" }}>
+          <RefreshCw size={13} className="animate-spin" />
+          <span>Chargement du deal HubSpot…</span>
+        </div>
+      );
+    }
     return (
       <div className="rounded-lg p-3 flex items-center gap-2 text-xs" style={{ background: "#fef3c7", border: "1px solid #fde68a", color: "#92400e" }}>
         <Building2 size={14} />
-        <span>Deal HubSpot <strong>{dealId}</strong> — snapshot non disponible (analyse antérieure à la capture deal).</span>
+        <span>Deal HubSpot <strong>{dealId}</strong> introuvable sur HubSpot (deal supprimé ou accès indisponible).</span>
         <button
           onClick={() => reanalyze()}
           disabled={reanalyzing}
@@ -528,7 +573,8 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
   }
 
   const [forcing, setForcing] = useState(false);
-  async function forceAnalyze() {
+  async function forceAnalyze({ confirmFirst = false }: { confirmFirst?: boolean } = {}) {
+    if (confirmFirst && typeof window !== "undefined" && !window.confirm("Refaire l'analyse de ce meeting ? L'analyse actuelle sera remplacée.")) return;
     setForcing(true);
     try {
       const res = await fetch(`/api/sales-coach/${analysisId}/reanalyze`, { method: "POST" });
@@ -584,7 +630,7 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
             detail.status === "error" ||
             detail.status === "pending") && (
             <button
-              onClick={forceAnalyze}
+              onClick={() => forceAnalyze()}
               disabled={forcing}
               className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md disabled:opacity-50"
               style={{ background: "#f01563", color: "#fff" }}
@@ -624,7 +670,16 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
   const toStringArray = (v: unknown): string[] => {
     if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
     if (v && typeof v === "object") return Object.values(v as Record<string, unknown>).filter((x): x is string => typeof x === "string");
-    if (typeof v === "string") return [v];
+    if (typeof v === "string") {
+      const trimmed = v.trim();
+      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (Array.isArray(parsed)) return parsed.filter((x): x is string => typeof x === "string");
+        } catch { /* keep as single string */ }
+      }
+      return [v];
+    }
     return [];
   };
   const coachingPriorities = toStringArray(a.coaching_priorities);
@@ -760,6 +815,39 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
             >
               <Send size={13} />
               {sending ? "Envoi…" : detail.slack_sent_at ? "Re-Slack" : "Slack"}
+            </button>
+            <button
+              onClick={() => forceAnalyze({ confirmFirst: true })}
+              disabled={forcing}
+              title="Refaire l'analyse de ce meeting"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12,
+                fontWeight: 500,
+                padding: "7px 12px",
+                borderRadius: 10,
+                border: `1px solid ${COLORS.lineStrong}`,
+                background: COLORS.bgCard,
+                color: COLORS.ink1,
+                cursor: forcing ? "not-allowed" : "pointer",
+                opacity: forcing ? 0.5 : 1,
+                transition: "all 0.15s",
+              }}
+              onMouseEnter={(e) => {
+                if (forcing) return;
+                e.currentTarget.style.borderColor = COLORS.brand;
+                e.currentTarget.style.color = COLORS.brand;
+              }}
+              onMouseLeave={(e) => {
+                if (forcing) return;
+                e.currentTarget.style.borderColor = COLORS.lineStrong;
+                e.currentTarget.style.color = COLORS.ink1;
+              }}
+            >
+              <RefreshCw size={13} className={forcing ? "animate-spin" : ""} />
+              {forcing ? "Relance…" : "Ré-analyser"}
             </button>
             <button
               onClick={deleteAnalysis}

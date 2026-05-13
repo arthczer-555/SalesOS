@@ -42,14 +42,35 @@ export function IntelListGrouped({
   selectedId,
   onSelect,
   mode,
+  hasMore = false,
+  isLoadingMore = false,
+  onLoadMore,
 }: {
   intels: Intel[];
   selectedId: string | null;
   onSelect: (i: Intel) => void;
   mode: GroupMode;
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
 }) {
   const groups = mode === "agent" ? groupByAgent(intels) : groupByDay(intels);
   const [collapsed, setCollapsed] = React.useState<Record<string, boolean>>({});
+  const sentinelRef = React.useRef<HTMLDivElement | null>(null);
+
+  React.useEffect(() => {
+    if (!hasMore || !onLoadMore) return;
+    const node = sentinelRef.current;
+    if (!node) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMore();
+      },
+      { rootMargin: "200px" }
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [hasMore, onLoadMore, intels.length]);
 
   if (intels.length === 0) {
     return (
@@ -100,6 +121,14 @@ export function IntelListGrouped({
           </div>
         );
       })}
+      {hasMore && (
+        <div
+          ref={sentinelRef}
+          style={{ padding: 16, textAlign: "center", color: COLORS.ink3, fontSize: 12 }}
+        >
+          {isLoadingMore ? "Chargement…" : ""}
+        </div>
+      )}
     </div>
   );
 }

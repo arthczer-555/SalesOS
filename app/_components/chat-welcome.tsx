@@ -54,7 +54,7 @@ export function ChatWelcome({ onPick }: { onPick: (text: string) => void }) {
         {firstName ? `Bonjour ${firstName}, comment puis-je aider ?` : "Comment puis-je aider ?"}
       </h1>
       <p style={{ fontSize: 13, color: COLORS.ink3, maxWidth: 460, margin: 0 }}>
-        Pose une question — j&apos;ai accès à HubSpot, Gmail, Slack, Drive et au web.
+        Pose une question — j&apos;ai accès à HubSpot, Gmail, Slack, Drive, LinkedIn et au web.
       </p>
 
       {/* Suggestion chips */}

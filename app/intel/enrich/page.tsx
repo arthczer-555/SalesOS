@@ -38,7 +38,11 @@ export default function IntelEnrichPage() {
   const [resolving, setResolving] = React.useState(false);
   const [resolvingKeys, setResolvingKeys] = React.useState<Set<string>>(new Set());
   const [error, setError] = React.useState<string | null>(null);
-  const [pendingImport, setPendingImport] = React.useState<EnrichmentProfile[] | null>(null);
+  const [pendingImport, setPendingImport] = React.useState<{
+    profiles: EnrichmentProfile[];
+    skippedByRadar: number;
+    hasMore: boolean;
+  } | null>(null);
 
   const { lists, reload: reloadLists } = useEnrichmentLists();
   const { reload: reloadRadar } = useRadarStatus();
@@ -81,17 +85,31 @@ export default function IntelEnrichPage() {
     setSearching(true);
     setError(null);
     try {
-      const { profiles: items } = await searchHubspot(c);
+      const r = await searchHubspot(c);
       setLastCriteriaHubspot(c);
       setActiveListSource("hubspot");
       setActiveListId(null);
       // Au lieu de remplir la table direct, ouvre le modal de sélection
-      setPendingImport(items);
+      setPendingImport({
+        profiles: r.profiles,
+        skippedByRadar: r.skippedByRadar ?? 0,
+        hasMore: !!r.hasMore,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
     } finally {
       setSearching(false);
     }
+  }
+
+  async function onLoadMoreHubspot(excludeIds: string[]) {
+    if (!lastCriteriaHubspot) return { profiles: [], skippedByRadar: 0, hasMore: false };
+    const r = await searchHubspot({ ...lastCriteriaHubspot, excludeIds });
+    return {
+      profiles: r.profiles,
+      skippedByRadar: r.skippedByRadar ?? 0,
+      hasMore: !!r.hasMore,
+    };
   }
 
   function confirmImport(selected: EnrichmentProfile[]) {
@@ -344,7 +362,10 @@ export default function IntelEnrichPage() {
 
       {pendingImport && (
         <HubspotImportModal
-          profiles={pendingImport}
+          profiles={pendingImport.profiles}
+          initialSkippedByRadar={pendingImport.skippedByRadar}
+          initialHasMore={pendingImport.hasMore}
+          onLoadMore={onLoadMoreHubspot}
           onClose={cancelImport}
           onConfirm={confirmImport}
         />

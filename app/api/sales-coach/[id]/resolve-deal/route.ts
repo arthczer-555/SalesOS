@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getClaapRecording, extractExternalParticipants } from "@/lib/claap";
+import { getClaapRecording, extractExternalParticipants, extractTitleSearchHint } from "@/lib/claap";
 import { fetchDealContext, resolveDealFromParticipants } from "@/lib/hubspot";
+import { sendSalesCoachSlack } from "@/lib/sales-coach/slack";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -20,7 +21,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   const { data: row } = await db
     .from("sales_coach_analyses")
-    .select("user_id, claap_recording_id, recorder_email, hubspot_deal_id, participants")
+    .select("user_id, claap_recording_id, recorder_email, hubspot_deal_id, participants, status, slack_sent_at")
     .eq("id", id)
     .single();
 
@@ -48,11 +49,24 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     .filter((e): e is string => !!e);
   const recorderEmail = rec.recorder?.email ?? row.recorder_email ?? "";
 
-  if (!recorderEmail || participantEmails.length === 0) {
+  if (!recorderEmail) {
+    return NextResponse.json({ ok: false, reason: "no_recorder" });
+  }
+
+  // Title-based hint lets us match a deal even when Claap captured no
+  // external participant emails (typical of meetings mis-classified as
+  // internal). Without the hint, those recordings have no resolution path.
+  const titleHint = extractTitleSearchHint(rec.title, recorderEmail);
+
+  if (participantEmails.length === 0 && !titleHint) {
     return NextResponse.json({ ok: false, reason: "no_participants" });
   }
 
-  const dealId = await resolveDealFromParticipants(participantEmails, recorderEmail);
+  const dealId = await resolveDealFromParticipants(
+    participantEmails,
+    recorderEmail,
+    titleHint,
+  );
   if (!dealId) {
     return NextResponse.json({ ok: false, reason: "no_match" });
   }
@@ -81,6 +95,22 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message }, { status: 500 });
+  }
+
+  // Fire the Slack digest if this attribution unblocks it (analysis done,
+  // not previously sent, and Slack globally enabled).
+  const shouldSendSlack =
+    row.status === "done" &&
+    !row.slack_sent_at &&
+    process.env.SALES_COACH_SLACK_ENABLED === "true";
+  if (shouldSendSlack) {
+    const slackRes = await sendSalesCoachSlack(db, id).catch((e) => ({
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+    }));
+    if (!slackRes.ok) {
+      console.warn(`[sales-coach/${id}] Slack send after deal auto-resolve failed:`, slackRes.error);
+    }
   }
 
   return NextResponse.json({ ok: true, dealId, name: snapshot?.name ?? null });

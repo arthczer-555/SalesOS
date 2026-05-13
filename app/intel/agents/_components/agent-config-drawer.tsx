@@ -5,6 +5,7 @@ import { X, Save, RefreshCw, ExternalLink } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { Agent } from "@/lib/intel-types";
 import { CompetitorConfig } from "./competitor-config";
+import { AgentTrackedEntities } from "./agent-tracked-entities";
 
 interface RunsResponse {
   state: { config: Record<string, unknown> | null; last_run_at: string | null; last_run_status: string | null; last_run_signals_count: number; last_run_error: string | null } | null;
@@ -17,10 +18,12 @@ export function AgentConfigDrawer({
   agent,
   onClose,
   onSaved,
+  onOpenGlobalSettings,
 }: {
   agent: Agent;
   onClose: () => void;
   onSaved: () => void;
+  onOpenGlobalSettings?: () => void;
 }) {
   const [history, setHistory] = React.useState<RunsResponse | null>(null);
   const [config, setConfig] = React.useState<Record<string, unknown>>({});
@@ -116,6 +119,9 @@ export function AgentConfigDrawer({
             </p>
           </Block>
 
+          {/* Entités suivies (Radar profiles / companies / ICP) */}
+          <AgentTrackedEntities agentId={agent.id} onOpenGlobalSettings={onOpenGlobalSettings} />
+
           {/* Per-agent config */}
           <SpecificConfig agentId={agent.id} config={config} setConfig={setConfig} />
 
@@ -127,7 +133,7 @@ export function AgentConfigDrawer({
                 <li>
                   Statut :{" "}
                   <span style={{ color: history.state.last_run_status === "ok" ? COLORS.ok : history.state.last_run_status === "error" ? COLORS.err : COLORS.warn }}>
-                    {history.state.last_run_status ?? "—"}
+                    {history.state.last_run_status === "running" ? "en cours" : (history.state.last_run_status ?? "—")}
                   </span>
                 </li>
                 <li>Intels créés : {history.state.last_run_signals_count}</li>
@@ -290,25 +296,13 @@ function SpecificConfig({
             );
           })}
         </div>
-        <p style={{ fontSize: 11, color: COLORS.ink3, margin: "8px 0 0 0" }}>
-          Voir la liste des champions trackés dans <a href="/intel/enrich?tab=radar" style={{ color: COLORS.brand }}>Enrichissement → Mon Radar</a> (filtre source = champion).
-        </p>
       </Block>
     );
   }
 
-  // hiring-spike, ads-activity, funding-expansion, company-news : utilisent les cibles globales
-  if (["hiring-spike", "ads-activity", "funding-expansion", "company-news"].includes(agentId)) {
-    return (
-      <Block label="Cibles">
-        <p style={{ fontSize: 12, color: COLORS.ink2, margin: 0, lineHeight: 1.5 }}>
-          Cet agent utilise les <strong>sociétés ICP globales</strong> et le <strong>Radar Netrows</strong>.
-          Pour modifier les cibles, ouvre <em>Cibles globales</em> dans le header de la page.
-        </p>
-      </Block>
-    );
-  }
-
+  // hiring-spike, ads-activity, funding-expansion, company-news : les entités
+  // suivies sont rendues par <AgentTrackedEntities /> au-dessus. Rien d'autre
+  // à configurer ici.
   return null;
 }
 

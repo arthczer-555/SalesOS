@@ -48,7 +48,7 @@ export default function ContentTabWrapper() {
 }
 
 function ContentTab() {
-  const { analysis: initialAnalysis, recommendations: initialRecs, drafts: initialDrafts, isLoading } = useMarketingContent();
+  const { analysis: initialAnalysis, recommendations: initialRecs, drafts: initialDrafts, isLoading, reload } = useMarketingContent();
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [analysis, setAnalysis] = useState<ContentAnalysis | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
@@ -56,6 +56,10 @@ function ContentTab() {
   const [localRecs, setLocalRecs] = useState<ArticleRecommendation[]>([]);
   const [generatedDrafts, setGeneratedDrafts] = useState<Map<string, ArticleDraft>>(new Map());
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set());
+  // When polling against the background function, we surface a client-side
+  // timeout if a rec stays in "writing" for too long (server safety net is
+  // 15 min on the loadRecommendations side).
+  const [generationStartedAt, setGenerationStartedAt] = useState<Map<string, number>>(new Map());
   const [generateErrors, setGenerateErrors] = useState<Map<string, string>>(new Map());
   const [previewLang, setPreviewLang] = useState<"fr" | "en">("fr");
   // Article actuellement ouvert en détail au step 3. null = vue liste.
@@ -76,6 +80,79 @@ function ContentTab() {
       setGeneratedDrafts((prev) => prev.size === 0 ? m : prev);
     }
   }, [initialAnalysis, initialRecs, initialDrafts, analysis, localRecs.length]);
+
+  // If we land on the page mid-generation (another tab, prior session, etc.),
+  // pick up the in-flight rec so polling resumes instead of showing a stale
+  // "Writing..." with no recovery path.
+  useEffect(() => {
+    const writingIds = initialRecs.filter((r) => r.status === "writing").map((r) => r.id);
+    if (writingIds.length === 0) return;
+    setGeneratingIds((prev) => {
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of writingIds) if (!next.has(id)) { next.add(id); changed = true; }
+      return changed ? next : prev;
+    });
+    setGenerationStartedAt((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const id of writingIds) if (!next.has(id)) { next.set(id, Date.now()); changed = true; }
+      return changed ? next : prev;
+    });
+  }, [initialRecs]);
+
+  // Reconcile in-flight recs with fresh server data on every SWR revalidation.
+  // When a rec leaves "writing" status, settle it locally and pull the draft.
+  useEffect(() => {
+    if (generatingIds.size === 0) return;
+    const draftsById = new Map<string, ArticleDraft>();
+    for (const d of initialDrafts) if (!draftsById.has(d.recommendationId)) draftsById.set(d.recommendationId, d);
+    let cleared = false;
+    const nextGenerating = new Set(generatingIds);
+    for (const id of generatingIds) {
+      const fresh = initialRecs.find((r) => r.id === id);
+      if (!fresh) continue;
+      if (fresh.status !== "writing") {
+        const draft = draftsById.get(id);
+        if (draft) setGeneratedDrafts((prev) => new Map(prev).set(id, draft));
+        setLocalRecs((prev) => prev.map((r) => r.id === id ? { ...r, status: fresh.status } : r));
+        nextGenerating.delete(id);
+        cleared = true;
+      }
+    }
+    if (cleared) setGeneratingIds(nextGenerating);
+  }, [initialRecs, initialDrafts, generatingIds]);
+
+  // Poll the API every 5s while any generation is in flight. The background
+  // function takes 60-180s typically; cap client-side waiting at 12 min so a
+  // crashed BG function doesn't leave the spinner indefinitely.
+  useEffect(() => {
+    if (generatingIds.size === 0) return;
+    const MAX_MS = 12 * 60 * 1000;
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const timedOut: string[] = [];
+      for (const id of generatingIds) {
+        const started = generationStartedAt.get(id);
+        if (started && now - started > MAX_MS) timedOut.push(id);
+      }
+      if (timedOut.length > 0) {
+        setGenerateErrors((prev) => {
+          const m = new Map(prev);
+          for (const id of timedOut) m.set(id, "Generation timed out (no result after 12 min). Try again.");
+          return m;
+        });
+        setLocalRecs((prev) => prev.map((r) => timedOut.includes(r.id) ? { ...r, status: "approved" as const } : r));
+        setGeneratingIds((prev) => {
+          const n = new Set(prev);
+          for (const id of timedOut) n.delete(id);
+          return n;
+        });
+      }
+      reload();
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [generatingIds, generationStartedAt, reload]);
 
   const handleAnalyze = useCallback(async () => {
     setAnalyzing(true);
@@ -145,23 +222,48 @@ function ContentTab() {
     setGeneratingIds((prev) => new Set(prev).add(id));
     setGenerateErrors((prev) => { const m = new Map(prev); m.delete(id); return m; });
     setLocalRecs((prev) => prev.map((r) => r.id === id ? { ...r, status: "writing" as const } : r));
+    setGenerationStartedAt((prev) => new Map(prev).set(id, Date.now()));
     try {
       const res = await fetch("/api/marketing/content", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "generate", recommendationId: id }),
       });
-      const data = await res.json();
-      if (data.error) {
-        setGenerateErrors((prev) => new Map(prev).set(id, data.error));
-        setLocalRecs((prev) => prev.map((r) => r.id === id ? { ...r, status: "approved" as const } : r));
-      } else if (data.draft) {
-        setGeneratedDrafts((prev) => new Map(prev).set(id, data.draft));
+      // The route returns 202 when generation is dispatched to the Netlify
+      // background function (prod). In local dev it runs inline and returns 200
+      // with the draft. A platform-level 5xx may return an HTML error page —
+      // parse defensively so a bad response surfaces a useful message instead
+      // of "Unexpected token '<'".
+      const text = await res.text();
+      const contentType = res.headers.get("content-type") || "";
+      let data: { error?: string; draft?: ArticleDraft; queued?: boolean } = {};
+      if (contentType.includes("application/json")) {
+        try { data = JSON.parse(text); } catch { /* fall through */ }
       }
+
+      if (res.status === 202 || data.queued) {
+        // Queued — polling effect picks up from here. Don't clear generatingIds.
+        return;
+      }
+
+      if (!res.ok || data.error) {
+        const fallback = res.status === 504 || res.status === 408
+          ? "Generation timed out on the server. The topic may be too complex — try again."
+          : `Generation failed (HTTP ${res.status}).`;
+        setGenerateErrors((prev) => new Map(prev).set(id, data.error || fallback));
+        setLocalRecs((prev) => prev.map((r) => r.id === id ? { ...r, status: "approved" as const } : r));
+        setGeneratingIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+        return;
+      }
+
+      // Inline 200 path (local dev / non-Netlify).
+      if (data.draft) {
+        setGeneratedDrafts((prev) => new Map(prev).set(id, data.draft!));
+      }
+      setGeneratingIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
     } catch (e) {
       setGenerateErrors((prev) => new Map(prev).set(id, e instanceof Error ? e.message : "Network error"));
       setLocalRecs((prev) => prev.map((r) => r.id === id ? { ...r, status: "approved" as const } : r));
-    } finally {
       setGeneratingIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
     }
   }, []);

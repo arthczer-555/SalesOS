@@ -158,7 +158,11 @@ export function BackfillModal({ open, onClose, onAnalysisStarted }: Props) {
             </div>
           )}
           {data?.recordings.map((r) => {
-            const analyzable = r.meeting_type === "external" && r.has_transcript && r.state === "Ready" && !r.existing_analysis;
+            // Any recording with a transcript can be analysed manually — the
+            // user is opting in explicitly. Even Claap-classified-internal
+            // meetings show the "Analyser" button here (the auto webhook
+            // pipeline applies stricter guards).
+            const analyzable = r.has_transcript && r.state === "Ready" && !r.existing_analysis;
             const already = !!r.existing_analysis;
             const res = result[r.id];
             return (
@@ -169,7 +173,13 @@ export function BackfillModal({ open, onClose, onAnalysisStarted }: Props) {
                     <div className="flex items-center gap-2 flex-wrap mb-1">
                       <span className="text-sm font-medium truncate" style={{ color: "#111" }}>{r.title}</span>
                       {r.meeting_type === "internal" && (
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "#f4f4f4", color: "#888" }}>Interne</span>
+                        <span
+                          className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+                          title="Claap a classé ce meeting comme interne — analyse possible si tu confirmes"
+                          style={{ background: "#f4f4f4", color: "#888" }}
+                        >
+                          Interne (Claap)
+                        </span>
                       )}
                       {!r.has_transcript && (
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded" style={{ background: "#fee2e2", color: "#dc2626" }}>Sans transcript</span>

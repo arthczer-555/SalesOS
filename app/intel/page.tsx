@@ -36,7 +36,7 @@ export default function IntelPage() {
     [filters, appliedSearch]
   );
 
-  const { intels, stats, isLoading, error, reload } = useIntels(queryFilters);
+  const { intels, stats, isLoading, isLoadingMore, hasMore, error, loadMore, reload } = useIntels(queryFilters);
 
   // Sync selected intel with the freshly fetched list (so toggles persist visually)
   React.useEffect(() => {
@@ -237,6 +237,9 @@ export default function IntelPage() {
               selectedId={selected?.id ?? null}
               onSelect={setSelected}
               mode={groupMode}
+              hasMore={hasMore}
+              isLoadingMore={isLoadingMore}
+              onLoadMore={loadMore}
             />
           )}
         </div>

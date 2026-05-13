@@ -27,6 +27,7 @@ export function CompetitorConfig() {
   const [profiles, setProfiles] = React.useState<CompetitorProfile[]>([]);
   const [discovered, setDiscovered] = React.useState<DiscoveredProfile[]>([]);
   const [discoveringFor, setDiscoveringFor] = React.useState<string | null>(null);
+  const [discoveredFor, setDiscoveredFor] = React.useState<string | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
@@ -81,6 +82,7 @@ export function CompetitorConfig() {
     setDiscoveringFor(company);
     setError(null);
     setDiscovered([]);
+    setDiscoveredFor(null);
     try {
       const r = await fetch("/api/intel/admin/competitor-discover", {
         method: "POST",
@@ -90,6 +92,7 @@ export function CompetitorConfig() {
       const data = await r.json();
       if (!r.ok) throw new Error(data.error ?? "Erreur");
       setDiscovered(data.profiles ?? []);
+      setDiscoveredFor(company);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
     } finally {
@@ -98,21 +101,30 @@ export function CompetitorConfig() {
   }
 
   async function addDiscovered(d: DiscoveredProfile, company: string) {
-    const r = await fetch("/api/intel/admin/competitor-profiles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username: d.username,
-        full_name: d.fullName,
-        headline: d.headline,
-        competitor_name: company,
-        role_type: deriveRoleType(d.headline),
-      }),
-    });
-    if (r.ok) {
+    if (!company) {
+      setError("Entreprise concurrente manquante — relance la découverte.");
+      return;
+    }
+    setError(null);
+    try {
+      const r = await fetch("/api/intel/admin/competitor-profiles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: d.username,
+          full_name: d.fullName,
+          headline: d.headline,
+          competitor_name: company,
+          role_type: deriveRoleType(d.headline),
+        }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error ?? "Erreur");
       setSuccess(`${d.fullName} ajouté.`);
       setDiscovered((cur) => cur.filter((x) => x.username !== d.username));
       void load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur");
     }
   }
 
@@ -221,7 +233,7 @@ export function CompetitorConfig() {
                 )}
                 <button
                   type="button"
-                  onClick={() => addDiscovered(d, discoveringFor ?? d.headline.split(" @ ")[1] ?? "")}
+                  onClick={() => addDiscovered(d, discoveredFor ?? "")}
                   style={{
                     padding: "3px 10px",
                     fontSize: 11,

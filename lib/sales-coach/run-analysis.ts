@@ -12,6 +12,14 @@ import {
   repairAnalysis,
   type SalesCoachAnalysis,
 } from "../guides/sales-coach";
+import {
+  generateMeetingRecap,
+  resolveAudience,
+  sendMeetingRecapSlack,
+  type Audience,
+  type MeetingRecap,
+} from "./meeting-recap";
+import { scoreOneDeal } from "@/app/api/deals/score/route";
 
 const DEFAULT_ANALYZE_MODEL = "claude-haiku-4-5-20251001";
 const MAX_TRANSCRIPT_CHARS_FOR_CLAUDE = 150_000;
@@ -79,6 +87,7 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
       : rawText;
 
     let analyzeModel = DEFAULT_ANALYZE_MODEL;
+    let recapModel: string | undefined;
     const { data: globalModelEntry } = await db
       .from("guide_defaults")
       .select("content")
@@ -86,10 +95,11 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
       .single();
     try {
       if (globalModelEntry?.content) {
-        analyzeModel =
-          (JSON.parse(globalModelEntry.content) as Record<string, string>).sales_coach ?? analyzeModel;
+        const prefs = JSON.parse(globalModelEntry.content) as Record<string, string>;
+        analyzeModel = prefs.sales_coach ?? analyzeModel;
+        recapModel = prefs.meeting_recap;
       }
-    } catch { /* keep default */ }
+    } catch { /* keep defaults */ }
 
     let dealId = row.hubspot_deal_id as string | null;
     let talkRatio: ReturnType<typeof computeTalkRatio> | null = null;
@@ -175,60 +185,124 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
       }
     }
 
-    let scoreBlock = "";
+    const audience: Audience = resolveAudience(snapshot);
+    console.log(`[sales-coach/analyze/${id}] audience=${audience} (dealId=${dealId ?? "none"}, closed_won=${snapshot?.is_closed_won === true}, pipeline=${snapshot?.pipeline_label ?? "?"})`);
+
+    let dealScoreSummary: { total: number | null; reasoning: string | null; next_action: string | null } | null = null;
     if (dealScore?.score) {
       const s = dealScore.score as { total?: number };
-      scoreBlock = `\n## Score IA du deal : ${s.total ?? "?"}/100${dealScore.reasoning ? `\nReasoning : ${dealScore.reasoning}` : ""}${dealScore.next_action ? `\nNext action suggérée : ${dealScore.next_action}` : ""}`;
+      dealScoreSummary = {
+        total: s.total ?? null,
+        reasoning: dealScore.reasoning ?? null,
+        next_action: dealScore.next_action ?? null,
+      };
     }
 
-    const userPrompt = [
-      `## Meeting à analyser`,
-      `- Titre : ${row.meeting_title ?? "?"}`,
-      `- Date : ${row.meeting_started_at ?? "?"}`,
-      ``,
-      renderDealContextForPrompt(snapshot),
-      scoreBlock,
-      ``,
-      renderPriorAnalyses(priorAnalyses),
-      ``,
-      `## Transcription`,
-      transcriptForClaude,
-    ].filter(Boolean).join("\n");
+    let analysis: SalesCoachAnalysis | null = null;
+    let scoreGlobal: number | null = null;
+    let recap: MeetingRecap | null = null;
 
-    // Use streaming to keep the TCP connection active during generation. Without
-    // streaming, the socket sits idle for the full duration of the response
-    // (~56s for ~5K output tokens on Haiku 4.5) and intermediate proxies (NAT,
-    // Netlify egress) close it as idle, which Anthropic then logs as
-    // 499/Client disconnected. Streaming sends SSE events as tokens are
-    // produced, keeping the connection healthy. finalMessage() returns the
-    // same shape as a non-streamed messages.create response.
-    const client = new Anthropic({ timeout: 600_000 });
-    const stream = client.messages.stream({
-      model: analyzeModel,
-      max_tokens: 8000,
-      system: SALES_COACH_SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
-      tools: [salesCoachTool],
-      tool_choice: { type: "tool" as const, name: "sales_coach_analysis" },
-    });
-    const message = await stream.finalMessage();
+    if (audience === "prospect") {
+      const scoreBlock = dealScoreSummary
+        ? `\n## Score IA du deal : ${dealScoreSummary.total ?? "?"}/100${dealScoreSummary.reasoning ? `\nReasoning : ${dealScoreSummary.reasoning}` : ""}${dealScoreSummary.next_action ? `\nNext action suggérée : ${dealScoreSummary.next_action}` : ""}`
+        : "";
 
-    logUsage(row.user_id, analyzeModel, message.usage.input_tokens, message.usage.output_tokens, "sales_coach_analyze");
+      const coachingPrompt = [
+        `## Meeting à analyser`,
+        `- Titre : ${row.meeting_title ?? "?"}`,
+        `- Date : ${row.meeting_started_at ?? "?"}`,
+        ``,
+        renderDealContextForPrompt(snapshot),
+        scoreBlock,
+        ``,
+        renderPriorAnalyses(priorAnalyses),
+        ``,
+        `## Transcription`,
+        transcriptForClaude,
+      ].filter(Boolean).join("\n");
 
-    const toolBlock = message.content.find((b) => b.type === "tool_use");
-    if (!toolBlock || !("input" in toolBlock)) throw new Error("No tool_use block in response");
+      // Streaming keeps the TCP connection active during generation — see
+      // earlier note. Same rationale for both calls below.
+      const client = new Anthropic({ timeout: 600_000 });
+      const coachingStreamP = client.messages.stream({
+        model: analyzeModel,
+        max_tokens: 8000,
+        system: SALES_COACH_SYSTEM_PROMPT,
+        messages: [{ role: "user", content: coachingPrompt }],
+        tools: [salesCoachTool],
+        tool_choice: { type: "tool" as const, name: "sales_coach_analysis" },
+      }).finalMessage();
 
-    const analysis = repairAnalysis(toolBlock.input as SalesCoachAnalysis);
-    const scoreGlobal = computeGlobalScore(analysis);
+      // Re-score the deal so the recap reflects the just-arrived meeting.
+      // Runs in parallel with the coaching analysis; the recap is chained off
+      // its result so it can use the fresh score/next_action. Failures fall
+      // back to the previously-fetched dealScoreSummary — never blocks the
+      // pipeline.
+      const scoringP: Promise<typeof dealScoreSummary> = (async () => {
+        if (!dealId) return dealScoreSummary;
+        try {
+          const fresh = await scoreOneDeal(dealId, row.user_id);
+          console.log(`[sales-coach/analyze/${id}] deal ${dealId} rescored: ${fresh.total}/100`);
+          return {
+            total: fresh.total,
+            reasoning: fresh.reasoning,
+            next_action: fresh.next_action,
+          };
+        } catch (e) {
+          console.warn(`[sales-coach/analyze/${id}] deal rescoring failed:`, e instanceof Error ? e.message : e);
+          return dealScoreSummary;
+        }
+      })();
+
+      const recapP = scoringP.then((freshScore) =>
+        generateMeetingRecap({
+          transcript: transcriptForClaude,
+          audience: "prospect",
+          dealSnapshot: snapshot,
+          dealScore: freshScore,
+          priorAnalyses,
+          meetingTitle: row.meeting_title,
+          meetingStartedAt: row.meeting_started_at,
+          userId: row.user_id,
+          model: recapModel,
+        }),
+      );
+
+      const [coachingMessage, recapResult] = await Promise.all([coachingStreamP, recapP]);
+
+      logUsage(row.user_id, analyzeModel, coachingMessage.usage.input_tokens, coachingMessage.usage.output_tokens, "sales_coach_analyze");
+
+      const toolBlock = coachingMessage.content.find((b) => b.type === "tool_use");
+      if (!toolBlock || !("input" in toolBlock)) throw new Error("No tool_use block in coaching response");
+      analysis = repairAnalysis(toolBlock.input as SalesCoachAnalysis);
+      scoreGlobal = computeGlobalScore(analysis);
+      recap = recapResult.recap;
+    } else {
+      // Client — skip coaching, only generate the meeting recap.
+      const recapResult = await generateMeetingRecap({
+        transcript: transcriptForClaude,
+        audience: "client",
+        dealSnapshot: snapshot,
+        dealScore: null,
+        priorAnalyses: [],
+        meetingTitle: row.meeting_title,
+        meetingStartedAt: row.meeting_started_at,
+        userId: row.user_id,
+        model: recapModel,
+      });
+      recap = recapResult.recap;
+    }
 
     await db
       .from("sales_coach_analyses")
       .update({
         analysis,
         score_global: scoreGlobal,
+        meeting_recap: recap,
+        audience,
         transcript_text: rawText,
         deal_snapshot: snapshot,
-        meeting_kind: analysis.meeting_kind,
+        meeting_kind: analysis?.meeting_kind ?? null,
         talk_ratio: talkRatio,
         status: "done",
         error_message: null,
@@ -237,16 +311,32 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
       .eq("id", id);
 
     const slackEnabled = process.env.SALES_COACH_SLACK_ENABLED === "true";
-    if (slackEnabled && row.user_id) {
+
+    // Sales-coach Slack (DM to owner) — prospects only, only if coaching ran.
+    if (audience === "prospect" && slackEnabled && row.user_id && dealId) {
       const slackRes = await sendSalesCoachSlack(db, id).catch((e) => ({
         ok: false,
         error: e instanceof Error ? e.message : String(e),
       }));
       if (!slackRes.ok) {
-        console.warn(`[sales-coach/analyze/${id}] Slack send skipped:`, slackRes.error);
+        console.warn(`[sales-coach/analyze/${id}] coaching Slack send skipped:`, slackRes.error);
       }
-    } else if (!slackEnabled) {
-      console.log(`[sales-coach/analyze/${id}] Slack disabled globally (SALES_COACH_SLACK_ENABLED)`);
+    } else if (audience === "prospect" && !slackEnabled) {
+      console.log(`[sales-coach/analyze/${id}] coaching Slack disabled globally (SALES_COACH_SLACK_ENABLED)`);
+    } else if (audience === "prospect" && !dealId) {
+      console.log(`[sales-coach/analyze/${id}] coaching Slack send deferred — no deal yet`);
+    }
+
+    // Meeting recap Slack — fires for both audiences. Routing/safety handled
+    // inside (defaults to DM mode via CLAAP_NOTE_SLACK_MODE).
+    if (recap) {
+      const recapSlackRes = await sendMeetingRecapSlack(db, id).catch((e) => ({
+        ok: false,
+        error: e instanceof Error ? e.message : String(e),
+      }));
+      if (!recapSlackRes.ok) {
+        console.warn(`[sales-coach/analyze/${id}] recap Slack send skipped:`, recapSlackRes.error);
+      }
     }
 
     return { ok: true, scoreGlobal };

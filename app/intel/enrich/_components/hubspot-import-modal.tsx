@@ -12,6 +12,9 @@ import {
   Linkedin,
   CheckSquare,
   Square,
+  Star,
+  Plus,
+  Loader2,
 } from "lucide-react";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { COLORS } from "@/lib/design/tokens";
@@ -47,13 +50,39 @@ function timeAgo(iso: string | null | undefined): string {
   return `il y a ${Math.floor(d / 365)}a`;
 }
 
-interface HubspotImportModalProps {
+export interface LoadMoreResult {
   profiles: EnrichmentProfile[];
-  onClose: () => void;
-  onConfirm: (selected: EnrichmentProfile[]) => void;
+  skippedByRadar: number;
+  hasMore: boolean;
 }
 
-export function HubspotImportModal({ profiles, onClose, onConfirm }: HubspotImportModalProps) {
+interface HubspotImportModalProps {
+  profiles: EnrichmentProfile[];
+  initialHasMore?: boolean;
+  initialSkippedByRadar?: number;
+  onLoadMore?: (excludeIds: string[]) => Promise<LoadMoreResult>;
+  onClose: () => void;
+  onConfirm: (selected: EnrichmentProfile[], options?: { isChampion?: boolean }) => void;
+}
+
+export function HubspotImportModal({
+  profiles,
+  initialHasMore = false,
+  initialSkippedByRadar = 0,
+  onLoadMore,
+  onClose,
+  onConfirm,
+}: HubspotImportModalProps) {
+  const [markAsChampion, setMarkAsChampion] = React.useState(false);
+  const idOf = (p: EnrichmentProfile) => p.hubspotId ?? p.email ?? p.fullName;
+
+  // Liste cumulée (le "Charger plus" l'augmente)
+  const [allProfiles, setAllProfiles] = React.useState<EnrichmentProfile[]>(profiles);
+  const [hasMore, setHasMore] = React.useState(initialHasMore);
+  const [skippedByRadar, setSkippedByRadar] = React.useState(initialSkippedByRadar);
+  const [loadingMore, setLoadingMore] = React.useState(false);
+  const [loadMoreErr, setLoadMoreErr] = React.useState<string | null>(null);
+
   // Toggle local de sélection (toutes cochées par défaut)
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(
     new Set(profiles.map((p) => p.hubspotId ?? p.email ?? p.fullName))
@@ -62,7 +91,30 @@ export function HubspotImportModal({ profiles, onClose, onConfirm }: HubspotImpo
   const [filterMode, setFilterMode] = React.useState<"all" | "selected" | "unselected">("all");
   const [quickFilter, setQuickFilter] = React.useState<"all" | "with-email" | "with-linkedin" | "no-linkedin" | "won" | "lost" | "open">("all");
 
-  const idOf = (p: EnrichmentProfile) => p.hubspotId ?? p.email ?? p.fullName;
+  async function handleLoadMore() {
+    if (!onLoadMore || loadingMore) return;
+    setLoadingMore(true);
+    setLoadMoreErr(null);
+    try {
+      const excludeIds = allProfiles.map((p) => p.hubspotId).filter((x): x is string => !!x);
+      const r = await onLoadMore(excludeIds);
+      // dédup défensif par hubspotId
+      const knownIds = new Set(excludeIds);
+      const fresh = r.profiles.filter((p) => !p.hubspotId || !knownIds.has(p.hubspotId));
+      setAllProfiles((cur) => [...cur, ...fresh]);
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const p of fresh) next.add(idOf(p));
+        return next;
+      });
+      setSkippedByRadar((n) => n + r.skippedByRadar);
+      setHasMore(r.hasMore && fresh.length > 0);
+    } catch (e) {
+      setLoadMoreErr(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setLoadingMore(false);
+    }
+  }
 
   const toggle = (id: string) => {
     setSelectedIds((prev) => {
@@ -74,7 +126,7 @@ export function HubspotImportModal({ profiles, onClose, onConfirm }: HubspotImpo
   };
 
   const filtered = React.useMemo(() => {
-    return profiles.filter((p) => {
+    return allProfiles.filter((p) => {
       const id = idOf(p);
       const sel = selectedIds.has(id);
       if (filterMode === "selected" && !sel) return false;
@@ -99,9 +151,9 @@ export function HubspotImportModal({ profiles, onClose, onConfirm }: HubspotImpo
       }
       return true;
     });
-  }, [profiles, q, selectedIds, filterMode, quickFilter]);
+  }, [allProfiles, q, selectedIds, filterMode, quickFilter]);
 
-  const selectAll = () => setSelectedIds(new Set(profiles.map(idOf)));
+  const selectAll = () => setSelectedIds(new Set(allProfiles.map(idOf)));
   const deselectAll = () => setSelectedIds(new Set());
   const selectFiltered = () => {
     setSelectedIds((prev) => {
@@ -119,11 +171,13 @@ export function HubspotImportModal({ profiles, onClose, onConfirm }: HubspotImpo
   };
 
   const selectedCount = selectedIds.size;
-  const total = profiles.length;
+  const total = allProfiles.length;
 
   const confirm = () => {
-    const selected = profiles.filter((p) => selectedIds.has(idOf(p))).map((p) => ({ ...p, selected: true }));
-    onConfirm(selected);
+    const selected = allProfiles
+      .filter((p) => selectedIds.has(idOf(p)))
+      .map((p) => ({ ...p, selected: true, isChampion: markAsChampion || p.isChampion }));
+    onConfirm(selected, { isChampion: markAsChampion });
   };
 
   // Lock body scroll
@@ -177,7 +231,11 @@ export function HubspotImportModal({ profiles, onClose, onConfirm }: HubspotImpo
               Aperçu des contacts à importer
             </h2>
             <p style={{ fontSize: 12, color: COLORS.ink3, margin: 0 }}>
-              {total} contact{total > 1 ? "s" : ""} trouvé{total > 1 ? "s" : ""} · sélectionne ceux que tu veux importer
+              {total} contact{total > 1 ? "s" : ""} chargé{total > 1 ? "s" : ""}
+              {skippedByRadar > 0 && (
+                <> · <strong style={{ color: COLORS.ink2 }}>{skippedByRadar}</strong> exclu{skippedByRadar > 1 ? "s" : ""} (déjà au Radar)</>
+              )}
+              {hasMore && <> · <strong style={{ color: COLORS.brand }}>plus dispos</strong></>}
             </p>
           </div>
           <button
@@ -406,6 +464,54 @@ export function HubspotImportModal({ profiles, onClose, onConfirm }: HubspotImpo
               })}
             </div>
           )}
+
+          {/* Load more */}
+          {onLoadMore && (hasMore || loadMoreErr) && (
+            <div
+              style={{
+                padding: 16,
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 6,
+                borderTop: filtered.length > 0 ? `1px solid ${COLORS.line}` : "none",
+              }}
+            >
+              <button
+                type="button"
+                onClick={handleLoadMore}
+                disabled={loadingMore || !hasMore}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 16px",
+                  fontSize: 12,
+                  fontWeight: 500,
+                  borderRadius: 8,
+                  border: `1px solid ${COLORS.line}`,
+                  background: COLORS.bgCard,
+                  color: hasMore && !loadingMore ? COLORS.ink1 : COLORS.ink3,
+                  cursor: hasMore && !loadingMore ? "pointer" : "default",
+                }}
+              >
+                {loadingMore ? (
+                  <>
+                    <Loader2 size={13} />
+                    Chargement…
+                  </>
+                ) : (
+                  <>
+                    <Plus size={13} />
+                    Charger plus
+                  </>
+                )}
+              </button>
+              {loadMoreErr && (
+                <span style={{ fontSize: 11, color: COLORS.err }}>Erreur : {loadMoreErr}</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Footer */}
@@ -417,11 +523,33 @@ export function HubspotImportModal({ profiles, onClose, onConfirm }: HubspotImpo
             display: "flex",
             alignItems: "center",
             gap: 10,
+            flexWrap: "wrap",
           }}
         >
           <span style={{ fontSize: 12, color: COLORS.ink2 }}>
             <strong style={{ color: COLORS.ink0 }}>{selectedCount}</strong> contact{selectedCount > 1 ? "s" : ""} sélectionné{selectedCount > 1 ? "s" : ""}
           </span>
+          <label
+            style={{
+              marginLeft: 12,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 12,
+              color: COLORS.ink1,
+              cursor: "pointer",
+            }}
+            title="Les profils importés seront flaggés is_champion=true — champion-tracker les surveillera."
+          >
+            <input
+              type="checkbox"
+              checked={markAsChampion}
+              onChange={(e) => setMarkAsChampion(e.target.checked)}
+              style={{ accentColor: COLORS.brand, width: 14, height: 14 }}
+            />
+            <Star size={12} color={markAsChampion ? COLORS.warn : COLORS.ink3} fill={markAsChampion ? COLORS.warn : "none"} />
+            Marquer comme champions
+          </label>
           <button type="button" onClick={onClose} style={{ ...btnSm(), marginLeft: "auto" }}>
             Annuler
           </button>

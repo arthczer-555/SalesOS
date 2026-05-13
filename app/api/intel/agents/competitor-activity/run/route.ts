@@ -50,13 +50,22 @@ export async function POST(req: NextRequest) {
   let creditsUsed = 0;
   const errors: string[] = [];
 
+  const LIKES_TARGET = 30;
+  const MAX_PAGES = 3;
+
   for (const p of profiles as CompetitorProfile[]) {
     try {
-      const likesRes = await getPeopleLikes(p.username);
-      creditsUsed++;
-      const likes = (likesRes.data ?? []) as PostLike[];
+      const likes: PostLike[] = [];
+      for (let page = 0; page < MAX_PAGES && likes.length < LIKES_TARGET; page++) {
+        const res = await getPeopleLikes(p.username, likes.length);
+        creditsUsed++;
+        const batch = (res.data ?? []) as PostLike[];
+        if (batch.length === 0) break;
+        likes.push(...batch);
+        if (batch.length < 10) break; // dernière page (Netrows renvoie ~10/page)
+      }
 
-      for (const like of likes.slice(0, 10)) {
+      for (const like of likes.slice(0, LIKES_TARGET)) {
         const text = (like.text ?? "").toLowerCase();
         const matchedCompany = targetCompanies.find((tc) => text.includes(tc));
         if (!matchedCompany) continue;

@@ -4,19 +4,24 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
-import { getProfile, resolveUsername, type LinkedInProfile } from "@/lib/netrows";
+import {
+  fetchCompanyLinkedInContext,
+  fetchCompanyWebContext,
+  fetchLinkedInContext,
+} from "@/lib/prospect-enrichment";
 
 export const dynamic = "force-dynamic";
 
 interface ContactInfo {
-  firstName: string;
-  lastName: string;
-  email: string;
-  jobTitle: string;
-  company: string;
-  industry: string;
-  lifecyclestage: string;
-  crmSummary: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  jobTitle?: string;
+  company?: string;
+  industry?: string;
+  lifecyclestage?: string;
+  crmSummary?: string;
+  linkedinUrl?: string | null;
 }
 
 export async function POST(req: NextRequest) {
@@ -36,7 +41,6 @@ export async function POST(req: NextRequest) {
     qcmObjectif?: string;
   };
 
-  // Fetch the user's personal prospection guide from DB
   const [{ data }, { data: globalModelEntry }, { data: globalGuideEntry }] = await Promise.all([
     db.from("users").select("prospection_guide").eq("id", user.id).maybeSingle(),
     db.from("guide_defaults").select("content").eq("key", "model_preferences").single(),
@@ -46,13 +50,35 @@ export async function POST(req: NextRequest) {
   let prospectionModel = "claude-haiku-4-5-20251001";
   try { if (globalModelEntry?.content) prospectionModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).prospection ?? prospectionModel; } catch { /* keep default */ }
 
+  const senderName = user.name?.trim() || "L'équipe Coachello";
+
+  // ── Enrichissement (best-effort, parallèle) ──────────────────────────────
+  // 1) Profil LinkedIn du prospect (Netrows)
+  // 2) Recherche web entreprise (Tavily, dernières actus / actualité RH)
+  // Le LinkedIn entreprise dépend du profil (on récupère le slug exact depuis
+  // la position courante), donc il est lancé séquentiellement après.
+  const [linkedin, companyWeb] = await Promise.all([
+    fetchLinkedInContext({
+      firstName: contactInfo.firstName,
+      lastName: contactInfo.lastName,
+      email: contactInfo.email,
+      company: contactInfo.company,
+      linkedinUrl: contactInfo.linkedinUrl ?? null,
+    }),
+    contactInfo.company ? fetchCompanyWebContext(contactInfo.company) : Promise.resolve(""),
+  ]);
+  const companyLinkedIn = contactInfo.company
+    ? await fetchCompanyLinkedInContext(contactInfo.company, linkedin.currentCompanyUsername)
+    : "";
+
+  const fullName = [contactInfo.firstName, contactInfo.lastName].filter(Boolean).join(" ").trim();
   const prospectBlock = [
-    `Nom : ${contactInfo.firstName} ${contactInfo.lastName}`,
-    `Email : ${contactInfo.email}`,
-    `Poste : ${contactInfo.jobTitle || "—"}`,
-    `Entreprise : ${contactInfo.company || "—"}`,
-    `Secteur : ${contactInfo.industry || "—"}`,
-    `Statut CRM : ${contactInfo.lifecyclestage || "—"}`,
+    fullName ? `Nom : ${fullName}` : null,
+    contactInfo.email ? `Email : ${contactInfo.email}` : null,
+    contactInfo.jobTitle ? `Poste : ${contactInfo.jobTitle}` : null,
+    contactInfo.company ? `Entreprise : ${contactInfo.company}` : null,
+    contactInfo.industry ? `Secteur : ${contactInfo.industry}` : null,
+    contactInfo.lifecyclestage ? `Statut CRM : ${contactInfo.lifecyclestage}` : null,
     contactInfo.crmSummary ? `Historique CRM :\n${contactInfo.crmSummary}` : null,
     recentNews ? `Actualité récente / contexte externe :\n${recentNews}` : null,
     companyContext ? `Contexte de l'entreprise :\n${companyContext}` : null,
@@ -65,52 +91,13 @@ export async function POST(req: NextRequest) {
     userInstructions ? `Instructions spécifiques de l'utilisateur :\n${userInstructions}` : null,
   ].filter(Boolean).join("\n\n");
 
-  const senderName = user.name?.trim() || "L'équipe Coachello";
-
-  // ── LinkedIn enrichment via Netrows (best-effort) ─────────────────────────
-  let linkedinBlock = "";
-  let linkedinEnriched = false;
-  if (process.env.NETROWS_API_KEY) {
-    try {
-      const username = await resolveUsername({
-        firstName: contactInfo.firstName,
-        lastName: contactInfo.lastName,
-        company: contactInfo.company,
-        email: contactInfo.email,
-      });
-      if (username) {
-        const profile: LinkedInProfile = await getProfile(username);
-        const positions = (profile.position ?? []).slice(0, 5).map((p) => {
-          const start = p.start ? `${p.start.month ? p.start.month + "/" : ""}${p.start.year}` : "";
-          const end = p.end?.year ? `${p.end.month ? p.end.month + "/" : ""}${p.end.year}` : "présent";
-          return `- ${p.title} @ ${p.companyName} (${start} → ${end})${p.description ? `\n  ${p.description.slice(0, 200)}` : ""}`;
-        }).join("\n");
-        const skills = (profile.skills ?? []).slice(0, 12).map((s) => s.name).join(", ");
-        const educations = (profile.educations ?? []).slice(0, 2).map((e) =>
-          `${e.degree ?? ""} ${e.fieldOfStudy ?? ""} — ${e.schoolName ?? ""}`.trim()
-        ).join(", ");
-        linkedinBlock = [
-          `Headline LinkedIn : ${profile.headline ?? "—"}`,
-          positions ? `Parcours :\n${positions}` : "",
-          skills ? `Compétences : ${skills}` : "",
-          educations ? `Formation : ${educations}` : "",
-          profile.summary ? `Bio LinkedIn :\n${profile.summary.slice(0, 500)}` : "",
-        ].filter(Boolean).join("\n");
-        linkedinEnriched = true;
-      }
-    } catch {
-      /* enrichment optional */
-    }
-  }
-
-  const fullProspectBlock = linkedinBlock
-    ? `${prospectBlock}\n\nProfil LinkedIn enrichi :\n${linkedinBlock}`
-    : prospectBlock;
+  const linkedinEnriched = Boolean(linkedin.text);
 
   const systemPrompt = [
     "Tu es un expert en prospection B2B pour Coachello, une entreprise de coaching professionnel.",
     "Tu rédiges des emails de prospection ultra-personnalisés, humains et percutants.",
     "L'email doit sonner vrai, pas comme un template générique.",
+    "Mobilise ta connaissance générale de l'entreprise du prospect (secteur, taille, actualités, enjeux RH connus) pour ancrer l'accroche. Si des blocs CONTEXTE ENTREPRISE ou FICHE LINKEDIN ENTREPRISE sont fournis, priorise ces informations. Reste factuel : n'invente jamais un fait, un chiffre ou un nom.",
     linkedinEnriched
       ? "Un profil LinkedIn enrichi est disponible : utilise-le pour personnaliser (mentionne 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé)."
       : "",
@@ -120,7 +107,13 @@ export async function POST(req: NextRequest) {
     guide ? `\n---\nGUIDE DE PROSPECTION (exemples et instructions) :\n${guide}` : "",
   ].filter(Boolean).join("\n");
 
-  const userPrompt = `Voici les informations sur le prospect :\n\n${fullProspectBlock}\n\nRédige un email de prospection personnalisé pour cette personne.`;
+  const userPrompt = [
+    `Voici les informations sur le prospect :\n\n${prospectBlock}`,
+    linkedin.text ? `\nPROFIL LINKEDIN ENRICHI (utilise-le pour personnaliser : 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé) :\n${linkedin.text}` : "",
+    companyLinkedIn ? `\nFICHE LINKEDIN ENTREPRISE :\n${companyLinkedIn}` : "",
+    companyWeb ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyWeb}` : "",
+    "\nRédige un email de prospection personnalisé pour cette personne.",
+  ].filter(Boolean).join("\n");
 
   const client = new Anthropic();
   const message = await client.messages.create({

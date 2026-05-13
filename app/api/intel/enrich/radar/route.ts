@@ -10,15 +10,18 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = req.nextUrl;
   const source = searchParams.get("source");
+  const isChampionParam = searchParams.get("is_champion");
   const q = searchParams.get("q")?.trim() ?? "";
 
   let query = db
     .from("linkedin_monitored_profiles")
-    .select("id, username, full_name, headline, company, profile_url, source, radar_active, last_change_at, last_refreshed_at, last_snapshot, created_at")
+    .select("id, username, full_name, headline, company, profile_url, source, radar_active, is_champion, last_change_at, last_refreshed_at, last_snapshot, created_at")
     .eq("radar_active", true)
     .order("created_at", { ascending: false });
 
   if (source) query = query.eq("source", source);
+  if (isChampionParam === "true") query = query.eq("is_champion", true);
+  if (isChampionParam === "false") query = query.eq("is_champion", false);
   if (q) query = query.or(`full_name.ilike.%${q}%,headline.ilike.%${q}%,company.ilike.%${q}%`);
 
   const { data, error } = await query.limit(500);

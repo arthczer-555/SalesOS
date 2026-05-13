@@ -81,7 +81,7 @@ export type AgentStatus = "active" | "partial" | "inactive";
 export interface AgentRunMetadata {
   enabled: boolean;
   last_run_at: string | null;
-  last_run_status: "ok" | "error" | "partial" | null;
+  last_run_status: "ok" | "error" | "partial" | "running" | null;
   last_run_signals_count: number;
   last_run_error: string | null;
   config: Record<string, unknown> | null;
@@ -128,6 +128,7 @@ export interface EnrichmentProfile {
   hubspotId?: string | null;
   selected?: boolean;
   source?: ProfileSource;
+  isChampion?: boolean;
   addedToRadar?: boolean;
   // HubSpot extras
   jobTitle?: string | null;
@@ -195,6 +196,9 @@ export interface HubspotCriteria {
   // Sort + pagination
   sort?: "createdate-desc" | "lastcontacted-desc" | "lastcontacted-asc" | "alpha" | "deal-amount-desc";
   limit?: number;
+  // Exclusion : profils LinkedIn déjà au Radar (par défaut true) + hubspotIds déjà chargés (pour "Charger plus")
+  excludeRadar?: boolean;
+  excludeIds?: string[];
   // Preset (UI seulement, mappé en filtres avant POST)
   preset?: HubspotPreset;
   // Auto-resolve LinkedIn pendant l'import
@@ -234,6 +238,7 @@ export interface RadarProfile {
   profile_url: string | null;
   source: ProfileSource;
   radar_active: boolean;
+  is_champion: boolean;
   last_change_at: string | null;
   last_refreshed_at: string | null;
   last_snapshot: RadarSnapshot | null;

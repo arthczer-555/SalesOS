@@ -23,6 +23,7 @@ import {
   findEmailByLinkedInCached,
   findDecisionMakerEmail,
 } from "@/lib/netrows";
+import * as XLSX from "xlsx";
 
 export const maxDuration = 300; // 5 minutes — required for large HubSpot fetches
 
@@ -311,12 +312,26 @@ const tools: Anthropic.Tool[] = [
   {
     name: "read_drive_file",
     description:
-      "Lit le contenu textuel d'un fichier Google Drive (Google Docs, Sheets, Slides exportés en texte). Utilise cet outil après search_drive pour lire un document trouvé.",
+      "Lit le contenu textuel d'un fichier Google Drive (Google Docs, Sheets, Slides exportés en texte). Utilise cet outil après search_drive pour lire un document trouvé. Pour un fichier Excel (.xlsx), utilise plutôt read_drive_excel.",
     input_schema: {
       type: "object" as const,
       properties: {
         file_id: { type: "string", description: "ID du fichier Google Drive" },
         mime_type: { type: "string", description: "Type MIME du fichier (ex: application/vnd.google-apps.document)" },
+      },
+      required: ["file_id"],
+    },
+  },
+  {
+    name: "read_drive_excel",
+    description:
+      "Lit un fichier Excel (.xlsx) stocké dans Google Drive. Sans 'sheet_name' : renvoie la liste des onglets et leurs dimensions. Avec 'sheet_name' : renvoie le contenu de l'onglet en CSV (capé à ~12000 caractères). Utilise cet outil pour les fichiers .xlsx, pas pour les Google Sheets natifs.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        file_id: { type: "string", description: "ID du fichier Drive (.xlsx)" },
+        sheet_name: { type: "string", description: "Nom de l'onglet à lire. Si omis, renvoie la liste des onglets." },
+        range: { type: "string", description: "Plage Excel optionnelle (ex: 'A1:F50') pour limiter la lecture." },
       },
       required: ["file_id"],
     },
@@ -938,6 +953,42 @@ async function executeTool(name: string, input: Record<string, unknown>, onProgr
         return text.slice(0, 8000); // limit to ~2k tokens
       } catch (e) {
         return `Erreur lecture Drive : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "read_drive_excel": {
+      try {
+        const token = await getDriveAccessToken();
+        const fileId = input.file_id as string;
+        const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) {
+          const err = await res.text().catch(() => "");
+          throw new Error(`Drive API ${res.status}: ${err.slice(0, 200)}`);
+        }
+        const buf = new Uint8Array(await res.arrayBuffer());
+        const wb = XLSX.read(buf, { type: "array" });
+        const sheetName = input.sheet_name as string | undefined;
+        if (!sheetName) {
+          const sheets = wb.SheetNames.map((n) => {
+            const ws = wb.Sheets[n];
+            const ref = ws["!ref"] ?? "";
+            const range = ref ? XLSX.utils.decode_range(ref) : null;
+            return {
+              name: n,
+              rows: range ? range.e.r - range.s.r + 1 : 0,
+              cols: range ? range.e.c - range.s.c + 1 : 0,
+              range: ref,
+            };
+          });
+          return JSON.stringify({ sheets, hint: "Rappelle read_drive_excel avec 'sheet_name' pour lire un onglet." });
+        }
+        const ws = wb.Sheets[sheetName];
+        if (!ws) return `Onglet introuvable. Onglets disponibles : ${wb.SheetNames.join(", ")}`;
+        const csv = XLSX.utils.sheet_to_csv(ws, { strip: true, ...(input.range ? { range: input.range as string } : {}) });
+        const cap = 12000;
+        return csv.length > cap ? csv.slice(0, cap) + `\n…(tronqué à ${cap} caractères — utilise 'range' pour cibler une zone)` : csv;
+      } catch (e) {
+        return `Erreur lecture Excel : ${e instanceof Error ? e.message : "inconnue"}`;
       }
     }
     case "search_gmail": {

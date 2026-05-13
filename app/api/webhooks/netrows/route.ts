@@ -181,12 +181,13 @@ export async function POST(req: NextRequest) {
         // Update linkedin_monitored_profiles
         const { data: monitored } = await db
           .from("linkedin_monitored_profiles")
-          .select("full_name, company, headline")
+          .select("full_name, company, headline, is_champion")
           .eq("username", username)
           .maybeSingle();
 
         const displayName = monitored?.full_name ?? username;
         const previousCompany = monitored?.company ?? "—";
+        const isChampion = monitored?.is_champion === true;
 
         // Determine new company from snapshot or fallback to monitored profile's company
         const snapshotPosition = body.newSnapshot?.position as { companyName?: string }[] | undefined;
@@ -211,21 +212,32 @@ export async function POST(req: NextRequest) {
           }
         })();
 
-        // ICP match scoring (only when out of target list, to avoid double-up)
+        // ICP match scoring (only when out of target list, to avoid double-up).
+        // Skipped for champions — on les traite déjà comme prioritaires.
         let icpResult: IcpScoreResult | null = null;
-        if (!isCompanyInTargets && newCompany && newCompany !== "—") {
+        if (!isChampion && !isCompanyInTargets && newCompany && newCompany !== "—") {
           icpResult = await scoreIcpMatch(newCompany, newValue);
         }
 
         const isIcpMatch = !!icpResult?.is_match && (icpResult?.score ?? 0) >= 70;
-        const finalSignalType = isIcpMatch ? "job_change_icp_match" : "job_change";
-        const finalAgentId = "job-change";
-        const finalScore = isIcpMatch ? icpResult!.score : 85;
-        const finalWhyRelevant = isIcpMatch
-          ? `${displayName} rejoint ${newCompany} — non listée dans les cibles mais ICP match (${icpResult!.score}/100). ${icpResult!.reasoning}`
-          : `${displayName} a changé de poste — nouveau décideur potentiel pour le coaching.`;
-        const title = `${displayName} change de poste${newCompany !== "—" ? ` chez ${newCompany}` : ""}`;
-        const action = `Contacter ${displayName} pour se présenter et proposer un accompagnement.`;
+        const finalSignalType = isChampion
+          ? "champion_change"
+          : isIcpMatch
+            ? "job_change_icp_match"
+            : "job_change";
+        const finalAgentId = isChampion ? "champion-tracker" : "job-change";
+        const finalScore = isChampion ? 95 : isIcpMatch ? icpResult!.score : 85;
+        const finalWhyRelevant = isChampion
+          ? `${displayName} (ancien champion${previousCompany !== "—" ? ` chez ${previousCompany}` : ""}) rejoint ${newCompany} — opportunité de re-pitch sur sa nouvelle boîte.`
+          : isIcpMatch
+            ? `${displayName} rejoint ${newCompany} — non listée dans les cibles mais ICP match (${icpResult!.score}/100). ${icpResult!.reasoning}`
+            : `${displayName} a changé de poste — nouveau décideur potentiel pour le coaching.`;
+        const title = isChampion
+          ? `🌟 Champion — ${displayName} rejoint ${newCompany !== "—" ? newCompany : "une nouvelle boîte"}`
+          : `${displayName} change de poste${newCompany !== "—" ? ` chez ${newCompany}` : ""}`;
+        const action = isChampion
+          ? `Recontacter ${displayName} — ancien champion, idéal pour ré-amorcer un cycle chez ${newCompany}.`
+          : `Contacter ${displayName} pour se présenter et proposer un accompagnement.`;
 
         // Create signal for all users
         const { data: allUsers } = await db.from("users").select("id");

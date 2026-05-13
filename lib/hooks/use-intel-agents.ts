@@ -9,6 +9,9 @@ export function useIntelAgents() {
   const { data, error, isLoading, mutate } = useSWR<AgentsResponse>("/api/intel/agents", {
     revalidateOnFocus: false,
     dedupingInterval: 30_000,
+    // Poll toutes les 5s tant qu'un agent est en cours (fire-and-forget)
+    refreshInterval: (latest) =>
+      latest?.agents.some((a) => a.last_run_status === "running") ? 5_000 : 0,
   });
 
   return {

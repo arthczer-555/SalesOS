@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getClaapRecording, pickTranscriptUrl, extractExternalParticipants } from "@/lib/claap";
+import {
+  getClaapRecording,
+  pickTranscriptUrl,
+  extractExternalParticipants,
+  extractTitleSearchHint,
+} from "@/lib/claap";
 import { resolveDealFromParticipants } from "@/lib/hubspot";
 
 export const dynamic = "force-dynamic";
@@ -42,9 +47,11 @@ export async function POST(req: NextRequest) {
   const transcriptUrl = pickTranscriptUrl(rec);
   if (!transcriptUrl) return NextResponse.json({ error: "Pas de transcript disponible sur Claap" }, { status: 400 });
 
-  if (rec.meeting?.type !== "external") {
-    return NextResponse.json({ error: "Meeting interne — non analysable" }, { status: 400 });
-  }
+  // The backfill endpoint is user-initiated (someone clicked "Analyser" on a
+  // specific recording), so we accept any meeting with a transcript — even
+  // those Claap classified as internal. The user is opting in explicitly.
+  // The webhook keeps a stricter guard since it runs automatically.
+  const titleHint = extractTitleSearchHint(rec.title, recorderEmail);
 
   // Check if already analyzed (idempotency)
   const { data: existing } = await db
@@ -65,12 +72,17 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
 
   // If user didn't provide a deal ID, try to auto-resolve via participants
+  // (with title-based company-name fallback as last resort).
   let resolvedDealId: string | null = hubspotDealId?.trim() || null;
   if (!resolvedDealId && recorderEmail) {
     const participantEmails = (rec.meeting?.participants ?? [])
       .map((p) => p.email)
       .filter((e): e is string => !!e);
-    resolvedDealId = await resolveDealFromParticipants(participantEmails, recorderEmail).catch((e) => {
+    resolvedDealId = await resolveDealFromParticipants(
+      participantEmails,
+      recorderEmail,
+      titleHint,
+    ).catch((e) => {
       console.warn("[backfill] deal auto-resolve failed:", e);
       return null;
     });
@@ -90,6 +102,9 @@ export async function POST(req: NextRequest) {
     hubspot_deal_id: resolvedDealId,
     meeting_title: rec.title ?? null,
     meeting_started_at: rec.meeting?.startingAt ?? rec.createdAt ?? null,
+    // Honest classification: store what Claap actually reported. The UI can
+    // surface an "Interne" tag if relevant — analysis still happened because
+    // the user explicitly requested it.
     meeting_type: rec.meeting?.type ?? null,
     participants: externalParticipants.length > 0 ? externalParticipants : null,
     user_id: recorderUser?.id ?? null,

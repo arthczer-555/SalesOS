@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { resolveDealFromParticipants } from "@/lib/hubspot";
-import { extractExternalParticipants } from "@/lib/claap";
+import { extractExternalParticipants, extractTitleSearchHint } from "@/lib/claap";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -62,17 +62,28 @@ export async function POST(req: NextRequest) {
     }
 
     // Scope filter: external meeting + linked to a HubSpot deal
-    const meetingType = rec.meeting?.type ?? "";
+    let meetingType = rec.meeting?.type ?? "";
     let dealId = rec.deal?.id ?? null;
     const recorderEmail = rec.recorder?.email ?? "";
     const transcriptUrl = rec.transcripts?.find((t) => t.isActive)?.textUrl ?? rec.transcripts?.[0]?.textUrl ?? null;
 
-    // Fallback: if Claap didn't link a deal, try to resolve via participant emails
-    if (!dealId && meetingType === "external" && recorderEmail) {
+    // Title hint — used both to seed the HubSpot deal/company name search and
+    // to decide whether to override Claap's "internal" classification (below).
+    const titleHint = extractTitleSearchHint(rec.title, recorderEmail);
+
+    // Fallback: if Claap didn't link a deal, try to resolve via participant
+    // emails (stage 1+2 inside the resolver) then via the title hint (stage 3).
+    // We run this BEFORE the internal-drop decision so a HubSpot match can
+    // serve as evidence to override Claap's mis-classification.
+    if (!dealId && recorderEmail) {
       const participantEmails = (rec.meeting?.participants ?? [])
         .map((p) => p.email)
         .filter((e): e is string => !!e);
-      dealId = await resolveDealFromParticipants(participantEmails, recorderEmail).catch((e) => {
+      dealId = await resolveDealFromParticipants(
+        participantEmails,
+        recorderEmail,
+        titleHint,
+      ).catch((e) => {
         console.warn("[claap-webhook] deal auto-resolve failed:", e);
         return null;
       });
@@ -81,7 +92,23 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Internal meetings are dropped entirely — no row created, no UI noise.
+    // Internal override safeguard: Claap mis-classifies some external meetings
+    // as "internal" when no external attendee was captured in the calendar
+    // invite. We only promote internal→external when ALL of these hold:
+    //   - the title yields a non-trivial search hint (titleHint)
+    //   - the auto-resolve actually found a matching HubSpot deal
+    // No HubSpot footprint → trust Claap and drop. The user can still
+    // manually analyse the recording from the "Analyser un meeting passé"
+    // modal if they disagree with this verdict.
+    if (meetingType === "internal" && dealId && titleHint) {
+      console.log(
+        `[claap-webhook] overriding internal→external for recording ${rec.id} — deal ${dealId} matched via title hint "${titleHint}"`,
+      );
+      meetingType = "external";
+    }
+
+    // Internal meetings (after title-based override) are dropped entirely — no
+    // row created, no UI noise.
     if (meetingType === "internal") {
       return NextResponse.json({ ok: true, ignored: "meeting_type_internal" });
     }

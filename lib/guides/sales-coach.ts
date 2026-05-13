@@ -22,9 +22,19 @@ Règles absolues :
 - Pour chaque axe noté, cite dans "evidence" un extrait court (≤ 15 mots) ou une paraphrase précise tirée du transcript.
 - Dans "explanation" : 3-5 phrases qui expliquent POURQUOI cette note — ce qui a été fait ou raté précisément.
 - Dans "recommendation" : 1 action concrète et spécifique à mener au prochain call/message sur CET axe. Pas des banalités.
-- Un mauvais score avec un feedback clair vaut mieux qu'un score flatteur.
+- Sois juste, pas dur. Un meeting solide et professionnel mérite 7 ou 8 — ne réserve pas le 7 à la perfection. Le 9/10 reste pour l'exemplaire.
 - "notes" : 1-2 phrases qualitatives synthétiques.
 - "score" : de 0 à 10.
+
+## Échelle de notation calibrée (à appliquer partout : axes coaching, MEDDIC, BOSCHE)
+
+- **0-2** : absent ou raté — la dimension n'a pas été abordée, ou de façon contre-productive.
+- **3-4** : effleuré — survolé sans profondeur, opportunité manquée.
+- **5-6** : fait mais incomplet — couvert correctement, manque de la profondeur ou de la rigueur.
+- **7-8** : solide — bien exécuté, attendu d'un commercial expérimenté. C'est la zone par défaut d'un meeting standard sans grosse faute.
+- **9-10** : exemplaire — exécution remarquable, à montrer en exemple.
+
+Point d'ancrage : un meeting "normal et propre" sans erreur majeure se note **6-7**, pas 4-5. Ne descends sous 5 que s'il y a un vrai problème factuel sur la dimension.
 
 ## 0. Classification du meeting (meeting_kind)
 
@@ -57,7 +67,7 @@ Dans "meeting_kind_reasoning" : 1 phrase qui justifie.
 
 ## 2. Grille MEDDIC (TOUJOURS remplie — framework universel de qualification)
 
-Pour CHAQUE dimension, évalue ce qui a été fait pendant CE meeting. Si la dimension n'est pas observable pour ce type de meeting (ex : Economic Buyer en kickoff), mets score=0, notes="N/A — non observable en {meeting_kind}", et rends quand même une "recommendation" pour la couvrir au prochain touchpoint.
+Pour CHAQUE dimension, évalue ce qui a été fait pendant CE meeting. Si la dimension n'est pas naturellement observable pour ce type de meeting (ex : Economic Buyer en kickoff, Decision Process en discovery R1 très exploratoire, Champion avant le 2e call), préfère marquer N/A plutôt que pénaliser : mets score=0, notes="N/A — non observable en {meeting_kind}", et rends quand même une "recommendation" pour la couvrir au prochain touchpoint. N'attribue un score bas (1-3) que si la dimension *aurait dû* être travaillée à ce stade et ne l'a pas été.
 
 - **M — Metrics** : le commercial a-t-il fait émerger des KPIs quantifiables (rétention, mobilité interne, manager effectiveness, ROI coaching) ? A-t-il proposé un cadre ROI (% promotions internes, coût hiring évité, time-to-productivity managers) ?
 - **EB — Economic Buyer** : le budget holder est-il identifié ou rencontré ? Si absent, une demande d'introduction a-t-elle été formulée ?
@@ -68,9 +78,9 @@ Pour CHAQUE dimension, évalue ce qui a été fait pendant CE meeting. Si la dim
 
 ## 3. Grille BOSCHE (UNIQUEMENT si meeting_kind ∈ {discovery_r1, discovery_deeper})
 
-Si le meeting n'est PAS une discovery : mets chaque score BOSCHE à 0, notes="N/A — meeting non discovery", trigger_identified=null, exit_criteria_met=false.
+Si le meeting n'est PAS une discovery : mets chaque score BOSCHE à 0, notes="N/A — meeting non discovery", recommendation="" (ou une reco générique pour la prochaine discovery), trigger_identified=null, exit_criteria_met=false.
 
-Si c'est une discovery, évalue :
+Si c'est une discovery, évalue chaque dimension avec score + notes + recommendation (1 action concrète et spécifique à mener au prochain call sur cette dimension précise) :
 - **B — Business pressure** : le commercial a-t-il fait émerger l'enjeu business prioritaire et la pression associée ?
 - **O — Organizational friction** : a-t-il compris qui porte le sujet, où ça bloque en interne, les silos éventuels ?
 - **S — Skills gap** : les vrais blocages humains / compétences / postures sont-ils identifiés avec des exemples concrets ?
@@ -188,28 +198,48 @@ export const salesCoachTool: Anthropic.Tool = {
         properties: {
           business: {
             type: "object",
-            properties: { score: { type: "number" }, notes: { type: "string" } },
-            required: ["score", "notes"],
+            properties: {
+              score: { type: "number" },
+              notes: { type: "string" },
+              recommendation: { type: "string", description: "1 action concrète à mener au prochain call sur cette dimension" },
+            },
+            required: ["score", "notes", "recommendation"],
           },
           organization: {
             type: "object",
-            properties: { score: { type: "number" }, notes: { type: "string" } },
-            required: ["score", "notes"],
+            properties: {
+              score: { type: "number" },
+              notes: { type: "string" },
+              recommendation: { type: "string", description: "1 action concrète à mener au prochain call sur cette dimension" },
+            },
+            required: ["score", "notes", "recommendation"],
           },
           skills: {
             type: "object",
-            properties: { score: { type: "number" }, notes: { type: "string" } },
-            required: ["score", "notes"],
+            properties: {
+              score: { type: "number" },
+              notes: { type: "string" },
+              recommendation: { type: "string", description: "1 action concrète à mener au prochain call sur cette dimension" },
+            },
+            required: ["score", "notes", "recommendation"],
           },
           consequences: {
             type: "object",
-            properties: { score: { type: "number" }, notes: { type: "string" } },
-            required: ["score", "notes"],
+            properties: {
+              score: { type: "number" },
+              notes: { type: "string" },
+              recommendation: { type: "string", description: "1 action concrète à mener au prochain call sur cette dimension" },
+            },
+            required: ["score", "notes", "recommendation"],
           },
           human_economic: {
             type: "object",
-            properties: { score: { type: "number" }, notes: { type: "string" } },
-            required: ["score", "notes"],
+            properties: {
+              score: { type: "number" },
+              notes: { type: "string" },
+              recommendation: { type: "string", description: "1 action concrète à mener au prochain call sur cette dimension" },
+            },
+            required: ["score", "notes", "recommendation"],
           },
           trigger_identified: {
             type: "string",
@@ -283,12 +313,14 @@ export type MeddicGrid = {
   champion: MeddicScore;
 };
 
+export type BoscheDimension = { score: number; notes: string; recommendation: string };
+
 export type BoscheScore = {
-  business: { score: number; notes: string };
-  organization: { score: number; notes: string };
-  skills: { score: number; notes: string };
-  consequences: { score: number; notes: string };
-  human_economic: { score: number; notes: string };
+  business: BoscheDimension;
+  organization: BoscheDimension;
+  skills: BoscheDimension;
+  consequences: BoscheDimension;
+  human_economic: BoscheDimension;
   trigger_identified: string | null;
   exit_criteria_met: boolean;
 };

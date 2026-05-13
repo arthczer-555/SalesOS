@@ -402,6 +402,16 @@ export default function ProspectingPage() {
   const [genError, setGenError] = useState<string | null>(null);
   const [showCrmPopup, setShowCrmPopup] = useState(false);
 
+  // Manual composer-side draft (no CRM contact selected — uses name+company or LinkedIn URL)
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualFirstName, setManualFirstName] = useState("");
+  const [manualLastName, setManualLastName] = useState("");
+  const [manualCompany, setManualCompany] = useState("");
+  const [manualLinkedinUrl, setManualLinkedinUrl] = useState("");
+  const [manualContext, setManualContext] = useState("");
+  const [manualGenerating, setManualGenerating] = useState(false);
+  const [manualError, setManualError] = useState<string | null>(null);
+
   // AI explanation + guide modal
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
   const [isAiSearch, setIsAiSearch] = useState(false);
@@ -635,7 +645,7 @@ export default function ProspectingPage() {
       const r = await fetch(`/api/prospection/details?id=${result.id}`);
       const data = await r.json();
       if (!r.ok) throw new Error(data.error);
-      setSelectedContact(data);
+      setSelectedContact({ ...data, linkedinUrl: data.linkedinUrl ?? result.linkedinUrl ?? null });
       setContactIndustry(data.industry ?? "");
       // Pre-fill suggestion fields if Claude found something
       if (data.suggestedAnalysis) setAnalysis(data.suggestedAnalysis);
@@ -683,6 +693,48 @@ export default function ProspectingPage() {
       setGenError(e instanceof Error ? e.message : "Erreur de génération");
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const generateManual = async () => {
+    const hasIdentity = (manualFirstName.trim() && manualCompany.trim()) || manualLinkedinUrl.trim() || to[0];
+    if (!hasIdentity) {
+      setManualError("Renseigne au minimum prénom + entreprise, ou une URL LinkedIn, ou un email destinataire.");
+      return;
+    }
+    setManualGenerating(true);
+    setManualError(null);
+    try {
+      const r = await fetch("/api/prospection/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contactInfo: {
+            firstName: manualFirstName.trim(),
+            lastName: manualLastName.trim(),
+            email: to[0] ?? "",
+            jobTitle: "",
+            company: manualCompany.trim(),
+            industry: "",
+            lifecyclestage: "",
+            crmSummary: "",
+            linkedinUrl: manualLinkedinUrl.trim() || null,
+          },
+          recentNews: manualContext,
+          companyContext: "",
+          coachingNeed: "",
+          angle: "",
+          userInstructions,
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error);
+      if (data.subject) setSubject(data.subject);
+      if (data.body) setBody(data.body);
+    } catch (e) {
+      setManualError(e instanceof Error ? e.message : "Erreur de génération");
+    } finally {
+      setManualGenerating(false);
     }
   };
 
@@ -947,6 +999,90 @@ export default function ProspectingPage() {
                 <span className="text-xs font-medium w-10 shrink-0" style={{ color: "#aaa" }}>Objet</span>
                 <input type="text" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Objet de l'email"
                   className="flex-1 text-sm outline-none bg-transparent font-medium" style={{ color: "#111" }} />
+              </div>
+
+              {/* Manual AI-draft assistant (works without CRM selection) */}
+              <div className="border-b shrink-0" style={{ borderColor: "#f0f0f0", background: "#fafafa" }}>
+                <button
+                  onClick={() => setManualOpen((v) => !v)}
+                  className="w-full flex items-center justify-between px-4 py-2 text-xs transition-colors"
+                  style={{ color: manualOpen ? "#111" : "#888" }}
+                >
+                  <span className="inline-flex items-center gap-1.5">
+                    <Sparkles size={12} style={{ color: "#f01563" }} />
+                    Assistant IA — rédiger sans contact CRM
+                  </span>
+                  {manualOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+                {manualOpen && (
+                  <div className="px-4 pb-3 space-y-2">
+                    <p className="text-[10px]" style={{ color: "#aaa" }}>
+                      Renseigne <b>prénom + entreprise</b> (Claude trouvera le LinkedIn) ou colle directement une <b>URL LinkedIn</b>. Tous les champs sont optionnels — l&apos;email destinataire (champ &quot;À&quot;) est aussi utilisé pour retrouver le profil.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        type="text"
+                        value={manualFirstName}
+                        onChange={(e) => setManualFirstName(e.target.value)}
+                        placeholder="Prénom"
+                        className="text-xs px-2.5 py-1.5 rounded-lg border outline-none"
+                        style={{ borderColor: "#e5e5e5", background: "#fff" }}
+                      />
+                      <input
+                        type="text"
+                        value={manualLastName}
+                        onChange={(e) => setManualLastName(e.target.value)}
+                        placeholder="Nom"
+                        className="text-xs px-2.5 py-1.5 rounded-lg border outline-none"
+                        style={{ borderColor: "#e5e5e5", background: "#fff" }}
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={manualCompany}
+                      onChange={(e) => setManualCompany(e.target.value)}
+                      placeholder="Entreprise"
+                      className="w-full text-xs px-2.5 py-1.5 rounded-lg border outline-none"
+                      style={{ borderColor: "#e5e5e5", background: "#fff" }}
+                    />
+                    <div className="relative">
+                      <Linkedin size={11} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: "#0a66c2" }} />
+                      <input
+                        type="text"
+                        value={manualLinkedinUrl}
+                        onChange={(e) => setManualLinkedinUrl(e.target.value)}
+                        placeholder="URL LinkedIn (optionnel) — https://www.linkedin.com/in/…"
+                        className="w-full text-xs pl-7 pr-2.5 py-1.5 rounded-lg border outline-none"
+                        style={{ borderColor: "#e5e5e5", background: "#fff" }}
+                      />
+                    </div>
+                    <textarea
+                      value={manualContext}
+                      onChange={(e) => setManualContext(e.target.value)}
+                      placeholder="Contexte / actualité / angle (optionnel)"
+                      rows={2}
+                      className="w-full text-xs px-2.5 py-1.5 rounded-lg border outline-none resize-none"
+                      style={{ borderColor: "#e5e5e5", background: "#fff" }}
+                    />
+                    {manualError && (
+                      <p className="text-[11px] px-2 py-1.5 rounded" style={{ background: "#fff0f3", color: "#f01563" }}>
+                        {manualError}
+                      </p>
+                    )}
+                    <button
+                      onClick={generateManual}
+                      disabled={manualGenerating}
+                      className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium transition-opacity"
+                      style={{ background: "#f01563", color: "#fff", opacity: manualGenerating ? 0.6 : 1 }}
+                    >
+                      {manualGenerating ? (
+                        <><Loader2 size={12} className="animate-spin" /> Génération…</>
+                      ) : (
+                        <><Sparkles size={12} /> Générer l&apos;email</>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Body */}
@@ -1380,6 +1516,24 @@ export default function ProspectingPage() {
                         placeholder="Ex : ROI mesurable, benchmarks sectoriels, cas client similaire…"
                         multiline
                       />
+                      {selectedContact.linkedinUrl && (
+                        <div className="pt-3" style={{ borderTop: "1px solid #f0f0f0" }}>
+                          <p className="text-[11px] font-medium mb-1.5" style={{ color: "#888" }}>Profil LinkedIn</p>
+                          <a
+                            href={selectedContact.linkedinUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-colors"
+                            style={{ borderColor: "#e5e5e5", color: "#0a66c2", background: "#f5f5f5" }}
+                          >
+                            <Linkedin size={12} />
+                            <span className="truncate max-w-[260px]">{selectedContact.linkedinUrl.replace(/^https?:\/\/(www\.)?/, "")}</span>
+                          </a>
+                          <p className="text-[10px] mt-1.5" style={{ color: "#aaa" }}>
+                            Vérifie que c&apos;est bien la bonne personne — son parcours sera utilisé pour personnaliser le message.
+                          </p>
+                        </div>
+                      )}
                     </div>
 
                     {/* Instructions block */}

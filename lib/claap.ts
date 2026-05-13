@@ -193,6 +193,87 @@ export function companyFromEmail(email: string | null | undefined): string | nul
     .join("-");
 }
 
+// Words that should never count as a prospect/company name in a meeting title.
+// Includes English+French generic meeting vocabulary plus quarter/year tokens.
+// Kept lowercase; matching is case-insensitive.
+const TITLE_NOISE_WORDS = new Set([
+  // English meeting nouns/verbs
+  "meeting", "call", "demo", "review", "discussion", "kickoff", "sync",
+  "intro", "discovery", "product", "strategy", "walkthrough", "session",
+  "follow", "followup", "weekly", "monthly", "daily", "standup", "checkin",
+  "onboarding", "training", "workshop", "presentation", "platform",
+  "partnership", "with", "and", "vs", "for", "from", "the", "via",
+  // French meeting nouns/verbs + prepositions
+  "réunion", "reunion", "présentation", "rendez", "rdv", "point",
+  "habilitation", "sprint", "planification", "appel", "atelier",
+  "le", "la", "les", "de", "du", "des", "un", "une", "et", "pour",
+  "avec", "chez", "sur",
+  // Quarters / common year markers
+  "q1", "q2", "q3", "q4", "h1", "h2",
+]);
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Build a "search hint" from a meeting title to feed HubSpot deal/company
+ * name lookups. The hint is the cleaned, most-likely-prospect-name portion of
+ * the title — useful when Claap captured no external participant emails (a
+ * frequent cause of "internal" mis-classification).
+ *
+ * Heuristic:
+ *  1. Remove the recorder's own company name (e.g. "Coachello").
+ *  2. Split on common pair separators (` x `, ` + `, ` & `, `:`, `|`, `/`).
+ *  3. For each resulting segment, drop short tokens + generic meeting words
+ *     (call, demo, review, sprint, point, etc.).
+ *  4. Return the longest cleaned segment (most likely to be a real company
+ *     name) — or null if nothing meaningful remains.
+ *
+ * Examples (recorder = coachello.io):
+ *   "Coachello x Besins Healthcare"      → "Besins Healthcare"
+ *   "Boeing x Coachello"                 → "Boeing"
+ *   "Plusgrade Strategy Discussion"      → "Plusgrade"
+ *   "Xpeng Product Demo Walkthrough"     → "Xpeng"
+ *   "COACHELLO : point habilitation"     → null   (only noise words remain)
+ *   "Sprint planning"                    → null
+ */
+export function extractTitleSearchHint(
+  title: string | null | undefined,
+  recorderEmail: string,
+): string | null {
+  if (!title) return null;
+  const ownCompany = companyFromEmail(recorderEmail);
+
+  let cleaned = title;
+  if (ownCompany) {
+    cleaned = cleaned.replace(new RegExp(`\\b${escapeRegex(ownCompany)}\\b`, "gi"), " ");
+  }
+
+  // Whitespace-bounded pair separators ("x", "+", "&", "vs") + structural ones
+  // (":", "|", "/"). Avoids splitting inside words like "Xpeng" or "B&B".
+  const segments = cleaned
+    .split(/\s+[x×+&]\s+|\s+vs\.?\s+|[:|/]+/i)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  const cleanedSegments = segments
+    .map((segment) => {
+      const words = segment
+        .split(/[\s\-_]+/)
+        .map((w) => w.trim())
+        .filter((w) => w.length >= 3 && !TITLE_NOISE_WORDS.has(w.toLowerCase()))
+        // Drop pure-numeric tokens (dates, IDs).
+        .filter((w) => !/^\d+$/.test(w));
+      return words.join(" ");
+    })
+    .filter((s) => s.length > 0);
+
+  if (cleanedSegments.length === 0) return null;
+  cleanedSegments.sort((a, b) => b.length - a.length);
+  return cleanedSegments[0];
+}
+
 /**
  * Keep only "external" participants — i.e. those whose email domain differs
  * from the recorder's. These are the prospects/customers we want to display

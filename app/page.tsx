@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo, memo } from "react";
 import { useRouter } from "next/navigation";
-import { History, Plus, Globe, Mail, MessageSquare, Database, FolderOpen, Check } from "lucide-react";
+import { History, Plus, Globe, Mail, MessageSquare, Database, FolderOpen, Linkedin, Check } from "lucide-react";
 import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -442,7 +442,7 @@ export default function IntelligencePage() {
               fontWeight: 600,
             }}
           >
-            HubSpot · Slack · Gmail · Drive · Web — Réponses en streaming
+            HubSpot · Slack · Gmail · Drive · LinkedIn · Web
           </p>
         </div>
       )}
@@ -466,6 +466,7 @@ function ConnectorsTabPlaceholder() {
     { icon: Mail, name: "Gmail", desc: "Recherche et lecture d'emails" },
     { icon: MessageSquare, name: "Slack", desc: "Recherche, lecture de canaux, envoi de message" },
     { icon: FolderOpen, name: "Google Drive", desc: "Recherche, lecture de fichiers" },
+    { icon: Linkedin, name: "LinkedIn", desc: "Profils, entreprises, posts, email finder (via Netrows)" },
     { icon: Globe, name: "Web", desc: "Recherche web temps réel" },
   ];
   return (

@@ -4,7 +4,11 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
-import { createCompanyContextCache } from "@/lib/prospect-enrichment";
+import {
+  createCompanyContextCache,
+  createCompanyLinkedInCache,
+  fetchLinkedInContext,
+} from "@/lib/prospect-enrichment";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -64,7 +68,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     "Tu es un expert en prospection B2B pour Coachello, une entreprise de coaching professionnel.",
     "Tu rédiges des emails de prospection ultra-personnalisés, humains et percutants.",
     "L'email doit sonner vrai, pas comme un template générique.",
-    "Mobilise ta connaissance générale de l'entreprise du prospect (secteur, taille, actualités, enjeux RH connus) pour ancrer l'accroche. Si un bloc CONTEXTE ENTREPRISE est fourni, priorise ces informations récentes. Reste factuel : n'invente jamais un fait, un chiffre ou un nom.",
+    "Mobilise ta connaissance générale de l'entreprise du prospect (secteur, taille, actualités, enjeux RH connus) pour ancrer l'accroche. Si des blocs CONTEXTE ENTREPRISE ou FICHE LINKEDIN ENTREPRISE sont fournis, priorise ces informations. Reste factuel : n'invente jamais un fait, un chiffre ou un nom.",
     "Varie les accroches d'un prospect à l'autre : si deux prospects se ressemblent, change l'angle (secteur, actualité, douleur).",
     `L'email doit être signé par : ${senderName}. Termine toujours l'email par une signature avec ce nom.`,
     "Réponds UNIQUEMENT en JSON valide avec exactement ces deux clés : { \"subject\": \"...\", \"body\": \"...\" }",
@@ -73,6 +77,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   ].filter(Boolean).join("\n");
 
   const getCompanyContext = createCompanyContextCache();
+  const getCompanyLinkedIn = createCompanyLinkedInCache();
   const client = new Anthropic();
   let generated = 0;
   let errors = 0;
@@ -87,7 +92,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
         const extra = (typeof email.extra_data === "object" && email.extra_data) ? email.extra_data as Record<string, string> : {};
 
-        const companyContext = email.company ? await getCompanyContext(email.company) : "";
+        const [companyContext, linkedin] = await Promise.all([
+          email.company ? getCompanyContext(email.company) : Promise.resolve(""),
+          fetchLinkedInContext({
+            firstName: email.first_name,
+            lastName: email.last_name,
+            email: email.email,
+            company: email.company,
+            linkedinUrl: extra.linkedinUrl ?? null,
+          }),
+        ]);
+        const companyLinkedIn = email.company
+          ? await getCompanyLinkedIn(email.company, linkedin.currentCompanyUsername)
+          : "";
 
         const prospectBlock = [
           `Nom : ${email.first_name} ${email.last_name}`,
@@ -106,6 +123,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         const userPrompt = [
           `OBJECTIF DE LA CAMPAGNE :\n${campaign.objective}`,
           `\nINFORMATIONS SUR LE PROSPECT :\n${prospectBlock}`,
+          linkedin.text ? `\nPROFIL LINKEDIN ENRICHI (utilise-le pour personnaliser : 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé) :\n${linkedin.text}` : "",
+          companyLinkedIn ? `\nFICHE LINKEDIN ENTREPRISE :\n${companyLinkedIn}` : "",
           companyContext ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyContext}` : "",
           "\nRédige un email de prospection personnalisé pour cette personne.",
         ].filter(Boolean).join("\n");

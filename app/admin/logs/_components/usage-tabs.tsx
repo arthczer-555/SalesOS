@@ -62,10 +62,6 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   chat:                    "Onglet CoachelloGPT — chaque message envoyé au bot",
   conversations:           "Onglet CoachelloGPT — génération automatique du titre de conversation (1er message uniquement)",
   briefing:                "Onglet Briefing — synthèse pré-meeting (contexte HubSpot + calendrier)",
-  competitive:             "Onglet Competition — analyse d'un concurrent",
-  competitive_chat:        "Onglet Competition — chat contextuel sur un concurrent",
-  competitive_battlecard:  "Onglet Competition — génération de battlecard",
-  competitive_report:      "Onglet Competition — rapport de veille concurrentielle",
   prospection_search:      "Onglet Prospection — recherche IA de prospects (langage naturel)",
   prospection_generate:    "Onglet Prospection — génération d'email de prospection",
   prospection_details:     "Onglet Prospection — inférence des champs de contexte depuis HubSpot",
@@ -141,10 +137,6 @@ const FEATURE_TO_PREF: Record<string, string> = {
   deals_analyze:           "deals_analyze",
   deals_email:             "deals_email",
   prospection_generate:    "prospection",
-  competitive:             "competitive",
-  competitive_chat:        "competitive",
-  competitive_battlecard:  "competitive",
-  competitive_report:      "competitive",
   market_scan:             "market",
   market_signals:          "market",
 };
@@ -157,7 +149,6 @@ const PREF_DEFAULTS: Record<string, string> = {
   deals_analyze:  "claude-sonnet-4-6",
   deals_email:    "claude-haiku-4-5-20251001",
   prospection:    "claude-haiku-4-5-20251001",
-  competitive:    "claude-haiku-4-5-20251001",
   market:         "claude-haiku-4-5-20251001",
 };
 

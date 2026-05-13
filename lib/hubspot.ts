@@ -267,6 +267,7 @@ export type DealSnapshot = {
   name: string;
   stage: string;
   stage_label: string | null;
+  pipeline_label: string | null;
   amount: number | null;
   close_date: string | null;
   owner_id: string | null;
@@ -296,7 +297,7 @@ const DEAL_PROPS = [
 type DealGetResponse = { properties?: Record<string, string> };
 type AssocResponse = { results?: { id: string }[] };
 type OwnersResponse = { results?: { id: string; firstName?: string; lastName?: string; email?: string }[] };
-type PipelinesResponse = { results?: { stages: { id: string; label: string }[] }[] };
+type PipelinesResponse = { results?: { label?: string; stages: { id: string; label: string }[] }[] };
 type SearchResultRow = { properties?: Record<string, string> };
 
 /**
@@ -325,10 +326,15 @@ export async function fetchDealContext(dealId: string): Promise<DealSnapshot | n
   }
 
   let stageLabel: string | null = null;
+  let pipelineLabel: string | null = null;
   if (pipelinesRes.status === "fulfilled") {
     for (const pl of pipelinesRes.value.results ?? []) {
       const st = pl.stages.find((s) => s.id === p.dealstage);
-      if (st) { stageLabel = st.label; break; }
+      if (st) {
+        stageLabel = st.label;
+        pipelineLabel = pl.label ?? null;
+        break;
+      }
     }
   }
 
@@ -423,6 +429,7 @@ export async function fetchDealContext(dealId: string): Promise<DealSnapshot | n
     name: p.dealname ?? "",
     stage: p.dealstage ?? "",
     stage_label: stageLabel,
+    pipeline_label: pipelineLabel,
     amount: p.amount ? parseFloat(p.amount) : null,
     close_date: p.closedate ?? null,
     owner_id: p.hubspot_owner_id ?? null,
@@ -446,7 +453,7 @@ export function renderDealContextForPrompt(snapshot: DealSnapshot | null): strin
   const lines: string[] = [];
   lines.push(`## Deal HubSpot`);
   lines.push(`- Nom : ${snapshot.name || "?"}`);
-  lines.push(`- Stage : ${snapshot.stage_label ?? snapshot.stage ?? "?"}`);
+  lines.push(`- Stage : ${snapshot.stage_label ?? snapshot.stage ?? "?"}${snapshot.pipeline_label ? ` (pipeline ${snapshot.pipeline_label})` : ""}`);
   if (snapshot.amount != null) lines.push(`- Montant : ${snapshot.amount.toLocaleString("fr-FR")}€`);
   if (snapshot.close_date) lines.push(`- Close date : ${new Date(snapshot.close_date).toLocaleDateString("fr-FR")}`);
   if (snapshot.owner_name) lines.push(`- Owner : ${snapshot.owner_name}`);
@@ -476,17 +483,70 @@ export function renderDealContextForPrompt(snapshot: DealSnapshot | null): strin
   return lines.join("\n");
 }
 
+// Public/free email domains never identify a company — exclude them from any
+// domain-based lookup. Kept here (not imported from lib/claap.ts) to avoid a
+// cross-module dep just for one constant.
+const PUBLIC_EMAIL_DOMAINS_FOR_DEAL_LOOKUP = new Set([
+  "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.fr",
+  "yahoo.com", "yahoo.fr", "icloud.com", "me.com", "live.com", "live.fr",
+  "msn.com", "protonmail.com", "proton.me", "pm.me",
+  "free.fr", "orange.fr", "sfr.fr", "wanadoo.fr", "laposte.net", "bbox.fr",
+  "neuf.fr", "aol.com",
+]);
+
+// Pick the best deal among a candidate pool: prefer open (not closed) and the
+// most recently modified. Returns null only if the pool is empty.
+async function pickBestDealId(dealIds: string[]): Promise<string | null> {
+  if (dealIds.length === 0) return null;
+  if (dealIds.length === 1) return dealIds[0];
+
+  const details = await Promise.allSettled(
+    dealIds.map((id) =>
+      hubspotFetch<{ id: string; properties: Record<string, string> }>(
+        `/crm/v3/objects/deals/${id}?properties=dealstage,hs_lastmodifieddate,hs_is_closed`,
+      ),
+    ),
+  );
+  const candidates = details
+    .filter(
+      (d): d is PromiseFulfilledResult<{ id: string; properties: Record<string, string> }> =>
+        d.status === "fulfilled",
+    )
+    .map((d) => ({
+      id: d.value.id,
+      isClosed: d.value.properties.hs_is_closed === "true",
+      lastModified: d.value.properties.hs_lastmodifieddate ?? "",
+    }));
+
+  if (candidates.length === 0) return dealIds[0];
+  const open = candidates.filter((c) => !c.isClosed);
+  const pool = open.length > 0 ? open : candidates;
+  pool.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
+  return pool[0].id;
+}
+
 /**
  * Given a meeting's participants + recorder, try to find a HubSpot deal linked
  * to one of the external contacts. Returns the best candidate deal ID or null.
  *
  * "External" = participant email whose domain differs from the recorder's.
+ *
+ * Three-stage matching, each used as a fallback when the previous yields no hit:
+ *  1. Exact email match on HubSpot contacts → deals associated to those contacts.
+ *  2. HubSpot companies matching the external email domains → deals on those
+ *     companies. Catches the case where the prospect has no contact record yet.
+ *  3. HubSpot companies matching `prospectCompanyHint` (typically extracted from
+ *     the meeting title like "Coachello x Besins Healthcare"). Catches the case
+ *     where Claap captured no external participants at all (mis-classified as
+ *     an internal meeting).
+ *
  * Among matches, prefers open deals (not closed-won/lost) and the most recently
  * modified one.
  */
 export async function resolveDealFromParticipants(
   participantEmails: string[],
   recorderEmail: string,
+  prospectCompanyHint?: string | null,
 ): Promise<string | null> {
   if (!process.env.HUBSPOT_ACCESS_TOKEN) return null;
 
@@ -500,55 +560,132 @@ export async function resolveDealFromParticipants(
         .filter((e): e is string => !!e && e.includes("@") && e.split("@")[1] !== recorderDomain),
     ),
   );
-  if (externalEmails.length === 0) return null;
 
-  // 1) Find HubSpot contacts for those emails (one filterGroup per email → OR)
-  const search = await hubspotFetch<{ results?: { id: string }[] }>(
-    "/crm/v3/objects/contacts/search",
+  // ── Stage 1: contacts by exact email ──────────────────────────────────────
+  if (externalEmails.length > 0) {
+    const contactSearch = await hubspotFetch<{ results?: { id: string }[] }>(
+      "/crm/v3/objects/contacts/search",
+      "POST",
+      {
+        filterGroups: externalEmails.slice(0, 10).map((email) => ({
+          filters: [{ propertyName: "email", operator: "EQ", value: email }],
+        })),
+        properties: ["email"],
+        limit: 20,
+      },
+    ).catch(() => ({ results: [] }));
+
+    const contactIds = (contactSearch.results ?? []).map((c) => c.id);
+    if (contactIds.length > 0) {
+      const assocMap = await hubspotBatchAssociations("contacts", "deals", contactIds);
+      const dealIds = new Set<string>();
+      for (const ids of assocMap.values()) for (const id of ids) dealIds.add(id);
+      if (dealIds.size > 0) {
+        const picked = await pickBestDealId([...dealIds]);
+        if (picked) return picked;
+      }
+    }
+  }
+
+  // Helper: companies → deals, returning the best candidate or null.
+  const dealFromCompanyIds = async (companyIds: string[]): Promise<string | null> => {
+    if (companyIds.length === 0) return null;
+    const assocMap = await hubspotBatchAssociations("companies", "deals", companyIds);
+    const dealIds = new Set<string>();
+    for (const ids of assocMap.values()) for (const id of ids) dealIds.add(id);
+    if (dealIds.size === 0) return null;
+    return pickBestDealId([...dealIds]);
+  };
+
+  // ── Stage 2: companies by domain → deals ──────────────────────────────────
+  // Reached when no contact matched, or contacts have no associated deals.
+  // Common case: the prospect's company is in HubSpot but no individual
+  // contact has been created yet.
+  const externalDomains = Array.from(
+    new Set(
+      externalEmails
+        .map((e) => e.split("@")[1])
+        .filter((d): d is string => !!d && !PUBLIC_EMAIL_DOMAINS_FOR_DEAL_LOOKUP.has(d)),
+    ),
+  );
+  if (externalDomains.length > 0) {
+    const companySearch = await hubspotFetch<{ results?: { id: string }[] }>(
+      "/crm/v3/objects/companies/search",
+      "POST",
+      {
+        filterGroups: externalDomains.slice(0, 10).map((domain) => ({
+          filters: [{ propertyName: "domain", operator: "EQ", value: domain }],
+        })),
+        properties: ["domain"],
+        limit: 20,
+      },
+    ).catch(() => ({ results: [] }));
+
+    const byDomain = await dealFromCompanyIds(
+      (companySearch.results ?? []).map((c) => c.id),
+    );
+    if (byDomain) return byDomain;
+  }
+
+  // ── Stage 3: HubSpot name search (deals first, then companies) ────────────
+  // Reached when participant emails couldn't resolve anything. The hint comes
+  // from a cleaned meeting title (e.g. "Coachello x Besins Healthcare" →
+  // "Besins Healthcare", "Plusgrade Strategy Discussion" → "Plusgrade"). We
+  // search deals directly first since that's what the caller ultimately needs;
+  // companies are a fallback for early-stage prospects without a deal yet.
+  const hint = prospectCompanyHint?.trim();
+  if (!hint) return null;
+
+  // Split the hint into searchable tokens. CONTAINS_TOKEN matches per-token,
+  // and AND-ing tokens within one filter group makes multi-word names like
+  // "Besins Healthcare" robust without forcing exact phrase matches.
+  const tokens = hint
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length >= 2);
+  if (tokens.length === 0) return null;
+
+  const dealNameSearch = await hubspotFetch<{ results?: { id: string }[] }>(
+    "/crm/v3/objects/deals/search",
     "POST",
     {
-      filterGroups: externalEmails.slice(0, 10).map((email) => ({
-        filters: [{ propertyName: "email", operator: "EQ", value: email }],
-      })),
-      properties: ["email"],
+      filterGroups: [
+        {
+          filters: tokens.map((token) => ({
+            propertyName: "dealname",
+            operator: "CONTAINS_TOKEN",
+            value: token,
+          })),
+        },
+      ],
+      properties: ["dealname"],
       limit: 20,
     },
   ).catch(() => ({ results: [] }));
 
-  const contactIds = (search.results ?? []).map((c) => c.id);
-  if (contactIds.length === 0) return null;
+  const dealNameIds = (dealNameSearch.results ?? []).map((d) => d.id);
+  if (dealNameIds.length > 0) {
+    const picked = await pickBestDealId(dealNameIds);
+    if (picked) return picked;
+  }
 
-  // 2) Get associated deals for these contacts
-  const assocMap = await hubspotBatchAssociations("contacts", "deals", contactIds);
-  const dealIds = new Set<string>();
-  for (const ids of assocMap.values()) for (const id of ids) dealIds.add(id);
-  if (dealIds.size === 0) return null;
-  if (dealIds.size === 1) return [...dealIds][0];
+  const companyNameSearch = await hubspotFetch<{ results?: { id: string }[] }>(
+    "/crm/v3/objects/companies/search",
+    "POST",
+    {
+      filterGroups: [
+        {
+          filters: tokens.map((token) => ({
+            propertyName: "name",
+            operator: "CONTAINS_TOKEN",
+            value: token,
+          })),
+        },
+      ],
+      properties: ["name"],
+      limit: 20,
+    },
+  ).catch(() => ({ results: [] }));
 
-  // 3) Multiple candidates — fetch minimal props and rank (prefer open, most recent)
-  const dealList = [...dealIds];
-  const details = await Promise.allSettled(
-    dealList.map((id) =>
-      hubspotFetch<{ id: string; properties: Record<string, string> }>(
-        `/crm/v3/objects/deals/${id}?properties=dealstage,hs_lastmodifieddate,hs_is_closed`,
-      ),
-    ),
-  );
-  const candidates = details
-    .filter(
-      (d): d is PromiseFulfilledResult<{ id: string; properties: Record<string, string> }> =>
-        d.status === "fulfilled",
-    )
-    .map((d) => ({
-      id: d.value.id,
-      stage: d.value.properties.dealstage ?? "",
-      isClosed: d.value.properties.hs_is_closed === "true",
-      lastModified: d.value.properties.hs_lastmodifieddate ?? "",
-    }));
-
-  if (candidates.length === 0) return dealList[0];
-  const open = candidates.filter((c) => !c.isClosed);
-  const pool = open.length > 0 ? open : candidates;
-  pool.sort((a, b) => b.lastModified.localeCompare(a.lastModified));
-  return pool[0].id;
+  return dealFromCompanyIds((companyNameSearch.results ?? []).map((c) => c.id));
 }

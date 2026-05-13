@@ -1,4 +1,4 @@
-import useSWR from "swr";
+import useSWRInfinite from "swr/infinite";
 import type { Intel, IntelFilters, IntelStats } from "@/lib/intel-types";
 
 interface IntelsResponse {
@@ -7,7 +7,7 @@ interface IntelsResponse {
   nextCursor: number | null;
 }
 
-function buildKey(filters: IntelFilters): string {
+function buildKey(filters: IntelFilters, cursor: number): string {
   const params = new URLSearchParams();
   if (filters.agents?.length) filters.agents.forEach((a) => params.append("agent", a));
   if (filters.scoreMin) params.set("score_min", String(filters.scoreMin));
@@ -15,20 +15,39 @@ function buildKey(filters: IntelFilters): string {
   if (filters.status && filters.status !== "all") params.set("status", filters.status);
   if (filters.q) params.set("q", filters.q);
   if (filters.username) params.set("username", filters.username);
+  if (cursor > 0) params.set("cursor", String(cursor));
   return `/api/intel/list?${params.toString()}`;
 }
 
 export function useIntels(filters: IntelFilters) {
-  const { data, error, isLoading, mutate } = useSWR<IntelsResponse>(buildKey(filters), {
-    revalidateOnFocus: false,
-    dedupingInterval: 15_000,
-  });
+  const { data, error, isLoading, isValidating, size, setSize, mutate } = useSWRInfinite<IntelsResponse>(
+    (pageIndex, previousPageData) => {
+      if (previousPageData && previousPageData.nextCursor === null) return null;
+      const cursor = previousPageData?.nextCursor ?? 0;
+      return buildKey(filters, cursor);
+    },
+    {
+      revalidateOnFocus: false,
+      revalidateFirstPage: false,
+      dedupingInterval: 15_000,
+      persistSize: false,
+    }
+  );
+
+  const pages = data ?? [];
+  const intels = pages.flatMap((p) => p.intels);
+  const stats = pages[0]?.stats ?? { total: 0, unread: 0, actionable: 0 };
+  const hasMore = pages.length > 0 ? pages[pages.length - 1].nextCursor !== null : false;
+  const isLoadingMore = isValidating && size > 1 && data && typeof data[size - 1] === "undefined";
 
   return {
-    intels: data?.intels ?? [],
-    stats: data?.stats ?? { total: 0, unread: 0, actionable: 0 },
+    intels,
+    stats,
     isLoading,
+    isLoadingMore: !!isLoadingMore,
+    hasMore,
     error: error ? (error instanceof Error ? error.message : "Erreur de chargement") : "",
+    loadMore: () => setSize((s) => s + 1),
     reload: () => mutate(),
   };
 }

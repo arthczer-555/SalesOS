@@ -1,12 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { AGENT_BY_ID } from "@/lib/intel-agents";
 import type { AgentId } from "@/lib/intel-types";
+import { runLinkedinScan } from "@/lib/intel/run-linkedin-scan";
+import { logAgentRun } from "@/lib/intel/log-agent-run";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+// Fire-and-forget : on enregistre last_run_status = "running" + 202,
+// l'exécution réelle se poursuit via `after()` après réponse au client.
+// Évite l'« Inactivity Timeout » du proxy Vercel sur les scans longs.
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
@@ -22,60 +27,81 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   await db
     .from("intel_agent_runs")
     .upsert(
-      { user_id: user.id, agent_id: id, last_run_status: "partial" },
+      { user_id: user.id, agent_id: id, last_run_at: startedAt, last_run_status: "running", last_run_error: null },
       { onConflict: "user_id,agent_id" }
     );
 
-  // Forward request to the actual runner endpoint (relative path on the same app)
-  try {
-    const baseUrl = req.nextUrl.origin;
-    const cookie = req.headers.get("cookie") ?? "";
-    const res = await fetch(`${baseUrl}${def.runEndpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", cookie },
-      body: JSON.stringify({}),
-    });
-    const text = await res.text();
+  const userId = user.id;
+  const baseUrl = req.nextUrl.origin;
+  const cookie = req.headers.get("cookie") ?? "";
+  const runEndpoint = def.runEndpoint;
+
+  after(async () => {
+    let signalsCount = 0;
+    let ok = true;
+    let errorText: string | null = null;
     let payload: unknown = null;
+
     try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = { raw: text.slice(0, 200) };
+      if (id === "company-news") {
+        // Appel direct in-process : évite le 2e hop HTTP et son Inactivity Timeout.
+        const result = await runLinkedinScan({ callerUserId: userId });
+        signalsCount = result.analysis.signals_created;
+        payload = result;
+      } else {
+        // Autres agents : on garde le saut HTTP en attendant leur extraction.
+        const res = await fetch(`${baseUrl}${runEndpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", cookie },
+          body: JSON.stringify({}),
+        });
+        const text = await res.text();
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = { raw: text.slice(0, 200) };
+        }
+        ok = res.ok;
+        if (!ok) errorText = String(text).slice(0, 500);
+        if (
+          payload &&
+          typeof payload === "object" &&
+          "signalsCount" in payload &&
+          typeof (payload as { signalsCount: unknown }).signalsCount === "number"
+        ) {
+          signalsCount = (payload as { signalsCount: number }).signalsCount;
+        }
+      }
+    } catch (e) {
+      ok = false;
+      errorText = e instanceof Error ? e.message : String(e);
     }
-    const ok = res.ok;
-    const signalsCount =
-      (payload && typeof payload === "object" && "signalsCount" in payload && typeof (payload as { signalsCount: unknown }).signalsCount === "number"
-        ? (payload as { signalsCount: number }).signalsCount
-        : 0);
 
     await db
       .from("intel_agent_runs")
       .upsert(
         {
-          user_id: user.id,
+          user_id: userId,
           agent_id: id,
           last_run_at: startedAt,
           last_run_status: ok ? "ok" : "error",
           last_run_signals_count: signalsCount,
-          last_run_error: ok ? null : String(text).slice(0, 500),
+          last_run_error: errorText,
         },
         { onConflict: "user_id,agent_id" }
       );
 
-    return NextResponse.json({ ok, payload });
-  } catch (e) {
-    await db
-      .from("intel_agent_runs")
-      .upsert(
-        {
-          user_id: user.id,
-          agent_id: id,
-          last_run_at: startedAt,
-          last_run_status: "error",
-          last_run_error: e instanceof Error ? e.message : String(e),
-        },
-        { onConflict: "user_id,agent_id" }
-      );
-    return NextResponse.json({ error: e instanceof Error ? e.message : "Erreur" }, { status: 500 });
-  }
+    await logAgentRun({
+      agentId: id,
+      triggeredBy: "manual",
+      userId,
+      startedAt,
+      status: ok ? "ok" : "error",
+      signalsCount,
+      error: errorText,
+      payload,
+    });
+  });
+
+  return NextResponse.json({ ok: true, queued: true }, { status: 202 });
 }

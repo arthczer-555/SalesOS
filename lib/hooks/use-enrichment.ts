@@ -29,7 +29,9 @@ export async function searchNetrows(criteria: NetrowsCriteria & { start?: number
   return data;
 }
 
-export async function searchHubspot(criteria: HubspotCriteria): Promise<{ profiles: EnrichmentProfile[] }> {
+export async function searchHubspot(
+  criteria: HubspotCriteria,
+): Promise<{ profiles: EnrichmentProfile[]; skippedByRadar?: number; hasMore?: boolean }> {
   const r = await fetch("/api/intel/enrich/hubspot-search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -77,6 +79,8 @@ export async function addToRadarBulk(profiles: EnrichmentProfile[]) {
         company: p.company,
         profileUrl: p.profileUrl,
         source: p.source ?? "manual",
+        is_champion: p.isChampion === true,
+        hubspotId: p.hubspotId ?? null,
       })),
     }),
   });

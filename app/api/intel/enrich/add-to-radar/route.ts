@@ -17,6 +17,8 @@ interface AddInput {
   company?: string | null;
   profileUrl?: string | null;
   source?: ProfileSource;
+  is_champion?: boolean;
+  hubspotId?: string | null;
 }
 
 export async function POST(req: NextRequest) {
@@ -27,8 +29,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Netrows non configuré" }, { status: 500 });
   }
 
-  const body = (await req.json().catch(() => ({}))) as { profiles?: AddInput[] };
+  const body = (await req.json().catch(() => ({}))) as {
+    profiles?: AddInput[];
+    is_champion?: boolean;
+  };
   const inputs = body.profiles ?? [];
+  const globalChampion = body.is_champion === true;
   if (inputs.length === 0) return NextResponse.json({ error: "profiles[] requis" }, { status: 400 });
 
   const added: string[] = [];
@@ -66,14 +72,24 @@ export async function POST(req: NextRequest) {
       await new Promise((r) => setTimeout(r, 800));
     }
 
-    // ── 2. Skip si déjà actif au Radar
+    // ── 2. Skip si déjà actif au Radar (sauf si on veut le promouvoir champion)
+    const wantChampion = globalChampion || p.is_champion === true;
     const { data: existing } = await db
       .from("linkedin_monitored_profiles")
-      .select("radar_active")
+      .select("radar_active, is_champion")
       .eq("username", username)
       .maybeSingle();
 
     if (existing?.radar_active === true) {
+      // Déjà au Radar : si on demande le flag champion et qu'il ne l'est pas
+      // encore, on flippe juste is_champion sans rappeler Netrows. On en profite
+      // pour backfill le hubspot_id si on l'a et qu'il manque encore.
+      const patch: Record<string, unknown> = {};
+      if (wantChampion && existing.is_champion !== true) patch.is_champion = true;
+      if (p.hubspotId) patch.hubspot_id = p.hubspotId;
+      if (Object.keys(patch).length > 0) {
+        await db.from("linkedin_monitored_profiles").update(patch).eq("username", username);
+      }
       skipped.push(username);
       continue;
     }
@@ -81,20 +97,23 @@ export async function POST(req: NextRequest) {
     // ── 3. Add to Netrows Radar + upsert DB
     try {
       await addProfileToRadar(username);
+      const shouldFlagChampion = globalChampion || p.is_champion === true;
+      const row: Record<string, unknown> = {
+        username,
+        full_name: p.fullName ?? displayName,
+        headline: p.headline ?? null,
+        company: p.company ?? null,
+        profile_url: p.profileUrl ?? `https://www.linkedin.com/in/${username}/`,
+        source: p.source ?? "manual",
+        radar_active: true,
+      };
+      if (p.hubspotId) row.hubspot_id = p.hubspotId;
+      // Ne JAMAIS écrire is_champion=false ici (sinon on désactiverait un
+      // champion existant). On ne le set qu'à la promotion explicite.
+      if (shouldFlagChampion) row.is_champion = true;
       await db
         .from("linkedin_monitored_profiles")
-        .upsert(
-          {
-            username,
-            full_name: p.fullName ?? displayName,
-            headline: p.headline ?? null,
-            company: p.company ?? null,
-            profile_url: p.profileUrl ?? `https://www.linkedin.com/in/${username}/`,
-            source: p.source ?? "manual",
-            radar_active: true,
-          },
-          { onConflict: "username" }
-        );
+        .upsert(row, { onConflict: "username" });
       added.push(username);
     } catch (e) {
       failed.push({ name: username, error: e instanceof Error ? e.message : String(e) });

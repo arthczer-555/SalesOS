@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hubspotFetch, hubspotSearchAll } from "@/lib/hubspot";
+import { loadRadarKeys, matchContactAgainstRadar } from "@/lib/radar-overlap";
 import type { HubspotCriteria } from "@/lib/intel-types";
 
 export const dynamic = "force-dynamic";
@@ -12,6 +13,7 @@ export const maxDuration = 60;
 // Gère aussi les filtres deal en faisant la jointure deals → contacts associés.
 
 const MAX_DEAL_SAMPLE = 500; // hard limit pour borner le coût
+const RADAR_SCAN_CAP = 300;  // borne pour le calcul de l'overlap Radar
 
 function rangeCutoff(range: HubspotCriteria["createdRange"]): string | null {
   const now = Date.now();
@@ -136,7 +138,7 @@ export async function POST(req: NextRequest) {
       }
 
       if (contactIds.size === 0) {
-        return NextResponse.json({ count: 0, dealCount: deal_total, truncated });
+        return NextResponse.json({ count: 0, dealCount: deal_total, truncated, radarCount: 0 });
       }
 
       // HubSpot limite les `values` à ~100 par filtre. Si on a plus de contactIds,
@@ -148,6 +150,8 @@ export async function POST(req: NextRequest) {
           dealCount: deal_total,
           truncated: true,
           approximated: true,
+          radarCount: null,
+          radarApproximated: true,
         });
       }
 
@@ -158,18 +162,75 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── 3. Final count of contacts
+  // ── 3. Final count of contacts + overlap avec le Radar (en parallèle)
   try {
-    const data = await hubspotFetch<{ total: number }>(`/crm/v3/objects/contacts/search`, "POST", {
+    const radarKeys = await loadRadarKeys(db);
+
+    const baseBody = {
       filterGroups: filters.length ? [{ filters }] : undefined,
       ...(c.q?.trim() ? { query: c.q.trim() } : {}),
-      properties: ["firstname"],
-      limit: 1,
-    });
+    };
+
+    // On échantillonne TOUS les contacts qui matchent (pas seulement ceux
+    // avec linkedin_url) — l'overlap se calcule désormais aussi via
+    // hubspot_id et nom+entreprise, donc le linkedin_url n'est plus requis.
+    const shouldScanRadar = radarKeys.size > 0;
+
+    interface SampleRow {
+      id: string;
+      properties: { firstname?: string; lastname?: string; company?: string; linkedin_url?: string };
+    }
+
+    const [countData, sampleRows] = await Promise.all([
+      hubspotFetch<{ total: number }>(`/crm/v3/objects/contacts/search`, "POST", {
+        ...baseBody,
+        properties: ["firstname"],
+        limit: 1,
+      }),
+      shouldScanRadar
+        ? hubspotSearchAll<SampleRow>(
+            "contacts",
+            {
+              ...baseBody,
+              properties: ["firstname", "lastname", "company", "linkedin_url"],
+              limit: 100,
+            },
+            RADAR_SCAN_CAP,
+          ).catch(() => [] as SampleRow[])
+        : Promise.resolve([] as SampleRow[]),
+    ]);
+
+    const total = countData.total ?? 0;
+
+    let radarHits = 0;
+    for (const row of sampleRows) {
+      const p = row.properties ?? {};
+      const res = matchContactAgainstRadar(
+        {
+          hubspotId: row.id,
+          firstName: p.firstname,
+          lastName: p.lastname,
+          company: p.company,
+          linkedinUrl: p.linkedin_url,
+        },
+        radarKeys,
+      );
+      if (res.matched) radarHits++;
+    }
+
+    // Si le sample ne couvre qu'une fraction des contacts, on extrapole
+    // linéairement pour donner une estimation utile.
+    const radarApproximated = sampleRows.length > 0 && total > sampleRows.length;
+    const radarCount = radarApproximated
+      ? Math.round((radarHits / sampleRows.length) * total)
+      : radarHits;
+
     return NextResponse.json({
-      count: data.total ?? 0,
+      count: total,
       dealCount: deal_total,
       truncated,
+      radarCount,
+      radarApproximated,
     });
   } catch (e) {
     console.error("[hubspot-count] contact search error:", e);

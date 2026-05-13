@@ -15,7 +15,21 @@ function toStringArray(v: unknown): string[] {
   if (v && typeof v === "object") {
     return Object.values(v as Record<string, unknown>).filter((x): x is string => typeof x === "string");
   }
-  if (typeof v === "string") return [v];
+  if (typeof v === "string") {
+    // Haiku occasionally returns the whole array as a JSON-encoded string
+    // (e.g. `'[ "a", "b", "c" ]'`) instead of a real array — try to parse it
+    // before falling back to a single-item list.
+    const trimmed = v.trim();
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((x): x is string => typeof x === "string");
+        }
+      } catch { /* not valid JSON — keep as single string */ }
+    }
+    return [v];
+  }
   return [];
 }
 

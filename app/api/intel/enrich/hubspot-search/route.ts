@@ -3,6 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hubspotFetch, hubspotSearchAll } from "@/lib/hubspot";
 import { resolveUsername } from "@/lib/netrows";
+import { loadRadarKeys, matchContactAgainstRadar, type RadarKeys } from "@/lib/radar-overlap";
 import type { EnrichmentProfile, HubspotCriteria } from "@/lib/intel-types";
 
 export const dynamic = "force-dynamic";
@@ -82,7 +83,9 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
   const c = (await req.json().catch(() => ({}))) as HubspotCriteria;
-  const limit = Math.max(10, Math.min(200, c.limit ?? 100));
+  const limit = Math.max(10, Math.min(500, c.limit ?? 100));
+  const excludeRadar = c.excludeRadar !== false; // défaut true
+  const excludeIdSet = new Set(c.excludeIds ?? []);
 
   // ── 1. Resolve owners (default = me)
   let owners = (c.owner ?? []).filter(Boolean);
@@ -233,7 +236,22 @@ export async function POST(req: NextRequest) {
     };
     const sorts = sortMap[c.sort ?? "createdate-desc"];
 
-    // ── 6. Run contact search
+    // ── 6. Charge les clés Radar (hubspot_id + username + name+company) pour exclusion
+    let radarKeys: RadarKeys = {
+      hubspotIds: new Set(),
+      usernames: new Set(),
+      nameCompanyKeys: new Set(),
+      keyToUsername: new Map(),
+      size: 0,
+    };
+    if (excludeRadar) {
+      radarKeys = await loadRadarKeys(db);
+    }
+
+    // ── 7. Run contact search avec sur-échantillonnage pour absorber le filtrage radar/excludeIds
+    const overhead = radarKeys.size + excludeIdSet.size;
+    const oversample = Math.min(1000, limit + overhead + 50);
+
     const searchBody: {
       properties: string[];
       filterGroups?: Array<{ filters: typeof filters }>;
@@ -244,41 +262,100 @@ export async function POST(req: NextRequest) {
       properties: PROPERTIES,
       filterGroups: filters.length ? [{ filters }] : undefined,
       sorts,
-      limit,
+      limit: 100, // page size HubSpot (max 100)
     };
     if (c.q?.trim()) searchBody.query = c.q.trim();
 
-    let contacts = await hubspotSearchAll<RawContact>("contacts", searchBody, limit);
+    const rawContacts = await hubspotSearchAll<RawContact>("contacts", searchBody, oversample);
 
-    // ── 7. If we didn't already fetch deals (no deal filter), batch-fetch top deals for these contacts
+    // Filtre client-side : excludeIds + Radar
+    let skippedByRadar = 0;
+    let skippedByExcludeIds = 0;
+    const filteredContacts: RawContact[] = [];
+    // Pour backfill opportuniste du hubspot_id sur les rows Radar matchées par nom+entreprise
+    const radarBackfill: { username: string; hubspotId: string }[] = [];
+    for (const row of rawContacts) {
+      if (excludeIdSet.has(row.id)) {
+        skippedByExcludeIds++;
+        continue;
+      }
+      if (excludeRadar) {
+        const m = matchContactAgainstRadar(
+          {
+            hubspotId: row.id,
+            firstName: row.properties.firstname,
+            lastName: row.properties.lastname,
+            company: row.properties.company,
+            linkedinUrl: row.properties.linkedin_url,
+          },
+          radarKeys,
+        );
+        if (m.matched) {
+          skippedByRadar++;
+          if (m.matchedBy === "name_company" && m.matchedUsername) {
+            radarBackfill.push({ username: m.matchedUsername, hubspotId: row.id });
+          }
+          continue;
+        }
+      }
+      filteredContacts.push(row);
+      if (filteredContacts.length >= limit) break;
+    }
+    let contacts = filteredContacts;
+
+    // Backfill du hubspot_id sur les rows Radar matchées par name+company.
+    // Non-bloquant : on lance les updates en parallèle sans attendre.
+    if (radarBackfill.length > 0) {
+      void Promise.all(
+        radarBackfill.map((b) =>
+          db
+            .from("linkedin_monitored_profiles")
+            .update({ hubspot_id: b.hubspotId })
+            .eq("username", b.username)
+            .is("hubspot_id", null),
+        ),
+      ).catch((e) => console.error("[hubspot-search] radar hubspot_id backfill failed:", e));
+    }
+    const hasMore = rawContacts.length >= oversample;
+
+    // ── 8. If we didn't already fetch deals (no deal filter), batch-fetch top deals for these contacts (chunké par 100)
     if (!wantsDealFilter && contacts.length > 0) {
-      const batchResp = await hubspotFetch<{
-        results?: { from: { id: string }; to: { toObjectId: string }[] }[];
-      }>(`/crm/v4/associations/contacts/deals/batch/read`, "POST", {
-        inputs: contacts.slice(0, 100).map((cc) => ({ id: cc.id })),
-      }).catch(() => ({ results: [] }));
-
-      const dealIdsToFetch = new Set<string>();
       const contactToDealIds = new Map<string, string[]>();
-      for (const r of batchResp.results ?? []) {
-        const cid = r.from.id;
-        const ids = (r.to ?? []).map((t) => String(t.toObjectId));
-        contactToDealIds.set(cid, ids);
-        ids.forEach((id) => dealIdsToFetch.add(id));
+      const dealIdsToFetch = new Set<string>();
+
+      for (let i = 0; i < contacts.length; i += 100) {
+        const chunk = contacts.slice(i, i + 100);
+        const batchResp = await hubspotFetch<{
+          results?: { from: { id: string }; to: { toObjectId: string }[] }[];
+        }>(`/crm/v4/associations/contacts/deals/batch/read`, "POST", {
+          inputs: chunk.map((cc) => ({ id: cc.id })),
+        }).catch(() => ({ results: [] }));
+
+        for (const r of batchResp.results ?? []) {
+          const cid = r.from.id;
+          const ids = (r.to ?? []).map((t) => String(t.toObjectId));
+          contactToDealIds.set(cid, ids);
+          ids.forEach((id) => dealIdsToFetch.add(id));
+        }
       }
 
       if (dealIdsToFetch.size > 0) {
-        const dealBatch = await hubspotFetch<{ results?: RawDeal[] }>(
-          `/crm/v3/objects/deals/batch/read`,
-          "POST",
-          {
-            properties: DEAL_PROPS,
-            inputs: Array.from(dealIdsToFetch).slice(0, 200).map((id) => ({ id })),
-          }
-        ).catch(() => ({ results: [] }));
+        const allDealIds = Array.from(dealIdsToFetch);
+        const fetched: RawDeal[] = [];
+        for (let i = 0; i < allDealIds.length; i += 100) {
+          const dealBatch = await hubspotFetch<{ results?: RawDeal[] }>(
+            `/crm/v3/objects/deals/batch/read`,
+            "POST",
+            {
+              properties: DEAL_PROPS,
+              inputs: allDealIds.slice(i, i + 100).map((id) => ({ id })),
+            }
+          ).catch(() => ({ results: [] }));
+          fetched.push(...(dealBatch.results ?? []));
+        }
 
         const dealById = new Map<string, RawDeal>();
-        for (const d of dealBatch.results ?? []) dealById.set(d.id, d);
+        for (const d of fetched) dealById.set(d.id, d);
 
         dealsByContact = new Map();
         for (const [cid, ids] of contactToDealIds.entries()) {
@@ -297,6 +374,57 @@ export async function POST(req: NextRequest) {
       contacts = [...contacts].sort((a, b) => score(b.id) - score(a.id));
     }
 
+    // ── 8.5 Fallback : si le contact n'a pas la propriété `company` remplie,
+    // on récupère le nom de la Company associée (objet Company lié au contact).
+    // Dans HubSpot, ces deux champs sont distincts et souvent non synchronisés.
+    const companyByContact = new Map<string, string>();
+    const contactsMissingCompany = contacts.filter((cc) => !cc.properties.company);
+
+    if (contactsMissingCompany.length > 0) {
+      const contactToCompanyId = new Map<string, string>();
+      const companyIdsToFetch = new Set<string>();
+
+      for (let i = 0; i < contactsMissingCompany.length; i += 100) {
+        const chunk = contactsMissingCompany.slice(i, i + 100);
+        const batchResp = await hubspotFetch<{
+          results?: { from: { id: string }; to: { toObjectId: string }[] }[];
+        }>(`/crm/v4/associations/contacts/companies/batch/read`, "POST", {
+          inputs: chunk.map((cc) => ({ id: cc.id })),
+        }).catch(() => ({ results: [] }));
+
+        for (const r of batchResp.results ?? []) {
+          const first = r.to?.[0];
+          if (!first) continue;
+          const compId = String(first.toObjectId);
+          contactToCompanyId.set(r.from.id, compId);
+          companyIdsToFetch.add(compId);
+        }
+      }
+
+      if (companyIdsToFetch.size > 0) {
+        const allCompanyIds = Array.from(companyIdsToFetch);
+        const companyNameById = new Map<string, string>();
+        for (let i = 0; i < allCompanyIds.length; i += 100) {
+          const batch = await hubspotFetch<{ results?: { id: string; properties: Record<string, string> }[] }>(
+            `/crm/v3/objects/companies/batch/read`,
+            "POST",
+            {
+              properties: ["name"],
+              inputs: allCompanyIds.slice(i, i + 100).map((id) => ({ id })),
+            }
+          ).catch(() => ({ results: [] }));
+          for (const co of batch.results ?? []) {
+            if (co.properties.name) companyNameById.set(co.id, co.properties.name);
+          }
+        }
+
+        for (const [cid, compId] of contactToCompanyId.entries()) {
+          const name = companyNameById.get(compId);
+          if (name) companyByContact.set(cid, name);
+        }
+      }
+    }
+
     // ── 9. Map to EnrichmentProfile
     let profiles: EnrichmentProfile[] = contacts.map((row) => {
       const p = row.properties;
@@ -313,7 +441,7 @@ export async function POST(req: NextRequest) {
         firstName: p.firstname,
         lastName: p.lastname,
         email: p.email ?? null,
-        company: p.company ?? null,
+        company: p.company || companyByContact.get(row.id) || null,
         jobTitle: p.jobtitle ?? null,
         headline: p.jobtitle ?? null,
         lifecyclestage: p.lifecyclestage ?? null,
@@ -359,7 +487,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    return NextResponse.json({ profiles, total: profiles.length });
+    return NextResponse.json({
+      profiles,
+      total: profiles.length,
+      skippedByRadar,
+      skippedByExcludeIds,
+      hasMore,
+    });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Erreur HubSpot" }, { status: 500 });
   }
