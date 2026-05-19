@@ -15,6 +15,7 @@ import {
   Star,
   Plus,
   Loader2,
+  Radar as RadarIcon,
 } from "lucide-react";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { COLORS } from "@/lib/design/tokens";
@@ -83,13 +84,17 @@ export function HubspotImportModal({
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [loadMoreErr, setLoadMoreErr] = React.useState<string | null>(null);
 
-  // Toggle local de sélection (toutes cochées par défaut)
+  // Toggle local de sélection. Les profils déjà au Radar sont décochés par défaut
+  // (le user les voit mais ne les ré-importe pas accidentellement).
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(
-    new Set(profiles.map((p) => p.hubspotId ?? p.email ?? p.fullName))
+    new Set(profiles.filter((p) => !p.isOnRadar).map((p) => p.hubspotId ?? p.email ?? p.fullName))
   );
   const [q, setQ] = React.useState("");
   const [filterMode, setFilterMode] = React.useState<"all" | "selected" | "unselected">("all");
   const [quickFilter, setQuickFilter] = React.useState<"all" | "with-email" | "with-linkedin" | "no-linkedin" | "won" | "lost" | "open">("all");
+  const [radarFilter, setRadarFilter] = React.useState<"all" | "on" | "off">("all");
+  const [ownerFilter, setOwnerFilter] = React.useState<string>("");
+  const [companyFilter, setCompanyFilter] = React.useState<string>("");
 
   async function handleLoadMore() {
     if (!onLoadMore || loadingMore) return;
@@ -104,7 +109,8 @@ export function HubspotImportModal({
       setAllProfiles((cur) => [...cur, ...fresh]);
       setSelectedIds((prev) => {
         const next = new Set(prev);
-        for (const p of fresh) next.add(idOf(p));
+        // On ne coche pas les profils déjà au Radar (cohérent avec l'init).
+        for (const p of fresh) if (!p.isOnRadar) next.add(idOf(p));
         return next;
       });
       setSkippedByRadar((n) => n + r.skippedByRadar);
@@ -132,6 +138,11 @@ export function HubspotImportModal({
       if (filterMode === "selected" && !sel) return false;
       if (filterMode === "unselected" && sel) return false;
 
+      if (radarFilter === "on" && !p.isOnRadar) return false;
+      if (radarFilter === "off" && p.isOnRadar) return false;
+      if (ownerFilter && (p.ownerId ?? "") !== ownerFilter) return false;
+      if (companyFilter && (p.company ?? "") !== companyFilter) return false;
+
       if (quickFilter === "with-email" && !p.email) return false;
       if (quickFilter === "with-linkedin" && !p.username) return false;
       if (quickFilter === "no-linkedin" && p.username) return false;
@@ -151,7 +162,26 @@ export function HubspotImportModal({
       }
       return true;
     });
-  }, [allProfiles, q, selectedIds, filterMode, quickFilter]);
+  }, [allProfiles, q, selectedIds, filterMode, quickFilter, radarFilter, ownerFilter, companyFilter]);
+
+  // Listes distinctes pour les selects Owner & Company.
+  const owners = React.useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of allProfiles) {
+      if (p.ownerId) map.set(p.ownerId, p.ownerName ?? "—");
+    }
+    return Array.from(map, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [allProfiles]);
+
+  const companies = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const p of allProfiles) {
+      if (p.company) set.add(p.company);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [allProfiles]);
+
+  const onRadarCount = React.useMemo(() => allProfiles.filter((p) => p.isOnRadar).length, [allProfiles]);
 
   const selectAll = () => setSelectedIds(new Set(allProfiles.map(idOf)));
   const deselectAll = () => setSelectedIds(new Set());
@@ -238,8 +268,11 @@ export function HubspotImportModal({
             </h2>
             <p style={{ fontSize: 12, color: COLORS.ink3, margin: 0 }}>
               {total} contact{total > 1 ? "s" : ""} chargé{total > 1 ? "s" : ""}
+              {onRadarCount > 0 && (
+                <> · <strong style={{ color: COLORS.ink2 }}>{onRadarCount}</strong> déjà au Radar (décoché{onRadarCount > 1 ? "s" : ""})</>
+              )}
               {skippedByRadar > 0 && (
-                <> · <strong style={{ color: COLORS.ink2 }}>{skippedByRadar}</strong> exclu{skippedByRadar > 1 ? "s" : ""} (déjà au Radar)</>
+                <> · <strong style={{ color: COLORS.ink2 }}>{skippedByRadar}</strong> exclu{skippedByRadar > 1 ? "s" : ""} (filtre serveur)</>
               )}
               {hasMore && <> · <strong style={{ color: COLORS.brand }}>plus dispos</strong></>}
             </p>
@@ -309,14 +342,7 @@ export function HubspotImportModal({
           <select
             value={quickFilter}
             onChange={(e) => setQuickFilter(e.target.value as typeof quickFilter)}
-            style={{
-              fontSize: 12,
-              padding: "6px 10px",
-              border: `1px solid ${COLORS.line}`,
-              borderRadius: 6,
-              background: COLORS.bgCard,
-              outline: "none",
-            }}
+            style={selectStyle()}
           >
             <option value="all">Tous les types</option>
             <option value="with-email">Avec email</option>
@@ -326,6 +352,60 @@ export function HubspotImportModal({
             <option value="lost">Closed Lost</option>
             <option value="open">Deal ouvert</option>
           </select>
+
+          <div
+            title="Filtrer par statut Radar"
+            style={{ display: "flex", gap: 4, border: `1px solid ${COLORS.line}`, borderRadius: 6, padding: 2, background: COLORS.bgCard }}
+          >
+            {(
+              [
+                { v: "all" as const, l: "Radar : tous" },
+                { v: "off" as const, l: "Pas au Radar" },
+                { v: "on" as const, l: "Au Radar" },
+              ] as const
+            ).map((m) => (
+              <button
+                key={m.v}
+                type="button"
+                onClick={() => setRadarFilter(m.v)}
+                style={modeBtn(radarFilter === m.v)}
+              >
+                {m.l}
+              </button>
+            ))}
+          </div>
+
+          {owners.length > 0 && (
+            <select
+              value={ownerFilter}
+              onChange={(e) => setOwnerFilter(e.target.value)}
+              title="Filtrer par Owner"
+              style={selectStyle()}
+            >
+              <option value="">Owner : tous</option>
+              {owners.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          )}
+
+          {companies.length > 0 && (
+            <select
+              value={companyFilter}
+              onChange={(e) => setCompanyFilter(e.target.value)}
+              title="Filtrer par Company"
+              style={{ ...selectStyle(), maxWidth: 220 }}
+            >
+              <option value="">Company : toutes</option>
+              {companies.map((co) => (
+                <option key={co} value={co}>
+                  {co}
+                </option>
+              ))}
+            </select>
+          )}
 
           <span style={{ fontSize: 12, color: COLORS.ink2 }}>
             <strong style={{ color: COLORS.ink0 }}>{selectedCount}</strong>/{total} sélectionnés
@@ -392,6 +472,28 @@ export function HubspotImportModal({
                         <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                           {p.fullName}
                         </span>
+                        {p.isOnRadar && (
+                          <span
+                            title="Déjà au Radar (décoché par défaut)"
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 3,
+                              fontSize: 9,
+                              fontWeight: 700,
+                              padding: "2px 6px",
+                              borderRadius: 99,
+                              background: COLORS.brandTintSoft,
+                              color: COLORS.brand,
+                              textTransform: "uppercase",
+                              letterSpacing: "0.04em",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            <RadarIcon size={9} />
+                            Radar
+                          </span>
+                        )}
                         {lc && (
                           <span
                             style={{
@@ -578,6 +680,17 @@ function modeBtn(active: boolean): React.CSSProperties {
     background: active ? COLORS.brand : "transparent",
     color: active ? "white" : COLORS.ink2,
     cursor: "pointer",
+  };
+}
+
+function selectStyle(): React.CSSProperties {
+  return {
+    fontSize: 12,
+    padding: "6px 10px",
+    border: `1px solid ${COLORS.line}`,
+    borderRadius: 6,
+    background: COLORS.bgCard,
+    outline: "none",
   };
 }
 

@@ -38,13 +38,18 @@ const FEATURE_LABELS: Record<string, string> = {
 
 export type RawLog = {
   id: string;
-  user_id: string;
+  user_id: string | null;
   model: string;
   feature: string | null;
   input_tokens: number;
   output_tokens: number;
   created_at: string;
 };
+
+// Clé d'agrégation pour les appels sans user attribué (cron, webhooks,
+// résolveurs internes). Affichée comme "Système (cron / non-attribué)".
+const SYSTEM_USER_KEY = "__system__";
+const SYSTEM_USER_LABEL = "Système (cron / non-attribué)";
 
 export type UserMeta = { id: string; name: string | null; email: string };
 
@@ -74,16 +79,17 @@ export default async function AdminLogsPage() {
   };
   const byUser = new Map<string, UserStat>();
   for (const log of logs ?? []) {
-    const u = userMap.get(log.user_id);
-    const name = u?.name ?? u?.email ?? log.user_id;
-    const cur = byUser.get(log.user_id) ?? { id: log.user_id, name, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, lastSeen: log.created_at, features: new Set<string>() };
+    const key = log.user_id ?? SYSTEM_USER_KEY;
+    const u = log.user_id ? userMap.get(log.user_id) : null;
+    const name = log.user_id ? (u?.name ?? u?.email ?? log.user_id) : SYSTEM_USER_LABEL;
+    const cur = byUser.get(key) ?? { id: key, name, calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, lastSeen: log.created_at, features: new Set<string>() };
     cur.calls++;
     cur.inputTokens += log.input_tokens;
     cur.outputTokens += log.output_tokens;
     cur.costUsd += cost(log.model, log.input_tokens, log.output_tokens);
     if (log.created_at > cur.lastSeen) cur.lastSeen = log.created_at;
     if (log.feature) cur.features.add(log.feature);
-    byUser.set(log.user_id, cur);
+    byUser.set(key, cur);
   }
 
   // ── Aggregate: by feature ─────────────────────────────────────────────────
@@ -103,8 +109,9 @@ export default async function AdminLogsPage() {
   const byUserFeature: Record<string, Record<string, number>> = {};
   for (const log of logs ?? []) {
     const f = log.feature ?? "unknown";
-    if (!byUserFeature[log.user_id]) byUserFeature[log.user_id] = {};
-    byUserFeature[log.user_id][f] = (byUserFeature[log.user_id][f] ?? 0) + 1;
+    const key = log.user_id ?? SYSTEM_USER_KEY;
+    if (!byUserFeature[key]) byUserFeature[key] = {};
+    byUserFeature[key][f] = (byUserFeature[key][f] ?? 0) + 1;
   }
 
   // Serialise Sets
@@ -118,7 +125,12 @@ export default async function AdminLogsPage() {
 
   const rawLogs = (logs ?? []).map((l) => ({
     ...l,
-    userName: userMap.get(l.user_id)?.name ?? userMap.get(l.user_id)?.email ?? l.user_id,
+    // Normalise les calls système (user_id null) avec une clé sentinelle.
+    // Le client traite tout comme une string et affiche le label dédié.
+    user_id: l.user_id ?? SYSTEM_USER_KEY,
+    userName: l.user_id
+      ? (userMap.get(l.user_id)?.name ?? userMap.get(l.user_id)?.email ?? l.user_id)
+      : SYSTEM_USER_LABEL,
     featureLabel: FEATURE_LABELS[l.feature ?? ""] ?? l.feature ?? "—",
     costUsd: cost(l.model, l.input_tokens, l.output_tokens),
   }));

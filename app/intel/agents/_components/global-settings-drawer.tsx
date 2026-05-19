@@ -1,62 +1,206 @@
 "use client";
 
 import * as React from "react";
-import { X, Save } from "lucide-react";
+import { X, Save, Plus, Trash2, Upload, Download } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 
-interface TargetsResponse {
-  companies: string[];
-  roles: string[];
-}
+type ScopeCompany = {
+  id: string;
+  name: string;
+  owner: string | null;
+  notes: string | null;
+};
+
+type SalesRep = { id: string; name: string };
+
+type ImportSummary = {
+  parsed: number;
+  deduped: number;
+  toInsert: number;
+  toUpdate: number;
+  skipped: number;
+  errors: { line: number; reason: string }[];
+};
 
 export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const [companies, setCompanies] = React.useState("");
+  const [companies, setCompanies] = React.useState<ScopeCompany[]>([]);
+  const [reps, setReps] = React.useState<SalesRep[]>([]);
   const [roles, setRoles] = React.useState("");
   const [loading, setLoading] = React.useState(false);
-  const [saving, setSaving] = React.useState(false);
-  const [success, setSuccess] = React.useState<string | null>(null);
-  const [error, setError] = React.useState<string | null>(null);
+  const [savingRoles, setSavingRoles] = React.useState(false);
+  const [feedback, setFeedback] = React.useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  const [filter, setFilter] = React.useState("");
+  const [importing, setImporting] = React.useState(false);
+  const [importPreview, setImportPreview] = React.useState<{ csv: string; summary: ImportSummary } | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   React.useEffect(() => {
     if (!open) return;
     setLoading(true);
-    setError(null);
-    setSuccess(null);
-    fetch("/api/intel/admin/targets")
-      .then((r) => r.json() as Promise<TargetsResponse>)
-      .then((data) => {
-        setCompanies((data.companies ?? []).join("\n"));
-        setRoles((data.roles ?? []).join("\n"));
+    setFeedback(null);
+    Promise.all([
+      fetch("/api/intel/admin/scope-companies").then((r) => r.json()),
+      fetch("/api/intel/admin/sales-reps").then((r) => r.json()),
+      fetch("/api/intel/admin/targets").then((r) => r.json()),
+    ])
+      .then(([cs, rs, ts]) => {
+        setCompanies(cs.companies ?? []);
+        setReps(rs.reps ?? []);
+        setRoles((ts.roles ?? []).join("\n"));
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Erreur"))
+      .catch((e) => setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur" }))
       .finally(() => setLoading(false));
   }, [open]);
 
-  async function save() {
-    setSaving(true);
-    setError(null);
-    setSuccess(null);
+  async function reloadCompanies() {
+    const r = await fetch("/api/intel/admin/scope-companies").then((x) => x.json());
+    setCompanies(r.companies ?? []);
+  }
+
+  async function reloadReps() {
+    const r = await fetch("/api/intel/admin/sales-reps").then((x) => x.json());
+    setReps(r.reps ?? []);
+  }
+
+  async function addCompany() {
+    const name = prompt("Nom de l'entreprise");
+    if (!name?.trim()) return;
+    setFeedback(null);
+    const r = await fetch("/api/intel/admin/scope-companies", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    const j = await r.json();
+    if (!r.ok) {
+      setFeedback({ kind: "err", msg: j.error ?? "Erreur ajout" });
+      return;
+    }
+    await reloadCompanies();
+  }
+
+  async function patchCompany(id: string, patch: Partial<ScopeCompany>) {
+    setFeedback(null);
+    const r = await fetch(`/api/intel/admin/scope-companies/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    const j = await r.json();
+    if (!r.ok) {
+      setFeedback({ kind: "err", msg: j.error ?? "Erreur" });
+      return;
+    }
+    setCompanies((cs) => cs.map((c) => (c.id === id ? (j.company as ScopeCompany) : c)));
+    if (typeof patch.owner === "string" && patch.owner) await reloadReps();
+  }
+
+  async function removeCompany(id: string, name: string) {
+    if (!confirm(`Retirer ${name} de tes entreprises suivies ?`)) return;
+    setFeedback(null);
+    const r = await fetch(`/api/intel/admin/scope-companies/${id}`, { method: "DELETE" });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      setFeedback({ kind: "err", msg: j.error ?? "Erreur suppression" });
+      return;
+    }
+    setCompanies((cs) => cs.filter((c) => c.id !== id));
+  }
+
+  async function saveRoles() {
+    setSavingRoles(true);
+    setFeedback(null);
     try {
       const r = await fetch("/api/intel/admin/targets", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          companies: companies.split("\n"),
-          roles: roles.split("\n"),
-        }),
+        body: JSON.stringify({ roles: roles.split("\n") }),
       });
       if (!r.ok) throw new Error((await r.json()).error ?? "Erreur");
-      setSuccess("Cibles mises à jour.");
+      setFeedback({ kind: "ok", msg: "Rôles enregistrés." });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur");
+      setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur" });
     } finally {
-      setSaving(false);
+      setSavingRoles(false);
+    }
+  }
+
+  function exportCsv() {
+    const escape = (v: string | null): string => {
+      const s = v ?? "";
+      if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+      return s;
+    };
+    const header = "name,owner,notes";
+    const body = companies.map((c) => [escape(c.name), escape(c.owner), escape(c.notes)].join(","));
+    const csv = [header, ...body].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `scope-companies-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const csv = String(reader.result ?? "");
+      const r = await fetch("/api/intel/admin/scope-companies/bulk-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv, dryRun: true }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        setFeedback({ kind: "err", msg: j.error ?? "Erreur import" });
+        return;
+      }
+      setImportPreview({ csv, summary: j.summary as ImportSummary });
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }
+
+  async function commitImport(mode: "skip" | "update") {
+    if (!importPreview) return;
+    setImporting(true);
+    setFeedback(null);
+    try {
+      const r = await fetch("/api/intel/admin/scope-companies/bulk-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv: importPreview.csv, mode }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error ?? "Erreur import");
+      const s = j.summary as ImportSummary;
+      const parts: string[] = [];
+      if (s.toInsert > 0) parts.push(`${s.toInsert} ajoutée${s.toInsert > 1 ? "s" : ""}`);
+      if (s.toUpdate > 0) parts.push(`${s.toUpdate} mise${s.toUpdate > 1 ? "s" : ""} à jour`);
+      if (s.skipped > 0) parts.push(`${s.skipped} doublon${s.skipped > 1 ? "s" : ""} ignoré${s.skipped > 1 ? "s" : ""}`);
+      setFeedback({ kind: "ok", msg: parts.join(" · ") || "Aucun changement." });
+      setImportPreview(null);
+      await Promise.all([reloadCompanies(), reloadReps()]);
+    } catch (e) {
+      setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur" });
+    } finally {
+      setImporting(false);
     }
   }
 
   if (!open) return null;
 
-  const compCount = companies.split("\n").filter((s) => s.trim()).length;
+  const filtered = filter.trim()
+    ? companies.filter(
+        (c) =>
+          c.name.toLowerCase().includes(filter.toLowerCase()) ||
+          (c.owner ?? "").toLowerCase().includes(filter.toLowerCase())
+      )
+    : companies;
   const rolesCount = roles.split("\n").filter((s) => s.trim()).length;
 
   return (
@@ -74,7 +218,7 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
       <aside
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 600,
+          width: 920,
           maxWidth: "100%",
           background: COLORS.bgCard,
           height: "100%",
@@ -94,9 +238,7 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
           <h2 style={{ fontSize: 14, fontWeight: 600, color: COLORS.ink0, margin: 0 }}>
             Cibles globales (ICP)
           </h2>
-          <span style={{ fontSize: 11, color: COLORS.ink3 }}>
-            partagées par tous les agents
-          </span>
+          <span style={{ fontSize: 11, color: COLORS.ink3 }}>partagées par tous les agents</span>
           <button
             type="button"
             onClick={onClose}
@@ -107,27 +249,139 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
           </button>
         </header>
 
-        <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 20 }}>
           {loading ? (
             <p style={{ color: COLORS.ink3 }}>Chargement…</p>
           ) : (
             <>
               <p style={{ fontSize: 12, color: COLORS.ink2, margin: 0, lineHeight: 1.5 }}>
-                Ces deux listes alimentent : Company News, Hiring Spike, Funding & Expansion,
-                Ads Activity, Init exhaustif, Weekly Scan. Une cible par ligne.
+                Ces listes alimentent : Company News, Hiring Spike, Funding & Expansion,
+                Ads Activity, Init exhaustif, Weekly Scan.
               </p>
 
-              <Section title={`Sociétés ICP (${compCount})`}>
-                <textarea
-                  value={companies}
-                  onChange={(e) => setCompanies(e.target.value)}
-                  rows={14}
-                  style={ta()}
-                  placeholder="Une société par ligne&#10;ex: Danone&#10;Sanofi"
-                />
-              </Section>
+              <section>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <h3
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: COLORS.ink3,
+                      margin: 0,
+                    }}
+                  >
+                    Entreprises suivies ({companies.length})
+                  </h3>
+                  <input
+                    value={filter}
+                    onChange={(e) => setFilter(e.target.value)}
+                    placeholder="Filtrer…"
+                    style={{
+                      marginLeft: 12,
+                      padding: "5px 8px",
+                      fontSize: 12,
+                      border: `1px solid ${COLORS.line}`,
+                      borderRadius: 6,
+                      outline: "none",
+                      background: COLORS.bgCard,
+                      width: 160,
+                    }}
+                  />
+                  <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                    <button type="button" onClick={addCompany} style={btnSecondary()}>
+                      <Plus size={12} /> Ajouter
+                    </button>
+                    <button type="button" onClick={() => fileInputRef.current?.click()} style={btnSecondary()}>
+                      <Upload size={12} /> Importer CSV
+                    </button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".csv,text/csv"
+                      onChange={onPickFile}
+                      style={{ display: "none" }}
+                    />
+                    <button type="button" onClick={exportCsv} disabled={companies.length === 0} style={btnSecondary()}>
+                      <Download size={12} /> Exporter CSV
+                    </button>
+                  </div>
+                </div>
 
-              <Section title={`Titres / rôles ciblés (${rolesCount})`}>
+                <datalist id="sales-reps-list">
+                  {reps.map((r) => (
+                    <option key={r.id} value={r.name} />
+                  ))}
+                </datalist>
+
+                <div
+                  style={{
+                    border: `1px solid ${COLORS.line}`,
+                    borderRadius: 8,
+                    background: COLORS.bgCard,
+                    maxHeight: 380,
+                    overflowY: "auto",
+                  }}
+                >
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                    <thead
+                      style={{
+                        position: "sticky",
+                        top: 0,
+                        background: COLORS.bgSoft,
+                        borderBottom: `1px solid ${COLORS.line}`,
+                        zIndex: 1,
+                      }}
+                    >
+                      <tr>
+                        <th style={th()}>Entreprise</th>
+                        <th style={th(180)}>Owner</th>
+                        <th style={th()}>Notes</th>
+                        <th style={th(40)}></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.length === 0 && (
+                        <tr>
+                          <td colSpan={4} style={{ padding: 24, textAlign: "center", color: COLORS.ink3, fontSize: 12 }}>
+                            {companies.length === 0 ? "Aucune entreprise. Ajoutes-en ou importe un CSV." : "Aucun résultat."}
+                          </td>
+                        </tr>
+                      )}
+                      {filtered.map((c) => (
+                        <CompanyRow key={c.id} company={c} onPatch={patchCompany} onRemove={removeCompany} />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p style={{ fontSize: 10, color: COLORS.ink3, margin: "6px 2px 0" }}>
+                  Modification inline · Tab pour passer au champ suivant. Dédup case-insensitive sur le nom.
+                </p>
+              </section>
+
+              <section>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                  <h3
+                    style={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.06em",
+                      color: COLORS.ink3,
+                      margin: 0,
+                    }}
+                  >
+                    Titres / rôles ciblés ({rolesCount})
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={saveRoles}
+                    disabled={savingRoles}
+                    style={{ ...btnSecondary(), marginLeft: "auto" }}
+                  >
+                    <Save size={12} /> {savingRoles ? "…" : "Enregistrer rôles"}
+                  </button>
+                </div>
                 <textarea
                   value={roles}
                   onChange={(e) => setRoles(e.target.value)}
@@ -135,7 +389,7 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
                   style={ta()}
                   placeholder="Un titre par ligne&#10;ex: DRH&#10;Head of L&D"
                 />
-              </Section>
+              </section>
             </>
           )}
         </div>
@@ -148,42 +402,207 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
             display: "flex",
             alignItems: "center",
             gap: 12,
+            minHeight: 48,
           }}
         >
-          {error && <span style={{ color: COLORS.err, fontSize: 12 }}>{error}</span>}
-          {success && <span style={{ color: COLORS.ok, fontSize: 12 }}>{success}</span>}
-          <button type="button" onClick={onClose} style={btnSecondary()}>
+          {feedback && (
+            <span style={{ color: feedback.kind === "ok" ? COLORS.ok : COLORS.err, fontSize: 12 }}>
+              {feedback.msg}
+            </span>
+          )}
+          <button type="button" onClick={onClose} style={{ ...btnSecondary(), marginLeft: "auto" }}>
             Fermer
-          </button>
-          <button type="button" onClick={save} disabled={saving} style={btnPrimary()}>
-            <Save size={13} />
-            {saving ? "Enregistrement…" : "Enregistrer"}
           </button>
         </footer>
       </aside>
+
+      {importPreview && (
+        <ImportPreviewModal
+          summary={importPreview.summary}
+          importing={importing}
+          onCancel={() => setImportPreview(null)}
+          onConfirm={commitImport}
+        />
+      )}
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function CompanyRow({
+  company,
+  onPatch,
+  onRemove,
+}: {
+  company: ScopeCompany;
+  onPatch: (id: string, patch: Partial<ScopeCompany>) => void;
+  onRemove: (id: string, name: string) => void;
+}) {
   return (
-    <div>
-      <h3
+    <tr style={{ borderBottom: `1px solid ${COLORS.line}` }}>
+      <td style={td()}>
+        <InlineEditable
+          value={company.name}
+          onCommit={(v) => v !== company.name && onPatch(company.id, { name: v })}
+          placeholder="Entreprise"
+        />
+      </td>
+      <td style={td()}>
+        <InlineEditable
+          value={company.owner ?? ""}
+          onCommit={(v) => (v || null) !== (company.owner ?? null) && onPatch(company.id, { owner: v || null })}
+          placeholder="—"
+          list="sales-reps-list"
+        />
+      </td>
+      <td style={td()}>
+        <InlineEditable
+          value={company.notes ?? ""}
+          onCommit={(v) => (v || null) !== (company.notes ?? null) && onPatch(company.id, { notes: v || null })}
+          placeholder="—"
+        />
+      </td>
+      <td style={{ ...td(), textAlign: "right" }}>
+        <button
+          type="button"
+          onClick={() => onRemove(company.id, company.name)}
+          aria-label="Supprimer"
+          style={{ border: "none", background: "transparent", color: COLORS.err, cursor: "pointer", padding: 0 }}
+        >
+          <Trash2 size={13} />
+        </button>
+      </td>
+    </tr>
+  );
+}
+
+function InlineEditable({
+  value,
+  onCommit,
+  placeholder,
+  list,
+}: {
+  value: string;
+  onCommit: (v: string) => void;
+  placeholder?: string;
+  list?: string;
+}) {
+  const [v, setV] = React.useState(value);
+  React.useEffect(() => setV(value), [value]);
+  return (
+    <input
+      value={v}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={() => onCommit(v.trim())}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+        if (e.key === "Escape") {
+          setV(value);
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+      placeholder={placeholder}
+      list={list}
+      style={{
+        width: "100%",
+        padding: "4px 6px",
+        fontSize: 12,
+        border: "1px solid transparent",
+        borderRadius: 4,
+        outline: "none",
+        background: "transparent",
+        color: COLORS.ink1,
+      }}
+      onFocus={(e) => (e.currentTarget.style.borderColor = COLORS.line)}
+      onBlurCapture={(e) => (e.currentTarget.style.borderColor = "transparent")}
+    />
+  );
+}
+
+function ImportPreviewModal({
+  summary,
+  importing,
+  onCancel,
+  onConfirm,
+}: {
+  summary: ImportSummary;
+  importing: boolean;
+  onCancel: () => void;
+  onConfirm: (mode: "skip" | "update") => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.5)",
+        zIndex: 200,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
         style={{
-          fontSize: 10,
-          fontWeight: 700,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
-          color: COLORS.ink3,
-          margin: 0,
-          marginBottom: 6,
+          width: 420,
+          background: COLORS.bgCard,
+          borderRadius: 12,
+          padding: 20,
+          display: "flex",
+          flexDirection: "column",
+          gap: 12,
         }}
       >
-        {title}
-      </h3>
-      {children}
+        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: COLORS.ink0 }}>Aperçu import CSV</h3>
+        <ul style={{ margin: 0, padding: "0 0 0 16px", fontSize: 12, color: COLORS.ink1, lineHeight: 1.6 }}>
+          <li>{summary.parsed} ligne{summary.parsed > 1 ? "s" : ""} lue{summary.parsed > 1 ? "s" : ""}</li>
+          <li>
+            {summary.toInsert} nouvelle{summary.toInsert > 1 ? "s" : ""} entreprise{summary.toInsert > 1 ? "s" : ""}
+          </li>
+          <li>
+            {summary.deduped - summary.toInsert} doublon{summary.deduped - summary.toInsert > 1 ? "s" : ""} avec l&apos;existant
+          </li>
+          {summary.errors.length > 0 && (
+            <li style={{ color: COLORS.err }}>
+              {summary.errors.length} erreur{summary.errors.length > 1 ? "s" : ""} (ligne {summary.errors.slice(0, 3).map((e) => e.line).join(", ")}…)
+            </li>
+          )}
+        </ul>
+        <p style={{ margin: 0, fontSize: 12, color: COLORS.ink2 }}>
+          Pour les doublons (case-insensitive sur le nom), tu veux :
+        </p>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button type="button" onClick={onCancel} style={btnSecondary()}>
+            Annuler
+          </button>
+          <button type="button" onClick={() => onConfirm("skip")} disabled={importing} style={btnSecondary()}>
+            Ignorer les doublons
+          </button>
+          <button type="button" onClick={() => onConfirm("update")} disabled={importing} style={btnPrimary()}>
+            Écraser owner/notes
+          </button>
+        </div>
+      </div>
     </div>
   );
+}
+
+function th(width?: number): React.CSSProperties {
+  return {
+    textAlign: "left",
+    padding: "6px 10px",
+    fontSize: 10,
+    fontWeight: 600,
+    color: COLORS.ink3,
+    textTransform: "uppercase",
+    letterSpacing: "0.04em",
+    ...(width ? { width } : {}),
+  };
+}
+
+function td(): React.CSSProperties {
+  return { padding: "4px 8px", verticalAlign: "middle" };
 }
 
 function ta(): React.CSSProperties {
@@ -203,10 +622,12 @@ function ta(): React.CSSProperties {
 
 function btnSecondary(): React.CSSProperties {
   return {
-    marginLeft: "auto",
-    padding: "6px 12px",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "6px 10px",
     fontSize: 12,
-    borderRadius: 8,
+    borderRadius: 6,
     border: `1px solid ${COLORS.line}`,
     background: COLORS.bgCard,
     color: COLORS.ink1,
@@ -219,10 +640,10 @@ function btnPrimary(): React.CSSProperties {
     display: "inline-flex",
     alignItems: "center",
     gap: 4,
-    padding: "6px 14px",
+    padding: "6px 12px",
     fontSize: 12,
     fontWeight: 600,
-    borderRadius: 8,
+    borderRadius: 6,
     border: `1px solid ${COLORS.brand}`,
     background: COLORS.brand,
     color: "white",

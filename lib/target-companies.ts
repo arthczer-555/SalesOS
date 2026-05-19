@@ -4,8 +4,13 @@ import { db } from "@/lib/db";
 
 export async function getTargetCompanies(): Promise<string[]> {
   try {
-    const { data } = await db.from("guide_defaults").select("content").eq("key", "target_companies").single();
-    if (data?.content) return JSON.parse(data.content as string) as string[];
+    const { data, error } = await db
+      .from("scope_companies")
+      .select("name")
+      .order("name", { ascending: true });
+    if (!error && data && data.length > 0) {
+      return data.map((r) => r.name as string).filter(Boolean);
+    }
   } catch { /* fallback */ }
   return TARGET_COMPANIES;
 }

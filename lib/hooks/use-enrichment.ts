@@ -102,6 +102,17 @@ export async function removeFromRadar(username: string) {
   return data;
 }
 
+export async function removeFromRadarBulk(usernames: string[]): Promise<{ removed: number }> {
+  const r = await fetch("/api/intel/enrich/radar/bulk-delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ usernames }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur retrait");
+  return { removed: typeof data.removed === "number" ? data.removed : usernames.length };
+}
+
 export interface RadarRefreshResult {
   updated_count: number;
   updated: string[];

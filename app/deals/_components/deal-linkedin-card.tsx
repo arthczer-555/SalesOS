@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Linkedin, ExternalLink, Sparkles, RefreshCw } from "lucide-react";
+import { Linkedin, ExternalLink } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
@@ -16,37 +16,37 @@ interface LinkedinProfile {
   skills: string[];
   education: string[];
   profileUrl: string;
+  contactName: string;
+  contactEmail: string | null;
 }
 
 interface ApiResponse {
-  profile?: LinkedinProfile;
-  contact?: { name: string; email: string | null };
+  profiles?: LinkedinProfile[];
   error?: string;
 }
 
 export function DealLinkedinCard({ dealId }: { dealId: string }) {
   const [data, setData] = React.useState<ApiResponse | null>(null);
   const [loading, setLoading] = React.useState(false);
-  const [hasFetched, setHasFetched] = React.useState(false);
 
-  async function fetchProfile() {
-    setLoading(true);
-    setHasFetched(true);
-    try {
-      const r = await fetch(`/api/deals/${dealId}/linkedin`);
-      const json = (await r.json()) as ApiResponse;
-      setData(json);
-    } catch {
-      setData({ error: "Erreur réseau" });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Auto-fetch au mount (les coûts sont contrôlés : 1-2 crédits par deal ouvert)
   React.useEffect(() => {
-    void fetchProfile();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false;
+    async function fetchProfiles() {
+      setLoading(true);
+      try {
+        const r = await fetch(`/api/deals/${dealId}/linkedin`);
+        const json = (await r.json()) as ApiResponse;
+        if (!cancelled) setData(json);
+      } catch {
+        if (!cancelled) setData({ profiles: [] });
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void fetchProfiles();
+    return () => {
+      cancelled = true;
+    };
   }, [dealId]);
 
   if (loading && !data) {
@@ -58,79 +58,56 @@ export function DealLinkedinCard({ dealId }: { dealId: string }) {
     );
   }
 
-  if (!data?.profile) {
-    if (!hasFetched) return null;
-    return (
-      <Card padding={16}>
-        <SectionHeader
-          title="LinkedIn"
-          right={
-            <button
-              type="button"
-              onClick={fetchProfile}
-              disabled={loading}
-              style={{
-                fontSize: 11,
-                padding: "3px 8px",
-                borderRadius: 6,
-                border: `1px solid ${COLORS.line}`,
-                background: COLORS.bgCard,
-                cursor: "pointer",
-                color: COLORS.ink2,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              <RefreshCw size={11} /> Réessayer
-            </button>
-          }
-        />
-        <p style={{ fontSize: 12, color: COLORS.ink3, margin: 0 }}>
-          {data?.error ?? "Aucun profil LinkedIn trouvé pour ce deal."}
-        </p>
-      </Card>
-    );
-  }
-
-  const p = data.profile;
+  const profiles = data?.profiles ?? [];
+  if (profiles.length === 0) return null;
 
   return (
     <Card padding={16} style={{ border: "1px solid #1d4ed8", boxShadow: "0 0 0 3px #1d4ed81a" }}>
-      <SectionHeader
-        title="LinkedIn"
-        right={
-          <a
-            href={p.profileUrl}
-            target="_blank"
-            rel="noreferrer"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              color: "#0a66c2",
-              fontSize: 11,
-              fontWeight: 600,
-              textDecoration: "none",
-            }}
-          >
-            <Linkedin size={12} /> Voir le profil <ExternalLink size={10} />
-          </a>
-        }
-      />
+      <SectionHeader title={`LinkedIn (${profiles.length})`} right={<LinkedinTag />} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {profiles.map((p, idx) => (
+          <ProfileBlock key={p.username} profile={p} divider={idx < profiles.length - 1} />
+        ))}
+      </div>
+    </Card>
+  );
+}
 
-      <div style={{ marginBottom: 10 }}>
-        <p style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, margin: 0 }}>
-          {p.name}
-          {data.contact?.name && data.contact.name !== p.name && (
-            <span style={{ fontSize: 11, color: COLORS.ink3, fontWeight: 400 }}> (HubSpot : {data.contact.name})</span>
-          )}
-        </p>
-        <p style={{ fontSize: 12, color: "#1d4ed8", margin: 0 }}>{p.headline}</p>
-        {p.location && <p style={{ fontSize: 11, color: COLORS.ink3, margin: 0 }}>{p.location}</p>}
+function ProfileBlock({ profile, divider }: { profile: LinkedinProfile; divider: boolean }) {
+  const p = profile;
+  return (
+    <div style={{ paddingBottom: divider ? 14 : 0, borderBottom: divider ? `1px solid ${COLORS.line}` : "none" }}>
+      <div style={{ marginBottom: 10, display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8 }}>
+        <div>
+          <p style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, margin: 0 }}>
+            {p.name}
+            {p.contactName && p.contactName !== p.name && (
+              <span style={{ fontSize: 11, color: COLORS.ink3, fontWeight: 400 }}> (HubSpot : {p.contactName})</span>
+            )}
+          </p>
+          <p style={{ fontSize: 12, color: "#1d4ed8", margin: 0 }}>{p.headline}</p>
+          {p.location && <p style={{ fontSize: 11, color: COLORS.ink3, margin: 0 }}>{p.location}</p>}
+        </div>
+        <a
+          href={p.profileUrl}
+          target="_blank"
+          rel="noreferrer"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            color: "#0a66c2",
+            fontSize: 11,
+            fontWeight: 600,
+            textDecoration: "none",
+            flexShrink: 0,
+          }}
+        >
+          <Linkedin size={12} /> Voir <ExternalLink size={10} />
+        </a>
       </div>
 
-      {p.positions && p.positions.length > 0 && (
+      {p.positions.length > 0 && (
         <div style={{ marginBottom: 10 }}>
           <p style={uppercaseLabel()}>Parcours</p>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -181,7 +158,7 @@ export function DealLinkedinCard({ dealId }: { dealId: string }) {
           <p style={{ fontSize: 12, color: COLORS.ink1, margin: 0, lineHeight: 1.5 }}>{p.summary}</p>
         </div>
       )}
-    </Card>
+    </div>
   );
 }
 
@@ -205,7 +182,3 @@ function uppercaseLabel(): React.CSSProperties {
     marginBottom: 4,
   };
 }
-
-// Suppress unused
-const _S = Sparkles;
-void _S;

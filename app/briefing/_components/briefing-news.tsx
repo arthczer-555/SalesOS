@@ -8,14 +8,13 @@ import { SectionHeader } from "@/components/ui/section-header";
 import type { BriefingResult } from "../_helpers";
 
 const CATEGORY_BADGES: Record<string, { label: string; bg: string; color: string }> = {
-  strategic: { label: "Stratégique", bg: "#f5f3ff", color: "#7c3aed" },
-  recognition: { label: "Reconnaissance", bg: "#fef3c7", color: "#d97706" },
+  funding: { label: "Levée", bg: "#f0fdf4", color: "#16a34a" },
+  acquisition: { label: "M&A", bg: "#f5f3ff", color: "#7c3aed" },
   partnership: { label: "Partenariat", bg: "#eff6ff", color: "#2563eb" },
-  growth: { label: "Croissance", bg: "#f0fdf4", color: "#16a34a" },
   leadership: { label: "Leadership", bg: "#eef2ff", color: "#4f46e5" },
+  restructuring: { label: "Restructuration", bg: "#fef2f2", color: "#dc2626" },
+  coaching: { label: "Coaching", bg: "#fdf4ff", color: "#a21caf" },
   general: { label: "Press", bg: "#f3f4f6", color: "#6b7280" },
-  press: { label: "Press", bg: "#f3f4f6", color: "#6b7280" },
-  linkedin: { label: "LinkedIn", bg: "#eff6ff", color: "#1d4ed8" },
 };
 
 export function BriefingNews({ briefing }: { briefing: BriefingResult }) {

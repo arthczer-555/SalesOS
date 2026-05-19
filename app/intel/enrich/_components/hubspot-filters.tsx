@@ -114,7 +114,7 @@ export function HubspotFilters({
   onSubmit: (c: HubspotCriteria) => void;
   isLoading: boolean;
 }) {
-  const [c, setC] = React.useState<HubspotCriteria>(initial ?? { createdRange: "all", sort: "createdate-desc", limit: 100, dealStatus: "any", excludeRadar: true });
+  const [c, setC] = React.useState<HubspotCriteria>(initial ?? { createdRange: "all", sort: "createdate-desc", limit: 100, dealStatus: "any", excludeRadar: false });
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
   const [count, setCount] = React.useState<number | null>(null);
   const [dealCount, setDealCount] = React.useState<number | null>(null);
@@ -654,10 +654,13 @@ export function HubspotFilters({
           borderTop: `1px solid ${COLORS.line}`,
         }}
       >
-        <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.ink2, cursor: "pointer" }}>
+        <label
+          style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.ink2, cursor: "pointer" }}
+          title="Si décoché, les profils déjà au Radar apparaissent dans le modal de sélection (décochés par défaut)."
+        >
           <input
             type="checkbox"
-            checked={c.excludeRadar !== false}
+            checked={c.excludeRadar === true}
             onChange={(e) => setC({ ...c, excludeRadar: e.target.checked })}
             style={{ accentColor: COLORS.brand, width: 14, height: 14 }}
           />
@@ -700,9 +703,11 @@ export function HubspotFilters({
                 <span
                   style={{ color: COLORS.ink3 }}
                   title={
-                    radarApproximated
-                      ? "Estimation extrapolée à partir d'un échantillon — l'import exclura tous les profils déjà au Radar."
-                      : "Ces profils seront exclus de l'import (déjà suivis dans votre Radar)."
+                    c.excludeRadar
+                      ? (radarApproximated
+                          ? "Estimation extrapolée à partir d'un échantillon, exclus à l'import."
+                          : "Ces profils seront exclus de l'import (déjà suivis dans votre Radar).")
+                      : "Ces profils apparaîtront dans le modal de sélection, décochés par défaut."
                   }
                 >
                   {" "}· <strong style={{ color: COLORS.ink2 }}>{radarApproximated ? "~" : ""}{radarCount}</strong> déjà au Radar

@@ -27,6 +27,15 @@ export interface StrategicHistoryItem {
   description: string;
 }
 
+export interface DealAnalysis {
+  momentum: "En accélération" | "Stable" | "En perte de vitesse";
+  momentumAnalysis: string;
+  riskLevel: "Faible" | "Moyen" | "Élevé";
+  positiveSignals: string[];
+  negativeSignals: string[];
+  nextStepCrm: string;
+}
+
 export interface BriefingResult {
   identity: { name: string; role: string; company: string; hubspotStage: string; lastContact: string };
   meetingType?: "discovery" | "follow_up";
@@ -36,7 +45,7 @@ export interface BriefingResult {
   companyProfile?: CompanyProfile;
   companyInsights?: string;
   personInsights?: string;
-  linkedinInsights?: { name: string; currentRole: string; experience?: string; skills?: string; education?: string; keyInsight: string }[];
+  linkedinInsights?: { name: string; currentRole: string; experience?: string; skills?: string; education?: string; keyInsight: string; linkedinUrl?: string }[];
   linkedinCompanyInsights?: {
     description?: string;
     headcount?: string;
@@ -54,6 +63,7 @@ export interface BriefingResult {
   nextStep?: string;
   confidence: "high" | "medium" | "low";
   dealQualification?: DealQualification;
+  dealAnalysis?: DealAnalysis | null;
 }
 
 export interface GatheredData {

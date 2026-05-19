@@ -21,6 +21,27 @@ function extractUsername(url?: string): string | null {
   return m ? decodeURIComponent(m[1]).replace(/\/$/, "") : null;
 }
 
+function serializeProfile(profile: LinkedInProfile, contact: ContactProps) {
+  return {
+    username: profile.username,
+    name: `${profile.firstName} ${profile.lastName}`,
+    headline: profile.headline,
+    summary: profile.summary?.slice(0, 600) ?? "",
+    location: profile.geo?.city ? `${profile.geo.city}, ${profile.geo.country}` : profile.geo?.country,
+    positions: (profile.position ?? []).slice(0, 5).map((p) => ({
+      company: p.companyName,
+      title: p.title,
+      start: p.start ? `${p.start.month ? p.start.month + "/" : ""}${p.start.year}` : null,
+      end: p.end?.year ? `${p.end.month ? p.end.month + "/" : ""}${p.end.year}` : "présent",
+    })),
+    skills: (profile.skills ?? []).slice(0, 12).map((s) => s.name),
+    education: (profile.educations ?? []).slice(0, 2).map((e) => `${e.schoolName ?? ""} — ${e.degree ?? ""} ${e.fieldOfStudy ?? ""}`.trim()),
+    profileUrl: `https://www.linkedin.com/in/${profile.username}/`,
+    contactName: `${contact.firstname ?? ""} ${contact.lastname ?? ""}`.trim(),
+    contactEmail: contact.email ?? null,
+  };
+}
+
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
@@ -32,16 +53,13 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params;
 
   try {
-    // 1. Récupérer les contacts associés au deal
     const assoc = await hubspotFetch<{ results?: { id: string }[] }>(`/crm/v3/objects/deals/${id}/associations/contacts`);
     const contactIds = (assoc.results ?? []).slice(0, 3).map((r) => r.id);
     if (contactIds.length === 0) {
-      return NextResponse.json({ error: "Aucun contact associé à ce deal" }, { status: 404 });
+      return NextResponse.json({ profiles: [] });
     }
 
-    // 2. Pour chaque contact, on essaie de résoudre un profil LinkedIn — on s'arrête au premier qui marche
-    let profile: LinkedInProfile | null = null;
-    let resolvedFrom: ContactProps | null = null;
+    const profiles: ReturnType<typeof serializeProfile>[] = [];
 
     for (const cid of contactIds) {
       const c = await hubspotFetch<{ id: string; properties: ContactProps }>(
@@ -61,40 +79,14 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       if (!username) continue;
 
       try {
-        profile = await getProfile(username);
-        resolvedFrom = props;
-        break;
+        const profile = await getProfile(username);
+        profiles.push(serializeProfile(profile, props));
       } catch {
         continue;
       }
     }
 
-    if (!profile || !resolvedFrom) {
-      return NextResponse.json({ error: "Aucun profil LinkedIn trouvé pour les contacts du deal" }, { status: 404 });
-    }
-
-    return NextResponse.json({
-      profile: {
-        username: profile.username,
-        name: `${profile.firstName} ${profile.lastName}`,
-        headline: profile.headline,
-        summary: profile.summary?.slice(0, 600) ?? "",
-        location: profile.geo?.city ? `${profile.geo.city}, ${profile.geo.country}` : profile.geo?.country,
-        positions: (profile.position ?? []).slice(0, 5).map((p) => ({
-          company: p.companyName,
-          title: p.title,
-          start: p.start ? `${p.start.month ? p.start.month + "/" : ""}${p.start.year}` : null,
-          end: p.end?.year ? `${p.end.month ? p.end.month + "/" : ""}${p.end.year}` : "présent",
-        })),
-        skills: (profile.skills ?? []).slice(0, 12).map((s) => s.name),
-        education: (profile.educations ?? []).slice(0, 2).map((e) => `${e.schoolName ?? ""} — ${e.degree ?? ""} ${e.fieldOfStudy ?? ""}`.trim()),
-        profileUrl: `https://www.linkedin.com/in/${profile.username}/`,
-      },
-      contact: {
-        name: `${resolvedFrom.firstname ?? ""} ${resolvedFrom.lastname ?? ""}`.trim(),
-        email: resolvedFrom.email ?? null,
-      },
-    });
+    return NextResponse.json({ profiles });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Erreur" }, { status: 500 });
   }

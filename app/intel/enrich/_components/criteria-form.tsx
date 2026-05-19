@@ -4,6 +4,7 @@ import * as React from "react";
 import { Search, X } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { NetrowsCriteria } from "@/lib/intel-types";
+import { ScopePickerPopover } from "./scope-picker-popover";
 
 export function CriteriaForm({
   initial,
@@ -45,6 +46,19 @@ export function CriteriaForm({
         setChips={setCompanies}
         value={companyInput}
         setValue={setCompanyInput}
+        action={
+          <ScopePickerPopover
+            label="+ Mes entreprises"
+            source="companies"
+            existing={companies}
+            onAdd={(vs) =>
+              setCompanies((c) => {
+                const seen = new Set(c.map((s) => s.toLowerCase()));
+                return [...c, ...vs.filter((v) => !seen.has(v.toLowerCase()))];
+              })
+            }
+          />
+        }
       />
       <ChipsInput
         label="Titres cibles"
@@ -53,6 +67,19 @@ export function CriteriaForm({
         setChips={setTitles}
         value={titleInput}
         setValue={setTitleInput}
+        action={
+          <ScopePickerPopover
+            label="+ Mes rôles"
+            source="roles"
+            existing={titles}
+            onAdd={(vs) =>
+              setTitles((c) => {
+                const seen = new Set(c.map((s) => s.toLowerCase()));
+                return [...c, ...vs.filter((v) => !seen.has(v.toLowerCase()))];
+              })
+            }
+          />
+        }
       />
       <div>
         <label style={lbl()}>Mots-clés (recherche libre)</label>
@@ -77,6 +104,7 @@ function ChipsInput({
   setChips,
   value,
   setValue,
+  action,
 }: {
   label: string;
   placeholder: string;
@@ -84,6 +112,7 @@ function ChipsInput({
   setChips: React.Dispatch<React.SetStateAction<string[]>>;
   value: string;
   setValue: React.Dispatch<React.SetStateAction<string>>;
+  action?: React.ReactNode;
 }) {
   function commit() {
     const v = value.trim();
@@ -94,7 +123,10 @@ function ChipsInput({
 
   return (
     <div>
-      <label style={lbl()}>{label}</label>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+        <label style={{ ...lbl(), marginBottom: 0 }}>{label}</label>
+        {action && <div style={{ marginLeft: "auto" }}>{action}</div>}
+      </div>
       <div
         style={{
           display: "flex",

@@ -84,7 +84,10 @@ export async function POST(req: NextRequest) {
 
   const c = (await req.json().catch(() => ({}))) as HubspotCriteria;
   const limit = Math.max(10, Math.min(500, c.limit ?? 100));
-  const excludeRadar = c.excludeRadar !== false; // défaut true
+  // Défaut: on inclut les profils déjà au Radar (avec un flag) pour les
+  // afficher dans le modal de sélection. Mettre excludeRadar=true les filtre
+  // côté serveur (option pour réduire le payload).
+  const excludeRadar = c.excludeRadar === true;
   const excludeIdSet = new Set(c.excludeIds ?? []);
 
   // ── 1. Resolve owners (default = me)
@@ -236,17 +239,10 @@ export async function POST(req: NextRequest) {
     };
     const sorts = sortMap[c.sort ?? "createdate-desc"];
 
-    // ── 6. Charge les clés Radar (hubspot_id + username + name+company) pour exclusion
-    let radarKeys: RadarKeys = {
-      hubspotIds: new Set(),
-      usernames: new Set(),
-      nameCompanyKeys: new Set(),
-      keyToUsername: new Map(),
-      size: 0,
-    };
-    if (excludeRadar) {
-      radarKeys = await loadRadarKeys(db);
-    }
+    // ── 6. Charge les clés Radar (hubspot_id + username + name+company).
+    // Utilisé soit pour exclure (excludeRadar=true), soit pour flagger les
+    // profils déjà au Radar (isOnRadar) afin de les afficher décochés dans le modal.
+    const radarKeys: RadarKeys = await loadRadarKeys(db);
 
     // ── 7. Run contact search avec sur-échantillonnage pour absorber le filtrage radar/excludeIds
     const overhead = radarKeys.size + excludeIdSet.size;
@@ -268,10 +264,11 @@ export async function POST(req: NextRequest) {
 
     const rawContacts = await hubspotSearchAll<RawContact>("contacts", searchBody, oversample);
 
-    // Filtre client-side : excludeIds + Radar
+    // Filtre client-side : excludeIds + Radar (skip ou flag selon excludeRadar)
     let skippedByRadar = 0;
     let skippedByExcludeIds = 0;
     const filteredContacts: RawContact[] = [];
+    const onRadarIds = new Set<string>();
     // Pour backfill opportuniste du hubspot_id sur les rows Radar matchées par nom+entreprise
     const radarBackfill: { username: string; hubspotId: string }[] = [];
     for (const row of rawContacts) {
@@ -279,24 +276,25 @@ export async function POST(req: NextRequest) {
         skippedByExcludeIds++;
         continue;
       }
-      if (excludeRadar) {
-        const m = matchContactAgainstRadar(
-          {
-            hubspotId: row.id,
-            firstName: row.properties.firstname,
-            lastName: row.properties.lastname,
-            company: row.properties.company,
-            linkedinUrl: row.properties.linkedin_url,
-          },
-          radarKeys,
-        );
-        if (m.matched) {
+      const m = matchContactAgainstRadar(
+        {
+          hubspotId: row.id,
+          firstName: row.properties.firstname,
+          lastName: row.properties.lastname,
+          company: row.properties.company,
+          linkedinUrl: row.properties.linkedin_url,
+        },
+        radarKeys,
+      );
+      if (m.matched) {
+        if (m.matchedBy === "name_company" && m.matchedUsername) {
+          radarBackfill.push({ username: m.matchedUsername, hubspotId: row.id });
+        }
+        if (excludeRadar) {
           skippedByRadar++;
-          if (m.matchedBy === "name_company" && m.matchedUsername) {
-            radarBackfill.push({ username: m.matchedUsername, hubspotId: row.id });
-          }
           continue;
         }
+        onRadarIds.add(row.id);
       }
       filteredContacts.push(row);
       if (filteredContacts.length >= limit) break;
@@ -434,6 +432,7 @@ export async function POST(req: NextRequest) {
       const deals = dealsByContact.get(row.id) ?? [];
       const top = deals.sort((a, b) => (parseFloat(b.properties.amount ?? "0") || 0) - (parseFloat(a.properties.amount ?? "0") || 0))[0];
       const topStage = top ? stagesById.get(top.properties.dealstage ?? "") : null;
+      const isOnRadar = onRadarIds.has(row.id);
       return {
         hubspotId: row.id,
         username,
@@ -451,7 +450,8 @@ export async function POST(req: NextRequest) {
         ownerName: ownerMap.get(p.hubspot_owner_id ?? "") ?? null,
         profileUrl: linkedinUrl,
         source: "hubspot" as const,
-        selected: true,
+        selected: !isOnRadar,
+        isOnRadar,
         lastContactedAt: p.notes_last_contacted ?? null,
         numAssociatedDeals: deals.length,
         topDeal: top

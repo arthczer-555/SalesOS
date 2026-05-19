@@ -1,54 +1,32 @@
 import type { Config } from "@netlify/functions";
-import { logAgentRun } from "../../lib/intel/log-agent-run";
 
 /**
  * Cron : runs every Monday at 06:00 UTC (~07:00 Paris winter / 08:00 summer).
  *
- * Fires all the intel agents in sequence so sales sees fresh signals at the
- * start of the week. Each agent self-authenticates via Bearer CRON_SECRET
- * (handled by `lib/cron-auth.ts`). The corresponding routes are whitelisted
- * in `middleware.ts`.
+ * Au lieu de fetcher les routes sync /api/intel/agents/*\/run (qui timeoutent
+ * à ~26s sur Netlify Pro), on dispatch en fire-and-forget vers une Background
+ * Function dédiée par agent. Chaque BG fn logge elle-même son outcome dans
+ * intel_agent_run_logs + intel_agent_runs, donc rien à tracker côté scan.
  *
- * Background functions on Netlify can run up to 15 min, which is plenty
- * since each agent maxes out around 1-2 min.
- *
- * Each agent run is appended to intel_agent_run_logs so /intel/agents → bouton
- * « Logs » montre l'historique complet (succès + échecs).
+ * Les dispatchs sont espacés de quelques secondes pour éviter de saturer les
+ * fournisseurs (Netrows, HubSpot, Tavily) au même instant.
  */
 
-// agentId = identifiant officiel défini dans lib/intel-agents.ts. Sert de clé
-// d'attribution dans intel_agent_run_logs ET de filtre dans le drawer Logs.
-const AGENTS: { path: string; agentId: string; label: string }[] = [
-  // Posts + keywords (companies + coaching/L&D mentions). Le scan alimente
-  // company-news / job-change / intent-content / hiring — on logge sous
-  // company-news qui est l'agent piloté par cet endpoint.
-  { path: "/api/linkedin/weekly-scan", agentId: "company-news", label: "weekly-scan" },
-  // Pubs LinkedIn actives sur les boîtes monitored
-  { path: "/api/intel/agents/ads/run", agentId: "ads-activity", label: "ads" },
-  // Offres d'emploi ICP RH/L&D
-  { path: "/api/intel/agents/hiring-spike/run", agentId: "hiring-spike", label: "hiring-spike" },
-  // Likes des AM/AE concurrents
-  { path: "/api/intel/agents/competitor-activity/run", agentId: "competitor-activity", label: "competitor-activity" },
-  // Ajout automatique des champions HubSpot au Radar
-  { path: "/api/intel/agents/champion-tracker/run", agentId: "champion-tracker", label: "champion-tracker" },
-  // Levées / M&A / expansion via Tavily
-  { path: "/api/intel/agents/funding/run", agentId: "funding-expansion", label: "funding" },
+interface AgentDispatch {
+  bgFn: string;
+  label: string;
+}
+
+const DISPATCH: AgentDispatch[] = [
+  { bgFn: "intel-company-news-background", label: "company-news" },
+  { bgFn: "intel-ads-background", label: "ads" },
+  { bgFn: "intel-hiring-spike-background", label: "hiring-spike" },
+  { bgFn: "intel-competitor-activity-background", label: "competitor-activity" },
+  { bgFn: "intel-champion-tracker-background", label: "champion-tracker" },
+  { bgFn: "intel-funding-background", label: "funding" },
 ];
 
-function extractSignalsCount(payload: unknown): number {
-  if (!payload || typeof payload !== "object") return 0;
-  const obj = payload as Record<string, unknown>;
-  if (typeof obj.signalsCount === "number") return obj.signalsCount;
-  const analysis = obj.analysis;
-  if (
-    analysis &&
-    typeof analysis === "object" &&
-    typeof (analysis as Record<string, unknown>).signals_created === "number"
-  ) {
-    return (analysis as { signals_created: number }).signals_created;
-  }
-  return 0;
-}
+const STAGGER_MS = 3_000;
 
 export default async () => {
   const siteUrl = process.env.URL || process.env.SITE_URL;
@@ -59,67 +37,44 @@ export default async () => {
   }
 
   const t0 = Date.now();
-  const results: { agent: string; ok: boolean; status: number; ms: number; payload?: unknown }[] = [];
+  const startedAt = new Date().toISOString();
+  let dispatched = 0;
+  const errors: { label: string; error: string }[] = [];
 
-  for (const agent of AGENTS) {
-    const startedAtIso = new Date().toISOString();
-    const start = Date.now();
-    let ok = false;
-    let status = 0;
-    let payload: unknown = null;
-    let errorText: string | null = null;
-
+  for (const agent of DISPATCH) {
     try {
-      const res = await fetch(`${siteUrl}${agent.path}`, {
+      const res = await fetch(`${siteUrl}/.netlify/functions/${agent.bgFn}`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${cronSecret}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ userId: null, startedAt, triggeredBy: "cron" }),
       });
-      status = res.status;
-      ok = res.ok;
-      const text = await res.text();
-      try {
-        payload = JSON.parse(text);
-      } catch {
-        payload = { raw: text.slice(0, 500) };
-      }
-      if (!ok) {
-        errorText = `HTTP ${status} — ${text.slice(0, 1500)}`;
-        console.error(`[intel-weekly-scan] ${agent.label} failed:`, status, payload);
+      // 202 attendu (BG fn renvoie immédiatement). Tout autre code = mauvaise
+      // config (auth, fn pas déployée).
+      if (res.status !== 202 && res.status !== 200) {
+        const text = await res.text().catch(() => "");
+        errors.push({ label: agent.label, error: `HTTP ${res.status} ${text.slice(0, 200)}` });
+        console.error(`[intel-weekly-scan] dispatch ${agent.label} returned ${res.status}:`, text.slice(0, 300));
       } else {
-        console.log(`[intel-weekly-scan] ${agent.label} ok in ${Date.now() - start}ms`, payload);
+        dispatched++;
+        console.log(`[intel-weekly-scan] dispatched ${agent.label} → ${agent.bgFn}`);
       }
     } catch (e) {
-      ok = false;
-      errorText = e instanceof Error ? e.message : String(e);
-      console.error(`[intel-weekly-scan] ${agent.label} fatal:`, e);
+      const msg = e instanceof Error ? e.message : String(e);
+      errors.push({ label: agent.label, error: msg });
+      console.error(`[intel-weekly-scan] dispatch ${agent.label} failed:`, e);
     }
-
-    results.push({ agent: agent.label, ok, status, ms: Date.now() - start, payload });
-
-    try {
-      await logAgentRun({
-        agentId: agent.agentId,
-        triggeredBy: "cron",
-        userId: null,
-        startedAt: startedAtIso,
-        status: ok ? "ok" : "error",
-        signalsCount: extractSignalsCount(payload),
-        error: errorText,
-        payload,
-      });
-    } catch (logErr) {
-      console.error(`[intel-weekly-scan] log insert failed for ${agent.label}:`, logErr);
-    }
+    await new Promise((r) => setTimeout(r, STAGGER_MS));
   }
 
-  const okCount = results.filter((r) => r.ok).length;
-  console.log(`[intel-weekly-scan] DONE: ${okCount}/${AGENTS.length} agents ok in ${Date.now() - t0}ms`);
+  console.log(
+    `[intel-weekly-scan] DONE: ${dispatched}/${DISPATCH.length} dispatched in ${Date.now() - t0}ms`,
+    errors.length > 0 ? { errors } : "",
+  );
 };
 
 export const config: Config = {
-  schedule: "0 6 * * 1", // every Monday 06:00 UTC = ~07h-08h Paris
+  schedule: "0 6 * * 1", // every Monday 06:00 UTC
 };

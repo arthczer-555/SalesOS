@@ -371,43 +371,31 @@ export async function POST(req: NextRequest) {
         }
       })(),
 
-      // Tavily: web news about the company (targeted queries for buying signals)
+      // Tavily: web news about the company — signaux business uniquement
       (async () => {
         if (!company) return { webResults: [], companyProfileResults: [], strategicResults: [] };
-        const attendeeName = externalAttendees[0]?.displayName ?? "";
-        const [r1, r2, r3, r4, r5] = await Promise.allSettled([
-          searchTavily(`"${company}" news`, 60),
-          searchTavily(`"${company}" funding OR acquisition OR partnership OR expansion`, 60),
-          searchTavily(`"${company}" ${attendeeName} appointment OR nomination`.trim(), 60),
+        const [rStrategic, rProfile] = await Promise.allSettled([
+          searchTavily(
+            `"${company}" (funding OR fundraising OR "levée" OR acquisition OR merger OR partnership OR partenariat OR restructuring OR restructuration OR layoffs OR "plan social" OR CEO OR CFO OR appointment OR nomination OR coaching OR "executive coaching")`,
+            120,
+          ),
           searchTavily(`"${company}" profil chiffre affaires employés siège modèle`, 180),
-          searchTavily(`"${company}" acquisition partenariat stratégique historique`, 365),
         ]);
 
-        const newsResults = [
-          ...(r1.status === "fulfilled" ? r1.value : []),
-          ...(r2.status === "fulfilled" ? r2.value : []),
-          ...(r3.status === "fulfilled" ? r3.value : []),
-        ];
         const seen = new Set<string>();
-        const webResults = newsResults.filter((r) => {
-          if (seen.has(r.url)) return false;
-          seen.add(r.url);
-          return true;
-        }).slice(0, 8);
-
-        const companyProfileResults = (r4.status === "fulfilled" ? r4.value : []).filter((r: { url: string }) => {
+        const webResults = (rStrategic.status === "fulfilled" ? rStrategic.value : []).filter((r: { url: string }) => {
           if (seen.has(r.url)) return false;
           seen.add(r.url);
           return true;
         }).slice(0, 5);
 
-        const strategicResults = (r5.status === "fulfilled" ? r5.value : []).filter((r: { url: string }) => {
+        const companyProfileResults = (rProfile.status === "fulfilled" ? rProfile.value : []).filter((r: { url: string }) => {
           if (seen.has(r.url)) return false;
           seen.add(r.url);
           return true;
         }).slice(0, 5);
 
-        return { webResults, companyProfileResults, strategicResults };
+        return { webResults, companyProfileResults, strategicResults: [] };
       })(),
 
       // LinkedIn: enrich attendee profiles via Netrows (search by name)
@@ -427,7 +415,11 @@ export async function POST(req: NextRequest) {
             const found = result.data?.items?.[0];
             if (found?.username) {
               const full = await getProfile(found.username);
-              profiles.push(full);
+              profiles.push({
+                ...full,
+                username: found.username,
+                profileUrl: `https://www.linkedin.com/in/${found.username}/`,
+              });
             }
           } catch { /* ignore */ }
         }

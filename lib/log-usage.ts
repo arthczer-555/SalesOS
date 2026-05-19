@@ -3,6 +3,12 @@ import { db } from "@/lib/db";
 /**
  * Fire-and-forget usage logging to usage_logs table.
  * Call after every client.messages.create() call.
+ *
+ * userId peut être null pour les appels système (cron, webhooks, résolveurs
+ * internes sans contexte user). Ces appels sont quand même loggués (user_id
+ * = null) sinon ils sont invisibles dans l'admin et on découvre la facture
+ * sans pouvoir l'attribuer. Pré-requis : la colonne user_id doit être
+ * nullable (cf. migration usage_logs_allow_null_user.sql).
  */
 export function logUsage(
   userId: string | null,
@@ -11,7 +17,7 @@ export function logUsage(
   outputTokens: number,
   feature?: string,
 ): void {
-  if (!userId || !process.env.SUPABASE_URL) return;
+  if (!process.env.SUPABASE_URL) return;
   void db.from("usage_logs").insert({
     user_id: userId,
     model,

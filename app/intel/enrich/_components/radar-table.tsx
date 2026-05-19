@@ -5,7 +5,7 @@ import { Search, ExternalLink, Trash2, RefreshCw, ChevronUp, ChevronDown, X, Fil
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { COLORS } from "@/lib/design/tokens";
 import { useRadarStatus } from "@/lib/hooks/use-radar-status";
-import { removeFromRadar, refreshRadarProfiles, type RadarRefreshResult } from "@/lib/hooks/use-enrichment";
+import { removeFromRadar, removeFromRadarBulk, refreshRadarProfiles, type RadarRefreshResult } from "@/lib/hooks/use-enrichment";
 import type { RadarProfile } from "@/lib/intel-types";
 import { timeAgo } from "../../_helpers";
 
@@ -61,6 +61,8 @@ export function RadarTable() {
   const [removing, setRemoving] = React.useState<string | null>(null);
   const [refreshing, setRefreshing] = React.useState<Set<string>>(new Set());
   const [bulkRefreshing, setBulkRefreshing] = React.useState(false);
+  const [bulkRemoving, setBulkRemoving] = React.useState(false);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [feedback, setFeedback] = React.useState<{ kind: "ok" | "err"; msg: string } | null>(null);
   const [detail, setDetail] = React.useState<RadarProfile | null>(null);
 
@@ -109,6 +111,48 @@ export function RadarTable() {
 
   const staleCount = React.useMemo(() => profiles.filter(isStale).length, [profiles]);
 
+  // Purge la sélection des usernames qui ne sont plus présents (après reload ou retrait).
+  React.useEffect(() => {
+    setSelected((prev) => {
+      if (prev.size === 0) return prev;
+      const valid = new Set(profiles.map((p) => p.username));
+      const next = new Set<string>();
+      prev.forEach((u) => {
+        if (valid.has(u)) next.add(u);
+      });
+      return next.size === prev.size ? prev : next;
+    });
+  }, [profiles]);
+
+  const visibleUsernames = React.useMemo(() => sorted.map((p) => p.username), [sorted]);
+  const visibleSelectedCount = React.useMemo(
+    () => visibleUsernames.reduce((n, u) => n + (selected.has(u) ? 1 : 0), 0),
+    [visibleUsernames, selected]
+  );
+  const allVisibleSelected = visibleUsernames.length > 0 && visibleSelectedCount === visibleUsernames.length;
+  const someVisibleSelected = visibleSelectedCount > 0 && !allVisibleSelected;
+
+  function toggleSelectOne(username: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(username)) next.delete(username);
+      else next.add(username);
+      return next;
+    });
+  }
+
+  function toggleSelectAllVisible() {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) {
+        visibleUsernames.forEach((u) => next.delete(u));
+      } else {
+        visibleUsernames.forEach((u) => next.add(u));
+      }
+      return next;
+    });
+  }
+
   function toggleSort(key: SortKey) {
     if (sortKey === key) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -133,6 +177,27 @@ export function RadarTable() {
       await reload();
     } finally {
       setRemoving(null);
+    }
+  }
+
+  async function onBulkRemove() {
+    const usernames = Array.from(selected);
+    if (usernames.length === 0) return;
+    if (!confirm(`Retirer ${usernames.length} profil${usernames.length > 1 ? "s" : ""} du Radar ?`)) return;
+    setBulkRemoving(true);
+    setFeedback(null);
+    try {
+      const { removed } = await removeFromRadarBulk(usernames);
+      setSelected(new Set());
+      await reload();
+      setFeedback({
+        kind: "ok",
+        msg: `${removed} profil${removed > 1 ? "s retirés" : " retiré"} du Radar.`,
+      });
+    } catch (e) {
+      setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur retrait" });
+    } finally {
+      setBulkRemoving(false);
     }
   }
 
@@ -321,6 +386,63 @@ export function RadarTable() {
         </span>
       </div>
 
+      {selected.size > 0 && (
+        <div
+          style={{
+            padding: "8px 12px",
+            marginBottom: 12,
+            background: COLORS.brandTintSoft,
+            border: `1px solid ${COLORS.brand}`,
+            borderRadius: 8,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            fontSize: 12,
+          }}
+        >
+          <span style={{ color: COLORS.ink1, fontWeight: 500 }}>
+            {selected.size} profil{selected.size > 1 ? "s" : ""} sélectionné{selected.size > 1 ? "s" : ""}
+          </span>
+          <button
+            type="button"
+            onClick={() => setSelected(new Set())}
+            style={{
+              padding: "5px 10px",
+              fontSize: 12,
+              borderRadius: 6,
+              border: `1px solid ${COLORS.line}`,
+              background: COLORS.bgCard,
+              color: COLORS.ink2,
+              cursor: "pointer",
+            }}
+          >
+            Désélectionner
+          </button>
+          <button
+            type="button"
+            onClick={onBulkRemove}
+            disabled={bulkRemoving}
+            style={{
+              marginLeft: "auto",
+              padding: "6px 12px",
+              fontSize: 12,
+              borderRadius: 6,
+              border: `1px solid ${COLORS.err}`,
+              background: bulkRemoving ? COLORS.bgSoft : COLORS.err,
+              color: bulkRemoving ? COLORS.ink3 : "white",
+              cursor: bulkRemoving ? "wait" : "pointer",
+              fontWeight: 500,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+          >
+            <Trash2 size={12} />
+            Retirer {selected.size} profil{selected.size > 1 ? "s" : ""} du Radar
+          </button>
+        </div>
+      )}
+
       {feedback && (
         <div
           style={{
@@ -352,6 +474,14 @@ export function RadarTable() {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead style={{ position: "sticky", top: 0, background: COLORS.bgCard, zIndex: 1, borderBottom: `1px solid ${COLORS.line}` }}>
             <tr>
+              <th style={th(36)}>
+                <HeaderCheckbox
+                  checked={allVisibleSelected}
+                  indeterminate={someVisibleSelected}
+                  onChange={toggleSelectAllVisible}
+                  disabled={visibleUsernames.length === 0}
+                />
+              </th>
               <th style={th(36)}></th>
               <SortHeader label="Nom · headline" k="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortHeader label="Entreprise" k="company" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
@@ -364,15 +494,16 @@ export function RadarTable() {
           </thead>
           <tbody>
             {isLoading && profiles.length === 0 && (
-              <tr><td colSpan={8} style={{ padding: 32, textAlign: "center", color: COLORS.ink3 }}>Chargement…</td></tr>
+              <tr><td colSpan={9} style={{ padding: 32, textAlign: "center", color: COLORS.ink3 }}>Chargement…</td></tr>
             )}
             {!isLoading && sorted.length === 0 && (
-              <tr><td colSpan={8} style={{ padding: 32, textAlign: "center", color: COLORS.ink3 }}>Aucun profil dans ces filtres.</td></tr>
+              <tr><td colSpan={9} style={{ padding: 32, textAlign: "center", color: COLORS.ink3 }}>Aucun profil dans ces filtres.</td></tr>
             )}
             {sorted.map((p) => {
               const stale = isStale(p);
               const isRefreshing = refreshing.has(p.username);
-              const isSelected = detail?.id === p.id;
+              const isDetailOpen = detail?.id === p.id;
+              const isChecked = selected.has(p.username);
               return (
                 <tr
                   key={p.id}
@@ -380,9 +511,22 @@ export function RadarTable() {
                   style={{
                     borderBottom: `1px solid ${COLORS.line}`,
                     cursor: "pointer",
-                    background: isSelected ? COLORS.brandTintSoft : "transparent",
+                    background: isChecked
+                      ? COLORS.brandTintSoft
+                      : isDetailOpen
+                        ? COLORS.bgSoft
+                        : "transparent",
                   }}
                 >
+                  <td style={{ padding: "10px 12px" }} onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleSelectOne(p.username)}
+                      aria-label={`Sélectionner ${p.full_name ?? p.username}`}
+                      style={{ cursor: "pointer" }}
+                    />
+                  </td>
                   <td style={{ padding: "10px 12px" }}>
                     <CompanyAvatar name={p.full_name ?? p.username} size={28} rounded="full" />
                   </td>
@@ -873,6 +1017,34 @@ function Section({ label, children }: { label: string; children: React.ReactNode
       </div>
       {children}
     </div>
+  );
+}
+
+function HeaderCheckbox({
+  checked,
+  indeterminate,
+  onChange,
+  disabled,
+}: {
+  checked: boolean;
+  indeterminate: boolean;
+  onChange: () => void;
+  disabled?: boolean;
+}) {
+  const ref = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate && !checked;
+  }, [indeterminate, checked]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      disabled={disabled}
+      aria-label="Tout sélectionner"
+      style={{ cursor: disabled ? "default" : "pointer" }}
+    />
   );
 }
 

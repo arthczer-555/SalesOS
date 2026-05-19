@@ -41,15 +41,17 @@ Chaque champ = 1 valeur courte ou null :
 
 ---
 
-## contextSummary
+## contextSummary (NARRATIF BUSINESS uniquement)
 
 Texte structure avec des sections markdown courtes. 1 phrase max par puce. Pas de paragraphes.
 
+**REGLE STRICTE de separation** : contextSummary raconte le contexte business (entreprise, marche, relation, historique). Tout ce qui releve du CRM (stage, montants, momentum funnel, signaux d'achat/risque) va dans dealAnalysis, PAS ici. Aucune redite entre les deux blocs.
+
 ## Situation
 2-3 puces max :
-- Stade CRM actuel et depuis quand
-- Dynamique de la relation (active, dormante, en negociation)
+- Dynamique de la relation cote business (active, dormante, en negociation)
 - Dernier contact (date + type)
+- Contexte strategique cote entreprise (initiative en cours, contexte marche)
 
 ## Derniers echanges
 Les 3-5 echanges les plus recents uniquement :
@@ -58,8 +60,23 @@ Les 3-5 echanges les plus recents uniquement :
 - Trier du plus recent au plus ancien
 - Pour les Claap : utiliser [CLAAP — JJ/MM/AAAA] + 1 phrase de resume du contenu
 
-NE PAS inclure de section Deals ici — les deals sont deja affiches dans un card dedie.
-NE PAS inclure de section Signaux ici — les signaux sont dans meetingTakeaways.
+NE PAS inclure de section Deals/Funnel ici — c'est le role de dealAnalysis.
+NE PAS inclure de section Signaux ici — les signaux a actionner sont dans meetingTakeaways, les signaux du funnel dans dealAnalysis.
+
+---
+
+## dealAnalysis (FACTUEL CRM uniquement)
+
+Analyse de l'etat du deal cote HubSpot. PAS de narratif business (qui va dans contextSummary). Null si meeting non commercial ou aucun deal associe.
+
+- momentum : "En accélération" | "Stable" | "En perte de vitesse"
+- momentumAnalysis : 1-2 phrases factuelles (ex: "3 emails échangés en 2 semaines après 1 mois de silence, montant deal stable à 25k€ depuis l'opening").
+- riskLevel : "Faible" | "Moyen" | "Élevé"
+- positiveSignals : max 3 signaux concrets observes dans le funnel (engagements rapides, montants en hausse, multiplication contacts cote client).
+- negativeSignals : max 3 signaux concrets observes dans le funnel (silences prolonges, deal stagnant, perte de contacts).
+- nextStepCrm : 1 action CRM concrete (relancer X sur le devis envoye le JJ/MM, programmer call avec decisionnaire). Doit etre different du nextStep narratif.
+
+Sources : sections DEALS HUBSPOT et HISTORIQUE ÉCHANGES exclusivement.
 
 ---
 
@@ -91,18 +108,26 @@ Adapte les questions au contexte reel du deal. Sois specifique, pas generique.
 
 ---
 
-## recentNews (actualites categorisees)
+## recentNews (signaux business uniquement)
 
 Items d'actualite EXTERNES uniquement (sources web). 1 phrase max par news.
 NE PAS inclure de messages Slack ni d'emails.
 
-Categorise chaque item :
-- strategic : operations strategiques (retrait bourse, fusion, acquisition)
-- recognition : recompenses, classements, certifications (Gartner, prix)
-- partnership : partenariats annonces
-- growth : resultats financiers, croissance, levee de fonds
-- leadership : nominations, changements de direction
-- general : autres actualites
+ECARTER systematiquement :
+- Communiques marketing / annonces produit generiques
+- Contenu SEO, articles sponsorises, listicles
+- Mentions ponctuelles sans signal business (citation dans un article, intervention conference)
+- Annonces RH classiques (recrutement de masse, journee portes ouvertes)
+
+NE GARDER QUE les signaux a forte valeur pour la prep d'un rendez-vous commercial :
+- funding : levee de fonds, tour de financement, IPO
+- acquisition : acquisition, fusion, cession, prise de participation
+- partnership : partenariat strategique (pas un simple integrator)
+- leadership : nomination CEO/CFO/COO/CHRO, depart d'un dirigeant
+- restructuring : restructuration, plan social, reorganisation
+- coaching : initiative coaching / formation managers / leadership development
+
+Categorise chaque item avec un de ces 6 types. Si aucune actualite ne correspond, retourner items: [] (tableau vide). NE PAS remplir avec du contenu generique pour faire du volume.
 
 Inclure la date et l'URL source obligatoirement. Maximum 4 items.
 

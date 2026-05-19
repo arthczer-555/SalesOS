@@ -130,6 +130,7 @@ export interface EnrichmentProfile {
   source?: ProfileSource;
   isChampion?: boolean;
   addedToRadar?: boolean;
+  isOnRadar?: boolean;
   // HubSpot extras
   jobTitle?: string | null;
   lifecyclestage?: string | null;

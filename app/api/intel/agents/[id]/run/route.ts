@@ -9,9 +9,22 @@ import { logAgentRun } from "@/lib/intel/log-agent-run";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+// Mapping agentId → Netlify Background Function. Tous les agents listés ici
+// sont déportés en BG fn sur Netlify pour éviter l'« Inactivity Timeout » du
+// proxy (~26s sur Pro). Les BG fns logguent elles-mêmes dans
+// intel_agent_run_logs + intel_agent_runs.
+const BACKGROUND_FN_BY_AGENT: Partial<Record<AgentId, string>> = {
+  "company-news": "intel-company-news-background",
+  "funding-expansion": "intel-funding-background",
+  "champion-tracker": "intel-champion-tracker-background",
+  "competitor-activity": "intel-competitor-activity-background",
+  "ads-activity": "intel-ads-background",
+  "hiring-spike": "intel-hiring-spike-background",
+};
+
 // Fire-and-forget : on enregistre last_run_status = "running" + 202,
-// l'exécution réelle se poursuit via `after()` après réponse au client.
-// Évite l'« Inactivity Timeout » du proxy Vercel sur les scans longs.
+// l'exécution réelle se poursuit côté Netlify Background Function ou via
+// `after()` en dev.
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
@@ -36,27 +49,26 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   const cookie = req.headers.get("cookie") ?? "";
   const runEndpoint = def.runEndpoint;
 
-  // ── company-news : délègue à une Netlify Background Function ──────────
-  // Le scan prend 1-3 min (50 entreprises + 15 keywords + Claude). Sur Netlify
-  // les fonctions synchrones (et leur `after()`) sont coupées à ~26s — d'où le
-  // statut "running" figé. Les Background Functions tolèrent jusqu'à 15 min.
+  // ── Netlify : dispatch vers la BG fn dédiée si l'agent en a une ────────
+  // Chaque BG fn logge elle-même son outcome dans intel_agent_runs +
+  // intel_agent_run_logs, donc on n'a rien à faire ici à part 202.
   const siteUrl = process.env.URL ?? process.env.SITE_URL ?? baseUrl;
   const cronSecret = process.env.CRON_SECRET;
-  if (id === "company-news" && process.env.NETLIFY === "true" && cronSecret) {
-    fetch(`${siteUrl}/.netlify/functions/intel-company-news-background`, {
+  const bgFn = BACKGROUND_FN_BY_AGENT[id as AgentId];
+  if (bgFn && process.env.NETLIFY === "true" && cronSecret) {
+    fetch(`${siteUrl}/.netlify/functions/${bgFn}`, {
       method: "POST",
       headers: { authorization: `Bearer ${cronSecret}`, "content-type": "application/json" },
       body: JSON.stringify({ userId, startedAt, triggeredBy: "manual" }),
     }).catch((e) => {
-      console.error("[intel/agents/run] background invoke failed:", e);
+      console.error(`[intel/agents/run] background invoke failed for ${id}:`, e);
     });
     return NextResponse.json({ ok: true, queued: true, background: true }, { status: 202 });
   }
 
-  // Dev local (pas de Background Functions dispo) + autres agents : on garde
-  // le pattern `after()` historique. Note : les autres agents partagent le
-  // même risque de coupure 26s sur Netlify et devraient passer en background
-  // s'ils dépassent ce budget.
+  // Dev local (pas de Background Functions dispo) : on garde le pattern
+  // `after()` historique. Le scan sync risque d'être coupé à ~26s en prod si
+  // jamais on tombe dans cette branche (agent sans BG fn mappée).
   after(async () => {
     let signalsCount = 0;
     let ok = true;

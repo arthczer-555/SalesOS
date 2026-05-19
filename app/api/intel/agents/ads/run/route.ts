@@ -1,83 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateCronOrUser } from "@/lib/cron-auth";
-import { db } from "@/lib/db";
-import { getCompanyAds, listRadarCompanies } from "@/lib/netrows";
+import { runAdsAgent } from "@/lib/intel/agents/ads";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
-interface AdItem {
-  adUrl: string;
-  text: string;
-  postedAt: string;
-}
-
+// Route sync utilisée en local (next dev) et comme fallback. En prod Netlify
+// le scan dépasse les ~26s sync : le wrapper /api/intel/agents/[id]/run et
+// intel-weekly-scan-background.mts dispatchent vers intel-ads-background.
 export async function POST(req: NextRequest) {
   const auth = await authenticateCronOrUser(req);
   if (!auth) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
-  if (!process.env.NETROWS_API_KEY) {
-    return NextResponse.json({ error: "Netrows non configuré" }, { status: 500 });
+  try {
+    const result = await runAdsAgent();
+    return NextResponse.json({ ok: true, ...result });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
-
-  const radar = await listRadarCompanies();
-  const companies = (radar.data ?? []).slice(0, 30);
-  const { data: allUsers } = await db.from("users").select("id");
-  const userIds = (allUsers ?? []).map((u: { id: string }) => u.id);
-
-  let signalsCount = 0;
-  let creditsUsed = 0;
-  const errors: string[] = [];
-
-  for (const c of companies) {
-    try {
-      const r = await getCompanyAds(c.username);
-      creditsUsed++;
-      const ads = ((r.data ?? []) as AdItem[]).slice(0, 5);
-      if (ads.length === 0) continue;
-
-      const title = `${c.username} : ${ads.length} pub${ads.length > 1 ? "s" : ""} LinkedIn active${ads.length > 1 ? "s" : ""}`;
-      const summary = ads.map((a) => `- ${a.text.slice(0, 120)}`).join("\n").slice(0, 600);
-
-      // Dedup : ne pas créer plus d'un signal "ads" / société / 7 jours
-      const oneWeekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
-      const { data: recent } = await db
-        .from("market_signals")
-        .select("id")
-        .eq("agent_id", "ads-activity")
-        .eq("company_name", c.username)
-        .gte("created_at", oneWeekAgo)
-        .limit(1);
-      if (recent && recent.length > 0) continue;
-
-      if (userIds.length > 0) {
-        await db.from("market_signals").insert(
-          userIds.map((uid) => ({
-            user_id: uid,
-            agent_id: "ads-activity",
-            company_name: c.username,
-            signal_type: "ads",
-            title,
-            summary,
-            strength: 2,
-            score: 60,
-            source_url: ads[0].adUrl,
-            source_domain: "linkedin.com",
-            why_relevant: "Pubs LinkedIn actives = budget marketing ouvert et besoin de notoriété — souvent corrélé à un cycle de croissance.",
-            suggested_action: "Adapter l'angle d'approche en partant des messages publicitaires diffusés.",
-            action_type: "linkedin",
-            is_read: false,
-            is_actioned: false,
-          }))
-        );
-        signalsCount++;
-      }
-
-      await new Promise((r) => setTimeout(r, 1200));
-    } catch (e) {
-      errors.push(`${c.username}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-
-  return NextResponse.json({ ok: true, signalsCount, creditsUsed, scanned: companies.length, errors });
 }

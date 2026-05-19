@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { MarkdownBlock } from "./markdown";
-import type { BriefingResult, DealQualification, GatheredData } from "../_helpers";
+import { TrendingUp, TrendingDown, Minus, AlertTriangle, CheckCircle, XCircle } from "lucide-react";
+import type { BriefingResult, DealAnalysis, DealQualification, GatheredData } from "../_helpers";
 import { isExistingClient } from "../_helpers";
 
 const QUAL_FIELDS: { key: keyof DealQualification; label: string }[] = [
@@ -30,6 +31,8 @@ export function BriefingContext({ briefing, rawData }: { briefing: BriefingResul
           <MarkdownBlock text={briefing.contextSummary} />
         </Card>
       )}
+
+      {briefing.dealAnalysis && <DealAnalysisCard analysis={briefing.dealAnalysis} />}
 
       {briefing.isSalesMeeting !== false && briefing.dealQualification && !isClient && (() => {
         const known = QUAL_FIELDS.filter((f) => !!briefing.dealQualification![f.key]);
@@ -116,5 +119,141 @@ export function BriefingContext({ briefing, rawData }: { briefing: BriefingResul
         </Card>
       )}
     </div>
+  );
+}
+
+const MOMENTUM_STYLES: Record<DealAnalysis["momentum"], { icon: React.ReactNode; bg: string; color: string }> = {
+  "En accélération": { icon: <TrendingUp size={12} />, bg: "#f0fdf4", color: "#15803d" },
+  "Stable": { icon: <Minus size={12} />, bg: "#f3f4f6", color: "#525252" },
+  "En perte de vitesse": { icon: <TrendingDown size={12} />, bg: "#fef2f2", color: "#dc2626" },
+};
+
+const RISK_STYLES: Record<DealAnalysis["riskLevel"], { bg: string; color: string }> = {
+  "Faible": { bg: "#f0fdf4", color: "#15803d" },
+  "Moyen": { bg: "#fef3c7", color: "#d97706" },
+  "Élevé": { bg: "#fef2f2", color: "#dc2626" },
+};
+
+function DealAnalysisCard({ analysis }: { analysis: DealAnalysis }) {
+  const mom = MOMENTUM_STYLES[analysis.momentum] ?? MOMENTUM_STYLES.Stable;
+  const risk = RISK_STYLES[analysis.riskLevel] ?? RISK_STYLES.Moyen;
+  return (
+    <Card padding={16}>
+      <SectionHeader title="État du deal" />
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "3px 8px",
+            borderRadius: 999,
+            background: mom.bg,
+            color: mom.color,
+          }}
+        >
+          {mom.icon} {analysis.momentum}
+        </span>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            fontSize: 11,
+            fontWeight: 600,
+            padding: "3px 8px",
+            borderRadius: 999,
+            background: risk.bg,
+            color: risk.color,
+          }}
+        >
+          <AlertTriangle size={12} /> Risque {analysis.riskLevel.toLowerCase()}
+        </span>
+      </div>
+
+      {analysis.momentumAnalysis && (
+        <p style={{ fontSize: 12, color: COLORS.ink1, margin: 0, marginBottom: 12, lineHeight: 1.5 }}>
+          {analysis.momentumAnalysis}
+        </p>
+      )}
+
+      {(analysis.positiveSignals?.length > 0 || analysis.negativeSignals?.length > 0) && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
+          {analysis.positiveSignals?.length > 0 && (
+            <div>
+              <p
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                  color: "#15803d",
+                  margin: 0,
+                  marginBottom: 4,
+                }}
+              >
+                Signaux positifs
+              </p>
+              <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+                {analysis.positiveSignals.map((s, i) => (
+                  <li key={i} style={{ display: "flex", gap: 6, fontSize: 12, color: COLORS.ink1, lineHeight: 1.4 }}>
+                    <CheckCircle size={12} style={{ color: "#15803d", flexShrink: 0, marginTop: 2 }} />
+                    <span>{s}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {analysis.negativeSignals?.length > 0 && (
+            <div>
+              <p
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: "0.04em",
+                  textTransform: "uppercase",
+                  color: "#dc2626",
+                  margin: 0,
+                  marginBottom: 4,
+                }}
+              >
+                Signaux négatifs
+              </p>
+              <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+                {analysis.negativeSignals.map((s, i) => (
+                  <li key={i} style={{ display: "flex", gap: 6, fontSize: 12, color: COLORS.ink1, lineHeight: 1.4 }}>
+                    <XCircle size={12} style={{ color: "#dc2626", flexShrink: 0, marginTop: 2 }} />
+                    <span>{s}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {analysis.nextStepCrm && (
+        <div style={{ paddingTop: 10, borderTop: `1px solid ${COLORS.line}` }}>
+          <p
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              color: COLORS.ink3,
+              margin: 0,
+              marginBottom: 4,
+            }}
+          >
+            Action CRM
+          </p>
+          <p style={{ fontSize: 12, color: COLORS.ink0, margin: 0, lineHeight: 1.5 }}>
+            {analysis.nextStepCrm}
+          </p>
+        </div>
+      )}
+    </Card>
   );
 }

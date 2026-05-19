@@ -30,7 +30,20 @@ const briefingTool: Anthropic.Tool = {
       meetingType: { type: "string", enum: ["discovery", "follow_up"] },
       isSalesMeeting: { type: "boolean", description: "true si la réunion est commerciale (prospect, client, deal). false si interne, partenaire, coaching, support, etc." },
       objective: { type: "string", description: "1 phrase : objectif de ce rendez-vous" },
-      contextSummary: { type: "string", description: "Markdown structuré : ## Situation, ## Derniers échanges. 1 phrase max par puce. Utiliser \\n pour les retours à la ligne." },
+      contextSummary: { type: "string", description: "NARRATIF business uniquement (entreprise, marché, relation, historique). NE PAS mentionner le stage HubSpot, les montants CRM, ni l'analyse du funnel — tout ça va dans dealAnalysis. Markdown structuré : ## Situation, ## Derniers échanges. 1 phrase max par puce. Utiliser \\n pour les retours à la ligne." },
+      dealAnalysis: {
+        type: "object",
+        description: "Analyse FACTUELLE de l'état du deal côté CRM HubSpot. UNIQUEMENT le funnel : stage, momentum, signaux d'achat/de risque visibles dans les engagements. PAS de narratif business (ça va dans contextSummary). null si aucun deal HubSpot pertinent ou meeting non commercial.",
+        properties: {
+          momentum: { type: "string", enum: ["En accélération", "Stable", "En perte de vitesse"] },
+          momentumAnalysis: { type: "string", description: "1-2 phrases factuelles sur la dynamique CRM (ex: 3 emails échangés en 2 semaines après 1 mois de silence)" },
+          riskLevel: { type: "string", enum: ["Faible", "Moyen", "Élevé"] },
+          positiveSignals: { type: "array", description: "Max 3 signaux positifs concrets observés dans le funnel (engagements, montants, réponses rapides)", items: { type: "string" } },
+          negativeSignals: { type: "array", description: "Max 3 signaux négatifs concrets observés dans le funnel (silences, objections, hésitations)", items: { type: "string" } },
+          nextStepCrm: { type: "string", description: "1 action CRM concrète pour faire avancer le deal après ce meeting (ex: relancer X sur le devis envoyé le JJ/MM). Différent du nextStep narratif." },
+        },
+        required: ["momentum", "momentumAnalysis", "riskLevel", "positiveSignals", "negativeSignals", "nextStepCrm"],
+      },
       companyProfile: {
         type: "object",
         properties: {
@@ -55,6 +68,7 @@ const briefingTool: Anthropic.Tool = {
             skills: { type: "string", description: "Compétences clés (top 5-8, séparées par des virgules)" },
             education: { type: "string", description: "Formation principale" },
             keyInsight: { type: "string", description: "1 phrase : ce qu'il faut retenir pour le meeting (ex: 'Expert L&D avec 10 ans en coaching, ex-DRH Danone')" },
+            linkedinUrl: { type: "string", description: "URL LinkedIn directe du profil (recopier VERBATIM depuis le champ 'URL LinkedIn' du contexte fourni)" },
           },
           required: ["name", "currentRole", "keyInsight"],
         },
@@ -92,7 +106,7 @@ const briefingTool: Anthropic.Tool = {
             items: {
               type: "object",
               properties: {
-                type: { type: "string", enum: ["strategic", "recognition", "partnership", "growth", "leadership", "general"] },
+                type: { type: "string", enum: ["funding", "acquisition", "partnership", "leadership", "restructuring", "coaching"] },
                 text: { type: "string", description: "1 phrase" },
                 url: { type: "string" },
                 date: { type: "string" },
@@ -174,7 +188,7 @@ export async function POST(req: NextRequest) {
         webResults: { title: string; url: string; content: string; published_date: string | null }[];
         companyProfileResults: { title: string; url: string; content: string; published_date: string | null }[];
         strategicResults: { title: string; url: string; content: string; published_date: string | null }[];
-        linkedinProfiles?: { firstName?: string; lastName?: string; headline?: string; summary?: string; position?: { companyName: string; title: string; description?: string; start?: { year?: number; month?: number }; end?: { year?: number; month?: number } }[]; skills?: { name: string }[]; educations?: { schoolName?: string; degree?: string; fieldOfStudy?: string }[] }[];
+        linkedinProfiles?: { username?: string; profileUrl?: string; firstName?: string; lastName?: string; headline?: string; summary?: string; position?: { companyName: string; title: string; description?: string; start?: { year?: number; month?: number }; end?: { year?: number; month?: number } }[]; skills?: { name: string }[]; educations?: { schoolName?: string; degree?: string; fieldOfStudy?: string }[] }[];
         linkedinCompany?: {
           username: string;
           details: { name: string; description?: string; industry?: string; companySize?: string; headquarters?: string; employeeCount?: number; followerCount?: number };
@@ -249,7 +263,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (rawData.webResults.length > 0) {
-      sections.push("=== ACTUALITÉS WEB (sources externes — utiliser pour recentNews) ===\n" + rawData.webResults.slice(0, 5).map((r) =>
+      sections.push("=== ACTUALITÉS WEB (signaux business uniquement — écarter le bruit générique, utiliser pour recentNews) ===\n" + rawData.webResults.slice(0, 5).map((r) =>
         `${r.title} (${r.published_date ?? "date inconnue"})\nURL: ${r.url}\n${r.content}`
       ).join("\n\n"));
     }
@@ -311,6 +325,7 @@ export async function POST(req: NextRequest) {
         ).join(", ");
         return [
           `Nom : ${name}`,
+          p.profileUrl ? `URL LinkedIn : ${p.profileUrl}` : "",
           `Headline : ${p.headline ?? "—"}`,
           `\nParcours professionnel :`,
           allPositions || "Non disponible",
@@ -335,11 +350,18 @@ REGLE ABSOLUE : chaque point = 1 phrase max. Pas de paragraphes. Tout structuré
 IMPORTANT — isSalesMeeting :
 - Mets isSalesMeeting=true UNIQUEMENT si la réunion est clairement commerciale : prospect, client, deal en cours, démo, closing.
 - Mets isSalesMeeting=false pour les réunions internes, partenaires, coaching, support, onboarding, ou si le contexte ne montre pas de lien commercial clair.
-- Si isSalesMeeting=false, NE REMPLIS PAS dealQualification (laisse null/undefined).
+- Si isSalesMeeting=false, NE REMPLIS PAS dealQualification ni dealAnalysis (laisse null/undefined).
+
+IMPORTANT — séparation contextSummary vs dealAnalysis (RÈGLE STRICTE) :
+- contextSummary = NARRATIF business : qui est l'entreprise, son marché, sa dynamique stratégique, l'historique de la relation. PAS de mention du stage HubSpot, des montants CRM, ni du funnel.
+- dealAnalysis = FACTUEL CRM : où en est le deal côté HubSpot (stage, momentum, signaux d'achat/de risque visibles dans les engagements et le pipeline). PAS de blabla narratif business.
+- Les deux blocs doivent être strictement complémentaires. Une info CRM va dans dealAnalysis. Une info business/stratégique va dans contextSummary. Aucune redite.
+- Si aucun deal HubSpot n'est associé au meeting, mets dealAnalysis à null (ne pas inventer).
 
 IMPORTANT — linkedinInsights :
 - Remplis linkedinInsights UNIQUEMENT si une section "=== PROFILS LINKEDIN ===" est présente dans le contexte ci-dessus.
 - Si cette section est absente, laisse linkedinInsights vide (tableau vide ou undefined). Ne déduis JAMAIS un profil LinkedIn depuis HubSpot, Gmail, Slack ou le web — ces sources ne sont PAS LinkedIn.
+- Pour chaque profil, recopier verbatim l'URL LinkedIn fournie dans le champ "URL LinkedIn :" du contexte dans le champ linkedinUrl. Ne JAMAIS inventer ni reconstruire cette URL.
 
 Utilise l'outil generate_briefing pour retourner le briefing.`;
 

@@ -226,6 +226,14 @@ export async function POST(req: NextRequest) {
           })
           .eq("username", username);
 
+        // Skip si rien de matériel n'a changé : LinkedIn renvoie un diff `position`
+        // pour des reformulations, ajouts d'emoji, tweaks de description, etc.
+        const norm = (s: string) => s.trim().toLowerCase();
+        if (norm(oldTitle) === norm(newTitle) && norm(previousCompany) === norm(newCompany)) {
+          console.log(`[netrows-webhook] skipped ${username}: no material change (${oldLabel} == ${newLabel})`);
+          return NextResponse.json({ ok: true, skipped: "no-material-change" });
+        }
+
         const isCompanyInTargets = await (async () => {
           try {
             const targets = (await getTargetCompanies()).map((t) => t.toLowerCase());
