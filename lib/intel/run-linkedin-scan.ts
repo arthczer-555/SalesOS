@@ -67,52 +67,70 @@ export async function runLinkedinScan(
   const targetCompanies = await getTargetCompanies();
   let creditsUsed = 0;
 
-  // ── Phase 1: Company posts ────────────────────────────────────────
-  const companyPostsResults: CompanyResult[] = [];
+  // Helpers : dédoublonnage + bulk insert pour ne pas attendre N round-trips
+  // Supabase par post. Une fois la BG fn appelée, on tourne avec ~50 entreprises
+  // et ~15 keywords, donc N peut monter à plusieurs centaines de posts.
+  async function filterNewUrls(urls: string[]): Promise<Set<string>> {
+    if (urls.length === 0) return new Set();
+    const { data } = await db
+      .from("linkedin_posts_cache")
+      .select("post_url")
+      .in("post_url", urls);
+    return new Set((data ?? []).map((r: { post_url: string }) => r.post_url));
+  }
 
-  for (let i = 0; i < Math.min(targetCompanies.length, companiesLimit); i++) {
-    const company = targetCompanies[i];
+  // Batches parallèles : Netrows tolère plusieurs requêtes simultanées, mais
+  // on garde une concurrence raisonnable pour ne pas s'auto-DDoS ni saturer
+  // Supabase. 8 et 5 sont des valeurs prudentes basées sur les paliers
+  // observés sur les autres scans.
+  async function runInBatches<T, R>(
+    items: T[],
+    batchSize: number,
+    fn: (item: T) => Promise<R>,
+  ): Promise<R[]> {
+    const results: R[] = [];
+    for (let i = 0; i < items.length; i += batchSize) {
+      const batch = items.slice(i, i + batchSize);
+      const settled = await Promise.all(batch.map(fn));
+      results.push(...settled);
+    }
+    return results;
+  }
+
+  // ── Phase 1: Company posts (batches de 8 en parallèle) ────────────
+  const companies = targetCompanies.slice(0, companiesLimit);
+  const companyPostsResults = await runInBatches(companies, 8, async (company) => {
     const username = slugifyCompany(company);
-
     try {
       const result = await getCompanyPosts(username);
       creditsUsed++;
-      const posts = result.data ?? [];
-
-      let newCount = 0;
-      for (const post of posts) {
-        if (!post.postUrl) continue;
-        const { data: existing } = await db
-          .from("linkedin_posts_cache")
-          .select("id")
-          .eq("post_url", post.postUrl)
-          .maybeSingle();
-
-        if (!existing) {
-          await db.from("linkedin_posts_cache").insert({
-            post_url: post.postUrl,
-            author_name: company,
-            author_headline: "Company page",
-            author_username: username,
-            company_match: company,
-            text_preview: (post.text ?? "").slice(0, 500),
-            posted_at: post.postedAt ?? null,
-            keyword_match: "company_post",
-            is_processed: false,
-          });
-          newCount++;
-        }
+      const posts = (result.data ?? []).filter((p) => !!p.postUrl);
+      const urls = posts.map((p) => p.postUrl);
+      const existing = await filterNewUrls(urls);
+      const toInsert = posts
+        .filter((p) => !existing.has(p.postUrl))
+        .map((post) => ({
+          post_url: post.postUrl,
+          author_name: company,
+          author_headline: "Company page",
+          author_username: username,
+          company_match: company,
+          text_preview: (post.text ?? "").slice(0, 500),
+          posted_at: post.postedAt ?? null,
+          keyword_match: "company_post",
+          is_processed: false,
+        }));
+      if (toInsert.length > 0) {
+        await db.from("linkedin_posts_cache").insert(toInsert);
       }
-      companyPostsResults.push({ company, newPosts: newCount });
+      return { company, newPosts: toInsert.length } as CompanyResult;
     } catch (e) {
-      companyPostsResults.push({ company, newPosts: 0, error: String(e).slice(0, 100) });
       creditsUsed++;
+      return { company, newPosts: 0, error: String(e).slice(0, 100) } as CompanyResult;
     }
+  });
 
-    if (i % 10 === 9) await new Promise((r) => setTimeout(r, 2000));
-  }
-
-  // ── Phase 2: Keyword posts ────────────────────────────────────────
+  // ── Phase 2: Keyword posts (batches de 5 en parallèle) ────────────
   const coachingCount = Math.min(COACHING_KEYWORDS.length, Math.ceil(keywordsLimit * 0.7));
   const jobChangeCount = Math.min(JOB_CHANGE_KEYWORDS.length, keywordsLimit - coachingCount);
   const allKeywords = [
@@ -120,53 +138,43 @@ export async function runLinkedinScan(
     ...JOB_CHANGE_KEYWORDS.slice(0, Math.max(1, jobChangeCount)),
   ].slice(0, keywordsLimit);
 
-  const keywordPostsResults: KeywordResult[] = [];
-
-  for (const kw of allKeywords) {
+  const targetCompaniesLower = targetCompanies.map((c) => ({ name: c, lower: c.toLowerCase() }));
+  const keywordPostsResults = await runInBatches(allKeywords, 5, async (kw) => {
     try {
       const result = await searchPosts(kw, "date_posted");
       creditsUsed++;
-      const posts = result.data ?? [];
-
-      let newCount = 0;
-      for (const post of posts) {
-        if (!post.postUrl) continue;
-
-        const { data: existing } = await db
-          .from("linkedin_posts_cache")
-          .select("id")
-          .eq("post_url", post.postUrl)
-          .maybeSingle();
-
-        if (!existing) {
-          const companyMatch = targetCompanies.find(
-            (c) =>
-              (post.text ?? "").toLowerCase().includes(c.toLowerCase()) ||
-              (post.author?.headline ?? "").toLowerCase().includes(c.toLowerCase()),
-          );
-
-          await db.from("linkedin_posts_cache").insert({
+      const posts = (result.data ?? []).filter((p) => !!p.postUrl);
+      const urls = posts.map((p) => p.postUrl);
+      const existing = await filterNewUrls(urls);
+      const toInsert = posts
+        .filter((p) => !existing.has(p.postUrl))
+        .map((post) => {
+          const text = (post.text ?? "").toLowerCase();
+          const headline = (post.author?.headline ?? "").toLowerCase();
+          const companyMatch =
+            targetCompaniesLower.find((c) => text.includes(c.lower) || headline.includes(c.lower))
+              ?.name ?? null;
+          return {
             post_url: post.postUrl,
             author_name: post.author?.name ?? null,
             author_headline: post.author?.headline ?? null,
             author_username: post.author?.username ?? null,
-            company_match: companyMatch ?? null,
+            company_match: companyMatch,
             text_preview: (post.text ?? "").slice(0, 500),
             posted_at: post.postedAt ?? null,
             keyword_match: kw,
             is_processed: false,
-          });
-          newCount++;
-        }
+          };
+        });
+      if (toInsert.length > 0) {
+        await db.from("linkedin_posts_cache").insert(toInsert);
       }
-      keywordPostsResults.push({ keyword: kw, newPosts: newCount });
+      return { keyword: kw, newPosts: toInsert.length } as KeywordResult;
     } catch (e) {
-      keywordPostsResults.push({ keyword: kw, newPosts: 0, error: String(e).slice(0, 100) });
       creditsUsed++;
+      return { keyword: kw, newPosts: 0, error: String(e).slice(0, 100) } as KeywordResult;
     }
-
-    await new Promise((r) => setTimeout(r, 1500));
-  }
+  });
 
   // ── Phase 3: Analyse new posts with Claude ────────────────────────
   const { data: unprocessed } = await db

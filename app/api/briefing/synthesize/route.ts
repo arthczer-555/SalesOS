@@ -9,6 +9,32 @@ import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
+// Force chaque champ array à un vrai array (sinon drop) et nettoie les sous-objets requis.
+// Le LLM en tool_use peut sortir des string/null/objet à la place d'un array si la réponse
+// est tronquée ou partielle : ça crash le rendu React (`.map is not a function`).
+function sanitizeBriefing(b: Record<string, unknown>): void {
+  const arrayFields = ["meetingTakeaways", "questionsToAsk", "strategicHistory", "linkedinInsights"];
+  for (const k of arrayFields) {
+    if (k in b && !Array.isArray(b[k])) delete b[k];
+  }
+  if (b.recentNews && typeof b.recentNews === "object") {
+    const rn = b.recentNews as { items?: unknown };
+    if (!Array.isArray(rn.items)) rn.items = [];
+  }
+  if (b.dealAnalysis && typeof b.dealAnalysis === "object") {
+    const da = b.dealAnalysis as Record<string, unknown>;
+    if (!Array.isArray(da.positiveSignals)) da.positiveSignals = [];
+    if (!Array.isArray(da.negativeSignals)) da.negativeSignals = [];
+    if (typeof da.riskLevel !== "string" || typeof da.momentum !== "string") {
+      b.dealAnalysis = null;
+    }
+  }
+  if (b.linkedinCompanyInsights && typeof b.linkedinCompanyInsights === "object") {
+    const lc = b.linkedinCompanyInsights as { recentPosts?: unknown };
+    if (lc.recentPosts !== undefined && !Array.isArray(lc.recentPosts)) lc.recentPosts = [];
+  }
+}
+
 // ── Tool schema — Anthropic guarantees valid JSON output ─────────────────────
 const briefingTool: Anthropic.Tool = {
   name: "generate_briefing",
@@ -408,6 +434,8 @@ Génère le briefing pour cette réunion.`;
         briefing.personInsights = briefing.personInsights.slice(0, match.index).replace(/["']?\s*$/, "").trim();
       }
     }
+
+    sanitizeBriefing(briefing);
 
     // ── Upsert with briefing ──────────────────────────────────────────────────
     await db.from("meeting_briefings").upsert({

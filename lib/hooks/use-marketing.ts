@@ -248,6 +248,19 @@ export function useLeads(status: LeadsStatusFilter, analysis: LeadsAnalysisFilte
     await mutate();
   }
 
+  async function setLeadSource(id: string, source: string | null) {
+    const res = await fetch(`/api/marketing/leads/${id}/source`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source }),
+    });
+    if (!res.ok) {
+      const { error: err } = await res.json().catch(() => ({ error: "Unknown error" }));
+      throw new Error(err || "Failed to update lead source");
+    }
+    await mutate();
+  }
+
   async function reanalyzeAll(
     onProgress?: (progress: { processed: number; ok: number; errors: number }) => void,
   ): Promise<{ totalProcessed: number; totalOk: number; totalErrors: number }> {
@@ -288,6 +301,7 @@ export function useLeads(status: LeadsStatusFilter, analysis: LeadsAnalysisFilte
     validateLead,
     syncLeads,
     analyzeLead,
+    setLeadSource,
     reanalyzeAll,
     refresh: () => mutate(),
   };

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { hubspotFetch } from "@/lib/hubspot";
-import { getProfile, resolveUsername, type LinkedInProfile } from "@/lib/netrows";
+import { getProfile, resolveUsername, slugifyCompany, type LinkedInProfile } from "@/lib/netrows";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -19,6 +19,34 @@ function extractUsername(url?: string): string | null {
   if (!url) return null;
   const m = url.match(/linkedin\.com\/in\/([^/?#]+)/i);
   return m ? decodeURIComponent(m[1]).replace(/\/$/, "") : null;
+}
+
+const STOPWORDS = new Set(["the", "and", "les", "des", "ile", "idf", "sas", "sarl", "sa", "group", "groupe", "co", "inc", "ltd"]);
+
+function companyTokens(name: string | undefined): Set<string> {
+  if (!name) return new Set();
+  return new Set(
+    slugifyCompany(name)
+      .split("-")
+      .filter((t) => t.length > 2 && !STOPWORDS.has(t))
+  );
+}
+
+function profileMatchesCompany(profile: LinkedInProfile, targetCompany: string | undefined): boolean {
+  if (!targetCompany) return true;
+  const targetSlug = slugifyCompany(targetCompany);
+  const targetTokens = companyTokens(targetCompany);
+  if (!targetSlug || targetTokens.size === 0) return true;
+  const positions = profile.position ?? [];
+  if (positions.length === 0) return true;
+  return positions.some((p) => {
+    const slug = slugifyCompany(p.companyName ?? "");
+    if (!slug) return false;
+    if (slug.includes(targetSlug) || targetSlug.includes(slug)) return true;
+    const tokens = companyTokens(p.companyName);
+    for (const t of targetTokens) if (tokens.has(t)) return true;
+    return false;
+  });
 }
 
 function serializeProfile(profile: LinkedInProfile, contact: ContactProps) {
@@ -67,6 +95,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
       );
       const props = c.properties;
 
+      const hadExplicitUrl = !!extractUsername(props.linkedin_url);
       let username = extractUsername(props.linkedin_url);
       if (!username) {
         username = await resolveUsername({
@@ -80,6 +109,12 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ id: string
 
       try {
         const profile = await getProfile(username);
+        // Garde-fou : si le username a été deviné (pas un linkedin_url fourni par HubSpot)
+        // et qu'aucune position du profil ne matche fuzzy avec la company HubSpot,
+        // on rejette — Netrows renvoie parfois un homonyme sans rapport.
+        if (!hadExplicitUrl && !profileMatchesCompany(profile, props.company)) {
+          continue;
+        }
         profiles.push(serializeProfile(profile, props));
       } catch {
         continue;

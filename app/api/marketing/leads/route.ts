@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { rematchHubspotForLead, runLeadAnalysis } from "@/lib/lead-analysis";
+import { rematchHubspotForLead } from "@/lib/lead-analysis";
 import { resolveMentionsInText, type SlackUser } from "@/lib/slack-leads";
 import type {
   LeadDealScoreSummary,
@@ -37,7 +37,7 @@ const LEAD_SELECT = `
   last_analysis_id, analysis_status, analyzed_at,
   analysis:lead_analyses!leads_last_analysis_id_fkey (
     id, lead_id, status, extracted_email, extracted_name, extracted_company,
-    extraction_confidence, extraction_notes,
+    extracted_source, extraction_confidence, extraction_notes,
     hubspot_contact_id, hubspot_deal_id, match_strategy,
     contact_email, contact_name, contact_lifecyclestage, contact_hs_lead_status,
     contact_owner_id, contact_owner_name,
@@ -353,22 +353,6 @@ export async function POST(req: NextRequest) {
     .single();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-
-  // Auto-trigger analysis when a lead becomes validated. Synchronous so the
-  // response carries the result; if Claude/HubSpot fail, the validation
-  // remains and analysis_status is persisted as 'error'.
-  if (status === "validated") {
-    try {
-      const analysis = await runLeadAnalysis(id, { userId: user.id });
-      return NextResponse.json({ lead: data, analysis });
-    } catch (e) {
-      console.error(`[lead-analyze ${id}] failed:`, e instanceof Error ? e.message : e);
-      return NextResponse.json({
-        lead: data,
-        analysisError: e instanceof Error ? e.message : "unknown",
-      });
-    }
-  }
 
   return NextResponse.json({ lead: data });
 }

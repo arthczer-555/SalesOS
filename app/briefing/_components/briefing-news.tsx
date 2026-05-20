@@ -18,7 +18,7 @@ const CATEGORY_BADGES: Record<string, { label: string; bg: string; color: string
 };
 
 export function BriefingNews({ briefing }: { briefing: BriefingResult }) {
-  if (!briefing.recentNews?.items?.length) return null;
+  if (!Array.isArray(briefing.recentNews?.items) || briefing.recentNews.items.length === 0) return null;
   return (
     <Card padding={16}>
       <SectionHeader title="Actualités récentes" />

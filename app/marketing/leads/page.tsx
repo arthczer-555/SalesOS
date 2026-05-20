@@ -24,6 +24,8 @@ import type {
 } from "@/lib/marketing-types";
 import { SlackText } from "@/lib/slack-mrkdwn";
 import LeadAnalysisBadge from "./_components/lead-analysis-badge";
+import LeadSourceEditor from "./_components/lead-source-editor";
+import LeadValidationModal from "./_components/lead-validation-modal";
 
 const ACCENT = "#f01563";
 const GREEN = "#10b981";
@@ -103,13 +105,17 @@ function LeadCard({
   lead,
   onValidate,
   onAnalyze,
+  onOpenValidation,
   onOpenImage,
+  onSetSource,
   busy,
 }: {
   lead: LeadWithAnalysis;
   onValidate: (status: LeadValidationStatus) => void;
   onAnalyze: () => void;
+  onOpenValidation: () => void;
   onOpenImage: (url: string) => void;
+  onSetSource: (source: string | null) => Promise<void>;
   busy: boolean;
 }) {
   const imageFiles = lead.files.filter(isImage);
@@ -117,6 +123,7 @@ function LeadCard({
   const showAnalysis = lead.validation_status === "validated";
   const analyzing = lead.analysis_status === "pending";
   const a = lead.analysis;
+  const isWon = Boolean(a?.deal_is_closed_won);
 
   return (
     <div
@@ -160,11 +167,20 @@ function LeadCard({
         </div>
       </div>
 
-      {showAnalysis && a && (a.extracted_email || a.extracted_name || a.extracted_company) && (
-        <div style={{ fontSize: 12, color: "#666", display: "flex", gap: 12, flexWrap: "wrap" }}>
+      {a && (
+        <div style={{ fontSize: 12, color: "#666", display: "flex", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
           {a.extracted_name && <span>👤 {a.extracted_name}</span>}
           {a.extracted_email && <span>✉️ {a.extracted_email}</span>}
           {a.extracted_company && <span>🏢 {a.extracted_company}</span>}
+          {lead.validation_status === "validated" ? (
+            <LeadSourceEditor
+              source={a.extracted_source}
+              onChange={onSetSource}
+              disabled={busy}
+            />
+          ) : (
+            a.extracted_source && <span>📣 {a.extracted_source}</span>
+          )}
         </div>
       )}
 
@@ -270,7 +286,7 @@ function LeadCard({
               <X size={14} /> Rejeter
             </button>
             <button
-              onClick={() => onValidate("validated")}
+              onClick={onOpenValidation}
               disabled={busy}
               className="text-sm px-3 py-1.5 font-medium transition-colors"
               style={{
@@ -289,24 +305,54 @@ function LeadCard({
             </button>
           </>
         ) : (
-          <button
-            onClick={() => onValidate("pending")}
-            disabled={busy}
-            className="text-sm px-3 py-1.5 font-medium transition-colors"
-            style={{
-              background: "#fff",
-              color: "#555",
-              border: "1px solid #e5e5e5",
-              borderRadius: 6,
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              cursor: busy ? "wait" : "pointer",
-              opacity: busy ? 0.6 : 1,
-            }}
-          >
-            <Undo2 size={14} /> Remettre en attente
-          </button>
+          <>
+            {lead.validation_status === "validated" && isWon && (
+              <button
+                onClick={() => {
+                  if (
+                    window.confirm(
+                      "Marquer ce lead gagné comme rejeté côté SalesOS ? Le deal HubSpot ne sera pas modifié.",
+                    )
+                  ) {
+                    onValidate("rejected");
+                  }
+                }}
+                disabled={busy}
+                className="text-sm px-3 py-1.5 font-medium transition-colors"
+                style={{
+                  background: "#fff",
+                  color: RED,
+                  border: `1px solid ${RED}`,
+                  borderRadius: 6,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  cursor: busy ? "wait" : "pointer",
+                  opacity: busy ? 0.6 : 1,
+                }}
+              >
+                <X size={14} /> Marquer comme rejeté
+              </button>
+            )}
+            <button
+              onClick={() => onValidate("pending")}
+              disabled={busy}
+              className="text-sm px-3 py-1.5 font-medium transition-colors"
+              style={{
+                background: "#fff",
+                color: "#555",
+                border: "1px solid #e5e5e5",
+                borderRadius: 6,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                cursor: busy ? "wait" : "pointer",
+                opacity: busy ? 0.6 : 1,
+              }}
+            >
+              <Undo2 size={14} /> Remettre en attente
+            </button>
+          </>
         )}
       </div>
     </div>
@@ -315,14 +361,24 @@ function LeadCard({
 
 export default function LeadsManagementPage() {
   const [filter, setFilter] = useState<LeadsStatusFilter>("pending");
-  const { leads, counts, isLoading, validateLead, syncLeads, analyzeLead, reanalyzeAll } =
-    useLeads(filter);
+  const {
+    leads,
+    counts,
+    isLoading,
+    validateLead,
+    syncLeads,
+    analyzeLead,
+    setLeadSource,
+    reanalyzeAll,
+    refresh,
+  } = useLeads(filter);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [reanalyzingAll, setReanalyzingAll] = useState(false);
   const [reanalyzeProgress, setReanalyzeProgress] = useState<string | null>(null);
+  const [validatingLead, setValidatingLead] = useState<LeadWithAnalysis | null>(null);
   const autoSyncDone = useRef(false);
 
   const runSync = async (silent = false) => {
@@ -533,12 +589,23 @@ export default function LeadsManagementPage() {
               lead={lead}
               onValidate={(s) => handleValidate(lead, s)}
               onAnalyze={() => handleAnalyze(lead)}
+              onOpenValidation={() => setValidatingLead(lead)}
               onOpenImage={setLightboxUrl}
+              onSetSource={(source) => setLeadSource(lead.id, source)}
               busy={busyId === lead.id}
             />
           ))}
         </div>
       )}
+
+      <LeadValidationModal
+        lead={validatingLead}
+        onClose={() => setValidatingLead(null)}
+        onSuccess={() => {
+          setValidatingLead(null);
+          refresh();
+        }}
+      />
 
       {lightboxUrl && (
         <div

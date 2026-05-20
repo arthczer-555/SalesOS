@@ -19,7 +19,8 @@ import LeadAnalysisBadge from "../leads/_components/lead-analysis-badge";
 import LeadDealSide from "../leads/_components/lead-deal-side";
 import LeadHubspotLeadSide from "../leads/_components/lead-hubspot-side";
 import FunnelStats from "../leads/_components/funnel-stats";
-import LeadStageFunnel from "../leads/_components/lead-stage-funnel";
+import LeadSourceWidget from "../leads/_components/lead-source-widget";
+import SalesPerformanceTable from "../leads/_components/sales-performance-table";
 import LeadsKpiRow from "../leads/_components/leads-kpi-row";
 
 const ACCENT = "#f01563";
@@ -131,13 +132,15 @@ function LeadCard({
           )}
         </div>
 
-        {a && (a.extracted_email || a.extracted_name || a.extracted_company) && (
-          <div style={{ fontSize: 12, color: "#666", display: "flex", gap: 12, flexWrap: "wrap" }}>
-            {a.extracted_name && <span>👤 {a.extracted_name}</span>}
-            {a.extracted_email && <span>✉️ {a.extracted_email}</span>}
-            {a.extracted_company && <span>🏢 {a.extracted_company}</span>}
-          </div>
-        )}
+        {a &&
+          (a.extracted_email || a.extracted_name || a.extracted_company || a.extracted_source) && (
+            <div style={{ fontSize: 12, color: "#666", display: "flex", gap: 12, flexWrap: "wrap" }}>
+              {a.extracted_name && <span>👤 {a.extracted_name}</span>}
+              {a.extracted_email && <span>✉️ {a.extracted_email}</span>}
+              {a.extracted_company && <span>🏢 {a.extracted_company}</span>}
+              {a.extracted_source && <span>📣 {a.extracted_source}</span>}
+            </div>
+          )}
 
         {lead.text && (
           <div style={{ fontSize: 14, color: "#222", lineHeight: 1.5, wordBreak: "break-word" }}>
@@ -258,10 +261,12 @@ export default function LeadsTab() {
         }}
       >
         <FunnelStats />
-        <LeadStageFunnel />
+        <LeadSourceWidget />
       </div>
 
       <LeadsKpiRow />
+
+      <SalesPerformanceTable />
 
       {/* Filters on validated leads + management button on the right */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -282,18 +287,6 @@ export default function LeadsTab() {
           onClick={() => setAnalysisFilter("without_deal")}
           label="Sans deal"
           count={counts.validatedWithoutDeal}
-        />
-        <FilterButton
-          active={analysisFilter === "with_lead"}
-          onClick={() => setAnalysisFilter("with_lead")}
-          label="Avec lead"
-          count={counts.validatedWithLead}
-        />
-        <FilterButton
-          active={analysisFilter === "without_lead"}
-          onClick={() => setAnalysisFilter("without_lead")}
-          label="Sans lead"
-          count={counts.validatedWithoutLead}
         />
         <FilterButton
           active={analysisFilter === "with_contact"}

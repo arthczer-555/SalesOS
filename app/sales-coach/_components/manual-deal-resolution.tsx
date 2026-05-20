@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { MeetingParticipant } from "@/lib/hooks/use-sales-coach";
+import { useToast } from "@/components/ui/toast";
 
 type DealSearchResult = {
   id: string;
@@ -65,6 +66,7 @@ export function ManualDealResolution({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const { toast } = useToast();
 
   // Autocomplete debouncé : déclenche la recherche 250ms après la dernière
   // frappe pour éviter de spammer HubSpot. Annule la requête en cours quand
@@ -123,17 +125,15 @@ export function ManualDealResolution({
   }
 
   async function confirmNoDeal() {
-    const ok = typeof window !== "undefined"
-      && window.confirm("Supprimer ce meeting de la liste ? L'analyse ne sera pas lancée. Cette action est irréversible.");
-    if (!ok) return;
     setDeleting(true);
     try {
       const res = await fetch(`/api/sales-coach/${analysisId}`, { method: "DELETE" });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(data.error ?? "Erreur lors de la suppression");
+      toast("Meeting supprimé.", "success");
       onDeleted();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erreur");
+      toast(e instanceof Error ? e.message : "Erreur", "error");
       setDeleting(false);
     }
   }

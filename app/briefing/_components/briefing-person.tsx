@@ -13,7 +13,7 @@ function linkedinSearchUrl(name: string, company?: string | null): string {
 }
 
 export function BriefingPerson({ briefing }: { briefing: BriefingResult }) {
-  if (!briefing.linkedinInsights?.length) return null;
+  if (!Array.isArray(briefing.linkedinInsights) || briefing.linkedinInsights.length === 0) return null;
 
   return (
     <Card padding={16}>

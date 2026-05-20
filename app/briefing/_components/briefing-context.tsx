@@ -23,6 +23,7 @@ const QUAL_FIELDS: { key: keyof DealQualification; label: string }[] = [
 
 export function BriefingContext({ briefing, rawData }: { briefing: BriefingResult; rawData: GatheredData | null }) {
   const isClient = isExistingClient(rawData);
+  const hasDeal = (rawData?.deals?.length ?? 0) > 0;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {briefing.contextSummary && (
@@ -34,7 +35,7 @@ export function BriefingContext({ briefing, rawData }: { briefing: BriefingResul
 
       {briefing.dealAnalysis && <DealAnalysisCard analysis={briefing.dealAnalysis} />}
 
-      {briefing.isSalesMeeting !== false && briefing.dealQualification && !isClient && (() => {
+      {briefing.isSalesMeeting !== false && briefing.dealQualification && !isClient && hasDeal && (() => {
         const known = QUAL_FIELDS.filter((f) => !!briefing.dealQualification![f.key]);
         const missing = QUAL_FIELDS.filter((f) => !briefing.dealQualification![f.key]);
         return (
@@ -135,6 +136,7 @@ const RISK_STYLES: Record<DealAnalysis["riskLevel"], { bg: string; color: string
 };
 
 function DealAnalysisCard({ analysis }: { analysis: DealAnalysis }) {
+  if (typeof analysis.momentum !== "string" || typeof analysis.riskLevel !== "string") return null;
   const mom = MOMENTUM_STYLES[analysis.momentum] ?? MOMENTUM_STYLES.Stable;
   const risk = RISK_STYLES[analysis.riskLevel] ?? RISK_STYLES.Moyen;
   return (
@@ -179,9 +181,9 @@ function DealAnalysisCard({ analysis }: { analysis: DealAnalysis }) {
         </p>
       )}
 
-      {(analysis.positiveSignals?.length > 0 || analysis.negativeSignals?.length > 0) && (
+      {((Array.isArray(analysis.positiveSignals) && analysis.positiveSignals.length > 0) || (Array.isArray(analysis.negativeSignals) && analysis.negativeSignals.length > 0)) && (
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
-          {analysis.positiveSignals?.length > 0 && (
+          {Array.isArray(analysis.positiveSignals) && analysis.positiveSignals.length > 0 && (
             <div>
               <p
                 style={{
@@ -206,7 +208,7 @@ function DealAnalysisCard({ analysis }: { analysis: DealAnalysis }) {
               </ul>
             </div>
           )}
-          {analysis.negativeSignals?.length > 0 && (
+          {Array.isArray(analysis.negativeSignals) && analysis.negativeSignals.length > 0 && (
             <div>
               <p
                 style={{

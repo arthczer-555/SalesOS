@@ -4,59 +4,25 @@
  * status `awaiting_manual_deal` and the recipient is invited to associate the
  * deal manually from the Sales Coach UI.
  *
- * Routing follows the same env-driven pattern as the meeting recap :
- *  - CLAAP_NOTE_SLACK_MODE=dm (default, test phase) -> DM to
- *    CLAAP_NOTE_SLACK_TEST_USER (defaults to "Arthur Czernichow")
- *  - CLAAP_NOTE_SLACK_MODE=channels (production) -> DM to the Claap recorder
- *    (the sales rep who recorded the meeting)
+ * Routing aligned with the meeting recap :
+ *  - SLACK_MODE=test (default) -> DM Arthur only, with a test header listing
+ *    who would have received the alert in prod mode.
+ *  - SLACK_MODE=prod -> DM every Coachello participant of the meeting
+ *    (recorder + organizer + any other internal attendee) AND Arthur in copy.
+ *    Falls back to Arthur alone if no internal participant could be resolved
+ *    (jamais d'envoi vide).
  */
 
-async function slackPost(path: string, body: Record<string, unknown>) {
-  const res = await fetch(`https://slack.com/api${path}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  if (!data.ok) throw new Error(`Slack ${path} -> ${data.error}`);
-  return data;
-}
-
-async function findDmChannelByDisplayName(displayName: string): Promise<string | null> {
-  const res = await fetch(`https://slack.com/api/users.list?limit=200`, {
-    headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
-  });
-  const data = await res.json();
-  if (!data.ok) return null;
-  type Member = { id: string; deleted?: boolean; is_bot?: boolean; profile?: { real_name?: string; display_name?: string } };
-  const needle = displayName.toLowerCase().trim();
-  const member = (data.members ?? []).find((m: Member) => {
-    if (m.deleted || m.is_bot) return false;
-    const realName = (m.profile?.real_name ?? "").toLowerCase();
-    const dn = (m.profile?.display_name ?? "").toLowerCase();
-    return realName.includes(needle) || dn.includes(needle);
-  });
-  if (!member) return null;
-  const dm = await slackPost("/conversations.open", { users: member.id });
-  return (dm as { channel: { id: string } }).channel.id ?? null;
-}
-
-async function findDmChannelByEmail(email: string): Promise<string | null> {
-  const res = await fetch(
-    `https://slack.com/api/users.lookupByEmail?email=${encodeURIComponent(email)}`,
-    { headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` } },
-  );
-  const data = await res.json();
-  if (!data.ok || !data.user?.id) return null;
-  const dm = await slackPost("/conversations.open", { users: data.user.id });
-  return (dm as { channel: { id: string } }).channel.id ?? null;
-}
+import {
+  dmRecipient,
+  findArthurFallbackRecipient,
+  resolveMeetingParticipantRecipients,
+  type MeetingRecipient,
+} from "./slack-recipients";
 
 export type ManualDealAlertContext = {
   analysisId: string;
+  claapRecordingId: string | null;
   meetingTitle: string | null;
   meetingStartedAt: string | null;
   recorderEmail: string | null;
@@ -70,22 +36,66 @@ export async function sendManualDealAlert(
     return { ok: false, error: "SLACK_BOT_TOKEN missing" };
   }
 
-  const mode = process.env.CLAAP_NOTE_SLACK_MODE === "channels" ? "channels" : "dm";
-  let channelId: string | null = null;
-  let destination = "";
+  const mode = process.env.SLACK_MODE === "prod" ? "prod" : "test";
 
-  if (mode === "dm") {
-    const target = process.env.CLAAP_NOTE_SLACK_TEST_USER || "Arthur Czernichow";
-    channelId = await findDmChannelByDisplayName(target);
-    destination = `DM(${target})`;
-    if (!channelId) return { ok: false, error: `Slack user "${target}" not found` };
-  } else {
-    if (!ctx.recorderEmail) {
-      return { ok: false, error: "No recorder email -- cannot route to recorder in channels mode" };
+  // Participants Coachello internes du meeting (recorder + organizer + autres).
+  // Identique au pattern du recap : on cible TOUT le monde côté Coachello, pas
+  // seulement le recorder, parce que l'organizer (souvent ≠ recorder) doit
+  // aussi pouvoir associer le deal.
+  const internalRecipients: MeetingRecipient[] = ctx.claapRecordingId
+    ? await resolveMeetingParticipantRecipients(
+        ctx.claapRecordingId,
+        ctx.recorderEmail,
+      ).catch((e) => {
+        console.warn(
+          `[manual-deal-alert/${ctx.analysisId}] participant resolution failed:`,
+          e,
+        );
+        return [] as MeetingRecipient[];
+      })
+    : [];
+
+  const arthur = await findArthurFallbackRecipient();
+
+  let recipients: MeetingRecipient[];
+  let isFallback = false;
+
+  if (mode === "test") {
+    if (!arthur) {
+      return {
+        ok: false,
+        error: `Slack user "${process.env.CLAAP_NOTE_SLACK_TEST_USER ?? "Arthur Czernichow"}" not found (mode=test)`,
+      };
     }
-    channelId = await findDmChannelByEmail(ctx.recorderEmail);
-    destination = `DM(${ctx.recorderEmail})`;
-    if (!channelId) return { ok: false, error: `Slack user for ${ctx.recorderEmail} not found` };
+    recipients = [arthur];
+  } else if (internalRecipients.length > 0) {
+    // Mode prod : tous les internes + Arthur en copie (dédupliqué au cas où
+    // Arthur figure parmi les participants).
+    const seen = new Set<string>();
+    recipients = [];
+    for (const r of internalRecipients) {
+      if (!seen.has(r.memberId)) {
+        seen.add(r.memberId);
+        recipients.push(r);
+      }
+    }
+    if (arthur && !seen.has(arthur.memberId)) {
+      recipients.push(arthur);
+    }
+  } else {
+    // Mode prod mais aucun participant interne détecté côté Claap : on tombe
+    // sur Arthur seul pour ne jamais perdre l'alerte.
+    if (!arthur) {
+      return {
+        ok: false,
+        error: "No Coachello participants in meeting and fallback user not found",
+      };
+    }
+    recipients = [arthur];
+    isFallback = true;
+    console.warn(
+      `[manual-deal-alert/${ctx.analysisId}] no Coachello participant detected -- falling back to Arthur`,
+    );
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.URL || "";
@@ -97,7 +107,7 @@ export async function sendManualDealAlert(
     : "(aucun participant externe identifié)";
 
   const lines: string[] = [
-    `:warning: *Meeting Claap sans deal HubSpot* — résolution manuelle nécessaire`,
+    `:warning: *Meeting Claap sans deal HubSpot* -- résolution manuelle nécessaire`,
     ``,
     `*Meeting :* ${ctx.meetingTitle ?? "Sans titre"}${date ? ` · ${date}` : ""}`,
     `*Participants externes :* ${participantsLine}`,
@@ -108,18 +118,45 @@ export async function sendManualDealAlert(
   if (appUrl) {
     lines.push(``, `<${appUrl}/sales-coach?id=${ctx.analysisId}|Associer un deal et lancer l'analyse →>`);
   }
-  const text = lines.join("\n");
+  const body = lines.join("\n");
 
-  try {
-    await slackPost("/chat.postMessage", {
-      channel: channelId,
-      text,
-      unfurl_links: false,
-      unfurl_media: false,
-    });
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  // Header de test qui explicite qui recevrait l'alerte en mode prod. Aligne
+  // le manual-deal alert sur le format du recap.
+  const text = mode === "test"
+    ? `${formatTestHeader(internalRecipients, arthur)}\n\n${body}`
+    : body;
+
+  let sentCount = 0;
+  const failures: string[] = [];
+
+  for (const r of recipients) {
+    try {
+      await dmRecipient(r.memberId, text);
+      sentCount++;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      failures.push(`${r.email}: ${msg}`);
+    }
   }
 
+  if (sentCount === 0) {
+    return { ok: false, error: failures.join("; ") || "no recipient reachable" };
+  }
+
+  const destination = `${recipients.map((r) => r.email).join(", ")}${isFallback ? " (fallback)" : ""}`;
   return { ok: true, destination };
+}
+
+function formatTestHeader(
+  internal: MeetingRecipient[],
+  arthur: MeetingRecipient | null,
+): string {
+  if (internal.length === 0) {
+    return ":test_tube: *Test* -- fallback : aucun participant Coachello détecté, en mode prod l'alerte serait envoyée à Arthur seul.";
+  }
+  const targets = [...internal.map((r) => r.email)];
+  if (arthur && !internal.some((r) => r.memberId === arthur.memberId)) {
+    targets.push(`${arthur.email} (copie)`);
+  }
+  return `:test_tube: *Test* -- en mode prod, cette alerte serait envoyée en DM à : ${targets.join(", ")}`;
 }

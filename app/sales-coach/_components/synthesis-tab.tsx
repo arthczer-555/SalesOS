@@ -8,39 +8,13 @@ import type {
   KeyMomentKind,
   SalesCoachAnalysis,
 } from "@/lib/guides/sales-coach";
-import { isClientAnalysis } from "@/lib/guides/sales-coach";
+import { extractStringArray, isClientAnalysis } from "@/lib/guides/sales-coach";
 import type { TalkRatio } from "@/lib/sales-coach/talk-ratio";
 import { COLORS, scoreToColor } from "@/lib/design/tokens";
 import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
 import { ProgressBar } from "@/components/ui/progress-bar";
 import { KeyMoments } from "./key-moments";
-
-function toStringArray(v: unknown): string[] {
-  if (Array.isArray(v)) return v.flatMap((x) => (typeof x === "string" ? parseMaybeJsonArray(x) : []));
-  if (v && typeof v === "object") {
-    return Object.values(v as Record<string, unknown>).filter((x): x is string => typeof x === "string");
-  }
-  if (typeof v === "string") return parseMaybeJsonArray(v);
-  return [];
-}
-
-// Haiku occasionally returns the whole array as a JSON-encoded string
-// (e.g. `'[ "a", "b", "c" ]'`, sometimes with smart quotes or a trailing `;`)
-// instead of a real array. Try to recover the items before treating it as one.
-function parseMaybeJsonArray(s: string): string[] {
-  const trimmed = s.trim().replace(/[;,]+\s*$/, "");
-  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return [s];
-  const normalized = trimmed.replace(/[“”]/g, '"').replace(/[‘’]/g, "'");
-  try {
-    const parsed = JSON.parse(normalized);
-    if (Array.isArray(parsed)) return parsed.filter((x): x is string => typeof x === "string");
-  } catch { /* fall through to regex */ }
-  const items = [...normalized.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) =>
-    m[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\"),
-  );
-  return items.length > 0 ? items : [s];
-}
 
 const KEY_MOMENT_KINDS = new Set<KeyMomentKind>([
   "engagement",
@@ -125,9 +99,9 @@ export function SynthesisTab({
   onGoToCustomerHealth,
 }: Props) {
   const isClient = isClientAnalysis(analysis);
-  const strengths = toStringArray(analysis.strengths);
-  const weaknesses = toStringArray(analysis.weaknesses);
-  const priorities = toStringArray(analysis.coaching_priorities);
+  const strengths = extractStringArray(analysis.strengths);
+  const weaknesses = extractStringArray(analysis.weaknesses);
+  const priorities = extractStringArray(analysis.coaching_priorities);
   const keyMoments = toKeyMoments(analysis.key_moments);
 
   return (

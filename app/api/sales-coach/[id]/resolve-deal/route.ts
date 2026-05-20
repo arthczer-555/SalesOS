@@ -200,8 +200,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const shouldSendSlack =
     !wasAwaiting &&
     row.status === "done" &&
-    !row.slack_sent_at &&
-    process.env.SALES_COACH_SLACK_ENABLED === "true";
+    !row.slack_sent_at;
   if (shouldSendSlack) {
     const slackRes = await sendSalesCoachSlack(db, id).catch((e) => ({
       ok: false,

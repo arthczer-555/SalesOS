@@ -3,7 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
-import type { SalesCoachAnalysis } from "@/lib/guides/sales-coach";
+import { repairAnalysis, type SalesCoachAnalysis } from "@/lib/guides/sales-coach";
 import type { DealSnapshot } from "@/lib/hubspot";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +44,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   }
   if (!row.analysis) return NextResponse.json({ error: "Analyse non disponible" }, { status: 400 });
 
-  const analysis = row.analysis as SalesCoachAnalysis;
+  const analysis = repairAnalysis(row.analysis as SalesCoachAnalysis);
   const snapshot = row.deal_snapshot as DealSnapshot | null;
 
   // Resolve model preference (sales_coach key)

@@ -76,6 +76,8 @@ export interface GatheredData {
   webResults: { title: string; url: string; content: string; published_date: string | null }[];
   companyProfileResults: { title: string; url: string; content: string; published_date: string | null }[];
   strategicResults: { title: string; url: string; content: string; published_date: string | null }[];
+  linkedinProfiles?: unknown[];
+  linkedinCompany?: unknown | null;
   cached?: boolean;
   briefing?: BriefingResult;
 }
@@ -128,7 +130,7 @@ export function isExistingClient(rawData: GatheredData | null): boolean {
   }
   const primaryDeal = rawData.deals[0];
   if (primaryDeal) {
-    const s = primaryDeal.stage.toLowerCase();
+    const s = (primaryDeal.stage ?? "").toLowerCase();
     if (/closed\s*won/.test(s) || s === "closedwon" || /gagn[ée]/.test(s)) return true;
   }
   return false;

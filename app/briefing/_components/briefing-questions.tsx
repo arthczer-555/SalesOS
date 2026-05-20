@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
 
 export function BriefingQuestions({ questions }: { questions: string[] }) {
-  if (!questions?.length) return null;
+  if (!Array.isArray(questions) || questions.length === 0) return null;
   return (
     <Card padding={16}>
       <SectionHeader title="Questions à poser" />

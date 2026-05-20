@@ -3,12 +3,10 @@
 import { Loader2 } from "lucide-react";
 import { useLeadsFunnel } from "@/lib/hooks/use-marketing";
 
-const ACCENT = "#f01563";
 const GREEN = "#10b981";
 const BLUE = "#3b82f6";
 const PURPLE = "#8b5cf6";
 const RED = "#ef4444";
-const GRAY = "#9ca3af";
 
 function formatAmount(n: number): string {
   return n.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + "€";
@@ -17,15 +15,6 @@ function formatAmount(n: number): string {
 function pct(num: number, denom: number): string {
   if (!denom) return "—";
   return `${Math.round((num / denom) * 100)}%`;
-}
-
-function isQualifiedLabel(label: string): boolean {
-  const norm = label.toLowerCase();
-  return /qualif|open\s*deal|connected/.test(norm);
-}
-
-function isConnectedLabel(label: string): boolean {
-  return /connect/i.test(label);
 }
 
 export default function LeadsKpiRow() {
@@ -51,19 +40,12 @@ export default function LeadsKpiRow() {
   }
 
   const { funnel: f, openPipelineAmount, closedLostAmount } = funnel;
-  const buckets = f.byLeadStage ?? [];
-  const totalLead = f.withLead ?? 0;
-  const noLead = f.withoutLead ?? 0;
-  const connected = buckets.find((b) => isConnectedLabel(b.stage_label));
-  const qualifiedCount = buckets
-    .filter((b) => isQualifiedLabel(b.stage_label))
-    .reduce((acc, b) => acc + b.count, 0);
 
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "repeat(8, minmax(0, 1fr))",
+        gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
         gap: 12,
       }}
     >
@@ -90,30 +72,6 @@ export default function LeadsKpiRow() {
         value={formatAmount(closedLostAmount)}
         subtitle={`${f.closedLost} deal${f.closedLost > 1 ? "s" : ""} perdu${f.closedLost > 1 ? "s" : ""}`}
         color={RED}
-      />
-      <KpiCard
-        label="% → connected"
-        value={connected ? pct(connected.count, totalLead) : "—"}
-        subtitle={connected ? `${connected.count} / ${totalLead} leads` : "Stage absent"}
-        color={BLUE}
-      />
-      <KpiCard
-        label="% qualifié"
-        value={pct(qualifiedCount, totalLead)}
-        subtitle={`${qualifiedCount} / ${totalLead} leads`}
-        color={GREEN}
-      />
-      <KpiCard
-        label="Avec deal"
-        value={String(f.withDeal ?? 0)}
-        subtitle="Lié à un deal"
-        color={ACCENT}
-      />
-      <KpiCard
-        label="Sans lead HubSpot"
-        value={String(noLead)}
-        subtitle="Validés sans Lead"
-        color={GRAY}
       />
     </div>
   );

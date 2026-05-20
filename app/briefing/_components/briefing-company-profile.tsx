@@ -77,7 +77,7 @@ export function BriefingCompanyProfile({ briefing }: { briefing: BriefingResult 
           )}
         </div>
       )}
-      {briefing.strategicHistory && briefing.strategicHistory.length > 0 && (
+      {Array.isArray(briefing.strategicHistory) && briefing.strategicHistory.length > 0 && (
         <div
           style={{
             marginTop: 12,

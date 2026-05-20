@@ -317,6 +317,10 @@ export default function BriefingPage() {
                       { label: `${rawData.gmailMessages.length} email${rawData.gmailMessages.length > 1 ? "s" : ""}`, active: rawData.gmailMessages.length > 0 },
                       { label: `${rawData.slackMessages.length} Slack`, active: rawData.slackMessages.length > 0 },
                       { label: `${rawData.webResults.length} web`, active: rawData.webResults.length > 0 },
+                      {
+                        label: `${(rawData.linkedinProfiles?.length ?? 0) + (rawData.linkedinCompany ? 1 : 0)} LinkedIn`,
+                        active: (rawData.linkedinProfiles?.length ?? 0) > 0 || !!rawData.linkedinCompany,
+                      },
                     ].map(({ label, active }) => (
                       <span
                         key={label}

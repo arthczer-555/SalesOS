@@ -28,13 +28,6 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: `Cannot send — status is ${row.status}` }, { status: 400 });
   }
 
-  if (process.env.SALES_COACH_SLACK_ENABLED !== "true") {
-    return NextResponse.json(
-      { error: "Slack désactivé globalement (SALES_COACH_SLACK_ENABLED)" },
-      { status: 403 },
-    );
-  }
-
   const result = await sendSalesCoachSlack(db, id);
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 500 });
 

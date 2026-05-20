@@ -2,15 +2,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   AnySalesCoachAnalysis,
   ClientMeetingKind,
-  ClientSalesCoachAnalysis,
   MeetingKind,
-  SalesCoachAnalysis,
 } from "@/lib/guides/sales-coach";
 import {
   CLIENT_MEETING_KIND_LABELS,
   MEETING_KIND_LABELS,
-  isClientAnalysis,
-  isDiscoveryKind,
+  extractStringArray,
+  repairAnalysis,
 } from "@/lib/guides/sales-coach";
 import type { DealSnapshot } from "@/lib/hubspot";
 import type { Audience } from "./meeting-recap";
@@ -22,155 +20,97 @@ import {
   type MeetingRecipient,
 } from "./slack-recipients";
 
-function formatAxisLine(emoji: string, label: string, axis: { score: number; notes: string }): string {
-  return `${emoji} *${label} :* ${axis.score}/10 — ${axis.notes}`;
-}
+/**
+ * Rend le debrief Slack post-analyse, aligné sur la page synthèse de l'app.
+ * Contient : header (deal, meeting, score), summary, strengths, weaknesses,
+ * coaching_priorities, lien vers l'analyse complète. Les blocs détaillés
+ * (axes, MEDDIC, BOSCHE, customer_health, key_moments, talk_ratio) restent
+ * réservés à la page synthèse pour garder le DM scannable en 30 secondes.
+ */
+function formatAnalysisDebrief(args: {
+  audience: Audience;
+  dealName: string;
+  dealStage: string | null;
+  meetingTitle: string;
+  meetingStartedAt: string | null;
+  meetingKind: MeetingKind | ClientMeetingKind | null;
+  scoreGlobal: number;
+  analysis: AnySalesCoachAnalysis;
+  appUrl: string;
+  analysisId: string;
+  salesName: string | null;
+}): string {
+  const {
+    audience,
+    dealName,
+    dealStage,
+    meetingTitle,
+    meetingStartedAt,
+    meetingKind,
+    scoreGlobal,
+    analysis,
+    appUrl,
+    analysisId,
+    salesName,
+  } = args;
+  const isClient = audience === "client";
 
-function formatProspectAnalysis(
-  args: {
-    dealName: string;
-    dealStage: string | null;
-    meetingTitle: string;
-    meetingStartedAt: string | null;
-    meetingKind: MeetingKind | null;
-    scoreGlobal: number;
-    analysis: SalesCoachAnalysis;
-    appUrl: string;
-    analysisId: string;
-    salesName: string | null;
-  },
-): string {
-  const { dealName, dealStage, meetingTitle, meetingStartedAt, meetingKind, scoreGlobal, analysis, appUrl, analysisId, salesName } = args;
-  const a = analysis.axes;
-  const m = analysis.meddic;
-  const b = analysis.bosche;
+  const date = meetingStartedAt
+    ? new Date(meetingStartedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
+    : "";
+  const kindLabel = meetingKind
+    ? isClient
+      ? CLIENT_MEETING_KIND_LABELS[meetingKind as ClientMeetingKind]
+      : MEETING_KIND_LABELS[meetingKind as MeetingKind]
+    : null;
 
-  const date = meetingStartedAt ? new Date(meetingStartedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "";
-  const kindLabel = meetingKind ? MEETING_KIND_LABELS[meetingKind] : null;
+  const headerEmoji = isClient ? ":handshake:" : ":dart:";
+  const headerTitle = isClient ? "DEBRIEF CS COACHING" : "DEBRIEF COACHING";
+  const prioritiesLabel = isClient
+    ? "Top 3 actions pour le prochain touchpoint"
+    : "Top 3 actions pour le prochain call";
 
-  const hasDealLabel = !!dealName && dealName !== "—";
-  const lines: string[] = [
-    `:dart: *DEBRIEF COACHING${hasDealLabel ? ` — ${dealName}` : ""}*${dealStage ? ` · _${dealStage}_` : ""}`,
-    `${meetingTitle}${date ? ` · ${date}` : ""}${salesName ? ` · ${salesName}` : ""}${kindLabel ? ` · _${kindLabel}_` : ""}`,
-    ``,
-    `*Note globale :* ${scoreGlobal}/10`,
-  ];
-  if (analysis.summary) {
-    lines.push(``, `*Points forts / à travailler :*`, analysis.summary);
-  }
-  if (a) {
-    lines.push(
-      ``,
-      `*6 axes coaching :*`,
-      formatAxisLine("•", "Opening", a.opening),
-      formatAxisLine("•", "Discovery", a.discovery),
-      formatAxisLine("•", "Écoute active", a.active_listening),
-      formatAxisLine("•", "Value articulation", a.value_articulation),
-      formatAxisLine("•", "Objection handling", a.objection_handling),
-      formatAxisLine("•", "Next steps", a.next_steps),
-    );
-  }
-  if (m) {
-    lines.push(
-      ``,
-      `*MEDDIC :*`,
-      `M : ${m.metrics.score}/10 — ${m.metrics.notes}`,
-      `EB : ${m.economic_buyer.score}/10 — ${m.economic_buyer.notes}`,
-      `DC : ${m.decision_criteria.score}/10 — ${m.decision_criteria.notes}`,
-      `DP : ${m.decision_process.score}/10 — ${m.decision_process.notes}`,
-      `IP : ${m.identify_pain.score}/10 — ${m.identify_pain.notes}`,
-      `C  : ${m.champion.score}/10 — ${m.champion.notes}`,
-    );
-  }
+  const dealLabel = dealName.trim();
+  const headerLine = `${headerEmoji} *${headerTitle}${dealLabel ? ` : ${dealLabel}` : ""}*${dealStage ? ` · _${dealStage}_` : ""}`;
 
-  if (isDiscoveryKind(meetingKind) && b?.trigger_identified) {
-    lines.push(
-      ``,
-      `*BOSCHE — discovery :*`,
-      `Trigger détecté : ${b.trigger_identified}`,
-      `B : ${b.business.score}/10 — ${b.business.notes}`,
-      `O : ${b.organization.score}/10 — ${b.organization.notes}`,
-      `S : ${b.skills.score}/10 — ${b.skills.notes}`,
-      `C : ${b.consequences.score}/10 — ${b.consequences.notes}`,
-      `H.E : ${b.human_economic.score}/10 — ${b.human_economic.notes}`,
-      `Exit criteria : ${b.exit_criteria_met ? ":white_check_mark:" : ":x:"}`,
-    );
+  const subtitleParts: string[] = [];
+  if (meetingTitle) subtitleParts.push(meetingTitle);
+  if (date) subtitleParts.push(date);
+  if (salesName) subtitleParts.push(salesName);
+  if (kindLabel) subtitleParts.push(`_${kindLabel}_`);
+
+  const lines: string[] = [headerLine];
+  if (subtitleParts.length > 0) lines.push(subtitleParts.join(" · "));
+  lines.push(``, `*Note globale :* ${scoreGlobal}/10`);
+
+  if (analysis.summary?.trim()) {
+    lines.push(``, `*Synthèse*`, analysis.summary.trim());
   }
 
-  if ((analysis.coaching_priorities?.length ?? 0) > 0) {
-    lines.push(``, `:rocket: *Top priorités pour ton prochain call :*`);
-    (analysis.coaching_priorities ?? []).forEach((p, i) => lines.push(`${i + 1}. ${p}`));
+  // extractStringArray, parce que Haiku char-by-char stringifie parfois ces
+  // champs en objet numeric-keyed (`{"0":"T","1":"o",...}`). Le validator
+  // ne couvre pas ces 3 champs, donc l'analyse peut être saved en `done` avec
+  // un shape cassé. Cohérent avec le rendu UI (analysis-detail, synthesis-tab).
+  const strengths = extractStringArray(analysis.strengths).map((s) => s.trim()).filter(Boolean);
+  if (strengths.length > 0) {
+    lines.push(``, `*Points forts*`);
+    for (const s of strengths) lines.push(`• ${s}`);
   }
 
-  if (appUrl) {
-    lines.push(``, `<${appUrl}/sales-coach?id=${analysisId}|Voir l'analyse complète →>`);
+  const weaknesses = extractStringArray(analysis.weaknesses).map((w) => w.trim()).filter(Boolean);
+  if (weaknesses.length > 0) {
+    lines.push(``, `*À travailler*`);
+    for (const w of weaknesses) lines.push(`• ${w}`);
   }
 
-  return lines.join("\n");
-}
-
-function formatClientAnalysis(
-  args: {
-    dealName: string;
-    dealStage: string | null;
-    meetingTitle: string;
-    meetingStartedAt: string | null;
-    meetingKind: ClientMeetingKind | null;
-    scoreGlobal: number;
-    analysis: ClientSalesCoachAnalysis;
-    appUrl: string;
-    analysisId: string;
-    salesName: string | null;
-  },
-): string {
-  const { dealName, dealStage, meetingTitle, meetingStartedAt, meetingKind, scoreGlobal, analysis, appUrl, analysisId, salesName } = args;
-  const a = analysis.axes;
-  const ch = analysis.customer_health;
-
-  const date = meetingStartedAt ? new Date(meetingStartedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" }) : "";
-  const kindLabel = meetingKind ? CLIENT_MEETING_KIND_LABELS[meetingKind] : null;
-
-  const hasDealLabel = !!dealName && dealName !== "—";
-  const lines: string[] = [
-    `:handshake: *DEBRIEF CS COACHING — ${hasDealLabel ? dealName : "client"}*${dealStage ? ` · _${dealStage}_` : ""}`,
-    `${meetingTitle}${date ? ` · ${date}` : ""}${salesName ? ` · ${salesName}` : ""}${kindLabel ? ` · _${kindLabel}_` : ""}`,
-    ``,
-    `*Note globale :* ${scoreGlobal}/10`,
-  ];
-  if (analysis.summary) {
-    lines.push(``, `*Synthèse :*`, analysis.summary);
-  }
-  if (a) {
-    lines.push(
-      ``,
-      `*6 axes coaching CS :*`,
-      formatAxisLine("•", "Opening & rapport", a.opening),
-      formatAxisLine("•", "Discovery (évolution)", a.discovery),
-      formatAxisLine("•", "Écoute active", a.active_listening),
-      formatAxisLine("•", "Value reinforcement", a.value_reinforcement),
-      formatAxisLine("•", "Expansion discovery", a.expansion_discovery),
-      formatAxisLine("•", "Next steps", a.next_steps),
-    );
-  }
-  if (ch) {
-    lines.push(
-      ``,
-      `*Customer Health :*`,
-      `• *Relation :* ${ch.relationship}`,
-      `• *Adoption :* ${ch.adoption}`,
-      `• *Sentiment :* ${ch.sentiment}`,
-      `• *Signaux expansion :* ${ch.expansion_signals}`,
-      `• *Risk flags :* ${ch.risk_flags}`,
-    );
-  }
-
-  if ((analysis.coaching_priorities?.length ?? 0) > 0) {
-    lines.push(``, `:rocket: *Top priorités pour ton prochain touchpoint :*`);
-    (analysis.coaching_priorities ?? []).forEach((p, i) => lines.push(`${i + 1}. ${p}`));
+  const priorities = extractStringArray(analysis.coaching_priorities).map((p) => p.trim()).filter(Boolean);
+  if (priorities.length > 0) {
+    lines.push(``, `:rocket: *${prioritiesLabel}*`);
+    priorities.forEach((p, i) => lines.push(`${i + 1}. ${p}`));
   }
 
   if (appUrl) {
-    lines.push(``, `<${appUrl}/sales-coach?id=${analysisId}|Voir l'analyse complète →>`);
+    lines.push(``, `<${appUrl}/sales-coach?id=${analysisId}|Voir l'analyse complète>`);
   }
 
   return lines.join("\n");
@@ -179,15 +119,13 @@ function formatClientAnalysis(
 /**
  * Envoie le debrief coaching en DM Slack.
  *
- * - Mode `dm` (test) : DM à Arthur uniquement, préfixé d'un header `🧪 *Test*`
- *   qui montre à qui le DM partirait en mode channels (pour valider le
- *   routing avant la bascule prod).
- * - Mode `channels` (prod) : DM à chaque participant Coachello présent dans
- *   le meeting Claap (même domaine que le recorder). Pas de fallback sur le
- *   deal owner — si la personne n'était pas dans le meeting, elle ne reçoit
- *   pas. Si aucun participant détecté : fallback Arthur.
- *
- * Gated globalement par `SALES_COACH_SLACK_ENABLED` côté run-analysis.
+ * - Mode `test` (défaut) : DM à Arthur uniquement, préfixé d'un header
+ *   `:test_tube: *Test*` qui montre à qui le DM partirait en mode prod (pour
+ *   valider le routing avant la bascule).
+ * - Mode `prod` : DM à chaque participant Coachello présent dans le meeting
+ *   Claap (même domaine que le recorder). Pas de fallback sur le deal owner,
+ *   si la personne n'était pas dans le meeting, elle ne reçoit pas. Si aucun
+ *   participant détecté : fallback Arthur.
  */
 export async function sendSalesCoachSlack(
   db: SupabaseClient,
@@ -202,7 +140,7 @@ export async function sendSalesCoachSlack(
   if (!row) return { ok: false, error: "Analysis not found" };
   if (!row.analysis) return { ok: false, error: "Analysis data missing" };
 
-  const mode = process.env.CLAAP_NOTE_SLACK_MODE === "channels" ? "channels" : "dm";
+  const mode = process.env.SLACK_MODE === "prod" ? "prod" : "test";
   const audience = (row.audience as Audience | null) ?? null;
 
   // Résout d'abord les participants Coachello du meeting. Utilisé :
@@ -221,10 +159,10 @@ export async function sendSalesCoachSlack(
   let recipients: MeetingRecipient[];
   let isFallback = false;
 
-  if (mode === "dm") {
+  if (mode === "test") {
     const arthur = await findArthurFallbackRecipient();
     if (!arthur) {
-      return { ok: false, error: `Slack user "${process.env.CLAAP_NOTE_SLACK_TEST_USER ?? "Arthur Czernichow"}" not found (mode=dm)` };
+      return { ok: false, error: `Slack user "${process.env.CLAAP_NOTE_SLACK_TEST_USER ?? "Arthur Czernichow"}" not found (mode=test)` };
     }
     recipients = [arthur];
   } else if (meetingParticipants.length > 0) {
@@ -236,44 +174,33 @@ export async function sendSalesCoachSlack(
     }
     recipients = [arthur];
     isFallback = true;
-    console.warn(`[sales-coach/slack/${analysisId}] no Coachello participant detected — falling back to Arthur`);
+    console.warn(`[sales-coach/slack/${analysisId}] no Coachello participant detected, falling back to Arthur`);
   }
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.URL || "";
   const snapshot = row.deal_snapshot as DealSnapshot | null;
-  const dealName = snapshot?.name || (row.hubspot_deal_id ? `Deal ${row.hubspot_deal_id}` : "—");
+  const dealName = snapshot?.name || (row.hubspot_deal_id ? `Deal ${row.hubspot_deal_id}` : "");
   const dealStage = snapshot?.stage_label ?? null;
 
-  const rawAnalysis = row.analysis as AnySalesCoachAnalysis;
-  const body = isClientAnalysis(rawAnalysis)
-    ? formatClientAnalysis({
-        dealName,
-        dealStage,
-        meetingTitle: row.meeting_title ?? "Meeting",
-        meetingStartedAt: row.meeting_started_at,
-        meetingKind: row.meeting_kind as ClientMeetingKind | null,
-        scoreGlobal: Number(row.score_global ?? 0),
-        analysis: rawAnalysis,
-        appUrl,
-        analysisId: row.id,
-        salesName: null,
-      })
-    : formatProspectAnalysis({
-        dealName,
-        dealStage,
-        meetingTitle: row.meeting_title ?? "Meeting",
-        meetingStartedAt: row.meeting_started_at,
-        meetingKind: row.meeting_kind as MeetingKind | null,
-        scoreGlobal: Number(row.score_global ?? 0),
-        analysis: rawAnalysis as SalesCoachAnalysis,
-        appUrl,
-        analysisId: row.id,
-        salesName: null,
-      });
+  const rawAnalysis = repairAnalysis(row.analysis as AnySalesCoachAnalysis);
+  const resolvedAudience: Audience = audience ?? "prospect";
+  const body = formatAnalysisDebrief({
+    audience: resolvedAudience,
+    dealName,
+    dealStage,
+    meetingTitle: row.meeting_title ?? "Meeting",
+    meetingStartedAt: row.meeting_started_at,
+    meetingKind: row.meeting_kind as MeetingKind | ClientMeetingKind | null,
+    scoreGlobal: Number(row.score_global ?? 0),
+    analysis: rawAnalysis,
+    appUrl,
+    analysisId: row.id,
+    salesName: null,
+  });
 
-  // Header test : uniquement en mode dm. En mode channels, on envoie le DM
+  // Header test : uniquement en mode test. En mode prod, on envoie le DM
   // directement aux concernés, pas besoin d'expliquer.
-  const text = mode === "dm"
+  const text = mode === "test"
     ? `${formatTestModeHeader({
         theoreticalRecipientEmails: isFallback ? [] : meetingParticipants.map((r) => r.email),
         audience,

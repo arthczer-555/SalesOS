@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
+import { withAnthropicRetry } from "@/lib/anthropic-retry";
 import {
   fetchDealContext,
   hubspotBatchAssociations,
@@ -14,7 +15,13 @@ import {
   normalizeCompany,
   normalizePerson,
 } from "@/lib/fuzzy-match";
-import type { Lead, LeadAnalysis, LeadFile, LeadMatchStrategy } from "@/lib/marketing-types";
+import {
+  LEAD_SOURCE_CATEGORIES,
+  type Lead,
+  type LeadAnalysis,
+  type LeadFile,
+  type LeadMatchStrategy,
+} from "@/lib/marketing-types";
 
 const ANALYZE_MODEL = "claude-haiku-4-5-20251001";
 const MAX_IMAGES_PER_LEAD = 3;
@@ -26,6 +33,7 @@ interface LeadExtraction {
   email: string | null;
   name: string | null;
   company: string | null;
+  source: string | null;
   confidence: number;
   notes: string;
 }
@@ -42,6 +50,7 @@ interface AnalysisRow {
   extracted_email: string | null;
   extracted_name: string | null;
   extracted_company: string | null;
+  extracted_source: string | null;
   extraction_confidence: number | null;
   extraction_notes: string | null;
   hubspot_contact_id: string | null;
@@ -111,10 +120,26 @@ Un message Slack vient d'être posté dans le canal des leads entrants. Il peut 
 - du texte libre (souvent un copier-coller de mail, LinkedIn, formulaire web),
 - des screenshots (LinkedIn message, Gmail forward, formulaire HubSpot, etc.).
 
-Ta mission : extraire l'EMAIL, le NOM COMPLET et l'ENTREPRISE du PROSPECT (la personne qui contacte
-Coachello), pas l'auteur du message Slack. Si l'info n'est pas certaine, mets null et explique
-ce qui manque dans 'notes'. confidence ∈ [0,1] reflète ta certitude globale sur l'identification du
-prospect.`;
+Ta mission : extraire l'EMAIL, le NOM COMPLET, l'ENTREPRISE et l'ORIGINE du PROSPECT (la personne
+qui contacte Coachello), pas l'auteur du message Slack. Si l'info n'est pas certaine, mets null et
+explique ce qui manque dans 'notes'. confidence ∈ [0,1] reflète ta certitude globale sur
+l'identification du prospect.
+
+Pour 'source' : si les images contiennent une question du type "How did you hear about us",
+"Comment nous avez-vous connu", "Par quel canal nous avez-vous trouvé", regarde la réponse du
+prospect et CLASSIFIE-LA dans UNE des catégories suivantes (retourne EXACTEMENT cette chaîne) :
+
+- "LinkedIn"        : profil LinkedIn, message InMail, post, pub LinkedIn, contact LinkedIn.
+- "Chatbot"         : ChatGPT, Copilot, Perplexity, Claude, Gemini, Bing AI, "AI search",
+                      "AI Copilot Search", toute IA conversationnelle.
+- "Web Search"      : Google, Bing, DuckDuckGo, Yahoo, recherche web classique non-IA.
+- "Recommandation"  : ami, collègue, partenaire, bouche à oreille, "referred by", "X m'a parlé".
+- "Évènement"       : salon, conférence, meetup, webinar, atelier, event physique ou en ligne.
+- "Réseaux sociaux" : Twitter/X, Instagram, Facebook, TikTok, YouTube (TOUT sauf LinkedIn).
+- "Presse"          : article presse, blog tiers, journal, média (pas Coachello lui-même).
+- "Autre"           : tout le reste qui ne rentre dans aucune catégorie ci-dessus.
+
+Si aucune mention claire d'origine dans les images, retourne null (pas "Autre").`;
 
 const EXTRACT_TOOL = {
   name: "extract_lead",
@@ -125,10 +150,15 @@ const EXTRACT_TOOL = {
       email: { type: ["string", "null"], description: "Email du prospect, en minuscules" },
       name: { type: ["string", "null"], description: "Nom complet du prospect (Prénom Nom)" },
       company: { type: ["string", "null"], description: "Entreprise du prospect" },
-      confidence: { type: "number", description: "0..1 — certitude globale" },
+      source: {
+        type: ["string", "null"],
+        enum: [...LEAD_SOURCE_CATEGORIES, null],
+        description: `Catégorie d'origine du lead. UNE des 8 valeurs autorisées (${LEAD_SOURCE_CATEGORIES.join(", ")}), ou null si aucune mention claire dans les images.`,
+      },
+      confidence: { type: "number", description: "0..1, certitude globale" },
       notes: { type: "string", description: "Sources, hésitations, infos manquantes" },
     },
-    required: ["email", "name", "company", "confidence", "notes"],
+    required: ["email", "name", "company", "source", "confidence", "notes"],
   },
 };
 
@@ -156,15 +186,19 @@ async function extractLeadInfo(lead: Lead): Promise<{
     },
   ];
 
-  const client = new Anthropic({ timeout: 60_000 });
-  const message = await client.messages.create({
-    model: ANALYZE_MODEL,
-    max_tokens: 1000,
-    system: EXTRACT_SYSTEM,
-    messages: [{ role: "user", content: userContent }],
-    tools: [EXTRACT_TOOL],
-    tool_choice: { type: "tool", name: "extract_lead" },
-  });
+  const client = new Anthropic({ timeout: 60_000, maxRetries: 0 });
+  const message = await withAnthropicRetry(
+    () =>
+      client.messages.create({
+        model: ANALYZE_MODEL,
+        max_tokens: 1000,
+        system: EXTRACT_SYSTEM,
+        messages: [{ role: "user", content: userContent }],
+        tools: [EXTRACT_TOOL],
+        tool_choice: { type: "tool", name: "extract_lead" },
+      }),
+    { label: `lead-analysis ${lead.id}` },
+  );
 
   const toolBlock = message.content.find((b) => b.type === "tool_use");
   if (!toolBlock || !("input" in toolBlock)) {
@@ -175,6 +209,7 @@ async function extractLeadInfo(lead: Lead): Promise<{
     email: typeof input.email === "string" ? input.email.toLowerCase().trim() || null : null,
     name: typeof input.name === "string" ? input.name.trim() || null : null,
     company: typeof input.company === "string" ? input.company.trim() || null : null,
+    source: typeof input.source === "string" ? input.source.trim() || null : null,
     confidence: typeof input.confidence === "number" ? input.confidence : 0,
     notes: typeof input.notes === "string" ? input.notes : "",
   };
@@ -686,6 +721,7 @@ export async function runLeadAnalysis(
         extracted_email: extraction.email,
         extracted_name: extraction.name,
         extracted_company: extraction.company,
+        extracted_source: extraction.source,
         extraction_confidence: extraction.confidence,
         extraction_notes: extraction.notes,
         hubspot_contact_id: match.contactId,
@@ -757,6 +793,7 @@ export async function rematchHubspotForLead(leadId: string): Promise<LeadAnalysi
     email: prevRow.extracted_email,
     name: prevRow.extracted_name,
     company: prevRow.extracted_company,
+    source: prevRow.extracted_source,
     confidence: prevRow.extraction_confidence ?? 0,
     notes: prevRow.extraction_notes ?? "",
   };

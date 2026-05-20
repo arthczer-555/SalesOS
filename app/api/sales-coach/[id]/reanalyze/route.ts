@@ -8,6 +8,7 @@ import {
   extractTitleSearchHint,
 } from "@/lib/claap";
 import { fetchDealContext, resolveDealFromParticipants } from "@/lib/hubspot";
+import { sendManualDealAlert } from "@/lib/sales-coach/admin-alert";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { data: row } = await db
     .from("sales_coach_analyses")
     .select(
-      "user_id, claap_recording_id, recorder_email, meeting_title, participants, hubspot_deal_id",
+      "user_id, claap_recording_id, recorder_email, meeting_title, meeting_started_at, participants, hubspot_deal_id",
     )
     .eq("id", id)
     .single();
@@ -95,6 +96,30 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (participants.length > 0) update.participants = participants;
     await db.from("sales_coach_analyses").update(update).eq("id", id);
     console.log(`[reanalyze/${id}] no deal resolvable — switched to awaiting_manual_deal`);
+
+    // Symétrie avec le webhook Claap : on notifie Slack pour que le recorder
+    // (ou Arthur en mode test) sache qu'une résolution manuelle est en attente.
+    const alertParticipants = participants.length > 0
+      ? participants.map((p) => p.email)
+      : Array.isArray(row.participants)
+        ? (row.participants as { email?: string }[])
+            .map((p) => p.email)
+            .filter((e): e is string => !!e)
+        : [];
+    const alertRes = await sendManualDealAlert({
+      analysisId: id,
+      claapRecordingId: row.claap_recording_id ?? null,
+      meetingTitle: row.meeting_title ?? null,
+      meetingStartedAt: row.meeting_started_at ?? rec.meeting?.startingAt ?? null,
+      recorderEmail: row.recorder_email ?? null,
+      participantEmails: alertParticipants,
+    }).catch((e) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+    if (!alertRes.ok) {
+      console.warn(`[reanalyze/${id}] manual-deal Slack alert failed:`, alertRes.error);
+    } else if ("destination" in alertRes && alertRes.destination) {
+      console.log(`[reanalyze/${id}] manual-deal Slack alert sent to ${alertRes.destination}`);
+    }
+
     return NextResponse.json({ ok: true, awaiting_manual_deal: true });
   }
 

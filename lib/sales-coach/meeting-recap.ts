@@ -414,7 +414,7 @@ export async function sendMeetingRecapSlack(
   });
 
   // Header "modifie et envoie dans #X" — toujours présent dans le corps du
-  // recap (mode dm + mode channels), audience-conditional. Le commercial copie
+  // recap (mode test + mode prod), audience-conditional. Le commercial copie
   // le message, le retouche, et le forward dans le channel cible lui-même.
   // Pas de post automatique dans les channels.
   const forwardHeader = formatForwardChannelHeader(audience);
@@ -423,7 +423,7 @@ export async function sendMeetingRecapSlack(
     : `:clipboard: *RECAP MEETING*\n\n${body}`;
 
   // Résout les participants Coachello du meeting Claap (= cibles en mode
-  // channels, et liste affichée dans le header test en mode dm).
+  // prod, et liste affichée dans le header test en mode test).
   const meetingParticipants: MeetingRecipient[] = row.claap_recording_id
     ? await resolveMeetingParticipantRecipients(
         row.claap_recording_id,
@@ -434,15 +434,15 @@ export async function sendMeetingRecapSlack(
       })
     : [];
 
-  const mode = process.env.CLAAP_NOTE_SLACK_MODE === "channels" ? "channels" : "dm";
+  const mode = process.env.SLACK_MODE === "prod" ? "prod" : "test";
 
   let recipients: MeetingRecipient[];
   let isFallback = false;
 
-  if (mode === "dm") {
+  if (mode === "test") {
     const arthur = await findArthurFallbackRecipient();
     if (!arthur) {
-      return { ok: false, error: `Slack user "${process.env.CLAAP_NOTE_SLACK_TEST_USER ?? "Arthur Czernichow"}" not found (mode=dm)` };
+      return { ok: false, error: `Slack user "${process.env.CLAAP_NOTE_SLACK_TEST_USER ?? "Arthur Czernichow"}" not found (mode=test)` };
     }
     recipients = [arthur];
   } else if (meetingParticipants.length > 0) {
@@ -457,10 +457,10 @@ export async function sendMeetingRecapSlack(
     console.warn(`[meeting-recap/${analysisId}] no Coachello participant detected — falling back to Arthur`);
   }
 
-  // En mode dm uniquement : préfixe le message avec le header de test qui
-  // explicite à qui le DM serait parti en mode channels (et dans quel
-  // channel le commercial devrait forwarder).
-  const text = mode === "dm"
+  // En mode test uniquement : préfixe le message avec le header qui explicite
+  // à qui le DM serait parti en mode prod (et dans quel channel le commercial
+  // devrait forwarder).
+  const text = mode === "test"
     ? `${formatTestModeHeader({
         theoreticalRecipientEmails: isFallback ? [] : meetingParticipants.map((r) => r.email),
         audience,

@@ -34,6 +34,7 @@ import type {
   SalesCoachAnalysis,
 } from "@/lib/guides/sales-coach";
 import {
+  extractStringArray,
   getMeetingKindLabel,
   isClientAnalysis,
   isDiscoveryKind,
@@ -46,6 +47,7 @@ import { Sparkles } from "lucide-react";
 import { COLORS, scoreToColor } from "@/lib/design/tokens";
 import { ScoreGauge } from "@/components/ui/score-gauge";
 import { TabBar } from "@/components/ui/tab-bar";
+import { useToast } from "@/components/ui/toast";
 
 interface Props {
   analysisId: string;
@@ -306,6 +308,7 @@ function DealTopo({
   const [autoResolveMsg, setAutoResolveMsg] = useState<string | null>(null);
   const [refreshingSnapshot, setRefreshingSnapshot] = useState(false);
   const snapshotFetchedRef = useRef<string | null>(null);
+  const { toast } = useToast();
 
   // When the analysis has a deal but no snapshot yet (e.g. row created before
   // deal_snapshot was captured), silently backfill it so the UI shows the deal
@@ -360,19 +363,16 @@ function DealTopo({
       setEditing(false);
       setDealInput("");
       onDealUpdated();
-      // Offer to re-run the analysis with the fresh deal context
-      if (confirm("Deal associé. Ré-analyser maintenant avec le contexte du deal HubSpot ?")) {
-        await reanalyze(true);
-      }
+      toast("Deal associé, ré-analyse lancée.", "success");
+      await reanalyze();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erreur");
+      toast(e instanceof Error ? e.message : "Erreur", "error");
     } finally {
       setSaving(false);
     }
   }
 
-  async function reanalyze(skipConfirm = false) {
-    if (!skipConfirm && !confirm("Ré-analyser ce meeting avec le contexte deal à jour ? L'analyse actuelle sera remplacée.")) return;
+  async function reanalyze() {
     setReanalyzing(true);
     try {
       const res = await fetch(`/api/sales-coach/${analysisId}/reanalyze`, { method: "POST" });
@@ -381,8 +381,9 @@ function DealTopo({
         throw new Error(data.error ?? "Erreur");
       }
       onDealUpdated();
+      toast("Ré-analyse lancée.", "success");
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erreur");
+      toast(e instanceof Error ? e.message : "Erreur", "error");
     } finally {
       setReanalyzing(false);
     }
@@ -402,15 +403,13 @@ function DealTopo({
       };
       if (!res.ok) throw new Error(data.error ?? "Erreur");
       onDealUpdated();
-      alert(
-        `Snapshot rafraîchi.\n\n` +
-          `Audience : ${data.audience ?? "?"}\n` +
-          `Pipeline : ${data.pipeline_label ?? "?"}\n` +
-          `Stage : ${data.stage_label ?? "?"}\n` +
-          `Closed won : ${data.is_closed_won === true ? "oui" : data.is_closed_won === false ? "non" : "?"}`,
+      const closedWonLabel = data.is_closed_won === true ? "oui" : data.is_closed_won === false ? "non" : "?";
+      toast(
+        `Snapshot rafraîchi. Audience : ${data.audience ?? "?"}, pipeline : ${data.pipeline_label ?? "?"}, stage : ${data.stage_label ?? "?"}, closed won : ${closedWonLabel}.`,
+        "success",
       );
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erreur");
+      toast(e instanceof Error ? e.message : "Erreur", "error");
     } finally {
       setRefreshingSnapshot(false);
     }
@@ -634,6 +633,7 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
   const [sending, setSending] = useState(false);
   const [sendResult, setSendResult] = useState<{ ok: boolean; msg: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const { toast } = useToast();
 
   const [emailModalOpen, setEmailModalOpen] = useState(false);
 
@@ -655,31 +655,30 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
   }
 
   async function deleteAnalysis() {
-    const ok = typeof window !== "undefined" && window.confirm("Supprimer cette analyse ? Cette action est irréversible.");
-    if (!ok) return;
     setDeleting(true);
     try {
       const res = await fetch(`/api/sales-coach/${analysisId}`, { method: "DELETE" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Erreur");
+      toast("Analyse supprimée.", "success");
       onDeleted?.();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erreur");
+      toast(e instanceof Error ? e.message : "Erreur", "error");
       setDeleting(false);
     }
   }
 
   const [forcing, setForcing] = useState(false);
-  async function forceAnalyze({ confirmFirst = false }: { confirmFirst?: boolean } = {}) {
-    if (confirmFirst && typeof window !== "undefined" && !window.confirm("Refaire l'analyse de ce meeting ? L'analyse actuelle sera remplacée.")) return;
+  async function forceAnalyze() {
     setForcing(true);
     try {
       const res = await fetch(`/api/sales-coach/${analysisId}/reanalyze`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error ?? "Erreur");
+      toast("Ré-analyse lancée.", "success");
       await reload();
     } catch (e) {
-      alert(e instanceof Error ? e.message : "Erreur");
+      toast(e instanceof Error ? e.message : "Erreur", "error");
     } finally {
       setForcing(false);
     }
@@ -781,25 +780,8 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
   // BOSCHE n'a de sens que pour les discoveries prospect.
   const isDisco = !isClient && isDiscoveryKind(detail.meeting_kind as Parameters<typeof isDiscoveryKind>[0]);
 
-  // Normalize string-list fields: Claude occasionally returns an object
-  // { "1": "...", "2": "..." } instead of a string array — accept both.
-  const toStringArray = (v: unknown): string[] => {
-    if (Array.isArray(v)) return v.filter((x): x is string => typeof x === "string");
-    if (v && typeof v === "object") return Object.values(v as Record<string, unknown>).filter((x): x is string => typeof x === "string");
-    if (typeof v === "string") {
-      const trimmed = v.trim();
-      if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (Array.isArray(parsed)) return parsed.filter((x): x is string => typeof x === "string");
-        } catch { /* keep as single string */ }
-      }
-      return [v];
-    }
-    return [];
-  };
-  const coachingPriorities = toStringArray(a.coaching_priorities);
-  const risks = toStringArray(a.risks);
+  const coachingPriorities = extractStringArray(a.coaching_priorities);
+  const risks = extractStringArray(a.risks);
 
   const participantNames = (detail.participants ?? [])
     .map((p) => p.name?.trim() || p.email.split("@")[0])
@@ -933,7 +915,7 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
               {sending ? "Envoi…" : detail.slack_sent_at ? "Re-Slack" : "Slack"}
             </button>
             <button
-              onClick={() => forceAnalyze({ confirmFirst: true })}
+              onClick={() => forceAnalyze()}
               disabled={forcing}
               title="Refaire l'analyse de ce meeting"
               style={{

@@ -262,6 +262,7 @@ export interface LeadAnalysis {
   extracted_email: string | null;
   extracted_name: string | null;
   extracted_company: string | null;
+  extracted_source: string | null;
   extraction_confidence: number | null;
   extraction_notes: string | null;
   hubspot_contact_id: string | null;
@@ -304,12 +305,40 @@ export interface LeadWithAnalysis extends Lead {
   analysis: LeadAnalysis | null;
 }
 
-// One bucket per HubSpot Lead pipeline stage. Order is preserved as returned
-// by the API (which mirrors the pipeline order from HubSpot).
-export interface LeadStageBucket {
-  stage_id: string | null;
-  stage_label: string;
+// Canonical lead-origin categories. Shared between Claude's extraction enum and
+// the manual source editor UI so that hand-typed values aggregate cleanly with
+// AI-detected ones in the funnel widget.
+export const LEAD_SOURCE_CATEGORIES = [
+  "LinkedIn",
+  "Chatbot",
+  "Web Search",
+  "Recommandation",
+  "Évènement",
+  "Réseaux sociaux",
+  "Presse",
+  "Autre",
+] as const;
+
+export type LeadSourceCategory = (typeof LEAD_SOURCE_CATEGORIES)[number];
+
+// Aggregated origin of validated leads, grouped after a case-insensitive
+// normalisation of `extracted_source` (so "LinkedIn"/"linkedin" merge).
+export interface LeadSourceBucket {
+  source: string;        // display label (most frequent original casing)
   count: number;
+}
+
+// Per-sales performance over the funnel window.
+export interface SalesPerformanceRow {
+  ownerId: string;
+  ownerName: string;
+  leadsCount: number;          // distinct validated leads attributed to this owner
+  dealsCount: number;          // distinct hubspot_deal_id
+  wonCount: number;
+  lostCount: number;
+  openPipelineAmount: number;
+  wonAmount: number;
+  conversionPct: number;       // wonCount / leadsCount (0..100)
 }
 
 export interface LeadsFunnel {
@@ -318,12 +347,11 @@ export interface LeadsFunnel {
     totalLeads: number;
     validated: number;
     withDeal: number;
-    withLead: number;       // validated leads matched to a HubSpot Lead object
-    withoutLead: number;    // validated leads NOT matched to any Lead object
     disco: number;
     closedWon: number;
     closedLost: number;
-    byLeadStage: LeadStageBucket[];
+    bySource: LeadSourceBucket[];
+    bySales: SalesPerformanceRow[];
   };
   openPipelineAmount: number;
   closedLostAmount: number;

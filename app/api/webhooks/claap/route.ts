@@ -230,6 +230,7 @@ export async function POST(req: NextRequest) {
 
       const alertRes = await sendManualDealAlert({
         analysisId: awaitingRow.id,
+        claapRecordingId: rec.id,
         meetingTitle: rec.title ?? null,
         meetingStartedAt: rec.meeting?.startingAt ?? null,
         recorderEmail,

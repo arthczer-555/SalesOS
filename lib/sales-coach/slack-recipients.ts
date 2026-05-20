@@ -140,16 +140,16 @@ export async function dmRecipient(
 }
 
 /**
- * Header affiché en haut des messages quand `CLAAP_NOTE_SLACK_MODE=dm`. Sert
- * de control de routing avant la bascule en prod : on visualise qui aurait
- * reçu le DM si on était en `channels`.
+ * Header affiché en haut des messages quand `SLACK_MODE=test`. Sert de control
+ * de routing avant la bascule en prod : on visualise qui aurait reçu le DM si
+ * on était en `prod`.
  *
  * Pour le recap, on ajoute aussi le channel cible que le commercial devrait
  * utiliser après reformatage (#11 prospect, #12 client). Pour le coaching,
  * pas de channel mentionné (le coaching ne se forwarde pas, c'est privé).
  *
- * Cas fallback (theoreticalRecipientEmails vide) : on signale qu'en mode
- * channels, on serait quand même tombé sur Arthur faute de participants.
+ * Cas fallback (theoreticalRecipientEmails vide) : on signale qu'en mode prod,
+ * on serait quand même tombé sur Arthur faute de participants.
  */
 export function formatTestModeHeader(args: {
   theoreticalRecipientEmails: string[];
@@ -159,24 +159,24 @@ export function formatTestModeHeader(args: {
   const { theoreticalRecipientEmails, audience, kind } = args;
 
   if (theoreticalRecipientEmails.length === 0) {
-    return ":test_tube: *Test* — fallback : aucun participant Coachello détecté dans ce meeting, donc envoyé à Arthur en mode channels aussi.";
+    return ":test_tube: *Test* — fallback : aucun participant Coachello détecté dans ce meeting, donc envoyé à Arthur en mode prod aussi.";
   }
 
   const emails = theoreticalRecipientEmails.join(", ");
 
   if (kind === "coaching") {
-    return `:test_tube: *Test* — en mode channels, ce message serait envoyé en DM à : ${emails}`;
+    return `:test_tube: *Test* — en mode prod, ce message serait envoyé en DM à : ${emails}`;
   }
 
   const channel = forwardChannelForAudience(audience);
   if (!channel) {
-    return `:test_tube: *Test* — en mode channels, ce message serait envoyé en DM à : ${emails}`;
+    return `:test_tube: *Test* — en mode prod, ce message serait envoyé en DM à : ${emails}`;
   }
-  return `:test_tube: *Test* — en mode channels, ce message serait envoyé en DM à : ${emails} (qui devraient ensuite le forward dans *${channel}*)`;
+  return `:test_tube: *Test* — en mode prod, ce message serait envoyé en DM à : ${emails} (qui devraient ensuite le forward dans *${channel}*)`;
 }
 
 /**
- * Header affiché DANS LES 2 MODES (dm + channels), uniquement pour le recap.
+ * Header affiché DANS LES 2 MODES (test + prod), uniquement pour le recap.
  * Audience-aware : un seul channel mentionné, jamais les deux.
  *
  * Invariant : client → #12-everything-clients, prospect → #11-everything-prospects.

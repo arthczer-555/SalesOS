@@ -138,7 +138,8 @@ export function BriefingDealSummary({ rawData }: { rawData: GatheredData | null 
   const closureLabel = deal.closedate
     ? new Date(deal.closedate).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" })
     : null;
-  const isClosedWon = /closed\s*won/i.test(deal.stage) || deal.stage.toLowerCase() === "closedwon";
+  const stage = deal.stage ?? "";
+  const isClosedWon = /closed\s*won/i.test(stage) || stage.toLowerCase() === "closedwon";
 
   const signals = deal.reasoning ? parseSignals(deal.reasoning) : [];
   const pos = signals.filter((s) => s.kind === "pos").map((s) => s.text);

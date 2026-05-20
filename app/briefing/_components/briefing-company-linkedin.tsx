@@ -73,7 +73,7 @@ export function BriefingCompanyLinkedin({ briefing }: { briefing: BriefingResult
         </p>
       )}
 
-      {li.recentPosts && li.recentPosts.length > 0 && (
+      {Array.isArray(li.recentPosts) && li.recentPosts.length > 0 && (
         <div
           style={{
             paddingTop: 12,

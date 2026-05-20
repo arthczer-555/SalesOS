@@ -190,7 +190,7 @@ Console de test des APIs Netrows : résolution de profils, recherche de contacts
 - **Usage** : enregistrements meetings, transcripts, déclenchement Sales Coach + recap Slack post-meeting (template Plusgrade)
 - **Auth** : `CLAAP_API_TOKEN` + `CLAAP_WEBHOOK_SECRET`
 - **Webhook** : `/api/webhooks/claap` → crée une row `sales_coach_analyses`, fan-out analyse coaching (prospects) + recap structuré (clients & prospects)
-- **Routing Slack du recap** : `CLAAP_NOTE_SLACK_MODE` (`dm`=DM à `CLAAP_NOTE_SLACK_TEST_USER`, défaut Arthur Czernichow ; `channels`=`#12-everything-clients` ou `#11-everything-prospects` selon audience)
+- **Routing Slack du recap** : `SLACK_MODE` (`test`=DM à `CLAAP_NOTE_SLACK_TEST_USER`, défaut Arthur Czernichow ; `prod`=DM aux participants Coachello du meeting, qui forwardent ensuite dans `#12-everything-clients` ou `#11-everything-prospects` selon audience)
 - **Détection Client vs Prospect** : closed-won OU pipeline label `Customer Success` → client (1 seul message Slack, recap sans lien SalesOS) ; sinon prospect (2 messages : analyse coaching DM + recap)
 - **Code** : [lib/claap.ts](lib/claap.ts), [lib/sales-coach/run-analysis.ts](lib/sales-coach/run-analysis.ts), [lib/sales-coach/meeting-recap.ts](lib/sales-coach/meeting-recap.ts), [lib/sales-coach/slack.ts](lib/sales-coach/slack.ts)
 
@@ -260,8 +260,7 @@ NETROWS_WEBHOOK_SECRET=
 # Claap
 CLAAP_API_TOKEN=
 CLAAP_WEBHOOK_SECRET=
-CLAAP_NOTE_SLACK_MODE=          # "channels" (prod) | "dm" (default, safe testing)
-CLAAP_NOTE_SLACK_TEST_USER=     # nom affichage Slack pour DM en mode "dm" (default: Arthur Czernichow)
+CLAAP_NOTE_SLACK_TEST_USER=     # nom affichage Slack pour DM en mode "test" (default: Arthur Czernichow)
 
 # WordPress
 WORDPRESS_API_URL=https://coachello.io/wp-json
@@ -269,7 +268,9 @@ WORDPRESS_API_URL=https://coachello.io/wp-json
 # Sécurité / cron
 CRON_SECRET=                    # protège les endpoints cron
 INTERNAL_SECRET=                # protège les Netlify Functions internes
-SALES_COACH_SLACK_ENABLED=true  # toggle posts Slack Sales Coach
+
+# Slack routing (sales coach + recap + admin alerts)
+SLACK_MODE=                     # "prod" (DM aux sales) | "test" (default, DM Arthur)
 ```
 
 > Ne jamais committer `.env.local`. Il est dans `.gitignore`.
@@ -930,7 +931,7 @@ Meeting terminé sur Claap
 → Trigger Netlify Function sales-coach-analyze-background (X-Internal-Secret)
 → runSalesCoachAnalysis() : transcript → Claude → score + analyse
 → Insert sales_coach_analyses
-→ Post Slack si SALES_COACH_SLACK_ENABLED=true
+→ Post Slack (routing selon SLACK_MODE : test → Arthur DM, prod → participants Coachello du meeting)
 ```
 
 ### Flux leads marketing

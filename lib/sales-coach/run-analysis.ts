@@ -434,14 +434,12 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
       })
       .eq("id", id);
 
-    const slackEnabled = process.env.SALES_COACH_SLACK_ENABLED === "true";
-
     // Sales-coach Slack (DM coaching) - tire pour prospect ET client si
-    // l'analyse a tourné. Le routing (mode dm -> Arthur, mode channels -> deal
+    // l'analyse a tourné. Le routing (mode test -> Arthur, mode prod -> deal
     // owner + participants) est géré dans sendSalesCoachSlack lui-même. On
     // n'envoie pas tant qu'aucun deal n'est attaché (rare côté client mais
     // possible côté prospect avant résolution manuelle).
-    if (analysis && slackEnabled && dealId) {
+    if (analysis && dealId) {
       const slackRes = await sendSalesCoachSlack(db, id).catch((e) => ({
         ok: false,
         error: e instanceof Error ? e.message : String(e),
@@ -449,14 +447,19 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
       if (!slackRes.ok) {
         console.warn(`[sales-coach/analyze/${id}] coaching Slack send skipped:`, slackRes.error);
       }
-    } else if (analysis && !slackEnabled) {
-      console.log(`[sales-coach/analyze/${id}] coaching Slack disabled globally (SALES_COACH_SLACK_ENABLED)`);
+      // Persist le résultat du send coaching pour pouvoir diagnostiquer
+      // post-mortem sans creuser les logs Netlify. NULL sur succès efface une
+      // éventuelle erreur d'un run précédent (cas re-trigger après fix).
+      await db
+        .from("sales_coach_analyses")
+        .update({ slack_error: slackRes.ok ? null : (slackRes.error ?? "unknown error") })
+        .eq("id", id);
     } else if (analysis && !dealId) {
       console.log(`[sales-coach/analyze/${id}] coaching Slack send deferred — no deal yet`);
     }
 
     // Meeting recap Slack — fires for both audiences. Routing/safety handled
-    // inside (defaults to DM mode via CLAAP_NOTE_SLACK_MODE).
+    // inside (defaults to test mode via SLACK_MODE).
     if (recap) {
       const recapSlackRes = await sendMeetingRecapSlack(db, id).catch((e) => ({
         ok: false,
@@ -465,6 +468,10 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
       if (!recapSlackRes.ok) {
         console.warn(`[sales-coach/analyze/${id}] recap Slack send skipped:`, recapSlackRes.error);
       }
+      await db
+        .from("sales_coach_analyses")
+        .update({ meeting_recap_slack_error: recapSlackRes.ok ? null : (recapSlackRes.error ?? "unknown error") })
+        .eq("id", id);
     }
 
     return { ok: true, scoreGlobal };

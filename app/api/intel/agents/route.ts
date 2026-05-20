@@ -6,6 +6,12 @@ import type { Agent, AgentRunMetadata, AgentId } from "@/lib/intel-types";
 
 export const dynamic = "force-dynamic";
 
+// Netlify Background Functions sont tuées à 15 min. Si la BG fn meurt avant
+// d'écrire son statut final, la ligne intel_agent_runs reste "running" sans
+// limite. On requalifie ces lignes en "error" côté lecture pour que l'UI ne
+// reste pas bloquée sur "En cours".
+const STALE_RUNNING_MS = 16 * 60 * 1000;
+
 export async function GET(_req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
@@ -15,14 +21,25 @@ export async function GET(_req: NextRequest) {
     .select("agent_id, enabled, last_run_at, last_run_status, last_run_signals_count, last_run_error, config")
     .eq("user_id", user.id);
 
+  const now = Date.now();
   const runsByAgent = new Map<string, AgentRunMetadata>();
   for (const r of runs ?? []) {
+    let status = r.last_run_status as AgentRunMetadata["last_run_status"];
+    let error = r.last_run_error as string | null;
+    if (status === "running" && r.last_run_at) {
+      const age = now - new Date(r.last_run_at).getTime();
+      if (Number.isFinite(age) && age > STALE_RUNNING_MS) {
+        status = "error";
+        error = error ?? "Background function timeout (>15min). No final status logged.";
+      }
+    }
+
     runsByAgent.set(r.agent_id, {
       enabled: r.enabled ?? true,
       last_run_at: r.last_run_at,
-      last_run_status: r.last_run_status,
+      last_run_status: status,
       last_run_signals_count: r.last_run_signals_count ?? 0,
-      last_run_error: r.last_run_error,
+      last_run_error: error,
       config: r.config,
     });
   }

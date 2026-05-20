@@ -75,6 +75,7 @@ export function DealDetailPanel({
 }: Props) {
   const [analysis, setAnalysis] = React.useState<Analysis | null>(null);
   const [analyzing, setAnalyzing] = React.useState(false);
+  const [analysisStale, setAnalysisStale] = React.useState(false);
   const [analyzeError, setAnalyzeError] = React.useState("");
   const [slackSending, setSlackSending] = React.useState(false);
   const [slackSent, setSlackSent] = React.useState(false);
@@ -95,7 +96,9 @@ export function DealDetailPanel({
 
   React.useEffect(() => {
     setAnalysis(null);
+    setAnalysisStale(false);
     setAnalyzeError("");
+    setAnalyzing(false);
     setEmailDraft(null);
     setShowComposer(false);
     setSent(false);
@@ -106,6 +109,65 @@ export function DealDetailPanel({
     setSlackSent(false);
   }, [details?.id]);
 
+  // À l'ouverture du deal, on récupère l'analyse précédente si elle existe.
+  // Permet d'afficher instantanément la dernière analyse sans bouton.
+  React.useEffect(() => {
+    if (!details?.id) return;
+    const dealId = details.id;
+    let aborted = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/deals/analyze?dealId=${encodeURIComponent(dealId)}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (aborted) return;
+        if (data.status === "done" && data.analysis) {
+          setAnalysis(data.analysis as Analysis);
+          setAnalysisStale(!!data.stale);
+        } else if (data.status === "analyzing") {
+          setAnalyzing(true);
+        }
+      } catch {
+        /* silent - l'utilisateur peut toujours relancer manuellement */
+      }
+    })();
+    return () => { aborted = true; };
+  }, [details?.id]);
+
+  // Polling tant que l'analyse tourne en arrière-plan (background function).
+  // Watchdog : on abandonne après 3 min - signe d'une analyse morte côté BG.
+  React.useEffect(() => {
+    if (!analyzing || !details?.id) return;
+    const dealId = details.id;
+    let cancelled = false;
+    const startedAt = Date.now();
+    const tick = async () => {
+      if (Date.now() - startedAt > 180_000) {
+        setAnalyzeError("L'analyse n'a pas répondu en 3 min. Relance via le bouton.");
+        setAnalyzing(false);
+        return;
+      }
+      try {
+        const r = await fetch(`/api/deals/analyze?dealId=${encodeURIComponent(dealId)}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (cancelled) return;
+        if (data.status === "done" && data.analysis) {
+          setAnalysis(data.analysis as Analysis);
+          setAnalysisStale(false);
+          setAnalyzing(false);
+        } else if (data.status === "error") {
+          setAnalyzeError(data.error || "Erreur pendant l'analyse");
+          setAnalyzing(false);
+        }
+      } catch {
+        /* on retentera au prochain tick */
+      }
+    };
+    const interval = setInterval(tick, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [analyzing, details?.id]);
+
   React.useEffect(() => {
     if (emailDraft) {
       setEmailSubject(emailDraft.subject);
@@ -115,15 +177,15 @@ export function DealDetailPanel({
     }
   }, [emailDraft]);
 
-  const analyze = React.useCallback(async () => {
+  const analyze = React.useCallback(async (opts?: { force?: boolean }) => {
     if (!details) return;
-    setAnalyzing(true);
     setAnalyzeError("");
+    setAnalyzing(true);
     try {
       const r = await fetch("/api/deals/analyze", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dealId: details.id }),
+        body: JSON.stringify({ dealId: details.id, force: opts?.force === true }),
       });
       const ct = r.headers.get("content-type") ?? "";
       if (!ct.includes("application/json")) {
@@ -131,10 +193,24 @@ export function DealDetailPanel({
       }
       const data = await r.json();
       if (!r.ok) throw new Error(data.error ?? "Erreur");
-      setAnalysis(data);
+
+      // Réponse "done" (cache frais OU dev inline qui vient de finir).
+      if (data.status === "done" && data.analysis) {
+        setAnalysis(data.analysis as Analysis);
+        setAnalysisStale(false);
+        setAnalyzing(false);
+        return;
+      }
+
+      // Analyse en cours côté background function : afficher la stale si elle
+      // existe et basculer en polling.
+      if (data.analysis) {
+        setAnalysis(data.analysis as Analysis);
+        setAnalysisStale(!!data.stale);
+      }
+      setAnalyzing(true);
     } catch (e) {
       setAnalyzeError(e instanceof Error ? e.message : "Erreur");
-    } finally {
       setAnalyzing(false);
     }
   }, [details]);
@@ -728,7 +804,7 @@ export function DealDetailPanel({
           {!analysis && (
             <button
               type="button"
-              onClick={analyze}
+              onClick={() => analyze()}
               disabled={analyzing}
               style={{
                 width: "100%",
@@ -785,8 +861,34 @@ export function DealDetailPanel({
           )}
           {analysis && (
             <Card padding={16}>
-              <SectionHeader title="Analyse approfondie" />
-              <AnalysisView analysis={analysis} onReanalyze={() => { setAnalysis(null); analyze(); }} />
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <SectionHeader title="Analyse approfondie" />
+                {(analyzing || analysisStale) && (
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      color: analyzing ? COLORS.brand : COLORS.ink3,
+                      padding: "3px 8px",
+                      borderRadius: 999,
+                      background: analyzing ? COLORS.errBg : COLORS.bgSoft,
+                    }}
+                  >
+                    {analyzing ? (
+                      <>
+                        <RefreshCw size={11} className="animate-spin" />
+                        Mise à jour en cours
+                      </>
+                    ) : (
+                      "Analyse périmée"
+                    )}
+                  </span>
+                )}
+              </div>
+              <AnalysisView analysis={analysis} onReanalyze={() => analyze({ force: true })} />
             </Card>
           )}
 

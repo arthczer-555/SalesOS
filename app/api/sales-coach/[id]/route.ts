@@ -61,13 +61,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   // - a deal id was just set (newly or replacing null)
   // - the analysis is complete
   // - the digest hasn't been sent yet
-  // - Slack is globally enabled
   const shouldSendSlack =
     !!newDealId &&
     !row.hubspot_deal_id &&
     row.status === "done" &&
-    !row.slack_sent_at &&
-    process.env.SALES_COACH_SLACK_ENABLED === "true";
+    !row.slack_sent_at;
   if (shouldSendSlack) {
     const slackRes = await sendSalesCoachSlack(db, id).catch((e) => ({
       ok: false,

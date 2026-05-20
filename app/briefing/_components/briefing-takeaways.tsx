@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
 
 export function BriefingTakeaways({ takeaways }: { takeaways: string[] }) {
-  if (!takeaways?.length) return null;
+  if (!Array.isArray(takeaways) || takeaways.length === 0) return null;
   return (
     <Card padding={16}>
       <SectionHeader title="Points clés pour le meeting" />
