@@ -2,6 +2,8 @@
 // Docs: https://netrows.com/docs
 // Base URL: https://api.netrows.com/v1
 
+import { sanitizeNetrowsParam } from "@/lib/intel/netrows-sanitize";
+
 const BASE = "https://api.netrows.com/v1";
 
 /**
@@ -30,7 +32,7 @@ function getApiKey(): string {
 
 /**
  * Netrows renvoie un 404 avec `{code: "NOT_FOUND"}` quand une recherche
- * ne ramène aucun résultat — c'est une réponse normale, pas une erreur.
+ * ne ramène aucun résultat. C'est une réponse normale, pas une erreur.
  * On l'attrape via cette classe pour que les wrappers de listes la
  * convertissent en `[]` au lieu de propager une exception.
  */
@@ -41,18 +43,76 @@ export class NetrowsNotFoundError extends Error {
   }
 }
 
+/** 401 Invalid API key. Bloquant, à corriger côté env. */
+export class NetrowsAuthError extends Error {
+  constructor(public readonly path: string) {
+    super(`Netrows 401 ${path}: clé API invalide ou révoquée`);
+    this.name = "NetrowsAuthError";
+  }
+}
+
+/** 402 Insufficient credits. Bloquant tant que crédits pas rechargés. */
+export class NetrowsCreditsError extends Error {
+  constructor(public readonly path: string) {
+    super(`Netrows 402 ${path}: crédits insuffisants`);
+    this.name = "NetrowsCreditsError";
+  }
+}
+
+/** 429 Rate limit exceeded. Réessayer dans ~1 min. */
+export class NetrowsRateLimitError extends Error {
+  constructor(public readonly path: string) {
+    super(`Netrows 429 ${path}: rate-limit atteint, réessayez dans ~1min`);
+    this.name = "NetrowsRateLimitError";
+  }
+}
+
+// Sans ce timeout, un fetch qui hang bloque tout le scan jusqu'à la
+// kill-fence Netlify à 15min (cf. intel-company-news-background).
+const NETROWS_TIMEOUT_MS = 25_000;
+
+export class NetrowsTimeoutError extends Error {
+  constructor(public readonly path: string) {
+    super(`Netrows ${path}: pas de réponse après ${NETROWS_TIMEOUT_MS}ms`);
+    this.name = "NetrowsTimeoutError";
+  }
+}
+
+function isAbortTimeout(e: unknown): boolean {
+  return e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError");
+}
+
 async function netrows<T>(path: string, params?: Record<string, string>): Promise<T> {
   const url = new URL(`${BASE}${path}`);
   if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
-  const res = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${getApiKey()}` },
-  });
+  let res: Response;
+  try {
+    res = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${getApiKey()}` },
+      signal: AbortSignal.timeout(NETROWS_TIMEOUT_MS),
+    });
+  } catch (e) {
+    if (isAbortTimeout(e)) throw new NetrowsTimeoutError(path);
+    throw e;
+  }
 
+  if (res.status === 401) {
+    await res.text().catch(() => "");
+    throw new NetrowsAuthError(path);
+  }
+  if (res.status === 402) {
+    await res.text().catch(() => "");
+    throw new NetrowsCreditsError(path);
+  }
   if (res.status === 404) {
     // Drain the body so the connection can be reused.
     await res.text().catch(() => "");
     throw new NetrowsNotFoundError(path);
+  }
+  if (res.status === 429) {
+    await res.text().catch(() => "");
+    throw new NetrowsRateLimitError(path);
   }
 
   if (!res.ok) {
@@ -64,14 +124,21 @@ async function netrows<T>(path: string, params?: Record<string, string>): Promis
 }
 
 async function netrowsPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${getApiKey()}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${getApiKey()}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(NETROWS_TIMEOUT_MS),
+    });
+  } catch (e) {
+    if (isAbortTimeout(e)) throw new NetrowsTimeoutError(path);
+    throw e;
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -145,21 +212,30 @@ export async function getProfileByUrl(url: string): Promise<LinkedInProfile> {
   return netrows<LinkedInProfile>("/people/profile-by-url", { url });
 }
 
-/** Search people by company + title (1 credit per page). Returns `{ total: 0, items: [] }` if no match. */
+/** Search people (1 credit per page, jusqu'à 10 profils/page). Returns `{ total: 0, items: [] }` if no match. */
 export async function searchPeople(params: {
   company?: string;
   keywordTitle?: string;
   keywords?: string;
   firstName?: string;
   lastName?: string;
+  geo?: string;
+  schoolId?: string;
+  keywordSchool?: string;
   start?: number;
 }): Promise<{ data: { total: number; items: { fullName: string; headline: string; username: string; location: string; profileURL: string }[] } }> {
   const query: Record<string, string> = {};
-  if (params.company) query.company = params.company;
-  if (params.keywordTitle) query.keywordTitle = params.keywordTitle;
-  if (params.keywords) query.keywords = params.keywords;
-  if (params.firstName) query.firstName = params.firstName;
-  if (params.lastName) query.lastName = params.lastName;
+  // Tous les params texte passent par sanitizeNetrowsParam : Netrows 404 silencieusement
+  // sur les caractères spéciaux (), {}, /, ',', ', ", &). Cf lib/intel/netrows-sanitize.
+  const clean = (v: string) => sanitizeNetrowsParam(v);
+  if (params.company) query.company = clean(params.company);
+  if (params.keywordTitle) query.keywordTitle = clean(params.keywordTitle);
+  if (params.keywords) query.keywords = clean(params.keywords);
+  if (params.firstName) query.firstName = clean(params.firstName);
+  if (params.lastName) query.lastName = clean(params.lastName);
+  if (params.geo) query.geo = params.geo; // ID numérique, pas de sanitize
+  if (params.schoolId) query.schoolId = params.schoolId;
+  if (params.keywordSchool) query.keywordSchool = clean(params.keywordSchool);
   if (params.start !== undefined) query.start = String(params.start);
   try {
     return await netrows("/people/search", query);
@@ -167,6 +243,30 @@ export async function searchPeople(params: {
     if (e instanceof NetrowsNotFoundError) return { data: { total: 0, items: [] } };
     throw e;
   }
+}
+
+/**
+ * Search LinkedIn locations to resolve a city name into a geo ID (free, pas
+ * de crédit). Renvoie `{ id, name }` où `id` est un URN type
+ * `urn:li:geo:106383538`. On extrait juste la partie numérique pour la passer
+ * à `searchPeople({ geo })`.
+ */
+export async function searchLocations(keyword: string): Promise<{ id: string; name: string }[]> {
+  try {
+    const r = await netrows<{ data: { items: { id: string; name: string }[] } }>(
+      "/locations/search",
+      { keyword }
+    );
+    return r.data?.items ?? [];
+  } catch (e) {
+    if (e instanceof NetrowsNotFoundError) return [];
+    throw e;
+  }
+}
+
+export function extractGeoId(urn: string): string {
+  const m = urn.match(/(\d+)$/);
+  return m ? m[1] : urn;
 }
 
 /** Reverse email lookup — find LinkedIn profile from work email (1 credit). Renvoie `found:false` si introuvable. */
@@ -407,13 +507,18 @@ export async function getPostReactions(postUrl: string, start = 0): Promise<{
   }
 }
 
-/** Email pro à partir d'un profil LinkedIn (5 crédits) — sans cache. Renvoie `null` si pas d'email. */
+/** Email pro à partir d'un profil LinkedIn (5 crédits) - sans cache. Renvoie `null` si pas d'email.
+ * L'API attend `linkedin_url`, donc on reconstruit l'URL canonique depuis le username.
+ */
 export async function findEmailByLinkedIn(username: string): Promise<{
   success: boolean;
   data: { email: string | null; confidence: "high" | "medium" | "low" | null };
 }> {
+  const linkedin_url = username.startsWith("http")
+    ? username
+    : `https://www.linkedin.com/in/${username}`;
   try {
-    return await netrows("/email-finder/by-linkedin", { username });
+    return await netrows("/email-finder/by-linkedin", { linkedin_url });
   } catch (e) {
     if (e instanceof NetrowsNotFoundError) return { success: false, data: { email: null, confidence: null } };
     throw e;
