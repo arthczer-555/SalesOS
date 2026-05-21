@@ -64,11 +64,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: err.error?.message ?? "Échec de l'envoi" }, { status: 500 });
     }
 
+    const now = new Date().toISOString();
     await db.from("mass_campaign_emails").update({
       status: "sent",
-      sent_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
+      sent_at: now,
+      updated_at: now,
     }).eq("id", emailId);
+
+    // Log outreach pour badge "X échanges". Best-effort.
+    const { error: logErr } = await db.from("outreach_log").insert({
+      user_id: user.id,
+      email: email.email,
+      hubspot_id: email.hubspot_id ?? null,
+      source: "mass_prospection",
+      source_id: email.id,
+      subject: email.subject ?? null,
+      sent_at: now,
+    });
+    if (logErr) console.error("[mass-prospection/send] outreach_log insert failed:", logErr.message);
   } else {
     const draftRes = await fetch("https://www.googleapis.com/gmail/v1/users/me/drafts", {
       method: "POST",

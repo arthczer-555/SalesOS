@@ -67,8 +67,8 @@ export class NetrowsRateLimitError extends Error {
   }
 }
 
-// Sans ce timeout, un fetch qui hang bloque tout le scan jusqu'à la
-// kill-fence Netlify à 15min (cf. intel-company-news-background).
+// Sans ce timeout, un fetch qui hang bloque l'appelant jusqu'à la
+// kill-fence Netlify (15min sur Background Functions).
 const NETROWS_TIMEOUT_MS = 25_000;
 
 export class NetrowsTimeoutError extends Error {

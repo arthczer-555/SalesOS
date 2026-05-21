@@ -123,7 +123,6 @@ function LeadCard({
   const showAnalysis = lead.validation_status === "validated";
   const analyzing = lead.analysis_status === "pending";
   const a = lead.analysis;
-  const isWon = Boolean(a?.deal_is_closed_won);
 
   return (
     <div
@@ -306,12 +305,12 @@ function LeadCard({
           </>
         ) : (
           <>
-            {lead.validation_status === "validated" && isWon && (
+            {lead.validation_status === "validated" && (
               <button
                 onClick={() => {
                   if (
                     window.confirm(
-                      "Marquer ce lead gagné comme rejeté côté SalesOS ? Le deal HubSpot ne sera pas modifié.",
+                      "Marquer ce lead comme rejeté ? Le deal HubSpot associé ne sera pas modifié.",
                     )
                   ) {
                     onValidate("rejected");

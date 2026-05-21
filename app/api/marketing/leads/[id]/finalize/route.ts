@@ -106,26 +106,39 @@ async function findContactByEmail(email: string): Promise<string | null> {
 
 async function findCompanyByDomain(
   domain: string,
-): Promise<{ id: string; name: string | null } | null> {
-  const rows = await hubspotSearchAll<{ id: string; properties?: { name?: string | null } }>(
+): Promise<{ id: string; name: string | null; ownerId: string | null } | null> {
+  const rows = await hubspotSearchAll<{
+    id: string;
+    properties?: { name?: string | null; hubspot_owner_id?: string | null };
+  }>(
     "companies",
     {
       filterGroups: [
         { filters: [{ propertyName: "domain", operator: "EQ", value: domain }] },
       ],
-      properties: ["domain", "name"],
+      properties: ["domain", "name", "hubspot_owner_id"],
       limit: 1,
     },
     1,
   ).catch(() => []);
   const row = rows[0];
   if (!row) return null;
-  return { id: row.id, name: row.properties?.name?.trim() || null };
+  return {
+    id: row.id,
+    name: row.properties?.name?.trim() || null,
+    ownerId: row.properties?.hubspot_owner_id?.trim() || null,
+  };
 }
 
 async function patchCompanyName(companyId: string, name: string): Promise<void> {
   await hubspotFetch(`/crm/v3/objects/companies/${companyId}`, "PATCH", {
     properties: { name },
+  });
+}
+
+async function patchCompanyOwner(companyId: string, ownerId: string): Promise<void> {
+  await hubspotFetch(`/crm/v3/objects/companies/${companyId}`, "PATCH", {
+    properties: { hubspot_owner_id: ownerId },
   });
 }
 
@@ -179,14 +192,17 @@ async function createDeal(
   ownerId: string,
   pipelineId: string,
   stageId: string,
+  source: string | null,
 ): Promise<string> {
+  const properties: Record<string, string> = {
+    dealname: dealName,
+    hubspot_owner_id: ownerId,
+    pipeline: pipelineId,
+    dealstage: stageId,
+  };
+  if (source) properties.source = source;
   const res = await hubspotFetch<{ id: string }>("/crm/v3/objects/deals", "POST", {
-    properties: {
-      dealname: dealName,
-      hubspot_owner_id: ownerId,
-      pipeline: pipelineId,
-      dealstage: stageId,
-    },
+    properties,
   });
   return res.id;
 }
@@ -410,7 +426,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   // 3. Reuse or create Company (by domain). HubSpot auto-creates a nameless
   // company when the contact is saved (domain-matching feature), so a found
-  // match may have no `name`. In that case, patch it with the validated one.
+  // match may have no `name` and no `hubspot_owner_id`. We always force the
+  // company owner to match the deal owner picked in the validation modal.
   const domain = domainFromEmail(contactEmail);
   let companyId: string | null = null;
   if (domain) {
@@ -420,6 +437,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (!found.name) {
         await patchCompanyName(found.id, companyName).catch(() => null);
       }
+      if (found.ownerId !== ownerId) {
+        await patchCompanyOwner(found.id, ownerId).catch(() => null);
+      }
     }
   }
   if (!companyId) {
@@ -427,7 +447,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // 4. Create Deal
-  const dealId = await createDeal(dealName, ownerId, pipelineId, stageId);
+  const dealId = await createDeal(dealName, ownerId, pipelineId, stageId, source);
 
   // 5. Associate (best-effort, parallel)
   await Promise.allSettled([
@@ -483,8 +503,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     : `@${ownerFallbackName}`;
 
   const slackText = dealUrl
-    ? `${ownerTag} ce lead est pour toi ! Deal HubSpot créé : <${dealUrl}|${dealName}>`
-    : `${ownerTag} ce lead est pour toi ! Deal HubSpot créé : ${dealName}`;
+    ? `${ownerTag} this lead is yours! HubSpot deal created: <${dealUrl}|${dealName}>`
+    : `${ownerTag} this lead is yours! HubSpot deal created: ${dealName}`;
 
   const slackWarnings: string[] = [];
   if (leadRow.slack_channel_id && leadRow.slack_ts) {

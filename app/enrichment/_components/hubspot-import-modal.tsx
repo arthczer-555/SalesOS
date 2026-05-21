@@ -647,7 +647,7 @@ export function HubspotImportModal({
               color: COLORS.ink1,
               cursor: "pointer",
             }}
-            title="Les profils importés seront flaggés is_champion=true — champion-tracker les surveillera."
+            title="Les profils importés seront flaggés is_champion=true au Radar."
           >
             <input
               type="checkbox"

@@ -126,56 +126,6 @@ export async function POST(req: NextRequest) {
 
     console.log("[netrows-webhook]", body.event, body.summary);
 
-    // ── Company changed ──────────────────────────────────────────────
-    if (body.event === "company.changed" && body.company) {
-      const staffChange = body.changes.find((c) => c.field === "staffCount");
-      if (staffChange) {
-        const oldCount = Number(staffChange.oldValue) || 0;
-        const newCount = Number(staffChange.newValue) || 0;
-        const diff = Math.abs(newCount - oldCount);
-        const pct = oldCount > 0 ? (diff / oldCount) * 100 : 100;
-
-        // Threshold: at least 30 people AND at least 10% movement.
-        // Filters out "TotalEnergies +50" (0.05% on 100k) which is pure noise,
-        // while keeping "100-person startup +15" (15%) which is meaningful.
-        const isSignificant = pct >= 10 && diff >= 30;
-
-        if (isSignificant) {
-          const companyName = (body.newSnapshot.name as string) ?? body.company.username;
-          const { data: allUsers } = await db.from("users").select("id");
-          if (allUsers?.length) {
-            const title = `${companyName} : effectifs ${newCount > oldCount ? "en hausse" : "en baisse"} (${oldCount} → ${newCount})`;
-            const why = "Changement significatif d'effectifs — besoin potentiel de coaching managers.";
-            const action = "Contacter le DRH pour proposer un accompagnement.";
-            const score = pct > 20 ? 80 : 60;
-            const sourceUrl = body.company.url;
-
-            await db.from("market_signals").insert(
-              allUsers.map((u: { id: string }) => ({
-                user_id: u.id,
-                agent_id: "hiring-spike",
-                company_name: companyName,
-                signal_type: "hiring",
-                title,
-                summary: `Changement de ${diff} employés (${pct.toFixed(0)}%) détecté via LinkedIn.`,
-                strength: pct > 20 ? 3 : 2,
-                score,
-                source_url: sourceUrl,
-                source_domain: "linkedin.com",
-                why_relevant: why,
-                suggested_action: action,
-                action_type: "email",
-                is_read: false,
-                is_actioned: false,
-              }))
-            );
-
-            await postSlackAlert({ title, why, action, score, sourceUrl });
-          }
-        }
-      }
-    }
-
     // ── Profile changed ──────────────────────────────────────────────
     if (body.event === "profile.changed" && body.profile) {
       // `position` (array) carries structured title+company; `headline` is just a string.
@@ -197,12 +147,11 @@ export async function POST(req: NextRequest) {
 
         const { data: monitored } = await db
           .from("linkedin_monitored_profiles")
-          .select("full_name, company, headline, is_champion")
+          .select("full_name, company, headline")
           .eq("username", username)
           .maybeSingle();
 
         const displayName = monitored?.full_name ?? username;
-        const isChampion = monitored?.is_champion === true;
 
         // Old company from the position payload itself (truth at change-time);
         // fall back to the stored value if we only have a headline change.
@@ -244,9 +193,8 @@ export async function POST(req: NextRequest) {
         })();
 
         // ICP match scoring (only when out of target list, to avoid double-up).
-        // Skipped for champions — on les traite déjà comme prioritaires.
         let icpResult: IcpScoreResult | null = null;
-        if (!isChampion && !isCompanyInTargets && newCompany && newCompany !== "—") {
+        if (!isCompanyInTargets && newCompany && newCompany !== "—") {
           icpResult = await scoreIcpMatch(newCompany, newTitle);
         }
 
@@ -256,30 +204,15 @@ export async function POST(req: NextRequest) {
           previousCompany !== "—" && !sameCompany
             ? ` (${previousCompany} → ${newCompany})`
             : "";
-        const finalSignalType = isChampion
-          ? "champion_change"
-          : isIcpMatch
-            ? "job_change_icp_match"
-            : "job_change";
-        const finalAgentId = isChampion ? "champion-tracker" : "job-change";
-        const finalScore = isChampion ? 95 : isIcpMatch ? icpResult!.score : 85;
-        const finalWhyRelevant = isChampion
-          ? sameCompany
-            ? `${displayName} (champion) change de poste chez ${newCompany} — opportunité de re-pitch sur son nouveau scope.`
-            : `${displayName} (ancien champion${previousCompany !== "—" ? ` chez ${previousCompany}` : ""}) rejoint ${newCompany} — opportunité de re-pitch sur sa nouvelle boîte.`
-          : isIcpMatch
-            ? `${displayName} rejoint ${newCompany}${moveLabel} — non listée dans les cibles mais ICP match (${icpResult!.score}/100). ${icpResult!.reasoning}`
-            : `${displayName} a changé de poste${moveLabel} — nouveau décideur potentiel pour le coaching.`;
-        const title = isChampion
-          ? sameCompany
-            ? `🌟 Champion — ${displayName} change de poste chez ${newCompany}`
-            : `🌟 Champion — ${displayName} rejoint ${newCompany !== "—" ? newCompany : "une nouvelle boîte"}`
-          : sameCompany
-            ? `${displayName} change de poste chez ${newCompany}`
-            : `${displayName} rejoint ${newCompany !== "—" ? newCompany : "une nouvelle boîte"}${previousCompany !== "—" ? ` (ex-${previousCompany})` : ""}`;
-        const action = isChampion
-          ? `Recontacter ${displayName} — ancien champion, idéal pour ré-amorcer un cycle chez ${newCompany}.`
-          : `Contacter ${displayName} pour se présenter et proposer un accompagnement.`;
+        const finalSignalType = isIcpMatch ? "job_change_icp_match" : "job_change";
+        const finalScore = isIcpMatch ? icpResult!.score : 85;
+        const finalWhyRelevant = isIcpMatch
+          ? `${displayName} rejoint ${newCompany}${moveLabel} — non listée dans les cibles mais ICP match (${icpResult!.score}/100). ${icpResult!.reasoning}`
+          : `${displayName} a changé de poste${moveLabel} — nouveau décideur potentiel pour le coaching.`;
+        const title = sameCompany
+          ? `${displayName} change de poste chez ${newCompany}`
+          : `${displayName} rejoint ${newCompany !== "—" ? newCompany : "une nouvelle boîte"}${previousCompany !== "—" ? ` (ex-${previousCompany})` : ""}`;
+        const action = `Contacter ${displayName} pour se présenter et proposer un accompagnement.`;
 
         // Create signal for all users
         const { data: allUsers } = await db.from("users").select("id");
@@ -287,7 +220,7 @@ export async function POST(req: NextRequest) {
           await db.from("market_signals").insert(
             allUsers.map((u: { id: string }) => ({
               user_id: u.id,
-              agent_id: finalAgentId,
+              agent_id: "job-change",
               company_name: newCompany,
               signal_type: finalSignalType,
               title,

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Search, RefreshCw, Bot, Sparkles } from "lucide-react";
+import { Search, RefreshCw, Bot } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { StatPill } from "@/components/ui/stat-pill";
 import { useIntels, patchIntel } from "@/lib/hooks/use-intels";
@@ -200,9 +200,6 @@ export default function IntelPage() {
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
           <Link href="/intel/agents" style={navBtnStyle()}>
             <Bot size={13} /> Agents
-          </Link>
-          <Link href="/intel/enrich" style={navBtnStyle("primary")}>
-            <Sparkles size={13} /> Enrichir
           </Link>
           <StatPill label="Intels" value={stats.total} />
           <StatPill label="Non lus" value={stats.unread} />

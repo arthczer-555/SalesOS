@@ -12,6 +12,8 @@ import {
   Target,
   Megaphone,
   Radar,
+  UserSearch,
+  Eye,
   Settings,
   ShieldCheck,
   Menu,
@@ -32,11 +34,13 @@ const nav: NavEntry[] = [
   { href: "/", label: "CoachelloGPT", icon: Sparkles },
   { href: "/briefing", label: "Briefing", icon: CalendarDays },
   { href: "/deals", label: "Deals", icon: Briefcase },
-  { href: "/sales-coach", label: "Sales Coach (beta)", icon: GraduationCap },
+  { href: "/sales-coach", label: "Sales Coach", icon: GraduationCap },
   { href: "/prospecting", label: "Prospection", icon: Crosshair },
   { href: "/mass-prospection", label: "Mass Prospection", icon: Target },
-  { href: "/marketing", label: "Marketing", icon: Megaphone },
+  //{ href: "/enrichment", label: "Enrichissement", icon: UserSearch },
   //{ href: "/intel", label: "Market Intel", icon: Radar },
+  //{ href: "/watchlist", label: "Watch List", icon: Eye },
+  { href: "/marketing", label: "Marketing", icon: Megaphone }
 ];
 
 export default function Sidebar() {

@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
 
   let query = db
     .from("linkedin_monitored_profiles")
-    .select("id, username, full_name, headline, company, profile_url, source, radar_active, is_champion, last_change_at, last_refreshed_at, last_snapshot, created_at")
+    .select("id, username, full_name, headline, company, profile_url, source, radar_active, is_champion, hubspot_id, email, email_confidence, email_source, email_resolved_at, last_change_at, last_refreshed_at, last_snapshot, created_at")
     .eq("radar_active", true)
     .order("created_at", { ascending: false });
 

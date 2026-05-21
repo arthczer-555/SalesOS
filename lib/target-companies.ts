@@ -9,7 +9,9 @@ export async function getTargetCompanies(): Promise<string[]> {
       .select("name")
       .order("name", { ascending: true });
     if (!error && data && data.length > 0) {
-      return data.map((r) => r.name as string).filter(Boolean);
+      return data
+        .map((r) => r.name as string)
+        .filter((n) => Boolean(n));
     }
   } catch { /* fallback */ }
   return TARGET_COMPANIES;

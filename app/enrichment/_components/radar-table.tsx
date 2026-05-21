@@ -1,11 +1,19 @@
 "use client";
 
 import * as React from "react";
-import { Search, ExternalLink, Trash2, RefreshCw, ChevronUp, ChevronDown, X, Filter, Crown } from "lucide-react";
+import { Search, ExternalLink, Trash2, RefreshCw, ChevronUp, ChevronDown, X, Filter, Crown, Mail, Copy, Check } from "lucide-react";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
+import { ExchangesBadge } from "@/components/ui/exchanges-badge";
 import { COLORS } from "@/lib/design/tokens";
 import { useRadarStatus } from "@/lib/hooks/use-radar-status";
-import { removeFromRadar, removeFromRadarBulk, refreshRadarProfiles, type RadarRefreshResult } from "@/lib/hooks/use-enrichment";
+import { useOutreachCounts } from "@/lib/hooks/use-outreach-counts";
+import {
+  removeFromRadar,
+  removeFromRadarBulk,
+  refreshRadarProfiles,
+  resolveMissingRadarEmails,
+  type RadarRefreshResult,
+} from "@/lib/hooks/use-enrichment";
 import type { RadarProfile } from "@/lib/intel-types";
 import { timeAgo } from "@/app/intel/_helpers";
 
@@ -62,6 +70,7 @@ export function RadarTable() {
   const [refreshing, setRefreshing] = React.useState<Set<string>>(new Set());
   const [bulkRefreshing, setBulkRefreshing] = React.useState(false);
   const [bulkRemoving, setBulkRemoving] = React.useState(false);
+  const [bulkResolving, setBulkResolving] = React.useState(false);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
   const [feedback, setFeedback] = React.useState<{ kind: "ok" | "err"; msg: string } | null>(null);
   const [detail, setDetail] = React.useState<RadarProfile | null>(null);
@@ -110,6 +119,16 @@ export function RadarTable() {
   }, [filtered, sortKey, sortDir]);
 
   const staleCount = React.useMemo(() => profiles.filter(isStale).length, [profiles]);
+  const missingEmailCount = React.useMemo(
+    () => profiles.filter((p) => !p.email).length,
+    [profiles]
+  );
+
+  const radarHubspotIds = React.useMemo(
+    () => profiles.map((p) => p.hubspot_id).filter((id): id is string => !!id),
+    [profiles]
+  );
+  const { countByHubspotId } = useOutreachCounts([], radarHubspotIds);
 
   // Purge la sélection des usernames qui ne sont plus présents (après reload ou retrait).
   React.useEffect(() => {
@@ -205,6 +224,7 @@ export function RadarTable() {
     const parts: string[] = [];
     if (r.updated_count > 0) parts.push(`${r.updated_count} rafraîchi${r.updated_count > 1 ? "s" : ""}`);
     if (r.diffs.length > 0) parts.push(`${r.diffs.length} change${r.diffs.length > 1 ? "ments" : "ment"} détecté${r.diffs.length > 1 ? "s" : ""}`);
+    if (r.re_resolved && r.re_resolved.length > 0) parts.push(`${r.re_resolved.length} email${r.re_resolved.length > 1 ? "s" : ""} ré-résolu${r.re_resolved.length > 1 ? "s" : ""}`);
     if (r.credits_used > 0) parts.push(`${r.credits_used} crédit${r.credits_used > 1 ? "s" : ""}`);
     if (r.errors.length > 0) parts.push(`${r.errors.length} échec${r.errors.length > 1 ? "s" : ""}`);
     return { kind: r.errors.length > 0 ? "err" : "ok", msg: parts.join(" · ") || "Aucune modification." };
@@ -251,6 +271,40 @@ export function RadarTable() {
       setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur refresh" });
     } finally {
       setBulkRefreshing(false);
+    }
+  }
+
+  async function onResolveMissingEmails() {
+    const count = Math.min(missingEmailCount, BULK_REFRESH_MAX);
+    if (count === 0) return;
+    // Coût pire-cas : 5 crédits Netrows par profil sans hubspot_id.
+    // HubSpot batch read est gratuit. Cache 30j amorti les répétitions.
+    if (
+      !confirm(
+        `Résoudre ${count} email${count > 1 ? "s" : ""} manquant${count > 1 ? "s" : ""} du Radar ?\n` +
+          `Coût pire-cas : ~${count * 5} crédits Netrows (gratuit si le profil est en HubSpot).\n` +
+          `Durée : ~${Math.ceil((count * 1.2) / 60)} min.`
+      )
+    ) {
+      return;
+    }
+    setBulkResolving(true);
+    setFeedback(null);
+    try {
+      const result = await resolveMissingRadarEmails(count);
+      await reload();
+      const parts: string[] = [];
+      if (result.resolved_count > 0) parts.push(`${result.resolved_count} résolu${result.resolved_count > 1 ? "s" : ""}`);
+      if (result.unresolved_count > 0) parts.push(`${result.unresolved_count} introuvable${result.unresolved_count > 1 ? "s" : ""}`);
+      if (result.remaining > 0) parts.push(`${result.remaining} restant${result.remaining > 1 ? "s" : ""}`);
+      setFeedback({
+        kind: result.resolved_count > 0 ? "ok" : "err",
+        msg: parts.join(" · ") || "Aucun email à résoudre.",
+      });
+    } catch (e) {
+      setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur résolution emails" });
+    } finally {
+      setBulkResolving(false);
     }
   }
 
@@ -360,6 +414,30 @@ export function RadarTable() {
 
         <span style={{ marginLeft: "auto", fontSize: 12, color: COLORS.ink2, display: "inline-flex", alignItems: "center", gap: 12 }}>
           <span>{sorted.length} / {profiles.length} profils</span>
+          {missingEmailCount > 0 && (
+            <button
+              type="button"
+              onClick={onResolveMissingEmails}
+              disabled={bulkResolving}
+              title="HubSpot (gratuit) puis Netrows by-linkedin (5 crédits/profil)"
+              style={{
+                padding: "6px 10px",
+                fontSize: 12,
+                borderRadius: 8,
+                border: `1px solid ${COLORS.brand}`,
+                background: bulkResolving ? COLORS.bgSoft : COLORS.bgCard,
+                color: bulkResolving ? COLORS.ink3 : COLORS.brand,
+                cursor: bulkResolving ? "wait" : "pointer",
+                fontWeight: 500,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <Mail size={12} className={bulkResolving ? "animate-pulse" : ""} />
+              Résoudre {Math.min(missingEmailCount, BULK_REFRESH_MAX)} email{missingEmailCount > 1 ? "s" : ""} manquant{missingEmailCount > 1 ? "s" : ""}
+            </button>
+          )}
           {staleCount > 0 && (
             <button
               type="button"
@@ -485,6 +563,7 @@ export function RadarTable() {
               <th style={th(36)}></th>
               <SortHeader label="Nom · headline" k="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortHeader label="Entreprise" k="company" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+              <th style={th()}>Email</th>
               <SortHeader label="Source" k="source" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortHeader label="Ajouté" k="created" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortHeader label="Dernier change" k="changed" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
@@ -494,10 +573,10 @@ export function RadarTable() {
           </thead>
           <tbody>
             {isLoading && profiles.length === 0 && (
-              <tr><td colSpan={9} style={{ padding: 32, textAlign: "center", color: COLORS.ink3 }}>Chargement…</td></tr>
+              <tr><td colSpan={10} style={{ padding: 32, textAlign: "center", color: COLORS.ink3 }}>Chargement…</td></tr>
             )}
             {!isLoading && sorted.length === 0 && (
-              <tr><td colSpan={9} style={{ padding: 32, textAlign: "center", color: COLORS.ink3 }}>Aucun profil dans ces filtres.</td></tr>
+              <tr><td colSpan={10} style={{ padding: 32, textAlign: "center", color: COLORS.ink3 }}>Aucun profil dans ces filtres.</td></tr>
             )}
             {sorted.map((p) => {
               const stale = isStale(p);
@@ -531,7 +610,10 @@ export function RadarTable() {
                     <CompanyAvatar name={p.full_name ?? p.username} size={28} rounded="full" />
                   </td>
                   <td style={{ padding: "10px 12px" }}>
-                    <div style={{ fontSize: 13, fontWeight: 500, color: COLORS.ink0 }}>{p.full_name ?? p.username}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 13, fontWeight: 500, color: COLORS.ink0 }}>{p.full_name ?? p.username}</span>
+                      <ExchangesBadge count={countByHubspotId(p.hubspot_id)} />
+                    </div>
                     <div
                       style={{
                         fontSize: 11,
@@ -546,6 +628,9 @@ export function RadarTable() {
                     </div>
                   </td>
                   <td style={{ padding: "10px 12px", fontSize: 12, color: COLORS.ink1 }}>{p.company ?? "—"}</td>
+                  <td style={{ padding: "10px 12px", maxWidth: 240 }} onClick={(e) => e.stopPropagation()}>
+                    <EmailCell profile={p} />
+                  </td>
                   <td style={{ padding: "10px 12px" }}>
                     <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
                       <span style={{ fontSize: 11, padding: "2px 8px", borderRadius: 99, background: COLORS.bgSoft, color: COLORS.ink2, fontWeight: 500 }}>
@@ -629,7 +714,15 @@ export function RadarTable() {
         </table>
       </div>
 
-      {detail && <ProfileDetailDrawer profile={detail} onClose={() => setDetail(null)} onRefresh={() => onRefreshOne(detail.username)} isRefreshing={refreshing.has(detail.username)} />}
+      {detail && (
+        <ProfileDetailDrawer
+          profile={detail}
+          onClose={() => setDetail(null)}
+          onRefresh={() => onRefreshOne(detail.username)}
+          isRefreshing={refreshing.has(detail.username)}
+          onReload={reload}
+        />
+      )}
     </div>
   );
 }
@@ -800,18 +893,198 @@ function MultiSelectFilter({
   );
 }
 
+const CONFIDENCE_DOT: Record<"high" | "medium" | "low", string> = {
+  high: COLORS.ok,
+  medium: COLORS.warn,
+  low: COLORS.err,
+};
+
+function EmailCell({ profile }: { profile: RadarProfile }) {
+  const [resolving, setResolving] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
+  const [localEmail, setLocalEmail] = React.useState<string | null>(profile.email);
+  const [localConfidence, setLocalConfidence] = React.useState<"high" | "medium" | "low" | null>(profile.email_confidence);
+  const [error, setError] = React.useState<string | null>(null);
+
+  // Sync si le parent reload (ex: bulk refresh termine).
+  React.useEffect(() => {
+    setLocalEmail(profile.email);
+    setLocalConfidence(profile.email_confidence);
+  }, [profile.email, profile.email_confidence, profile.id]);
+
+  async function copy() {
+    if (!localEmail) return;
+    await navigator.clipboard.writeText(localEmail);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function resolve() {
+    setResolving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/intel/enrich/radar/resolve-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ radar_id: profile.id }),
+      });
+      const data = await res.json();
+      if (data.ok && data.email) {
+        setLocalEmail(data.email);
+        setLocalConfidence(data.confidence ?? null);
+      } else {
+        setError(data.reason ?? data.error ?? "Introuvable");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setResolving(false);
+    }
+  }
+
+  if (localEmail) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+        {localConfidence && (
+          <span
+            title={`Confiance ${localConfidence}`}
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              background: CONFIDENCE_DOT[localConfidence],
+              flexShrink: 0,
+            }}
+          />
+        )}
+        <span
+          title={localEmail}
+          style={{
+            fontSize: 12,
+            color: COLORS.ink1,
+            fontFamily: "ui-monospace, monospace",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            minWidth: 0,
+            flex: 1,
+          }}
+        >
+          {localEmail}
+        </span>
+        <button
+          type="button"
+          onClick={copy}
+          aria-label="Copier l'email"
+          title={copied ? "Copié" : "Copier"}
+          style={{
+            border: "none",
+            background: "transparent",
+            color: copied ? COLORS.ok : COLORS.ink3,
+            cursor: "pointer",
+            padding: 0,
+            display: "inline-flex",
+            flexShrink: 0,
+          }}
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={resolve}
+      disabled={resolving}
+      title={error ?? "Résoudre via HubSpot puis Netrows (5 crédits)"}
+      style={{
+        fontSize: 11,
+        padding: "3px 8px",
+        borderRadius: 6,
+        border: `1px solid ${error ? COLORS.err : COLORS.line}`,
+        background: COLORS.bgCard,
+        color: error ? COLORS.err : COLORS.ink2,
+        cursor: resolving ? "wait" : "pointer",
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+      }}
+    >
+      <Mail size={11} className={resolving ? "animate-pulse" : ""} />
+      {resolving ? "..." : error ? "Échec" : "Résoudre"}
+    </button>
+  );
+}
+
 function ProfileDetailDrawer({
   profile,
   onClose,
   onRefresh,
   isRefreshing,
+  onReload,
 }: {
   profile: RadarProfile;
   onClose: () => void;
   onRefresh: () => void;
   isRefreshing: boolean;
+  onReload: () => void;
 }) {
   const snap = profile.last_snapshot;
+  const [resolvedEmail, setResolvedEmail] = React.useState<string | null>(null);
+  const [resolvedConfidence, setResolvedConfidence] = React.useState<string | null>(null);
+  const [resolvedSource, setResolvedSource] = React.useState<string | null>(null);
+  const [resolveState, setResolveState] = React.useState<"idle" | "loading" | "error">("idle");
+  const [resolveError, setResolveError] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  // Reset au changement de profil
+  React.useEffect(() => {
+    setResolvedEmail(null);
+    setResolvedConfidence(null);
+    setResolvedSource(null);
+    setResolveState("idle");
+    setResolveError(null);
+    setCopied(false);
+  }, [profile.id]);
+
+  const email = resolvedEmail ?? profile.email;
+  const confidence = resolvedConfidence ?? profile.email_confidence;
+  const source = resolvedSource ?? profile.email_source;
+
+  async function resolveEmail() {
+    setResolveState("loading");
+    setResolveError(null);
+    try {
+      const res = await fetch("/api/intel/enrich/radar/resolve-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ radar_id: profile.id }),
+      });
+      const data = await res.json();
+      if (data.ok && data.email) {
+        setResolvedEmail(data.email);
+        setResolvedConfidence(data.confidence ?? null);
+        setResolvedSource(data.source ?? null);
+        setResolveState("idle");
+        onReload();
+      } else {
+        setResolveError(data.reason ?? data.error ?? "Email introuvable");
+        setResolveState("error");
+      }
+    } catch (e) {
+      setResolveError(e instanceof Error ? e.message : "Erreur réseau");
+      setResolveState("error");
+    }
+  }
+
+  async function copyEmail() {
+    if (!email) return;
+    await navigator.clipboard.writeText(email);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  }
   return (
     <div
       style={{
@@ -861,6 +1134,89 @@ function ProfileDetailDrawer({
 
         <Section label="Entreprise actuelle">
           <div style={{ fontSize: 13, color: COLORS.ink1 }}>{profile.company ?? "—"}</div>
+        </Section>
+
+        <Section label="Email pro">
+          {email ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Mail size={12} style={{ color: COLORS.brand }} />
+                <span style={{ fontSize: 13, color: COLORS.ink1, fontFamily: "ui-monospace, monospace" }}>{email}</span>
+                <button
+                  type="button"
+                  onClick={copyEmail}
+                  aria-label="Copier l'email"
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    color: copied ? COLORS.ok : COLORS.ink3,
+                    padding: 2,
+                    display: "inline-flex",
+                    alignItems: "center",
+                  }}
+                >
+                  {copied ? <Check size={12} /> : <Copy size={12} />}
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                {source && (
+                  <span
+                    style={{
+                      fontSize: 10,
+                      padding: "1px 6px",
+                      borderRadius: 99,
+                      background: source === "hubspot" ? "#fff7ed" : COLORS.bgSoft,
+                      color: source === "hubspot" ? "#c2410c" : COLORS.ink2,
+                      fontWeight: 500,
+                    }}
+                  >
+                    {source === "hubspot" ? "HubSpot" : source === "netrows" ? "Netrows" : source}
+                  </span>
+                )}
+                {confidence && (
+                  <span style={{ fontSize: 10, color: COLORS.ink3 }}>
+                    Confiance : {confidence}
+                  </span>
+                )}
+                {profile.email_resolved_at && (
+                  <span style={{ fontSize: 10, color: COLORS.ink3 }}>· résolu {timeAgo(profile.email_resolved_at)}</span>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <span style={{ fontSize: 12, color: COLORS.ink3, fontStyle: "italic" }}>
+                Email non résolu.
+                {!profile.hubspot_id && " Résolution Netrows : ~1 crédit."}
+              </span>
+              <button
+                type="button"
+                onClick={resolveEmail}
+                disabled={resolveState === "loading"}
+                style={{
+                  alignSelf: "flex-start",
+                  padding: "5px 10px",
+                  fontSize: 11,
+                  borderRadius: 6,
+                  border: `1px solid ${COLORS.brand}`,
+                  background: resolveState === "loading" ? COLORS.bgSoft : COLORS.brand,
+                  color: resolveState === "loading" ? COLORS.ink3 : "white",
+                  cursor: resolveState === "loading" ? "wait" : "pointer",
+                  fontWeight: 500,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 5,
+                }}
+              >
+                <Mail size={11} />
+                {resolveState === "loading" ? "Résolution..." : "Résoudre l'email"}
+              </button>
+              {resolveState === "error" && resolveError && (
+                <span style={{ fontSize: 10, color: COLORS.err }}>{resolveError}</span>
+              )}
+            </div>
+          )}
         </Section>
 
         <div style={{ display: "flex", gap: 12 }}>

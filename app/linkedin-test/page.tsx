@@ -34,8 +34,6 @@ export default function LinkedInTestPage() {
   const [totalCredits, setTotalCredits] = useState(0);
   const [companyDetailsInput, setCompanyDetailsInput] = useState("totalenergies");
   const [initLimit, setInitLimit] = useState(3);
-  const [scanCompaniesLimit, setScanCompaniesLimit] = useState(5);
-  const [scanKeywordsLimit, setScanKeywordsLimit] = useState(3);
 
   // HubSpot contacts
   const [hsContacts, setHsContacts] = useState<HsContact[]>([]);
@@ -303,23 +301,6 @@ export default function LinkedInTestPage() {
             </div>
             <button onClick={() => runTest("init", `Init ${initLimit} entreprises`, initLimit * 3, () => fetch("/api/linkedin/init-monitoring", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ limit: initLimit, radarEnabled: false }) }))} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#f01563", color: "#fff" }}>
               {results.init?.loading ? "..." : `Lancer (~${initLimit * 3} crédits)`}
-            </button>
-          </div>
-        </TestCard>
-
-        {/* ── Scan Hebdo ──────────────────────────────────────────────── */}
-        <TestCard title="Scan LinkedIn Hebdo" description="Scanne les posts des entreprises cibles + mots-clés coaching/L&D, analyse avec Claude et crée des signaux." credits={0}>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px]" style={{ color: "#888" }}>Entreprises :</span>
-              <input type="number" value={scanCompaniesLimit} onChange={(e) => setScanCompaniesLimit(Math.max(1, Math.min(50, Number(e.target.value))))} className="w-14 text-xs px-2 py-1.5 border rounded-lg text-center" style={{ borderColor: "#e5e5e5" }} />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px]" style={{ color: "#888" }}>Keywords :</span>
-              <input type="number" value={scanKeywordsLimit} onChange={(e) => setScanKeywordsLimit(Math.max(1, Math.min(15, Number(e.target.value))))} className="w-14 text-xs px-2 py-1.5 border rounded-lg text-center" style={{ borderColor: "#e5e5e5" }} />
-            </div>
-            <button onClick={() => runTest("scan_hebdo", `Scan ${scanCompaniesLimit} entreprises + ${scanKeywordsLimit} keywords`, scanCompaniesLimit + scanKeywordsLimit, () => fetch("/api/linkedin/weekly-scan", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ companiesLimit: scanCompaniesLimit, keywordsLimit: scanKeywordsLimit }) }))} className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: "#111", color: "#fff" }}>
-              {results.scan_hebdo?.loading ? "..." : `Lancer (~${scanCompaniesLimit + scanKeywordsLimit} crédits)`}
             </button>
           </div>
         </TestCard>

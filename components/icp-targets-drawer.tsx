@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useSWRConfig } from "swr";
 import { X, Save, Plus, Trash2, Upload, Download } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 
@@ -8,6 +9,8 @@ type ScopeCompany = {
   id: string;
   name: string;
   owner: string | null;
+  sector: string | null;
+  current_coaching_platform: string | null;
   notes: string | null;
 };
 
@@ -22,7 +25,29 @@ type ImportSummary = {
   errors: { line: number; reason: string }[];
 };
 
-export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+export type IcpDrawerSection = "companies" | "roles";
+
+export function IcpTargetsDrawer({
+  open,
+  onClose,
+  sections,
+  title,
+}: {
+  open: boolean;
+  onClose: () => void;
+  sections?: IcpDrawerSection[];
+  title?: string;
+}) {
+  const showCompanies = !sections || sections.includes("companies");
+  const showRoles = !sections || sections.includes("roles");
+  const resolvedTitle =
+    title ??
+    (showCompanies && showRoles
+      ? "Cibles globales (ICP)"
+      : showCompanies
+      ? "Cibles ICP"
+      : "Jobs cibles");
+  const { mutate: swrMutate } = useSWRConfig();
   const [companies, setCompanies] = React.useState<ScopeCompany[]>([]);
   const [reps, setReps] = React.useState<SalesRep[]>([]);
   const [roles, setRoles] = React.useState("");
@@ -34,23 +59,34 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
   const [importPreview, setImportPreview] = React.useState<{ csv: string; summary: ImportSummary } | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
+  const invalidateWatchlist = React.useCallback(() => {
+    swrMutate(
+      (key) => typeof key === "string" && key.startsWith("/api/watchlist/"),
+      undefined,
+      { revalidate: true }
+    );
+  }, [swrMutate]);
+
   React.useEffect(() => {
     if (!open) return;
     setLoading(true);
     setFeedback(null);
-    Promise.all([
-      fetch("/api/intel/admin/scope-companies").then((r) => r.json()),
-      fetch("/api/intel/admin/sales-reps").then((r) => r.json()),
-      fetch("/api/intel/admin/targets").then((r) => r.json()),
-    ])
-      .then(([cs, rs, ts]) => {
-        setCompanies(cs.companies ?? []);
-        setReps(rs.reps ?? []);
-        setRoles((ts.roles ?? []).join("\n"));
-      })
+    const fetches: Promise<unknown>[] = [];
+    if (showCompanies) {
+      fetches.push(
+        fetch("/api/intel/admin/scope-companies").then((r) => r.json()).then((cs) => setCompanies(cs.companies ?? [])),
+        fetch("/api/intel/admin/sales-reps").then((r) => r.json()).then((rs) => setReps(rs.reps ?? []))
+      );
+    }
+    if (showRoles) {
+      fetches.push(
+        fetch("/api/intel/admin/targets").then((r) => r.json()).then((ts) => setRoles((ts.roles ?? []).join("\n")))
+      );
+    }
+    Promise.all(fetches)
       .catch((e) => setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur" }))
       .finally(() => setLoading(false));
-  }, [open]);
+  }, [open, showCompanies, showRoles]);
 
   async function reloadCompanies() {
     const r = await fetch("/api/intel/admin/scope-companies").then((x) => x.json());
@@ -77,6 +113,7 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
       return;
     }
     await reloadCompanies();
+    invalidateWatchlist();
   }
 
   async function patchCompany(id: string, patch: Partial<ScopeCompany>) {
@@ -92,7 +129,12 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
       return;
     }
     setCompanies((cs) => cs.map((c) => (c.id === id ? (j.company as ScopeCompany) : c)));
-    if (typeof patch.owner === "string" && patch.owner) await reloadReps();
+    if (patch.owner !== undefined) {
+      await reloadReps();
+      invalidateWatchlist();
+    } else if (patch.name !== undefined) {
+      invalidateWatchlist();
+    }
   }
 
   async function removeCompany(id: string, name: string) {
@@ -105,6 +147,7 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
       return;
     }
     setCompanies((cs) => cs.filter((c) => c.id !== id));
+    invalidateWatchlist();
   }
 
   async function saveRoles() {
@@ -131,8 +174,16 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
       if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
       return s;
     };
-    const header = "name,owner,notes";
-    const body = companies.map((c) => [escape(c.name), escape(c.owner), escape(c.notes)].join(","));
+    const header = "name,owner,sector,current_coaching_platform,notes";
+    const body = companies.map((c) =>
+      [
+        escape(c.name),
+        escape(c.owner),
+        escape(c.sector),
+        escape(c.current_coaching_platform),
+        escape(c.notes),
+      ].join(",")
+    );
     const csv = [header, ...body].join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -185,6 +236,7 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
       setFeedback({ kind: "ok", msg: parts.join(" · ") || "Aucun changement." });
       setImportPreview(null);
       await Promise.all([reloadCompanies(), reloadReps()]);
+      invalidateWatchlist();
     } catch (e) {
       setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur" });
     } finally {
@@ -194,14 +246,28 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
 
   if (!open) return null;
 
-  const filtered = filter.trim()
+  const f = filter.trim().toLowerCase();
+  const filtered = f
     ? companies.filter(
         (c) =>
-          c.name.toLowerCase().includes(filter.toLowerCase()) ||
-          (c.owner ?? "").toLowerCase().includes(filter.toLowerCase())
+          c.name.toLowerCase().includes(f) ||
+          (c.owner ?? "").toLowerCase().includes(f) ||
+          (c.sector ?? "").toLowerCase().includes(f) ||
+          (c.current_coaching_platform ?? "").toLowerCase().includes(f)
       )
     : companies;
   const rolesCount = roles.split("\n").filter((s) => s.trim()).length;
+
+  const sectorOptions = Array.from(
+    new Set(companies.map((c) => c.sector?.trim()).filter((s): s is string => Boolean(s)))
+  ).sort((a, b) => a.localeCompare(b));
+  const platformOptions = Array.from(
+    new Set(
+      companies
+        .map((c) => c.current_coaching_platform?.trim())
+        .filter((s): s is string => Boolean(s))
+    )
+  ).sort((a, b) => a.localeCompare(b));
 
   return (
     <div
@@ -218,7 +284,7 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
       <aside
         onClick={(e) => e.stopPropagation()}
         style={{
-          width: 920,
+          width: showCompanies ? 1120 : 560,
           maxWidth: "100%",
           background: COLORS.bgCard,
           height: "100%",
@@ -236,9 +302,11 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
           }}
         >
           <h2 style={{ fontSize: 14, fontWeight: 600, color: COLORS.ink0, margin: 0 }}>
-            Cibles globales (ICP)
+            {resolvedTitle}
           </h2>
-          <span style={{ fontSize: 11, color: COLORS.ink3 }}>partagées par tous les agents</span>
+          {showCompanies && showRoles && (
+            <span style={{ fontSize: 11, color: COLORS.ink3 }}>partagées par tous les agents</span>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -254,11 +322,14 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
             <p style={{ color: COLORS.ink3 }}>Chargement…</p>
           ) : (
             <>
-              <p style={{ fontSize: 12, color: COLORS.ink2, margin: 0, lineHeight: 1.5 }}>
-                Ces listes alimentent : Company News, Hiring Spike, Funding & Expansion,
-                Ads Activity, Init exhaustif, Weekly Scan.
-              </p>
+              {showCompanies && showRoles && (
+                <p style={{ fontSize: 12, color: COLORS.ink2, margin: 0, lineHeight: 1.5 }}>
+                  Ces listes alimentent : Company News, Hiring Spike, Funding & Expansion,
+                  Ads Activity, Init exhaustif, Weekly Scan.
+                </p>
+              )}
 
+              {showCompanies && (
               <section>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
                   <h3
@@ -313,6 +384,16 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
                     <option key={r.id} value={r.name} />
                   ))}
                 </datalist>
+                <datalist id="sectors-list">
+                  {sectorOptions.map((s) => (
+                    <option key={s} value={s} />
+                  ))}
+                </datalist>
+                <datalist id="coaching-platforms-list">
+                  {platformOptions.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
 
                 <div
                   style={{
@@ -335,7 +416,9 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
                     >
                       <tr>
                         <th style={th()}>Entreprise</th>
-                        <th style={th(180)}>Owner</th>
+                        <th style={th(140)}>Owner</th>
+                        <th style={th(160)}>Secteur</th>
+                        <th style={th(180)}>Plateforme coaching</th>
                         <th style={th()}>Notes</th>
                         <th style={th(40)}></th>
                       </tr>
@@ -343,7 +426,7 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
                     <tbody>
                       {filtered.length === 0 && (
                         <tr>
-                          <td colSpan={4} style={{ padding: 24, textAlign: "center", color: COLORS.ink3, fontSize: 12 }}>
+                          <td colSpan={6} style={{ padding: 24, textAlign: "center", color: COLORS.ink3, fontSize: 12 }}>
                             {companies.length === 0 ? "Aucune entreprise. Ajoutes-en ou importe un CSV." : "Aucun résultat."}
                           </td>
                         </tr>
@@ -358,7 +441,9 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
                   Modification inline · Tab pour passer au champ suivant. Dédup case-insensitive sur le nom.
                 </p>
               </section>
+              )}
 
+              {showRoles && (
               <section>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                   <h3
@@ -390,6 +475,7 @@ export function GlobalSettingsDrawer({ open, onClose }: { open: boolean; onClose
                   placeholder="Un titre par ligne&#10;ex: DRH&#10;Head of L&D"
                 />
               </section>
+              )}
             </>
           )}
         </div>
@@ -452,6 +538,25 @@ function CompanyRow({
           onCommit={(v) => (v || null) !== (company.owner ?? null) && onPatch(company.id, { owner: v || null })}
           placeholder="—"
           list="sales-reps-list"
+        />
+      </td>
+      <td style={td()}>
+        <InlineEditable
+          value={company.sector ?? ""}
+          onCommit={(v) => (v || null) !== (company.sector ?? null) && onPatch(company.id, { sector: v || null })}
+          placeholder="—"
+          list="sectors-list"
+        />
+      </td>
+      <td style={td()}>
+        <InlineEditable
+          value={company.current_coaching_platform ?? ""}
+          onCommit={(v) =>
+            (v || null) !== (company.current_coaching_platform ?? null) &&
+            onPatch(company.id, { current_coaching_platform: v || null })
+          }
+          placeholder="—"
+          list="coaching-platforms-list"
         />
       </td>
       <td style={td()}>

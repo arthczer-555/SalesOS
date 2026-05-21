@@ -1,5 +1,5 @@
 import useSWR from "swr";
-import type { EnrichmentList, EnrichmentProfile, NetrowsCriteria, HubspotCriteria } from "@/lib/intel-types";
+import type { ComboLog, EnrichmentList, EnrichmentProfile, NetrowsCriteria, HubspotCriteria } from "@/lib/intel-types";
 
 interface ListsResponse {
   lists: EnrichmentList[];
@@ -18,7 +18,20 @@ export function useEnrichmentLists() {
   };
 }
 
-export async function searchNetrows(criteria: NetrowsCriteria & { start?: number }): Promise<{ profiles: EnrichmentProfile[]; total: number }> {
+export interface NetrowsSearchProgress {
+  status: "pending" | "running" | "done" | "error";
+  combosTotal: number;
+  combosDone: number;
+  profiles: EnrichmentProfile[];
+  total: number;
+  capped: { requested: number; limit: number } | null;
+  comboLogs: ComboLog[];
+  error: string | null;
+}
+
+export async function startNetrowsSearch(
+  criteria: NetrowsCriteria,
+): Promise<{ jobId: string; combosTotal: number; capped: { requested: number; limit: number } | null }> {
   const r = await fetch("/api/intel/enrich/netrows-search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -27,6 +40,30 @@ export async function searchNetrows(criteria: NetrowsCriteria & { start?: number
   const data = await r.json();
   if (!r.ok) throw new Error(data.error ?? "Erreur Netrows");
   return data;
+}
+
+export async function getNetrowsSearchProgress(jobId: string): Promise<NetrowsSearchProgress> {
+  const r = await fetch(`/api/intel/enrich/netrows-search/${jobId}`);
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur polling");
+  return data;
+}
+
+export async function pollNetrowsSearch(
+  jobId: string,
+  onProgress?: (p: NetrowsSearchProgress) => void,
+  opts: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<NetrowsSearchProgress> {
+  const intervalMs = opts.intervalMs ?? 2000;
+  const timeoutMs = opts.timeoutMs ?? 15 * 60 * 1000;
+  const start = Date.now();
+  while (true) {
+    const p = await getNetrowsSearchProgress(jobId);
+    onProgress?.(p);
+    if (p.status === "done" || p.status === "error") return p;
+    if (Date.now() - start > timeoutMs) throw new Error("Timeout polling Netrows");
+    await new Promise((res) => setTimeout(res, intervalMs));
+  }
 }
 
 export async function searchHubspot(
@@ -122,6 +159,8 @@ export interface RadarRefreshResult {
   }[];
   errors: { username: string; error: string }[];
   credits_used: number;
+  re_resolved: { username: string; email: string; confidence: "high" | "medium" | "low" | null; source: "hubspot" | "netrows" | "cache" }[];
+  re_resolve_errors: { username: string; reason: string }[];
 }
 
 export async function refreshRadarProfiles(usernames: string[]): Promise<RadarRefreshResult> {
@@ -132,6 +171,26 @@ export async function refreshRadarProfiles(usernames: string[]): Promise<RadarRe
   });
   const data = await r.json();
   if (!r.ok) throw new Error(data.error ?? "Erreur refresh");
+  return data;
+}
+
+export interface RadarBackfillEmailsResult {
+  attempted: number;
+  resolved_count: number;
+  unresolved_count: number;
+  remaining: number;
+  resolved: { radar_id: string; username: string; email: string; confidence: "high" | "medium" | "low" | null; source: "hubspot" | "netrows" | "cache" }[];
+  unresolved: { radar_id: string; username: string; reason: string }[];
+}
+
+export async function resolveMissingRadarEmails(limit = 50): Promise<RadarBackfillEmailsResult> {
+  const r = await fetch("/api/intel/enrich/radar/resolve-missing-emails", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ limit }),
+  });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error ?? "Erreur résolution emails");
   return data;
 }
 

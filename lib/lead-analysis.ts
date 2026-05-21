@@ -135,7 +135,6 @@ prospect et CLASSIFIE-LA dans UNE des catégories suivantes (retourne EXACTEMENT
 - "Web Search"      : Google, Bing, DuckDuckGo, Yahoo, recherche web classique non-IA.
 - "Recommandation"  : ami, collègue, partenaire, bouche à oreille, "referred by", "X m'a parlé".
 - "Évènement"       : salon, conférence, meetup, webinar, atelier, event physique ou en ligne.
-- "Réseaux sociaux" : Twitter/X, Instagram, Facebook, TikTok, YouTube (TOUT sauf LinkedIn).
 - "Presse"          : article presse, blog tiers, journal, média (pas Coachello lui-même).
 - "Autre"           : tout le reste qui ne rentre dans aucune catégorie ci-dessus.
 
@@ -153,7 +152,7 @@ const EXTRACT_TOOL = {
       source: {
         type: ["string", "null"],
         enum: [...LEAD_SOURCE_CATEGORIES, null],
-        description: `Catégorie d'origine du lead. UNE des 8 valeurs autorisées (${LEAD_SOURCE_CATEGORIES.join(", ")}), ou null si aucune mention claire dans les images.`,
+        description: `Catégorie d'origine du lead. UNE des ${LEAD_SOURCE_CATEGORIES.length} valeurs autorisées (${LEAD_SOURCE_CATEGORIES.join(", ")}), ou null si aucune mention claire dans les images.`,
       },
       confidence: { type: "number", description: "0..1, certitude globale" },
       notes: { type: "string", description: "Sources, hésitations, infos manquantes" },

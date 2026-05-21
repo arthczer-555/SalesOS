@@ -1,7 +1,12 @@
 "use client";
 
-import React, { useState, useRef, useEffect, useCallback, KeyboardEvent } from "react";
+import React, { useState, useRef, useEffect, useCallback, useMemo, KeyboardEvent } from "react";
 import { useGmailStatus } from "@/lib/hooks/use-gmail-status";
+import { useOutreachCounts } from "@/lib/hooks/use-outreach-counts";
+import { useRadarStatus } from "@/lib/hooks/use-radar-status";
+import { useEnrichmentLists } from "@/lib/hooks/use-enrichment";
+import type { EnrichmentProfile } from "@/lib/intel-types";
+import { ExchangesBadge } from "@/components/ui/exchanges-badge";
 import {
   Search, Loader2, Sparkles, X, Upload, Plus, ChevronLeft, ChevronRight,
   Send, Save, RotateCcw, Mail, AlertCircle, Check, FileText, Users,
@@ -162,12 +167,51 @@ export default function MassProspectionPage() {
   // ── UI state ─────────────────────────────────────────────────────────
   const [generating, setGenerating] = useState(false);
   const [genProgress, setGenProgress] = useState({ done: 0, total: 0 });
-  const [sourceTab, setSourceTab] = useState<"hubspot" | "csv" | "manual">("hubspot");
+  const [sourceTab, setSourceTab] = useState<"hubspot" | "csv" | "manual" | "radar" | "lists">("hubspot");
 
   // ── HubSpot search ───────────────────────────────────────────────────
   const [hsQuery, setHsQuery] = useState("");
   const [hsResults, setHsResults] = useState<HubSpotResult[]>([]);
   const [hsLoading, setHsLoading] = useState(false);
+
+  // ── Radar source (onglet "Mon radar") ────────────────────────────────
+  const { profiles: radarProfiles, isLoading: radarLoading } = useRadarStatus();
+  const [radarQuery, setRadarQuery] = useState("");
+  const [radarSelected, setRadarSelected] = useState<Set<string>>(new Set());
+  const [radarAdding, setRadarAdding] = useState(false);
+  const [radarFeedback, setRadarFeedback] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+
+  // ── Lists source (onglet "Listes") ───────────────────────────────────
+  const { lists: savedLists, isLoading: listsLoading } = useEnrichmentLists();
+  const [selectedListId, setSelectedListId] = useState<string | null>(null);
+  const [listProfilesSelected, setListProfilesSelected] = useState<Set<string>>(new Set());
+  const [listHideContacted, setListHideContacted] = useState(false);
+  const [listQuery, setListQuery] = useState("");
+  const selectedList = useMemo(
+    () => savedLists.find((l) => l.id === selectedListId) ?? null,
+    [savedLists, selectedListId]
+  );
+  const selectedListProfiles = useMemo<EnrichmentProfile[]>(
+    () => (selectedList?.results as EnrichmentProfile[] | undefined) ?? [],
+    [selectedList]
+  );
+
+  // ── Outreach counts (badge "X échanges") ─────────────────────────────
+  const outreachEmails = useMemo(
+    () =>
+      [
+        ...prospects.map((p) => p.email),
+        ...hsResults.map((r) => r.email),
+        ...selectedListProfiles.map((p) => p.email),
+      ].filter((e): e is string => !!e),
+    [prospects, hsResults, selectedListProfiles]
+  );
+  const radarHubspotIds = useMemo(
+    () => radarProfiles.map((p) => p.hubspot_id).filter((id): id is string => !!id),
+    [radarProfiles]
+  );
+  const { countByEmail: outreachCountByEmail, countByHubspotId: outreachCountByHubspotId } =
+    useOutreachCounts(outreachEmails, radarHubspotIds);
 
   // ── CSV modal ────────────────────────────────────────────────────────
   const [csvModalOpen, setCsvModalOpen] = useState(false);
@@ -330,9 +374,162 @@ export default function MassProspectionPage() {
     setProspects((prev) => [...prev, p]);
   }
 
+  function toggleRadarSelected(radarId: string) {
+    setRadarSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(radarId)) next.delete(radarId);
+      else next.add(radarId);
+      return next;
+    });
+  }
+
+  async function addRadarSelection() {
+    const ids = Array.from(radarSelected);
+    if (ids.length === 0) return;
+    setRadarAdding(true);
+    setRadarFeedback(null);
+    try {
+      const res = await fetch("/api/mass-prospection/resolve-radar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ radar_ids: ids }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Erreur résolution radar");
+
+      let added = 0;
+      let duplicates = 0;
+      const existingEmails = new Set(prospects.map((p) => p.email.toLowerCase()));
+      const newProspects: Prospect[] = [];
+      for (const r of data.resolved as Array<{
+        hubspot_id: string | null;
+        firstName: string;
+        lastName: string;
+        email: string;
+        jobTitle: string;
+        company: string;
+        industry: string;
+        linkedinUrl: string | null;
+        source: "hubspot" | "netrows";
+        username: string;
+      }>) {
+        const key = r.email.toLowerCase();
+        if (existingEmails.has(key)) {
+          duplicates++;
+          continue;
+        }
+        existingEmails.add(key);
+        newProspects.push({
+          hubspot_id: r.hubspot_id ?? undefined,
+          firstName: r.firstName,
+          lastName: r.lastName,
+          email: r.email,
+          jobTitle: r.jobTitle,
+          company: r.company,
+          industry: r.industry,
+          extraData: {
+            linkedinUrl: r.linkedinUrl,
+            radar_username: r.username,
+            email_source: r.source,
+          },
+        });
+        added++;
+      }
+      if (newProspects.length > 0) setProspects((prev) => [...prev, ...newProspects]);
+      setRadarSelected(new Set());
+
+      const unresolvedCount = (data.unresolved as unknown[] | undefined)?.length ?? 0;
+      const parts: string[] = [];
+      if (added > 0) parts.push(`${added} ajouté${added > 1 ? "s" : ""}`);
+      if (duplicates > 0) parts.push(`${duplicates} doublon${duplicates > 1 ? "s" : ""}`);
+      if (unresolvedCount > 0) parts.push(`${unresolvedCount} email${unresolvedCount > 1 ? "s" : ""} introuvable${unresolvedCount > 1 ? "s" : ""}`);
+      setRadarFeedback({
+        kind: unresolvedCount > 0 && added === 0 ? "err" : "ok",
+        msg: parts.join(" · ") || "Aucun profil ajouté.",
+      });
+    } catch (e) {
+      setRadarFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur résolution" });
+    } finally {
+      setRadarAdding(false);
+    }
+  }
+
   function removeProspect(email: string) {
     setProspects((prev) => prev.filter((p) => p.email.toLowerCase() !== email.toLowerCase()));
   }
+
+  // ── Watch List import (?from=watchlist&ids=...) ─────────────────────
+  const watchlistImportedRef = useRef(false);
+  useEffect(() => {
+    if (watchlistImportedRef.current) return;
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("from") !== "watchlist") return;
+    const ids = (url.searchParams.get("ids") ?? "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (ids.length === 0) return;
+    watchlistImportedRef.current = true;
+    setSourceTab("radar");
+    setRadarFeedback({ kind: "ok", msg: `Import depuis Watch List (${ids.length} prospects)…` });
+    void (async () => {
+      try {
+        const res = await fetch("/api/mass-prospection/resolve-radar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ radar_ids: ids }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error ?? "Erreur résolution radar");
+        const existingEmails = new Set(prospects.map((p) => p.email.toLowerCase()));
+        const newProspects: Prospect[] = [];
+        for (const r of data.resolved as Array<{
+          hubspot_id: string | null;
+          firstName: string;
+          lastName: string;
+          email: string;
+          jobTitle: string;
+          company: string;
+          industry: string;
+          linkedinUrl: string | null;
+          source: "hubspot" | "netrows";
+          username: string;
+        }>) {
+          const key = r.email.toLowerCase();
+          if (existingEmails.has(key)) continue;
+          existingEmails.add(key);
+          newProspects.push({
+            hubspot_id: r.hubspot_id ?? undefined,
+            firstName: r.firstName,
+            lastName: r.lastName,
+            email: r.email,
+            jobTitle: r.jobTitle,
+            company: r.company,
+            industry: r.industry,
+            extraData: { linkedinUrl: r.linkedinUrl, radar_username: r.username, email_source: r.source },
+          });
+        }
+        if (newProspects.length > 0) setProspects((prev) => [...prev, ...newProspects]);
+        const unresolved = (data.unresolved as unknown[] | undefined)?.length ?? 0;
+        setRadarFeedback({
+          kind: newProspects.length === 0 ? "err" : "ok",
+          msg:
+            newProspects.length > 0
+              ? `${newProspects.length} prospect${newProspects.length > 1 ? "s" : ""} importé${newProspects.length > 1 ? "s" : ""}` +
+                (unresolved > 0 ? ` · ${unresolved} email${unresolved > 1 ? "s" : ""} introuvable${unresolved > 1 ? "s" : ""}` : "")
+              : "Aucun email résolu",
+        });
+      } catch (e) {
+        setRadarFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur import" });
+      } finally {
+        url.searchParams.delete("from");
+        url.searchParams.delete("ids");
+        window.history.replaceState({}, "", url.pathname + (url.search ? `?${url.searchParams.toString()}` : ""));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ── CSV handling ─────────────────────────────────────────────────────
   async function handleCsvFile(file: File) {
@@ -755,7 +952,7 @@ export default function MassProspectionPage() {
           <div className="w-1/2 flex flex-col border-r overflow-hidden" style={{ borderColor: "#eee" }}>
             {/* Source tabs */}
             <div className="flex items-center gap-1 px-4 py-3 border-b" style={{ borderColor: "#eee", background: "#fff" }}>
-              {(["hubspot", "csv", "manual"] as const).map((tab) => (
+              {(["hubspot", "radar", "lists", "csv", "manual"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => setSourceTab(tab)}
@@ -765,7 +962,15 @@ export default function MassProspectionPage() {
                     color: sourceTab === tab ? "#fff" : "#666",
                   }}
                 >
-                  {tab === "hubspot" ? "HubSpot" : tab === "csv" ? "CSV" : "Manuel"}
+                  {tab === "hubspot"
+                    ? "HubSpot"
+                    : tab === "radar"
+                    ? "Mon radar"
+                    : tab === "lists"
+                    ? "Listes"
+                    : tab === "csv"
+                    ? "CSV"
+                    : "Manuel"}
                 </button>
               ))}
             </div>
@@ -818,6 +1023,7 @@ export default function MassProspectionPage() {
                                     <Linkedin size={10} />
                                   </a>
                                 )}
+                                <ExchangesBadge count={outreachCountByEmail(r.email)} />
                               </div>
                               <span className="text-[10px] truncate block" style={{ color: "#888" }}>
                                 {r.jobTitle ? `${r.jobTitle} · ` : ""}{r.company || r.email}
@@ -852,6 +1058,358 @@ export default function MassProspectionPage() {
                         );
                       })}
                     </div>
+                  )}
+                </div>
+              )}
+
+              {/* Radar tab */}
+              {sourceTab === "radar" && (
+                <div className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        value={radarQuery}
+                        onChange={(e) => setRadarQuery(e.target.value)}
+                        placeholder="Filtrer mon radar..."
+                        className="w-full pl-9 pr-3 py-2 rounded-lg border text-xs outline-none transition-all"
+                        style={{ borderColor: "#e5e5e5" }}
+                        onFocus={(e) => (e.currentTarget.style.borderColor = "#f01563")}
+                        onBlur={(e) => (e.currentTarget.style.borderColor = "#e5e5e5")}
+                      />
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "#aaa" }} />
+                    </div>
+                    {radarSelected.size > 0 && (
+                      <>
+                        <button
+                          onClick={() => setRadarSelected(new Set())}
+                          className="px-3 py-2 rounded-lg text-xs"
+                          style={{ background: "#f5f5f5", color: "#666" }}
+                        >
+                          Désélectionner
+                        </button>
+                        <button
+                          onClick={addRadarSelection}
+                          disabled={radarAdding}
+                          className="px-4 py-2 rounded-lg text-xs font-medium transition-all"
+                          style={{
+                            background: radarAdding ? "#f5f5f5" : "#f01563",
+                            color: radarAdding ? "#aaa" : "#fff",
+                          }}
+                        >
+                          {radarAdding ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <Loader2 size={12} className="animate-spin" />
+                              Résolution emails...
+                            </span>
+                          ) : (
+                            `Ajouter ${radarSelected.size} profil${radarSelected.size > 1 ? "s" : ""}`
+                          )}
+                        </button>
+                      </>
+                    )}
+                  </div>
+
+                  {radarFeedback && (
+                    <div
+                      className="text-[11px] px-3 py-2 rounded-lg flex items-center justify-between gap-2"
+                      style={{
+                        background: radarFeedback.kind === "ok" ? "#f0fdf4" : "#fef2f2",
+                        color: radarFeedback.kind === "ok" ? "#15803d" : "#b91c1c",
+                        border: `1px solid ${radarFeedback.kind === "ok" ? "#bbf7d0" : "#fecaca"}`,
+                      }}
+                    >
+                      <span>{radarFeedback.msg}</span>
+                      <button onClick={() => setRadarFeedback(null)} style={{ color: "inherit" }}>
+                        <X size={11} />
+                      </button>
+                    </div>
+                  )}
+
+                  {radarLoading && radarProfiles.length === 0 ? (
+                    <div className="flex justify-center py-8">
+                      <Loader2 size={20} className="animate-spin" style={{ color: "#f01563" }} />
+                    </div>
+                  ) : radarProfiles.length === 0 ? (
+                    <span className="text-[11px] text-center py-8" style={{ color: "#aaa" }}>
+                      Aucun profil dans ton radar.{" "}
+                      <Link href="/enrichment" className="underline" style={{ color: "#f01563" }}>
+                        Ajouter des profils
+                      </Link>
+                    </span>
+                  ) : (
+                    <div className="flex flex-col gap-1.5">
+                      {radarProfiles
+                        .filter((p) => {
+                          if (!radarQuery.trim()) return true;
+                          const q = radarQuery.toLowerCase();
+                          return [p.full_name, p.headline, p.company, p.username].some((v) => v?.toLowerCase().includes(q));
+                        })
+                        .map((p) => {
+                          const selected = radarSelected.has(p.id);
+                          const exchangeCount = outreachCountByHubspotId(p.hubspot_id);
+                          return (
+                            <div
+                              key={p.id}
+                              onClick={() => toggleRadarSelected(p.id)}
+                              className="flex items-center gap-2.5 p-2.5 rounded-lg border cursor-pointer transition-all"
+                              style={{
+                                borderColor: selected ? "#f01563" : "#f0f0f0",
+                                background: selected ? "#fff8fb" : "#fff",
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={selected}
+                                onChange={() => toggleRadarSelected(p.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                className="shrink-0"
+                                style={{ cursor: "pointer" }}
+                              />
+                              <Avatar firstName={p.full_name?.split(" ")[0] ?? p.username} lastName={p.full_name?.split(" ").slice(1).join(" ") ?? ""} size={28} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs font-medium truncate" style={{ color: "#111" }}>
+                                    {p.full_name ?? p.username}
+                                  </span>
+                                  {p.profile_url && (
+                                    <a href={p.profile_url} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "#0a66c2" }}>
+                                      <Linkedin size={10} />
+                                    </a>
+                                  )}
+                                  <ExchangesBadge count={exchangeCount} />
+                                  {!p.hubspot_id && (
+                                    <span
+                                      title="Email résolu via Netrows au moment de l'ajout (1 crédit)"
+                                      className="text-[9px] px-1.5 py-0.5 rounded-full"
+                                      style={{ background: "#fff7ed", color: "#c2410c", border: "1px solid #fed7aa" }}
+                                    >
+                                      Netrows
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] truncate block" style={{ color: "#888" }}>
+                                  {p.headline ? `${p.headline}` : ""}
+                                  {p.headline && p.company ? " · " : ""}
+                                  {p.company ?? ""}
+                                </span>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Lists tab */}
+              {sourceTab === "lists" && (
+                <div className="p-4 flex flex-col gap-3">
+                  {listsLoading && savedLists.length === 0 ? (
+                    <div className="flex justify-center py-8">
+                      <Loader2 size={20} className="animate-spin" style={{ color: "#f01563" }} />
+                    </div>
+                  ) : savedLists.length === 0 ? (
+                    <span className="text-[11px] text-center py-8" style={{ color: "#aaa" }}>
+                      Aucune liste sauvegardée.{" "}
+                      <Link href="/enrichment" className="underline" style={{ color: "#f01563" }}>
+                        Créer une liste
+                      </Link>
+                    </span>
+                  ) : (
+                    <>
+                      {/* List picker */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {savedLists.map((l) => (
+                          <button
+                            key={l.id}
+                            onClick={() => {
+                              setSelectedListId(l.id);
+                              setListProfilesSelected(new Set());
+                            }}
+                            className="px-3 py-1.5 rounded-full text-[11px] font-medium transition-all"
+                            style={{
+                              background: selectedListId === l.id ? "#f01563" : "#f5f5f5",
+                              color: selectedListId === l.id ? "#fff" : "#666",
+                              border: "1px solid",
+                              borderColor: selectedListId === l.id ? "#f01563" : "#e5e5e5",
+                            }}
+                            title={`${l.source === "hubspot" ? "HubSpot" : "Netrows"} · ${(l.results as EnrichmentProfile[] | undefined)?.length ?? 0} profils`}
+                          >
+                            {l.name}
+                          </button>
+                        ))}
+                      </div>
+
+                      {selectedList && (
+                        <>
+                          {/* Filters bar */}
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 relative">
+                              <input
+                                type="text"
+                                value={listQuery}
+                                onChange={(e) => setListQuery(e.target.value)}
+                                placeholder="Filtrer la liste..."
+                                className="w-full pl-9 pr-3 py-2 rounded-lg border text-xs outline-none transition-all"
+                                style={{ borderColor: "#e5e5e5" }}
+                                onFocus={(e) => (e.currentTarget.style.borderColor = "#f01563")}
+                                onBlur={(e) => (e.currentTarget.style.borderColor = "#e5e5e5")}
+                              />
+                              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: "#aaa" }} />
+                            </div>
+                            <label className="flex items-center gap-1.5 text-[11px] cursor-pointer" style={{ color: "#666" }}>
+                              <input
+                                type="checkbox"
+                                checked={listHideContacted}
+                                onChange={(e) => setListHideContacted(e.target.checked)}
+                              />
+                              Masquer déjà contactés
+                            </label>
+                            {listProfilesSelected.size > 0 && (
+                              <>
+                                <button
+                                  onClick={() => setListProfilesSelected(new Set())}
+                                  className="px-3 py-2 rounded-lg text-xs"
+                                  style={{ background: "#f5f5f5", color: "#666" }}
+                                >
+                                  Désélectionner
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const toAdd: Prospect[] = [];
+                                    let skipped = 0;
+                                    for (const key of listProfilesSelected) {
+                                      const profile = selectedListProfiles.find(
+                                        (p) => (p.email?.toLowerCase() ?? p.username ?? "") === key
+                                      );
+                                      if (!profile?.email) {
+                                        skipped++;
+                                        continue;
+                                      }
+                                      const exists = prospects.some(
+                                        (x) => x.email.toLowerCase() === profile.email!.toLowerCase()
+                                      );
+                                      if (exists) continue;
+                                      toAdd.push({
+                                        hubspot_id: profile.hubspotId ?? undefined,
+                                        firstName: profile.firstName ?? profile.fullName?.split(" ")[0] ?? "",
+                                        lastName: profile.lastName ?? profile.fullName?.split(" ").slice(1).join(" ") ?? "",
+                                        email: profile.email,
+                                        jobTitle: profile.jobTitle ?? profile.headline ?? undefined,
+                                        company: profile.company ?? undefined,
+                                        industry: undefined,
+                                        extraData: {
+                                          source: profile.source,
+                                          username: profile.username,
+                                          profileUrl: profile.profileUrl,
+                                          headline: profile.headline,
+                                        },
+                                      });
+                                    }
+                                    if (toAdd.length > 0) setProspects((prev) => [...prev, ...toAdd]);
+                                    setListProfilesSelected(new Set());
+                                    if (skipped > 0) {
+                                      console.warn(`[mass-prospection] ${skipped} profil(s) ignoré(s) sans email`);
+                                    }
+                                  }}
+                                  className="px-4 py-2 rounded-lg text-xs font-medium transition-all"
+                                  style={{ background: "#f01563", color: "#fff" }}
+                                >
+                                  Ajouter {listProfilesSelected.size} profil{listProfilesSelected.size > 1 ? "s" : ""}
+                                </button>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Profiles list */}
+                          <div className="flex flex-col gap-1.5">
+                            {selectedListProfiles
+                              .filter((p) => {
+                                if (listHideContacted && p.email && outreachCountByEmail(p.email) > 0) return false;
+                                if (!listQuery.trim()) return true;
+                                const q = listQuery.toLowerCase();
+                                return [p.fullName, p.firstName, p.lastName, p.headline, p.company, p.email, p.jobTitle]
+                                  .some((v) => v?.toLowerCase().includes(q));
+                              })
+                              .map((p) => {
+                                const key = p.email?.toLowerCase() ?? p.username ?? "";
+                                const selected = listProfilesSelected.has(key);
+                                const noEmail = !p.email;
+                                const exchangeCount = p.email ? outreachCountByEmail(p.email) : 0;
+                                return (
+                                  <div
+                                    key={key}
+                                    onClick={() => {
+                                      if (noEmail) return;
+                                      setListProfilesSelected((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(key)) next.delete(key);
+                                        else next.add(key);
+                                        return next;
+                                      });
+                                    }}
+                                    className="flex items-center gap-2.5 p-2.5 rounded-lg border transition-all"
+                                    style={{
+                                      borderColor: selected ? "#f01563" : "#f0f0f0",
+                                      background: selected ? "#fff8fb" : "#fff",
+                                      cursor: noEmail ? "not-allowed" : "pointer",
+                                      opacity: noEmail ? 0.5 : 1,
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={selected}
+                                      disabled={noEmail}
+                                      onChange={() => { /* handled by parent click */ }}
+                                      onClick={(e) => e.stopPropagation()}
+                                      className="shrink-0"
+                                      style={{ cursor: noEmail ? "not-allowed" : "pointer" }}
+                                    />
+                                    <Avatar
+                                      firstName={p.firstName ?? p.fullName?.split(" ")[0] ?? p.username ?? "?"}
+                                      lastName={p.lastName ?? p.fullName?.split(" ").slice(1).join(" ") ?? ""}
+                                      size={28}
+                                    />
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-xs font-medium truncate" style={{ color: "#111" }}>
+                                          {p.fullName ?? `${p.firstName ?? ""} ${p.lastName ?? ""}`.trim() ?? p.username}
+                                        </span>
+                                        {p.profileUrl && (
+                                          <a href={p.profileUrl} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} style={{ color: "#0a66c2" }}>
+                                            <Linkedin size={10} />
+                                          </a>
+                                        )}
+                                        <ExchangesBadge count={exchangeCount} />
+                                        {noEmail && (
+                                          <span
+                                            className="text-[9px] px-1.5 py-0.5 rounded-full"
+                                            style={{ background: "#fef2f2", color: "#b91c1c", border: "1px solid #fecaca" }}
+                                          >
+                                            Sans email
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span className="text-[10px] truncate block" style={{ color: "#888" }}>
+                                        {p.jobTitle ?? p.headline ?? ""}
+                                        {(p.jobTitle ?? p.headline) && p.company ? " · " : ""}
+                                        {p.company ?? ""}
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            {selectedListProfiles.length > 0 &&
+                              selectedListProfiles.filter((p) => p.email).length === 0 && (
+                                <span className="text-[11px] text-center py-4" style={{ color: "#aaa" }}>
+                                  Aucun profil avec email dans cette liste.
+                                </span>
+                              )}
+                          </div>
+                        </>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -993,9 +1551,12 @@ export default function MassProspectionPage() {
                   >
                     <Avatar firstName={p.firstName} lastName={p.lastName} size={22} />
                     <div className="flex-1 min-w-0">
-                      <span className="text-[11px] font-medium truncate block" style={{ color: "#111" }}>
-                        {p.firstName || p.lastName ? `${p.firstName} ${p.lastName}`.trim() : p.email}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-[11px] font-medium truncate" style={{ color: "#111" }}>
+                          {p.firstName || p.lastName ? `${p.firstName} ${p.lastName}`.trim() : p.email}
+                        </span>
+                        <ExchangesBadge count={outreachCountByEmail(p.email)} />
+                      </div>
                       {(p.firstName || p.lastName) && (
                         <span className="text-[9px] truncate block" style={{ color: "#888" }}>{p.email}</span>
                       )}

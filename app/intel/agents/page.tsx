@@ -9,7 +9,7 @@ import type { Agent } from "@/lib/intel-types";
 import { useIntelAgents, toggleAgent, runAgent } from "@/lib/hooks/use-intel-agents";
 import { AgentCard } from "./_components/agent-card";
 import { AgentConfigDrawer } from "./_components/agent-config-drawer";
-import { GlobalSettingsDrawer } from "@/components/icp-targets-drawer";
+import { IcpTargetsDrawer } from "@/components/icp-targets-drawer";
 import { AgentLogsDrawer } from "./_components/agent-logs-drawer";
 import type { AgentLogsResponse } from "@/app/api/intel/agents/logs/route";
 
@@ -160,12 +160,6 @@ export default function IntelAgentsPage() {
         </button>
       </div>
 
-      {/* Cron note */}
-      <div style={{ padding: "8px 24px", background: "#eff6ff", borderBottom: `1px solid ${COLORS.line}`, fontSize: 11, color: "#1e40af" }}>
-        Les agents activés (toggle ✓) tournent automatiquement (cron hebdo) ou peuvent être déclenchés à la demande
-        via « Lancer ». Les intels sont stockés en DB ; aucun coût Claude à la lecture.
-      </div>
-
       {/* Grid */}
       <div
         style={{
@@ -212,7 +206,7 @@ export default function IntelAgentsPage() {
           }}
         />
       )}
-      <GlobalSettingsDrawer open={globalOpen} onClose={() => setGlobalOpen(false)} />
+      <IcpTargetsDrawer open={globalOpen} onClose={() => setGlobalOpen(false)} />
       <AgentLogsDrawer open={logsOpen} onClose={() => setLogsOpen(false)} />
     </div>
   );

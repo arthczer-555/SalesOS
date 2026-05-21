@@ -5,6 +5,9 @@ import { maybeCreateSalesRep } from "@/lib/scope-companies";
 
 export const dynamic = "force-dynamic";
 
+const COLS =
+  "id, name, owner, sector, current_coaching_platform, notes, created_at, updated_at";
+
 export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
@@ -13,6 +16,8 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
   const body = (await req.json().catch(() => null)) as {
     name?: string;
     owner?: string | null;
+    sector?: string | null;
+    current_coaching_platform?: string | null;
     notes?: string | null;
   } | null;
   if (!body) return NextResponse.json({ error: "Body invalide" }, { status: 400 });
@@ -24,13 +29,16 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ id: strin
     patch.name = trimmed;
   }
   if (body.owner !== undefined) patch.owner = body.owner?.toString().trim() || null;
+  if (body.sector !== undefined) patch.sector = body.sector?.toString().trim() || null;
+  if (body.current_coaching_platform !== undefined)
+    patch.current_coaching_platform = body.current_coaching_platform?.toString().trim() || null;
   if (body.notes !== undefined) patch.notes = body.notes?.toString().trim() || null;
 
   const { data, error } = await db
     .from("scope_companies")
     .update(patch)
     .eq("id", id)
-    .select("id, name, owner, notes, created_at, updated_at")
+    .select(COLS)
     .single();
 
   if (error) {

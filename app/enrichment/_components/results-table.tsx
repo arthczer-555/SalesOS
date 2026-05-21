@@ -65,9 +65,9 @@ export function ResultsTable({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column" }}>
       {/* Table */}
-      <div style={{ flex: 1, overflowY: "auto" }}>
+      <div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <thead
             style={{

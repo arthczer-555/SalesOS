@@ -314,7 +314,6 @@ export const LEAD_SOURCE_CATEGORIES = [
   "Web Search",
   "Recommandation",
   "Évènement",
-  "Réseaux sociaux",
   "Presse",
   "Autre",
 ] as const;

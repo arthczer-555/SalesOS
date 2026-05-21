@@ -7,7 +7,13 @@ export const dynamic = "force-dynamic";
 
 type Mode = "skip" | "update";
 
-type Row = { name: string; owner: string | null; notes: string | null };
+type Row = {
+  name: string;
+  owner: string | null;
+  sector: string | null;
+  current_coaching_platform: string | null;
+  notes: string | null;
+};
 
 function dedupRows(rows: Row[]): Row[] {
   const seen = new Map<string, Row>();
@@ -20,6 +26,8 @@ function dedupRows(rows: Row[]): Row[] {
       seen.set(key, {
         name: r.name,
         owner: r.owner ?? prev.owner,
+        sector: r.sector ?? prev.sector,
+        current_coaching_platform: r.current_coaching_platform ?? prev.current_coaching_platform,
         notes: r.notes ?? prev.notes,
       });
     }
@@ -88,6 +96,9 @@ export async function POST(req: NextRequest) {
   for (const u of toUpdate) {
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (u.row.owner !== null) patch.owner = u.row.owner;
+    if (u.row.sector !== null) patch.sector = u.row.sector;
+    if (u.row.current_coaching_platform !== null)
+      patch.current_coaching_platform = u.row.current_coaching_platform;
     if (u.row.notes !== null) patch.notes = u.row.notes;
     if (Object.keys(patch).length > 1) {
       const { error } = await db.from("scope_companies").update(patch).eq("id", u.id);

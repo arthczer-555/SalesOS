@@ -1,18 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { X, Save, RefreshCw, ExternalLink } from "lucide-react";
+import { X, Save, RefreshCw } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { Agent } from "@/lib/intel-types";
-import { CompetitorConfig } from "./competitor-config";
 import { AgentTrackedEntities } from "./agent-tracked-entities";
+import { AgentDiagnostic } from "./agent-diagnostic";
 
 interface RunsResponse {
   state: { config: Record<string, unknown> | null; last_run_at: string | null; last_run_status: string | null; last_run_signals_count: number; last_run_error: string | null } | null;
   recentSignals: { id: string; title: string; score: number; created_at: string; signal_type: string; company_name: string | null }[];
 }
-
-const LIFECYCLES = ["customer", "opportunity", "salesqualifiedlead", "marketingqualifiedlead", "lead", "subscriber", "evangelist", "other"];
 
 export function AgentConfigDrawer({
   agent,
@@ -114,10 +112,13 @@ export function AgentConfigDrawer({
           <Block label="Cron / Run manuel">
             <p style={{ fontSize: 12, color: COLORS.ink2, margin: 0, lineHeight: 1.5 }}>
               {agent.runEndpoint
-                ? "Cet agent peut tourner automatiquement (cron hebdo via CRON_SECRET) ou à la demande via « Lancer maintenant ». Les intels sont stockés en DB ; aucun coût Claude à la lecture."
+                ? "Cet agent peut tourner automatiquement (cron Mon/Wed/Fri 06:00 UTC) ou à la demande via « Lancer maintenant ». Les intels sont stockés en DB ; aucun coût Claude à la lecture."
                 : "Cet agent fonctionne en push : Netrows envoie un webhook à chaque changement détecté. Aucun cron ni run manuel nécessaire."}
             </p>
           </Block>
+
+          {/* Diagnostic : sources utilisées, prérequis, clés ENV, mots-clés */}
+          <AgentDiagnostic agentId={agent.id} />
 
           {/* Entités suivies (Radar profiles / companies / ICP) */}
           <AgentTrackedEntities agentId={agent.id} onOpenGlobalSettings={onOpenGlobalSettings} />
@@ -209,32 +210,6 @@ function SpecificConfig({
   config: Record<string, unknown>;
   setConfig: React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
 }) {
-  if (agentId === "intent-content") {
-    const keywords = (config.keywords as string[] | undefined)?.join("\n") ?? "";
-    return (
-      <Block label="Mots-clés à scanner">
-        <p style={{ fontSize: 11, color: COLORS.ink3, margin: 0, marginBottom: 6 }}>
-          Un mot-clé par ligne. Vide = utiliser la liste par défaut (coaching, L&D, leadership…).
-        </p>
-        <textarea
-          value={keywords}
-          rows={10}
-          onChange={(e) => setConfig((c) => ({ ...c, keywords: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) }))}
-          style={ta()}
-          placeholder="coaching managers&#10;burnout managers&#10;rétention talents"
-        />
-      </Block>
-    );
-  }
-
-  if (agentId === "competitor-activity") {
-    return (
-      <Block label="Concurrents à scanner">
-        <CompetitorConfig />
-      </Block>
-    );
-  }
-
   if (agentId === "job-change") {
     const min = (config.icpScoreMin as number | undefined) ?? 70;
     return (
@@ -259,50 +234,6 @@ function SpecificConfig({
     );
   }
 
-  if (agentId === "champion-tracker") {
-    const lifecycles = (config.lifecycles as string[] | undefined) ?? ["customer"];
-    return (
-      <Block label="Filtres HubSpot">
-        <p style={{ fontSize: 11, color: COLORS.ink3, margin: 0, marginBottom: 6 }}>
-          Sélectionne les lifecycle stages dont les contacts seront ajoutés au Radar comme champions.
-          Quand ils changent de boîte, tu reçois un intel automatiquement (push webhook).
-        </p>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {LIFECYCLES.map((l) => {
-            const sel = lifecycles.includes(l);
-            return (
-              <button
-                key={l}
-                type="button"
-                onClick={() =>
-                  setConfig((c) => ({
-                    ...c,
-                    lifecycles: sel ? lifecycles.filter((x) => x !== l) : [...lifecycles, l],
-                  }))
-                }
-                style={{
-                  padding: "4px 10px",
-                  fontSize: 11,
-                  fontWeight: 500,
-                  borderRadius: 99,
-                  border: `1px solid ${sel ? COLORS.brand : COLORS.line}`,
-                  background: sel ? COLORS.brandTint : COLORS.bgCard,
-                  color: sel ? COLORS.brand : COLORS.ink2,
-                  cursor: "pointer",
-                }}
-              >
-                {l}
-              </button>
-            );
-          })}
-        </div>
-      </Block>
-    );
-  }
-
-  // hiring-spike, ads-activity, funding-expansion, company-news : les entités
-  // suivies sont rendues par <AgentTrackedEntities /> au-dessus. Rien d'autre
-  // à configurer ici.
   return null;
 }
 
@@ -325,21 +256,6 @@ function Block({ label, children }: { label: string; children: React.ReactNode }
       {children}
     </section>
   );
-}
-
-function ta(): React.CSSProperties {
-  return {
-    width: "100%",
-    fontSize: 12,
-    fontFamily: "ui-monospace, monospace",
-    padding: 10,
-    border: `1px solid ${COLORS.line}`,
-    borderRadius: 8,
-    outline: "none",
-    resize: "vertical",
-    background: COLORS.bgCard,
-    color: COLORS.ink0,
-  };
 }
 
 function btnSecondary(): React.CSSProperties {
@@ -374,6 +290,3 @@ function btnPrimary(): React.CSSProperties {
   };
 }
 
-// Suppress unused-imports
-const _ExternalLink = ExternalLink;
-void _ExternalLink;

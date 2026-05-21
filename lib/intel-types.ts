@@ -1,28 +1,10 @@
 // ── Market Intel — types partagés ────────────────────────────────────────────
 
 export type SignalType =
-  | "funding"
-  | "hiring"
-  | "nomination"
-  | "expansion"
-  | "restructuring"
-  | "content"
   | "job_change"
-  | "linkedin_post"
-  | "competitor_engagement"
-  | "job_change_icp_match"
-  | "ads"
-  | "champion_change";
+  | "job_change_icp_match";
 
-export type AgentId =
-  | "job-change"
-  | "company-news"
-  | "competitor-activity"
-  | "hiring-spike"
-  | "funding-expansion"
-  | "champion-tracker"
-  | "intent-content"
-  | "ads-activity";
+export type AgentId = "job-change";
 
 export type ActionType = "email" | "linkedin" | "call" | "monitor";
 
@@ -163,6 +145,23 @@ export interface NetrowsCriteria {
   sectors?: string[];
   sizes?: string[];
   keywords?: string;
+  // Filtres avancés exposés via la doc Netrows /people/search
+  firstName?: string;
+  lastName?: string;
+  geo?: string; // LinkedIn geo ID (numérique). Résolu via /api/intel/enrich/netrows-locations.
+  geoName?: string; // Nom lisible de la ville, conservé pour réafficher dans la form.
+  schoolId?: string; // LinkedIn school ID
+  keywordSchool?: string; // ex: "Harvard", "Stanford"
+}
+
+export interface ComboLog {
+  company: string | null;
+  title: string | null;
+  status: "ok" | "no_match" | "rate_limit" | "credits" | "auth" | "error";
+  http_status: number | null;
+  items_count: number;
+  error: string | null;
+  duration_ms: number;
 }
 
 export type HubspotPreset =
@@ -240,6 +239,11 @@ export interface RadarProfile {
   source: ProfileSource;
   radar_active: boolean;
   is_champion: boolean;
+  hubspot_id: string | null;
+  email: string | null;
+  email_confidence: "high" | "medium" | "low" | null;
+  email_source: "hubspot" | "netrows" | null;
+  email_resolved_at: string | null;
   last_change_at: string | null;
   last_refreshed_at: string | null;
   last_snapshot: RadarSnapshot | null;

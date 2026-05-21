@@ -2,6 +2,8 @@
 
 import React, { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { useGmailStatus } from "@/lib/hooks/use-gmail-status";
+import { useOutreachCounts } from "@/lib/hooks/use-outreach-counts";
+import { ExchangesBadge } from "@/components/ui/exchanges-badge";
 import { useUser } from "@clerk/nextjs";
 import { Paperclip, Send, Save, X, Search, Loader2, Sparkles, RotateCcw, ChevronDown, ChevronRight, ChevronUp, Linkedin, Copy, Check, Mail, MailOpen, Phone, Calendar, MessageSquare } from "lucide-react";
 import Link from "next/link";
@@ -239,7 +241,7 @@ function FilterSelect({ value, onChange, label, children }: {
 
 // ── ProspectCard ───────────────────────────────────────────────────────────
 
-function ProspectCard({ result: r, onSelect }: { result: SearchResult; onSelect: () => void }) {
+function ProspectCard({ result: r, onSelect, exchanges }: { result: SearchResult; onSelect: () => void; exchanges: number }) {
   const [msgState, setMsgState] = useState<"idle" | "loading" | "done">("idle");
   const [msg, setMsg] = useState("");
   const [copied, setCopied] = useState(false);
@@ -305,6 +307,7 @@ function ProspectCard({ result: r, onSelect }: { result: SearchResult; onSelect:
           {r.industry && <span className="text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "#f5f5f5", color: "#999" }}>{r.industry}</span>}
         </div>
         <div className="flex flex-col items-end gap-0.5 shrink-0">
+          {exchanges > 0 && <ExchangesBadge count={exchanges} />}
           {r.lastContacted && (
             <span className="text-[9px]" style={{ color: "#bbb" }}>Dernier contact : {new Date(r.lastContacted).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" })}</span>
           )}
@@ -379,6 +382,10 @@ export default function ProspectingPage() {
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [totalResults, setTotalResults] = useState<number | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+
+  const searchEmails = React.useMemo(() => searchResults.map((r) => r.email).filter(Boolean), [searchResults]);
+  const searchHubspotIds = React.useMemo(() => searchResults.map((r) => r.id).filter(Boolean), [searchResults]);
+  const { countByEmail, countByHubspotId } = useOutreachCounts(searchEmails, searchHubspotIds);
 
   const [selectedContact, setSelectedContact] = useState<ContactDetails | null>(null);
   const [loadingDetails, setLoadingDetails] = useState(false);
@@ -492,6 +499,8 @@ export default function ProspectingPage() {
     fd.append("bcc", bcc.join(","));
     fd.append("subject", subject);
     fd.append("body", body);
+    fd.append("source", "prospecting");
+    if (selectedContact?.id) fd.append("hubspot_id", selectedContact.id);
     attachments.forEach((f) => fd.append("attachments", f));
     return fd;
   };
@@ -1368,7 +1377,12 @@ export default function ProspectingPage() {
                   <div className="space-y-3">
                     <div className="grid grid-cols-2 gap-2">
                       {searchResults.map((r) => (
-                        <ProspectCard key={r.id} result={r} onSelect={() => selectContact(r)} />
+                        <ProspectCard
+                          key={r.id}
+                          result={r}
+                          onSelect={() => selectContact(r)}
+                          exchanges={Math.max(countByEmail(r.email), countByHubspotId(r.id))}
+                        />
                       ))}
                     </div>
 

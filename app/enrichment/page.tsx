@@ -1,13 +1,14 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { Target } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
-import type { EnrichmentList, EnrichmentProfile, HubspotCriteria, NetrowsCriteria } from "@/lib/intel-types";
+import type { ComboLog, EnrichmentList, EnrichmentProfile, HubspotCriteria, NetrowsCriteria } from "@/lib/intel-types";
 import {
   useEnrichmentLists,
-  searchNetrows,
+  startNetrowsSearch,
+  pollNetrowsSearch,
   searchHubspot,
   resolveUsernames,
   findEmails,
@@ -16,24 +17,39 @@ import {
   deleteList,
 } from "@/lib/hooks/use-enrichment";
 import { useRadarStatus } from "@/lib/hooks/use-radar-status";
-import { CriteriaForm } from "./_components/criteria-form";
+import { IcpTargetsDrawer } from "@/components/icp-targets-drawer";
+import { CriteriaForm, DEFAULT_TITLES } from "./_components/criteria-form";
 import { HubspotFilters } from "./_components/hubspot-filters";
 import { ResultsTable } from "./_components/results-table";
 import { RadarTable } from "./_components/radar-table";
 import { SavedListsSidebar } from "./_components/saved-lists-sidebar";
 import { HubspotImportModal } from "./_components/hubspot-import-modal";
+import { ComboLogsPanel } from "./_components/combo-logs-panel";
+import { CsvImport } from "./_components/csv-import";
 
-type TabId = "netrows" | "hubspot" | "radar";
+type TabId = "netrows" | "hubspot" | "csv" | "radar";
 
-export default function IntelEnrichPage() {
+export default function EnrichmentPage() {
+  // Préfill depuis Watch List : /enrichment?source=watchlist&company=<nom>
+  // Le lazy initial state garantit que CriteriaForm reçoit dès le premier
+  // render le critère prérempli (companies + titles défaut).
+  const searchParams = useSearchParams();
+  const watchlistCompany =
+    searchParams?.get("source") === "watchlist" ? searchParams.get("company") : null;
+
   const [tab, setTab] = React.useState<TabId>("netrows");
+  const [icpOpen, setIcpOpen] = React.useState(false);
   const [profiles, setProfiles] = React.useState<EnrichmentProfile[]>([]);
-  const [lastCriteriaNetrows, setLastCriteriaNetrows] = React.useState<NetrowsCriteria | null>(null);
+  const [lastCriteriaNetrows, setLastCriteriaNetrows] = React.useState<NetrowsCriteria | null>(() =>
+    watchlistCompany ? { companies: [watchlistCompany], titles: DEFAULT_TITLES } : null,
+  );
   const [lastCriteriaHubspot, setLastCriteriaHubspot] = React.useState<HubspotCriteria | null>(null);
   const [activeListId, setActiveListId] = React.useState<string | null>(null);
   const [activeListSource, setActiveListSource] = React.useState<"netrows" | "hubspot">("netrows");
   const [searching, setSearching] = React.useState(false);
   const [adding, setAdding] = React.useState(false);
+  const [csvImporting, setCsvImporting] = React.useState(false);
+  const [csvResult, setCsvResult] = React.useState<string | null>(null);
   const [findingEmails, setFindingEmails] = React.useState(false);
   const [resolving, setResolving] = React.useState(false);
   const [resolvingKeys, setResolvingKeys] = React.useState<Set<string>>(new Set());
@@ -43,6 +59,15 @@ export default function IntelEnrichPage() {
     skippedByRadar: number;
     hasMore: boolean;
   } | null>(null);
+  const [searchProgress, setSearchProgress] = React.useState<{
+    done: number;
+    total: number;
+    found: number;
+    capped: { requested: number; limit: number } | null;
+    comboLogs: ComboLog[];
+  } | null>(null);
+  const [lastComboLogs, setLastComboLogs] = React.useState<ComboLog[]>([]);
+  const [logsOpen, setLogsOpen] = React.useState(false);
 
   const { lists, reload: reloadLists } = useEnrichmentLists();
   const { reload: reloadRadar } = useRadarStatus();
@@ -68,9 +93,25 @@ export default function IntelEnrichPage() {
   async function onSubmitNetrows(c: NetrowsCriteria) {
     setSearching(true);
     setError(null);
+    setSearchProgress(null);
+    setLastComboLogs([]);
     try {
-      const { profiles: items } = await searchNetrows(c);
-      setProfiles(items);
+      const { jobId, combosTotal, capped } = await startNetrowsSearch(c);
+      setSearchProgress({ done: 0, total: combosTotal, found: 0, capped, comboLogs: [] });
+      const result = await pollNetrowsSearch(jobId, (p) => {
+        setSearchProgress({
+          done: p.combosDone,
+          total: p.combosTotal,
+          found: p.profiles.length,
+          capped: p.capped,
+          comboLogs: p.comboLogs ?? [],
+        });
+      });
+      setLastComboLogs(result.comboLogs ?? []);
+      if (result.status === "error") {
+        throw new Error(result.error ?? "Erreur recherche");
+      }
+      setProfiles(result.profiles);
       setLastCriteriaNetrows(c);
       setActiveListSource("netrows");
       setActiveListId(null);
@@ -78,6 +119,7 @@ export default function IntelEnrichPage() {
       setError(e instanceof Error ? e.message : "Erreur");
     } finally {
       setSearching(false);
+      setSearchProgress(null);
     }
   }
 
@@ -204,6 +246,29 @@ export default function IntelEnrichPage() {
     }
   }
 
+  async function onImportCsv(profilesToImport: EnrichmentProfile[]) {
+    setCsvImporting(true);
+    setError(null);
+    setCsvResult(null);
+    try {
+      const r = await addToRadarBulk(profilesToImport);
+      await reloadRadar();
+      const parts: string[] = [];
+      if (r.added.length > 0) parts.push(`${r.added.length} ajouté${r.added.length > 1 ? "s" : ""}`);
+      if (r.resolvedCount > 0) parts.push(`${r.resolvedCount} LinkedIn résolu${r.resolvedCount > 1 ? "s" : ""}`);
+      if (r.skipped.length > 0) parts.push(`${r.skipped.length} déjà au Radar`);
+      if (r.unresolved.length > 0) parts.push(`${r.unresolved.length} LinkedIn introuvable${r.unresolved.length > 1 ? "s" : ""}`);
+      if (r.failed.length > 0) parts.push(`${r.failed.length} échec${r.failed.length > 1 ? "s" : ""}`);
+      const msg = parts.join(" · ");
+      if (r.unresolved.length > 0 || r.failed.length > 0) setError(msg);
+      else if (msg) setCsvResult(msg);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur import CSV");
+    } finally {
+      setCsvImporting(false);
+    }
+  }
+
   async function onSaveList() {
     const name = window.prompt("Nom de la liste ?", activeListId ? "Liste mise à jour" : "");
     if (!name) return;
@@ -252,25 +317,6 @@ export default function IntelEnrichPage() {
             gap: 12,
           }}
         >
-          <Link
-            href="/intel"
-            aria-label="Retour Market Intel"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              fontSize: 12,
-              padding: "6px 10px",
-              borderRadius: 8,
-              border: `1px solid ${COLORS.line}`,
-              background: COLORS.bgCard,
-              color: COLORS.ink2,
-              cursor: "pointer",
-              textDecoration: "none",
-            }}
-          >
-            <ArrowLeft size={13} /> Market Intel
-          </Link>
           <div>
             <h1 style={{ fontSize: 16, fontWeight: 600, color: COLORS.ink0, margin: 0, lineHeight: 1.2 }}>Enrichissement</h1>
             <p style={{ fontSize: 11, color: COLORS.ink3, margin: 0 }}>
@@ -278,26 +324,53 @@ export default function IntelEnrichPage() {
             </p>
           </div>
 
-          <div style={{ marginLeft: "auto", display: "flex", gap: 0, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: 2 }}>
-            {(["netrows", "hubspot", "radar"] as TabId[]).map((t) => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setTab(t)}
-                style={{
-                  padding: "6px 14px",
-                  fontSize: 12,
-                  fontWeight: 500,
-                  borderRadius: 6,
-                  border: "none",
-                  cursor: "pointer",
-                  background: tab === t ? COLORS.brand : "transparent",
-                  color: tab === t ? "white" : COLORS.ink2,
-                }}
-              >
-                {t === "netrows" ? "Recherche Netrows" : t === "hubspot" ? "Import HubSpot" : "Mon Radar"}
-              </button>
-            ))}
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            <button
+              type="button"
+              onClick={() => setIcpOpen(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "6px 10px",
+                fontSize: 12,
+                borderRadius: 8,
+                border: `1px solid ${COLORS.line}`,
+                background: COLORS.bgCard,
+                color: COLORS.ink2,
+                cursor: "pointer",
+              }}
+            >
+              <Target size={13} /> Jobs cibles
+            </button>
+
+            <div style={{ display: "flex", gap: 0, border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: 2 }}>
+              {(["netrows", "hubspot", "csv", "radar"] as TabId[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setTab(t)}
+                  style={{
+                    padding: "6px 14px",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    borderRadius: 6,
+                    border: "none",
+                    cursor: "pointer",
+                    background: tab === t ? COLORS.brand : "transparent",
+                    color: tab === t ? "white" : COLORS.ink2,
+                  }}
+                >
+                  {t === "netrows"
+                    ? "Recherche Netrows"
+                    : t === "hubspot"
+                    ? "Import HubSpot"
+                    : t === "csv"
+                    ? "Import CSV"
+                    : "Mon Radar"}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -325,6 +398,41 @@ export default function IntelEnrichPage() {
                 onSubmit={onSubmitNetrows}
                 isLoading={searching}
               />
+              {searchProgress && (
+                <div
+                  style={{
+                    margin: "12px 0",
+                    padding: "10px 14px",
+                    background: COLORS.bgSoft,
+                    border: `1px solid ${COLORS.line}`,
+                    borderRadius: 8,
+                    fontSize: 12,
+                    color: COLORS.ink2,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                  }}
+                >
+                  <span>
+                    Recherche en cours : <strong>{searchProgress.done}</strong> / {searchProgress.total} combinaisons
+                    {" · "}
+                    <strong>{searchProgress.found}</strong> profil{searchProgress.found > 1 ? "s" : ""} trouvé{searchProgress.found > 1 ? "s" : ""}
+                  </span>
+                  {searchProgress.capped && (
+                    <span style={{ color: COLORS.warn, fontWeight: 500 }}>
+                      ⚠ Tronqué à {searchProgress.capped.limit} / {searchProgress.capped.requested} combos
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {(() => {
+                const logs = searchProgress ? searchProgress.comboLogs : lastComboLogs;
+                if (logs.length === 0) return null;
+                return (
+                  <ComboLogsPanel logs={logs} open={logsOpen} onToggle={() => setLogsOpen((o) => !o)} />
+                );
+              })()}
               <ResultsTable
                 profiles={profiles}
                 onChange={setProfiles}
@@ -356,6 +464,26 @@ export default function IntelEnrichPage() {
             </>
           )}
 
+          {tab === "csv" && (
+            <>
+              {csvResult && (
+                <div
+                  style={{
+                    padding: "8px 12px",
+                    background: COLORS.okBg,
+                    color: COLORS.ok,
+                    fontSize: 12,
+                    borderRadius: 8,
+                    border: `1px solid ${COLORS.ok}33`,
+                  }}
+                >
+                  {csvResult}
+                </div>
+              )}
+              <CsvImport onImport={onImportCsv} isImporting={csvImporting} />
+            </>
+          )}
+
           {tab === "radar" && <RadarTable />}
         </div>
       </div>
@@ -370,6 +498,8 @@ export default function IntelEnrichPage() {
           onConfirm={confirmImport}
         />
       )}
+
+      <IcpTargetsDrawer open={icpOpen} onClose={() => setIcpOpen(false)} sections={["roles"]} />
     </div>
   );
 }
