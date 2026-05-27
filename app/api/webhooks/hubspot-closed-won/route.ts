@@ -19,23 +19,47 @@ function verifyHubspotSignature(req: NextRequest, rawBody: string): boolean {
 
   const signature = req.headers.get("x-hubspot-signature-v3");
   const timestamp = req.headers.get("x-hubspot-request-timestamp");
-  if (!signature || !timestamp) return false;
+  if (!signature || !timestamp) {
+    console.warn("[hubspot-closed-won] missing signature or timestamp headers");
+    return false;
+  }
 
   // Rejet des replays > 5 min (recommandation HubSpot).
   const ageMs = Date.now() - Number(timestamp);
-  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 5 * 60 * 1000) return false;
-
-  // L'URI utilisée par HubSpot dans l'HMAC inclut protocol + host + path.
-  // En prod sur Netlify la requête arrive sur HTTPS via le host public.
-  const uri = `${req.nextUrl.protocol}//${req.nextUrl.host}${req.nextUrl.pathname}`;
-  const message = "POST" + uri + rawBody + timestamp;
-  const expected = crypto.createHmac("sha256", secret).update(message).digest("base64");
-
-  try {
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-  } catch {
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 5 * 60 * 1000) {
+    console.warn(`[hubspot-closed-won] timestamp out of range: ageMs=${ageMs}`);
     return false;
   }
+
+  // L'URI utilisée par HubSpot dans l'HMAC est l'URL exacte tapée dans la config
+  // de la subscription. Sur Netlify req.nextUrl peut différer (proxy, rewrites),
+  // donc on autorise un override via HUBSPOT_WEBHOOK_TARGET_URL.
+  const overrideUri = process.env.HUBSPOT_WEBHOOK_TARGET_URL?.trim();
+  const computedUri = `${req.nextUrl.protocol}//${req.nextUrl.host}${req.nextUrl.pathname}`;
+  const candidates = overrideUri ? [overrideUri, computedUri] : [computedUri];
+
+  for (const uri of candidates) {
+    const message = "POST" + uri + rawBody + timestamp;
+    const expected = crypto.createHmac("sha256", secret).update(message).digest("base64");
+    try {
+      if (crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
+        return true;
+      }
+    } catch {
+      // longueurs différentes -> timingSafeEqual throw, on ignore et on essaie le suivant
+    }
+  }
+
+  // Diagnostic : aucun candidat ne matche. On log le hash des entrées pour
+  // identifier la cause sans fuiter le secret ni le body.
+  const debugHash = (s: string) =>
+    crypto.createHash("sha256").update(s).digest("hex").slice(0, 12);
+  console.warn(
+    `[hubspot-closed-won] signature mismatch. candidates=${JSON.stringify(candidates)} ` +
+      `bodyHash=${debugHash(rawBody)} bodyLen=${rawBody.length} ` +
+      `receivedSigPrefix=${signature.slice(0, 10)}... timestamp=${timestamp}`,
+  );
+  return false;
 }
 
 type HubspotWebhookEvent = {
