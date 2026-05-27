@@ -57,6 +57,84 @@ export async function listClaapRecordings(limit = 30): Promise<ClaapRecording[]>
   return data.result?.recordings ?? [];
 }
 
+// Réponse Claap "list recordings" — la forme exacte du curseur varie selon
+// la version d'API. On essaie plusieurs clés communes (`cursor`, `next`,
+// `nextCursor`) et on tombe sur la première qui répond.
+type ListRecordingsResponse = {
+  result?: {
+    recordings?: ClaapRecording[];
+    cursor?: string | null;
+    next?: string | null;
+    nextCursor?: string | null;
+    hasMore?: boolean;
+  };
+};
+
+function extractCursor(res: ListRecordingsResponse): string | null {
+  const r = res.result ?? {};
+  return r.cursor ?? r.next ?? r.nextCursor ?? null;
+}
+
+/**
+ * Paginate les recordings Claap au-delà de la simple `listClaapRecordings`.
+ *
+ * Stratégie :
+ *  - On fetch page par page (100 items / page = max raisonnable côté Claap),
+ *    on suit le curseur retourné s'il existe (`?after=<cursor>`),
+ *  - On arrête tôt si `shouldContinue(lastRec)` retourne false — utile quand
+ *    on cherche un deal récent et qu'on n'a pas envie de remonter à 2022.
+ *  - On cappe absolument à `maxTotal` (default 1000) et à `MAX_PAGES` (10)
+ *    pour pas spammer Claap sur un workspace énorme.
+ *
+ * Retourne tous les recordings collectés. L'appelant filtre ensuite par
+ * critères métier (participant, titre…).
+ */
+export async function listClaapRecordingsPaginated(opts: {
+  maxTotal?: number;
+  pageSize?: number;
+  /** Retourne `false` pour stopper la pagination après la page courante. */
+  shouldContinue?: (lastRec: ClaapRecording) => boolean;
+}): Promise<ClaapRecording[]> {
+  const maxTotal = Math.max(1, Math.min(5000, opts.maxTotal ?? 1000));
+  const pageSize = Math.max(1, Math.min(100, opts.pageSize ?? 100));
+  const MAX_PAGES = 10;
+
+  const all: ClaapRecording[] = [];
+  let cursor: string | null = null;
+  let page = 0;
+
+  while (all.length < maxTotal && page < MAX_PAGES) {
+    page++;
+    const qs = new URLSearchParams({ limit: String(pageSize) });
+    if (cursor) qs.set("after", cursor);
+
+    let resp: ListRecordingsResponse;
+    try {
+      resp = await claapFetch<ListRecordingsResponse>(`/recordings?${qs.toString()}`);
+    } catch (e) {
+      console.warn(`[listClaapRecordingsPaginated] page ${page} failed:`, e instanceof Error ? e.message : e);
+      break;
+    }
+
+    const recs = resp.result?.recordings ?? [];
+    if (recs.length === 0) break;
+    all.push(...recs);
+
+    // Early stop si la condition métier est satisfaite par le dernier rec
+    // de la page (typiquement : trop ancien pour ce deal).
+    if (opts.shouldContinue && !opts.shouldContinue(recs[recs.length - 1])) break;
+
+    const nextCursor = extractCursor(resp);
+    // Si l'API ne renvoie aucun curseur ET aucun hasMore=true, on considère
+    // qu'on est sur une endpoint mono-page : on s'arrête.
+    if (!nextCursor && resp.result?.hasMore !== true) break;
+    if (!nextCursor) break;
+    cursor = nextCursor;
+  }
+
+  return all.slice(0, maxTotal);
+}
+
 export async function getClaapRecording(id: string): Promise<ClaapRecording | null> {
   const data = await claapFetch<{ result?: { recording?: ClaapRecording } }>(
     `/recordings/${encodeURIComponent(id)}`,
@@ -295,4 +373,149 @@ export function extractExternalParticipants(
       email: p.email.toLowerCase(),
       attended: p.attended ?? null,
     }));
+}
+
+// ── Recherche multi-critères pour le chatbot ─────────────────────────────────
+
+export type ClaapMeetingMatch = {
+  recording_id: string;
+  title: string | null;
+  started_at: string | null;
+  ended_at: string | null;
+  duration_seconds: number | null;
+  url: string | null;
+  participants: { name: string | null; email: string | null; attended: boolean | null }[];
+};
+
+function recordingStartMs(rec: ClaapRecording): number | null {
+  const iso = rec.meeting?.startingAt ?? rec.createdAt ?? null;
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Recherche des recordings Claap par filtres simples (participant_email,
+ * participant_domain, title_query, since, until). Tous les filtres sont
+ * optionnels et combinables (AND). Pagine Claap et filtre en mémoire car
+ * l'API ne supporte pas ces filtres côté serveur.
+ *
+ * Early-stop : si `since` est passé, on arrête la pagination dès qu'une page
+ * se termine avant cette date (les recordings sont triés du + récent au +
+ * ancien).
+ */
+export async function searchClaapMeetings(opts: {
+  participant_email?: string;
+  participant_domain?: string;
+  /** Liste de domaines acceptés (OR). Utile pour matcher un deal HubSpot qui
+   * a plusieurs domaines externes (company.domain + contacts.email). */
+  participant_domains?: string[];
+  title_query?: string;
+  since?: string;
+  until?: string;
+  limit?: number;
+}): Promise<ClaapMeetingMatch[]> {
+  const limit = Math.max(1, Math.min(50, opts.limit ?? 20));
+  const sinceMs = opts.since ? new Date(opts.since).getTime() : null;
+  const untilMs = opts.until ? new Date(opts.until).getTime() : null;
+  const emailLc = opts.participant_email?.toLowerCase().trim() || null;
+  const domainLcSet = new Set<string>();
+  if (opts.participant_domain) {
+    const d = opts.participant_domain.toLowerCase().trim().replace(/^@/, "");
+    if (d) domainLcSet.add(d);
+  }
+  for (const d of opts.participant_domains ?? []) {
+    const norm = d?.toLowerCase().trim().replace(/^@/, "");
+    if (norm) domainLcSet.add(norm);
+  }
+  const titleLc = opts.title_query?.toLowerCase().trim() || null;
+
+  const recordings = await listClaapRecordingsPaginated({
+    maxTotal: 1000,
+    pageSize: 100,
+    shouldContinue: (lastRec) => {
+      if (sinceMs === null) return true;
+      const ms = recordingStartMs(lastRec);
+      if (ms === null) return true;
+      return ms >= sinceMs;
+    },
+  });
+
+  const matches: ClaapMeetingMatch[] = [];
+  for (const rec of recordings) {
+    const ms = recordingStartMs(rec);
+    if (sinceMs !== null && ms !== null && ms < sinceMs) continue;
+    if (untilMs !== null && ms !== null && ms > untilMs) continue;
+
+    if (titleLc && !(rec.title?.toLowerCase() ?? "").includes(titleLc)) continue;
+
+    if (emailLc || domainLcSet.size > 0) {
+      let participantOk = false;
+      for (const p of rec.meeting?.participants ?? []) {
+        const peLc = p.email?.toLowerCase().trim();
+        if (!peLc) continue;
+        if (emailLc && peLc === emailLc) { participantOk = true; break; }
+        if (domainLcSet.size > 0) {
+          const peDom = peLc.split("@")[1];
+          if (peDom && domainLcSet.has(peDom)) { participantOk = true; break; }
+        }
+      }
+      if (!participantOk) continue;
+    }
+
+    matches.push({
+      recording_id: rec.id,
+      title: rec.title ?? null,
+      started_at: rec.meeting?.startingAt ?? rec.createdAt ?? null,
+      ended_at: rec.meeting?.endingAt ?? null,
+      duration_seconds: rec.durationSeconds ?? null,
+      url: rec.url ?? null,
+      participants: (rec.meeting?.participants ?? []).map((p) => ({
+        name: p.name ?? null,
+        email: p.email ?? null,
+        attended: p.attended ?? null,
+      })),
+    });
+    if (matches.length >= limit) break;
+  }
+  return matches;
+}
+
+/**
+ * Charge le transcript texte d'un recording Claap, avec ses métadonnées
+ * principales. Retourne null si le recording n'existe pas, ou un objet avec
+ * `transcript_text` = null si le transcript n'est pas encore disponible.
+ */
+export async function fetchClaapMeetingDetail(recordingId: string): Promise<
+  | (ClaapMeetingMatch & { transcript_text: string | null; transcript_language: string | null })
+  | null
+> {
+  const rec = await getClaapRecording(recordingId);
+  if (!rec) return null;
+  const transcriptUrl = pickTranscriptUrl(rec);
+  let transcriptText: string | null = null;
+  if (transcriptUrl) {
+    try {
+      const res = await fetch(transcriptUrl, { signal: AbortSignal.timeout(10000) });
+      if (res.ok) transcriptText = await res.text();
+    } catch {
+      transcriptText = null;
+    }
+  }
+  const activeTranscript = rec.transcripts?.find((t) => t.isActive) ?? rec.transcripts?.[0] ?? null;
+  return {
+    recording_id: rec.id,
+    title: rec.title ?? null,
+    started_at: rec.meeting?.startingAt ?? rec.createdAt ?? null,
+    ended_at: rec.meeting?.endingAt ?? null,
+    duration_seconds: rec.durationSeconds ?? null,
+    url: rec.url ?? null,
+    participants: (rec.meeting?.participants ?? []).map((p) => ({
+      name: p.name ?? null,
+      email: p.email ?? null,
+      attended: p.attended ?? null,
+    })),
+    transcript_text: transcriptText,
+    transcript_language: activeTranscript?.langIso2 ?? null,
+  };
 }

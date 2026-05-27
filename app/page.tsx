@@ -89,6 +89,8 @@ export default function IntelligencePage() {
     list_drive_folder:         "Navigation dans Drive…",
     search_gmail:              "Recherche dans tes emails…",
     read_gmail_message:        "Lecture de l'email…",
+    search_claap_meetings:     "Recherche des meetings Claap…",
+    get_claap_meeting_transcript: "Lecture du transcript Claap…",
   }), []);
 
   const bottomRef = useRef<HTMLDivElement>(null);

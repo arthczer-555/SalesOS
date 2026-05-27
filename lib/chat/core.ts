@@ -20,6 +20,16 @@ import { decrypt } from "@/lib/crypto";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
 import { searchGmailMessages, getGmailMessage } from "@/lib/gmail";
+import { searchClaapMeetings, fetchClaapMeetingDetail } from "@/lib/claap";
+import { fetchDealContext } from "@/lib/hubspot";
+
+const PUBLIC_EMAIL_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.fr",
+  "yahoo.com", "yahoo.fr", "icloud.com", "me.com", "live.com", "live.fr",
+  "msn.com", "protonmail.com", "proton.me", "pm.me",
+  "free.fr", "orange.fr", "sfr.fr", "wanadoo.fr", "laposte.net", "bbox.fr",
+  "neuf.fr", "aol.com",
+]);
 import {
   getProfile,
   searchPeople,
@@ -566,6 +576,36 @@ export const TOOLS: Anthropic.Tool[] = [
       required: ["company", "title"],
     },
   },
+  {
+    name: "search_claap_meetings",
+    description:
+      "Recherche des réunions/calls enregistrés sur Claap. Filtres combinables : participant_email, participant_domain (ex: 'acme.com'), title_query (mot dans le titre), since/until (ISO date YYYY-MM-DD), deal_id (HubSpot, matche meetings via participants + nom company). Retourne une liste légère (id, titre, date, participants) sans transcript. Utilise ensuite get_claap_meeting_transcript pour récupérer le contenu d'un meeting précis.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        participant_email: { type: "string", description: "Email d'un participant exact (ex: 'jean@acme.com')" },
+        participant_domain: { type: "string", description: "Domaine email d'un participant (ex: 'acme.com')" },
+        title_query: { type: "string", description: "Sous-chaîne à matcher dans le titre du meeting (insensible à la casse)" },
+        since: { type: "string", description: "Date ISO de début (ex: '2026-05-01'). Inclusif." },
+        until: { type: "string", description: "Date ISO de fin (ex: '2026-05-27'). Inclusif." },
+        deal_id: { type: "string", description: "ID HubSpot d'un deal : match automatique via participants + nom company (réutilise la logique de la fiche client). Combinable avec les autres filtres pour restreindre encore." },
+        limit: { type: "number", description: "Nombre max de résultats (défaut : 20, max : 50)" },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "get_claap_meeting_transcript",
+    description:
+      "Récupère le transcript complet et les métadonnées d'un meeting Claap précis. Utilise cet outil après search_claap_meetings pour lire/résumer/citer le contenu d'un call. Le transcript peut être long : ne demande qu'un meeting à la fois.",
+    input_schema: {
+      type: "object" as const,
+      properties: {
+        recording_id: { type: "string", description: "ID Claap du recording (obtenu via search_claap_meetings)" },
+      },
+      required: ["recording_id"],
+    },
+  },
 ];
 
 // ── Tool execution ────────────────────────────────────────────────────────────
@@ -1107,6 +1147,86 @@ async function executeTool(
     case "find_decision_maker_email": {
       try { const r = await findDecisionMakerEmail({ company: input.company as string, title: input.title as string }); return JSON.stringify(r.data ?? { email: null }); }
       catch (e) { return `Erreur decision maker : ${e instanceof Error ? e.message : "inconnue"}`; }
+    }
+    case "search_claap_meetings": {
+      if (!process.env.CLAAP_API_TOKEN) {
+        return "Erreur : intégration Claap non configurée (CLAAP_API_TOKEN manquant).";
+      }
+      const dealId = (input.deal_id as string | undefined)?.trim();
+      const participantEmail = (input.participant_email as string | undefined)?.trim();
+      const participantDomain = (input.participant_domain as string | undefined)?.trim();
+      const titleQuery = (input.title_query as string | undefined)?.trim();
+      const since = (input.since as string | undefined)?.trim();
+      const until = (input.until as string | undefined)?.trim();
+      const limit = Math.max(1, Math.min(50, (input.limit as number | undefined) ?? 20));
+
+      try {
+        if (dealId) {
+          onProgress(`Recherche des meetings Claap du deal ${dealId}...`);
+          const deal = await fetchDealContext(dealId);
+          if (!deal) return `Deal HubSpot ${dealId} introuvable.`;
+
+          const domains = new Set<string>();
+          const companyDomain = deal.company?.domain?.toLowerCase().trim();
+          if (companyDomain && !PUBLIC_EMAIL_DOMAINS.has(companyDomain)) domains.add(companyDomain);
+          for (const c of deal.contacts ?? []) {
+            const dom = c.email?.toLowerCase().trim().split("@")[1];
+            if (dom && !PUBLIC_EMAIL_DOMAINS.has(dom)) domains.add(dom);
+          }
+          if (domains.size === 0 && !titleQuery) {
+            return JSON.stringify({
+              deal_id: dealId,
+              deal_name: deal.name,
+              count: 0,
+              meetings: [],
+              note: "Aucun domaine externe trouvé sur le deal (company.domain + contacts.email tous vides ou publics). Précise un title_query ou un participant_email pour matcher.",
+            });
+          }
+
+          const matches = await searchClaapMeetings({
+            participant_domains: Array.from(domains),
+            title_query: titleQuery,
+            since,
+            until,
+            limit,
+          });
+          return JSON.stringify({
+            deal_id: dealId,
+            deal_name: deal.name,
+            domains_used: Array.from(domains),
+            count: matches.length,
+            meetings: matches,
+          });
+        }
+
+        onProgress(`Recherche dans les meetings Claap...`);
+        const matches = await searchClaapMeetings({
+          participant_email: participantEmail,
+          participant_domain: participantDomain,
+          title_query: titleQuery,
+          since,
+          until,
+          limit,
+        });
+        return JSON.stringify({ count: matches.length, meetings: matches });
+      } catch (e) {
+        return `Erreur Claap search : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
+    }
+    case "get_claap_meeting_transcript": {
+      if (!process.env.CLAAP_API_TOKEN) {
+        return "Erreur : intégration Claap non configurée (CLAAP_API_TOKEN manquant).";
+      }
+      const recordingId = (input.recording_id as string | undefined)?.trim();
+      if (!recordingId) return "Erreur : recording_id requis.";
+      try {
+        onProgress(`Chargement du transcript Claap ${recordingId}...`);
+        const detail = await fetchClaapMeetingDetail(recordingId);
+        if (!detail) return `Meeting Claap ${recordingId} introuvable.`;
+        return JSON.stringify(detail);
+      } catch (e) {
+        return `Erreur Claap transcript : ${e instanceof Error ? e.message : "inconnue"}`;
+      }
     }
     default:
       return "Outil inconnu.";
