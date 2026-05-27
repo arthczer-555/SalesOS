@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifySlackSignature } from "@/lib/slack/verify";
-import { getUserInfo, postMessage, publishHomeView } from "@/lib/slack/api";
+import { getUserInfo, publishHomeView } from "@/lib/slack/api";
 import { buildHomeView } from "@/lib/slack/home-view";
 
 export const dynamic = "force-dynamic";
@@ -16,12 +16,13 @@ export const dynamic = "force-dynamic";
  *
  * Contraintes Slack :
  *  - ACK 200 en moins de 3s sinon retry automatique.
- *  - Signature HMAC-SHA256 vérifiée avec SLACK_SIGNING_SECRET (cf. verify.ts).
+ *  - Signature HMAC-SHA256 vérifiée avec SLACK_SIGNING_SECRET.
  *  - Le body doit être lu BRUT (req.text()) pour que la signature matche.
  *
- * Pour les events lourds (CoachelloGPT = boucle agentic 30s-2min), on ACK
- * immédiatement et on délègue à une Background Function Netlify. Cette
- * partie est stubée pour l'instant — branchement dans une PR suivante.
+ * Pour les events lourds (DMs/mentions → boucle agentic 30s-2min), on ACK
+ * immédiatement et on délègue à la Background Function Netlify
+ * `slack-chat-background`. Elle poste un placeholder dans Slack et fait du
+ * chat.update progressif au fur et à mesure que les tools sont appelés.
  */
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
@@ -42,40 +43,51 @@ export async function POST(req: NextRequest) {
     return new NextResponse("invalid json", { status: 400 });
   }
 
-  // ── Challenge initial Slack ─────────────────────────────────────────────
   if (payload.type === "url_verification") {
     return NextResponse.json({ challenge: payload.challenge });
   }
 
-  // ── Event callback ──────────────────────────────────────────────────────
   if (payload.type === "event_callback" && payload.event) {
     const event = payload.event;
 
-    // Slack retry si on ne répond pas en 3s. On dispatch en fire-and-forget
-    // pour les events qui nécessitent un travail long. Pour Home Tab, c'est
-    // assez rapide pour rester en sync.
     try {
       if (event.type === "app_home_opened" && event.tab === "home") {
         await handleAppHomeOpened(event);
         return NextResponse.json({ ok: true });
       }
 
+      // ── DM directe au bot ────────────────────────────────────────────────
       if (event.type === "message" && event.channel_type === "im") {
-        // Skip les messages du bot lui-même (sinon boucle infinie)
         if (event.bot_id || event.subtype === "bot_message") {
+          // Skip nos propres messages (sinon boucle infinie)
           return NextResponse.json({ ok: true });
         }
-        await handleUserMessage(event, "im");
+        await dispatchToBackground(req, {
+          channel: event.channel!,
+          threadTs: event.thread_ts ?? "",
+          slackUserId: event.user!,
+          text: event.text ?? "",
+          teamId: payload.team_id,
+        });
         return NextResponse.json({ ok: true });
       }
 
+      // ── @mention du bot dans un canal ────────────────────────────────────
       if (event.type === "app_mention") {
-        await handleUserMessage(event, "mention");
+        const cleaned = stripBotMention(event.text ?? "");
+        await dispatchToBackground(req, {
+          channel: event.channel!,
+          // Toujours répondre en thread sur les mentions pour pas polluer le canal
+          threadTs: event.thread_ts ?? event.ts ?? "",
+          slackUserId: event.user!,
+          text: cleaned,
+          teamId: payload.team_id,
+        });
         return NextResponse.json({ ok: true });
       }
     } catch (e) {
       console.error("[slack/events] handler error:", e);
-      // On répond quand même 200 pour éviter le retry storm Slack.
+      // ACK 200 quand même pour éviter le retry storm.
       return NextResponse.json({ ok: true });
     }
   }
@@ -93,7 +105,6 @@ async function handleAppHomeOpened(event: SlackEvent) {
   try {
     const info = await getUserInfo(userId);
     userName = info.profile?.display_name || info.profile?.real_name || info.real_name || null;
-    // Slack renvoie parfois display_name = "" — on retombe sur real_name
     if (userName) userName = userName.split(" ")[0];
   } catch (e) {
     console.warn("[slack/events] users.info failed:", e);
@@ -106,25 +117,54 @@ async function handleAppHomeOpened(event: SlackEvent) {
 }
 
 /**
- * Placeholder : pour l'instant on répond juste un accusé de réception.
- * Le branchement vers `runChat()` + Background Function viendra dans la
- * prochaine étape, une fois la route déployée et la Request URL validée
- * par Slack.
+ * Déclenche la Background Function Netlify qui gère l'agentic loop.
+ * En dev (NETLIFY non set), exécute en inline (sans timeout strict du
+ * Next dev server). En prod, fire-and-forget POST avec timeout court
+ * pour qu'on ACK Slack en <3s.
  */
-async function handleUserMessage(event: SlackEvent, source: "im" | "mention") {
-  const channel = event.channel;
-  const text = event.text ?? "";
-  if (!channel) return;
+async function dispatchToBackground(
+  req: NextRequest,
+  payload: {
+    channel: string;
+    threadTs: string;
+    slackUserId: string;
+    text: string;
+    teamId?: string;
+  },
+) {
+  const internalSecret = process.env.INTERNAL_SECRET;
+  if (!internalSecret) {
+    console.error("[slack/events] INTERNAL_SECRET manquant");
+    return;
+  }
 
-  const placeholder = source === "mention"
-    ? "👋 Je suis en train d'être branché à CoachelloGPT. Bientôt, je répondrai pour de vrai à tes mentions !"
-    : "👋 Je suis en train d'être branché à CoachelloGPT. Bientôt, je répondrai pour de vrai à tes DMs ! (message reçu : " + text.slice(0, 80) + ")";
+  const triggerUrl = `${req.nextUrl.origin}/.netlify/functions/slack-chat-background`;
+  try {
+    await fetch(triggerUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-internal-secret": internalSecret,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("aborted") && !msg.includes("timeout")) {
+      console.error("[slack/events] bg dispatch failed:", msg);
+    }
+    // Le timeout volontaire est normal — la bg fn continue en arrière-plan.
+  }
+}
 
-  await postMessage({
-    channel,
-    text: placeholder,
-    thread_ts: source === "mention" ? event.ts : undefined,
-  });
+/**
+ * Retire le `<@U12345>` du texte d'une @mention pour passer à Claude le
+ * contenu utile sans bruit. Slack envoie `<@UXXXX> ta question` quand on
+ * mentionne le bot.
+ */
+function stripBotMention(text: string): string {
+  return text.replace(/<@U[A-Z0-9]+>\s*/g, "").trim();
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
