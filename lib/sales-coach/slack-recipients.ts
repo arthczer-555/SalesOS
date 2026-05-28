@@ -164,20 +164,20 @@ export function formatTestModeHeader(args: {
   const { theoreticalRecipientEmails, audience, kind } = args;
 
   if (theoreticalRecipientEmails.length === 0) {
-    return ":test_tube: *Test* — fallback : aucun participant Coachello détecté dans ce meeting, donc envoyé à Arthur en mode prod aussi.";
+    return ":test_tube: *Test* - fallback: no Coachello participant detected in this meeting, so in prod mode it would still go to Arthur.";
   }
 
   const emails = theoreticalRecipientEmails.join(", ");
 
   if (kind === "coaching") {
-    return `:test_tube: *Test* — en mode prod, ce message serait envoyé en DM à : ${emails}`;
+    return `:test_tube: *Test* - in prod mode, this message would be sent as a DM to: ${emails}`;
   }
 
   const channel = forwardChannelForAudience(audience);
   if (!channel) {
-    return `:test_tube: *Test* — en mode prod, ce message serait envoyé en DM à : ${emails}`;
+    return `:test_tube: *Test* - in prod mode, this message would be sent as a DM to: ${emails}`;
   }
-  return `:test_tube: *Test* — en mode prod, ce message serait envoyé en DM à : ${emails} (qui devraient ensuite le forward dans *${channel}*)`;
+  return `:test_tube: *Test* - in prod mode, this message would be sent as a DM to: ${emails} (who should then forward it in *${channel}*)`;
 }
 
 /**
@@ -191,7 +191,7 @@ export function formatTestModeHeader(args: {
 export function formatForwardChannelHeader(audience: Audience | null): string | null {
   const channel = forwardChannelForAudience(audience);
   if (!channel) return null;
-  return `:clipboard: *Modifie ce message et envoie-le dans ${channel}*`;
+  return `:clipboard: *Tweak this message if needed and post it in ${channel}*`;
 }
 
 function forwardChannelForAudience(audience: Audience | null): string | null {

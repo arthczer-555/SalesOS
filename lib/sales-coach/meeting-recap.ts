@@ -290,10 +290,10 @@ function formatRecapMessage(args: {
   if (ownerName) headerParts.push(ownerName);
 
   const dateStr = meetingStartedAt
-    ? new Date(meetingStartedAt).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" })
+    ? new Date(meetingStartedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
     : null;
   const subtitleParts: string[] = [];
-  if (dateStr) subtitleParts.push(`Meeting du ${dateStr}`);
+  if (dateStr) subtitleParts.push(`Meeting on ${dateStr}`);
   if (meetingTitle) subtitleParts.push(`"${meetingTitle}"`);
 
   const lines: string[] = [
@@ -326,7 +326,7 @@ function formatRecapMessage(args: {
   }
 
   if (audience === "prospect" && dealId && appUrl) {
-    lines.push(``, `<${appUrl}/deals?dealId=${encodeURIComponent(dealId)}|Ouvrir le deal dans SalesOS →>`);
+    lines.push(``, `<${appUrl}/deals?dealId=${encodeURIComponent(dealId)}|Open deal in SalesOS →>`);
   }
 
   return lines.join("\n");

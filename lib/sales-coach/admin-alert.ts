@@ -100,23 +100,23 @@ export async function sendManualDealAlert(
 
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.URL || "";
   const date = ctx.meetingStartedAt
-    ? new Date(ctx.meetingStartedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
+    ? new Date(ctx.meetingStartedAt).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })
     : null;
   const participantsLine = ctx.participantEmails.length > 0
     ? ctx.participantEmails.join(", ")
-    : "(aucun participant externe identifié)";
+    : "(no external participant identified)";
 
   const lines: string[] = [
-    `:warning: *Meeting Claap sans deal HubSpot* -- résolution manuelle nécessaire`,
+    `:warning: *Claap meeting with no HubSpot deal* - manual association needed`,
     ``,
-    `*Meeting :* ${ctx.meetingTitle ?? "Sans titre"}${date ? ` · ${date}` : ""}`,
-    `*Participants externes :* ${participantsLine}`,
+    `*Meeting:* ${ctx.meetingTitle ?? "Untitled"}${date ? ` · ${date}` : ""}`,
+    `*External participants:* ${participantsLine}`,
   ];
   if (ctx.recorderEmail) {
-    lines.push(`*Recorder :* ${ctx.recorderEmail}`);
+    lines.push(`*Recorder:* ${ctx.recorderEmail}`);
   }
   if (appUrl) {
-    lines.push(``, `<${appUrl}/sales-coach?id=${ctx.analysisId}|Associer un deal et lancer l'analyse →>`);
+    lines.push(``, `<${appUrl}/sales-coach?id=${ctx.analysisId}|Link a deal and start the analysis →>`);
   }
   const body = lines.join("\n");
 
@@ -152,11 +152,11 @@ function formatTestHeader(
   arthur: MeetingRecipient | null,
 ): string {
   if (internal.length === 0) {
-    return ":test_tube: *Test* -- fallback : aucun participant Coachello détecté, en mode prod l'alerte serait envoyée à Arthur seul.";
+    return ":test_tube: *Test* - fallback: no Coachello participant detected, in prod mode the alert would go to Arthur only.";
   }
   const targets = [...internal.map((r) => r.email)];
   if (arthur && !internal.some((r) => r.memberId === arthur.memberId)) {
-    targets.push(`${arthur.email} (copie)`);
+    targets.push(`${arthur.email} (cc)`);
   }
-  return `:test_tube: *Test* -- en mode prod, cette alerte serait envoyée en DM à : ${targets.join(", ")}`;
+  return `:test_tube: *Test* - in prod mode, this alert would be sent as a DM to: ${targets.join(", ")}`;
 }

@@ -56,7 +56,7 @@ function formatAnalysisDebrief(args: {
   const isClient = audience === "client";
 
   const date = meetingStartedAt
-    ? new Date(meetingStartedAt).toLocaleString("fr-FR", { dateStyle: "short", timeStyle: "short" })
+    ? new Date(meetingStartedAt).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })
     : "";
   const kindLabel = meetingKind
     ? isClient
@@ -65,10 +65,10 @@ function formatAnalysisDebrief(args: {
     : null;
 
   const headerEmoji = isClient ? ":handshake:" : ":dart:";
-  const headerTitle = isClient ? "DEBRIEF CS COACHING" : "DEBRIEF COACHING";
+  const headerTitle = isClient ? "CS COACHING DEBRIEF" : "COACHING DEBRIEF";
   const prioritiesLabel = isClient
-    ? "Top 3 actions pour le prochain touchpoint"
-    : "Top 3 actions pour le prochain call";
+    ? "Top 3 actions for the next touchpoint"
+    : "Top 3 actions for the next call";
 
   const dealLabel = dealName.trim();
   const headerLine = `${headerEmoji} *${headerTitle}${dealLabel ? ` : ${dealLabel}` : ""}*${dealStage ? ` · _${dealStage}_` : ""}`;
@@ -81,10 +81,10 @@ function formatAnalysisDebrief(args: {
 
   const lines: string[] = [headerLine];
   if (subtitleParts.length > 0) lines.push(subtitleParts.join(" · "));
-  lines.push(``, `*Note globale :* ${scoreGlobal}/10`);
+  lines.push(``, `*Overall score:* ${scoreGlobal}/10`);
 
   if (analysis.summary?.trim()) {
-    lines.push(``, `*Synthèse*`, analysis.summary.trim());
+    lines.push(``, `*Summary*`, analysis.summary.trim());
   }
 
   // extractStringArray, parce que Haiku char-by-char stringifie parfois ces
@@ -93,13 +93,13 @@ function formatAnalysisDebrief(args: {
   // un shape cassé. Cohérent avec le rendu UI (analysis-detail, synthesis-tab).
   const strengths = extractStringArray(analysis.strengths).map((s) => s.trim()).filter(Boolean);
   if (strengths.length > 0) {
-    lines.push(``, `*Points forts*`);
+    lines.push(``, `*Strengths*`);
     for (const s of strengths) lines.push(`• ${s}`);
   }
 
   const weaknesses = extractStringArray(analysis.weaknesses).map((w) => w.trim()).filter(Boolean);
   if (weaknesses.length > 0) {
-    lines.push(``, `*À travailler*`);
+    lines.push(``, `*Areas to improve*`);
     for (const w of weaknesses) lines.push(`• ${w}`);
   }
 
@@ -110,7 +110,7 @@ function formatAnalysisDebrief(args: {
   }
 
   if (appUrl) {
-    lines.push(``, `<${appUrl}/sales-coach?id=${analysisId}|Voir l'analyse complète>`);
+    lines.push(``, `<${appUrl}/sales-coach?id=${analysisId}|View full analysis>`);
   }
 
   return lines.join("\n");
