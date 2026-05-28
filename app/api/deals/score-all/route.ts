@@ -95,6 +95,13 @@ export async function POST(req: NextRequest) {
             qualification: result.qualification ?? null,
             scored_at: new Date().toISOString(),
           }, { onConflict: "deal_id" });
+          // Best-effort : events clés (colonne optionnelle, cf. migration).
+          if (result.key_events?.length) {
+            await db
+              .from("deal_scores")
+              .update({ key_events: result.key_events })
+              .eq("deal_id", dealId);
+          }
         })
       );
       for (const r of results) {

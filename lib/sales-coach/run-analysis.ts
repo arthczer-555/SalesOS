@@ -417,22 +417,23 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
       recap = recapResult.recap;
     }
 
-    await db
-      .from("sales_coach_analyses")
-      .update({
-        analysis,
-        score_global: scoreGlobal,
-        meeting_recap: recap,
-        audience,
-        transcript_text: rawText,
-        deal_snapshot: snapshot,
-        meeting_kind: analysis?.meeting_kind ?? null,
-        talk_ratio: talkRatio,
-        status: "done",
-        error_message: null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", id);
+    const doneUpdate: Record<string, unknown> = {
+      analysis,
+      score_global: scoreGlobal,
+      meeting_recap: recap,
+      audience,
+      transcript_text: rawText,
+      deal_snapshot: snapshot,
+      meeting_kind: analysis?.meeting_kind ?? null,
+      talk_ratio: talkRatio,
+      status: "done",
+      error_message: null,
+      updated_at: new Date().toISOString(),
+    };
+    // Un meeting rattaché à un deal n'est plus "interne" — on le force en
+    // "external" pour qu'il sorte du filtre de la liste Coaching.
+    if (dealId) doneUpdate.meeting_type = "external";
+    await db.from("sales_coach_analyses").update(doneUpdate).eq("id", id);
 
     // Sales-coach Slack (DM coaching) - tire pour prospect ET client si
     // l'analyse a tourné. Le routing (mode test -> Arthur, mode prod -> deal

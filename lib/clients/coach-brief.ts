@@ -122,7 +122,10 @@ const COACH_BRIEF_TOOL: Anthropic.Tool = {
 // qualité du brief n'est pas suffisante sur les profils complexes.
 const COACH_BRIEF_MODEL = "claude-haiku-4-5-20251001";
 
-export async function generateCoachBrief(ctx: ClientEnrichmentContext): Promise<CoachBrief | null> {
+export async function generateCoachBrief(
+  ctx: ClientEnrichmentContext,
+  userId: string | null = null,
+): Promise<CoachBrief | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
 
   const prompt = renderClientContextForPrompt(ctx);
@@ -141,7 +144,7 @@ export async function generateCoachBrief(ctx: ClientEnrichmentContext): Promise<
     { label: "clients/coach-brief" },
   );
 
-  logUsage(null, COACH_BRIEF_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "clients_coach_brief");
+  logUsage(userId, COACH_BRIEF_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "clients_coach_brief");
 
   const block = msg.content.find((b) => b.type === "tool_use");
   if (!block || !("input" in block)) return null;

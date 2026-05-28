@@ -67,19 +67,25 @@ function toFieldValue<T>(raw: unknown): ClientFieldValue<T> {
   return { value, confidence: finalConfidence, source, updated_at: now };
 }
 
-// Traverse la sortie Claude et la transforme en ClientFields. Tolérant aux
-// sections manquantes : si Claude oublie une section, on la laisse vide.
+// Traverse la sortie Claude et la transforme en ClientFields. Garantit une
+// structure COMPLÈTE : les 6 sections et tous leurs fields sont toujours
+// présents, même si Claude en omet (section/field absent => value=null,
+// confidence=0). Évite que fields_json soit partiel selon l'humeur du modèle.
 export function parseClientFieldsFromClaude(raw: unknown): Partial<ClientFields> {
-  if (!raw || typeof raw !== "object") return {};
   const out: Partial<ClientFields> = {};
-  const r = raw as Record<string, Record<string, unknown>>;
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, Record<string, unknown>>;
 
   const mapSection = <S extends keyof ClientFields>(
     sectionKey: S,
     fieldKeys: ReadonlyArray<keyof ClientFields[S]>,
   ) => {
-    const sectionRaw = r[sectionKey as string];
-    if (!sectionRaw || typeof sectionRaw !== "object") return;
+    // On part de la section renvoyée par Claude si elle existe, sinon d'un objet
+    // vide : dans tous les cas on itère sur la liste statique des fields, donc
+    // chaque field est créé (toFieldValue defaulte à value=null si absent).
+    const sectionRaw =
+      r[sectionKey as string] && typeof r[sectionKey as string] === "object"
+        ? r[sectionKey as string]
+        : {};
     const built = {} as ClientFields[S];
     for (const fk of fieldKeys) {
       // Cast safety: parsing produit un ClientFieldValue<unknown>, on le tape

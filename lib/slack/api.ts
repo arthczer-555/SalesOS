@@ -60,6 +60,23 @@ export async function publishHomeView(args: {
   return call<{ ok: true }>("/views.publish", args);
 }
 
+export async function getRecentMessages(
+  channel: string,
+  limit = 15,
+): Promise<{ text?: string; bot_id?: string; subtype?: string; ts: string }[]> {
+  const res = await fetch(
+    `${BASE}/conversations.history?channel=${encodeURIComponent(channel)}&limit=${limit}`,
+    { headers: { Authorization: `Bearer ${token()}` } },
+  );
+  const data = (await res.json()) as {
+    ok: boolean;
+    error?: string;
+    messages?: { text?: string; bot_id?: string; subtype?: string; ts: string }[];
+  };
+  if (!data.ok) throw new Error(`Slack /conversations.history → ${data.error ?? "unknown_error"}`);
+  return data.messages ?? [];
+}
+
 export async function getUserInfo(userId: string): Promise<{
   id: string;
   name: string;

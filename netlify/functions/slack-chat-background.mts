@@ -1,7 +1,26 @@
 import { runChat, ChatAuthError } from "../../lib/chat/core";
 import { resolveSlackUser } from "../../lib/slack/user-resolve";
 import { loadThreadMessages, saveThreadMessages } from "../../lib/slack/chat-thread";
-import { postMessage, updateMessage } from "../../lib/slack/api";
+import { postMessage, updateMessage, getRecentMessages } from "../../lib/slack/api";
+
+const UNRECOGNIZED_TEXT =
+  "Désolé, je ne reconnais pas ton compte Slack. Demande à Arthur de te configurer dans SalesOS.";
+
+/**
+ * Évite de répéter le refus : si le dernier message du bot dans ce canal est
+ * déjà le refus, on reste silencieux plutôt que de spammer à chaque message
+ * envoyé par un user non reconnu. On re-prévient si une vraie conversation a
+ * eu lieu entre-temps (le dernier message du bot n'est alors plus le refus).
+ */
+async function refusalAlreadyShown(channel: string): Promise<boolean> {
+  try {
+    const messages = await getRecentMessages(channel, 15);
+    const lastBot = messages.find((m) => m.bot_id || m.subtype === "bot_message");
+    return lastBot?.text === UNRECOGNIZED_TEXT;
+  } catch {
+    return false;
+  }
+}
 
 export const config = {
   // Background functions Netlify ont jusqu'à 15min, contre ~26s pour une
@@ -104,11 +123,13 @@ export default async (req: Request) => {
   // ── 1) Map Slack user → SalesOS user (sinon refus poli) ───────────────────
   const user = await resolveSlackUser(slackUserId);
   if (!user) {
-    await postMessage({
-      channel,
-      thread_ts: threadTs || undefined,
-      text: "Désolé, je ne reconnais pas ton compte Slack. Demande à Arthur de te configurer dans SalesOS.",
-    });
+    if (!(await refusalAlreadyShown(channel))) {
+      await postMessage({
+        channel,
+        thread_ts: threadTs || undefined,
+        text: UNRECOGNIZED_TEXT,
+      });
+    }
     return;
   }
 

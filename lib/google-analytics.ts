@@ -170,20 +170,6 @@ async function runReport(
 // ─── Exported functions ──────────────────────────────────────────────────────
 
 /**
- * Run an arbitrary GA4 runReport with a user-supplied body. Used by the
- * /admin/ga4-debug playground. Returns both the exact body that was sent and
- * the raw response so the caller can display them side-by-side.
- */
-export async function runRawReport(
-  userId: string,
-  body: Record<string, unknown>,
-): Promise<{ request: Record<string, unknown>; response: Record<string, unknown> }> {
-  const accessToken = await getGmailAccessToken(userId);
-  const response = await runReport(accessToken, body);
-  return { request: body, response };
-}
-
-/**
  * Fetch KPIs for a date range + the previous period for comparison.
  */
 export async function fetchKPIs(

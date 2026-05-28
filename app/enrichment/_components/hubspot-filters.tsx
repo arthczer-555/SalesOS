@@ -109,10 +109,12 @@ export function HubspotFilters({
   initial,
   onSubmit,
   isLoading,
+  scopeCompanies = [],
 }: {
   initial?: HubspotCriteria;
   onSubmit: (c: HubspotCriteria) => void;
   isLoading: boolean;
+  scopeCompanies?: { id: string; name: string }[];
 }) {
   const [c, setC] = React.useState<HubspotCriteria>(initial ?? { createdRange: "all", sort: "createdate-desc", limit: 100, dealStatus: "any", excludeRadar: false });
   const [advancedOpen, setAdvancedOpen] = React.useState(false);
@@ -296,6 +298,30 @@ export function HubspotFilters({
           />
         </div>
       </div>
+
+      {/* Companies (watchlist) */}
+      {scopeCompanies.length > 0 && (
+        <div>
+          <LabelWithHelp
+            label="Companies (watchlist)"
+            help="Restreint aux contacts dont la propriété `company` correspond à une company de votre watchlist. Les contacts sans ce champ rempli ne remontent pas, même si la Company associée correspond."
+          />
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            <button
+              type="button"
+              onClick={() => setC({ ...c, companies: undefined, preset: undefined })}
+              style={chip(!c.companies || c.companies.length === 0)}
+            >
+              Toutes
+            </button>
+            <CompaniesDropdown
+              companies={scopeCompanies}
+              selected={c.companies ?? []}
+              onChange={(next) => setC({ ...c, companies: next.length ? next : undefined, preset: undefined })}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Lifecycle stage */}
       <div>
@@ -877,6 +903,173 @@ function OwnersDropdown({
                           {o.email}
                         </div>
                       )}
+                    </span>
+                  </label>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompaniesDropdown({
+  companies,
+  selected,
+  onChange,
+}: {
+  companies: { id: string; name: string }[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [q, setQ] = React.useState("");
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  React.useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [open]);
+
+  if (companies.length === 0) return null;
+
+  const filtered = q.trim()
+    ? companies.filter((co) => co.name.toLowerCase().includes(q.toLowerCase()))
+    : companies;
+
+  const toggle = (name: string) => {
+    if (selected.includes(name)) onChange(selected.filter((x) => x !== name));
+    else onChange([...selected, name]);
+  };
+
+  const label = selected.length === 0 ? "Choisir des companies…" : `${selected.length} company${selected.length > 1 ? "s" : ""} sélectionnée${selected.length > 1 ? "s" : ""}`;
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "5px 11px",
+          fontSize: 11,
+          fontWeight: 500,
+          borderRadius: 99,
+          border: `1px solid ${selected.length > 0 ? COLORS.brand : COLORS.line}`,
+          background: selected.length > 0 ? COLORS.brandTint : COLORS.bgCard,
+          color: selected.length > 0 ? COLORS.brand : COLORS.ink2,
+          cursor: "pointer",
+        }}
+      >
+        {label}
+        <ChevronDown size={11} />
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "calc(100% + 4px)",
+            left: 0,
+            minWidth: 280,
+            maxWidth: 360,
+            background: COLORS.bgCard,
+            border: `1px solid ${COLORS.line}`,
+            borderRadius: 8,
+            boxShadow: "0 6px 24px rgba(0,0,0,0.1)",
+            zIndex: 30,
+            display: "flex",
+            flexDirection: "column",
+            maxHeight: 320,
+          }}
+        >
+          <div style={{ padding: 8, borderBottom: `1px solid ${COLORS.line}`, display: "flex", gap: 6, alignItems: "center" }}>
+            <Search size={12} style={{ color: COLORS.ink3, flexShrink: 0 }} />
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Rechercher une company…"
+              style={{
+                flex: 1,
+                fontSize: 12,
+                border: "none",
+                outline: "none",
+                background: "transparent",
+                padding: 0,
+              }}
+            />
+            {selected.length < companies.length && (
+              <button
+                type="button"
+                onClick={() => onChange(companies.map((co) => co.name))}
+                style={{
+                  fontSize: 10,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  border: `1px solid ${COLORS.brand}`,
+                  background: COLORS.brandTint,
+                  color: COLORS.brand,
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Tout sélectionner
+              </button>
+            )}
+            {selected.length > 0 && (
+              <button
+                type="button"
+                onClick={() => onChange([])}
+                style={{
+                  fontSize: 10,
+                  padding: "2px 6px",
+                  borderRadius: 4,
+                  border: `1px solid ${COLORS.line}`,
+                  background: COLORS.bgSoft,
+                  color: COLORS.ink2,
+                  cursor: "pointer",
+                }}
+              >
+                Vider
+              </button>
+            )}
+          </div>
+          <div style={{ overflowY: "auto", padding: 4 }}>
+            {filtered.length === 0 ? (
+              <p style={{ padding: 12, fontSize: 11, color: COLORS.ink3, margin: 0, textAlign: "center" }}>
+                Aucune company.
+              </p>
+            ) : (
+              filtered.map((co) => {
+                const sel = selected.includes(co.name);
+                return (
+                  <label
+                    key={co.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      padding: "6px 8px",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      background: sel ? COLORS.brandTintSoft : "transparent",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={sel}
+                      onChange={() => toggle(co.name)}
+                      style={{ accentColor: COLORS.brand, width: 14, height: 14 }}
+                    />
+                    <span style={{ flex: 1, minWidth: 0, fontSize: 12, color: COLORS.ink0, fontWeight: 500 }}>
+                      {co.name}
                     </span>
                   </label>
                 );

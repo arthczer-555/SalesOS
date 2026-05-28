@@ -19,7 +19,7 @@ type ClaapRecordingItem = {
   existing_analysis: { id: string; status: string } | null;
 };
 
-type ListResponse = { recordings: ClaapRecordingItem[]; isAdmin: boolean };
+type ListResponse = { recordings: ClaapRecordingItem[]; isAdmin: boolean; nextCursor: string | null };
 
 type HubspotDealOption = { id: string; name: string };
 type DealsListResponse = {
@@ -47,10 +47,13 @@ function formatDate(iso: string | null): string {
 
 export function BackfillModal({ open, onClose, onAnalysisStarted }: Props) {
   const [scope, setScope] = useState<"mine" | "all">("mine");
-  const { data, error, isLoading, mutate } = useSWR<ListResponse>(
-    open ? `/api/sales-coach/claap-recordings${scope === "all" ? "?scope=all" : ""}` : null,
-    { revalidateOnFocus: false },
-  );
+  const [recordings, setRecordings] = useState<ClaapRecordingItem[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const { data: dealsData } = useSWR<DealsListResponse>(open ? "/api/deals/list" : null, {
     revalidateOnFocus: false,
   });
@@ -58,6 +61,58 @@ export function BackfillModal({ open, onClose, onAnalysisStarted }: Props) {
   const [dealIdByRec, setDealIdByRec] = useState<Record<string, string>>({});
   const [launching, setLaunching] = useState<string | null>(null);
   const [result, setResult] = useState<Record<string, { ok: boolean; msg: string }>>({});
+
+  async function fetchRecordings(cursor: string | null): Promise<ListResponse> {
+    const params = new URLSearchParams();
+    if (scope === "all") params.set("scope", "all");
+    if (cursor) params.set("cursor", cursor);
+    const res = await fetch(`/api/sales-coach/claap-recordings?${params.toString()}`);
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error ?? "Erreur de chargement");
+    return json as ListResponse;
+  }
+
+  // Initial load — refetch from scratch whenever the modal opens or the scope changes.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+    setRecordings([]);
+    setNextCursor(null);
+    fetchRecordings(null)
+      .then((json) => {
+        if (cancelled) return;
+        setRecordings(json.recordings);
+        setNextCursor(json.nextCursor ?? null);
+        setIsAdmin(!!json.isAdmin);
+      })
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Erreur de chargement");
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, scope]);
+
+  async function loadMore() {
+    if (!nextCursor || isLoadingMore) return;
+    setIsLoadingMore(true);
+    setError(null);
+    try {
+      const json = await fetchRecordings(nextCursor);
+      setRecordings((prev) => [...prev, ...json.recordings]);
+      setNextCursor(json.nextCursor ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur de chargement");
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }
 
   useEffect(() => {
     if (!open) {
@@ -81,8 +136,16 @@ export function BackfillModal({ open, onClose, onAnalysisStarted }: Props) {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Erreur");
       setResult((r) => ({ ...r, [recordingId]: { ok: true, msg: "Analyse lancée" } }));
-      await mutate();
-      if (json.id) onAnalysisStarted(json.id);
+      if (json.id) {
+        setRecordings((prev) =>
+          prev.map((rec) =>
+            rec.id === recordingId
+              ? { ...rec, existing_analysis: { id: json.id, status: "pending" } }
+              : rec,
+          ),
+        );
+        onAnalysisStarted(json.id);
+      }
     } catch (e) {
       setResult((r) => ({
         ...r,
@@ -113,9 +176,9 @@ export function BackfillModal({ open, onClose, onAnalysisStarted }: Props) {
           <div>
             <h2 className="text-base font-semibold" style={{ color: "#111" }}>Analyser un meeting passé</h2>
             <p className="text-xs mt-0.5" style={{ color: "#888" }}>
-              {scope === "mine" ? "Tes 50 derniers meetings Claap" : "50 derniers meetings Claap du workspace"}. Choisis un deal HubSpot et lance l&apos;analyse.
+              {scope === "mine" ? "Tes meetings Claap les plus récents" : "Meetings Claap du workspace"}. Choisis un deal HubSpot et lance l&apos;analyse. Utilise « Charger plus » pour remonter dans le temps.
             </p>
-            {data?.isAdmin && (
+            {isAdmin && (
               <div className="mt-2 flex gap-1">
                 {(["mine", "all"] as const).map((v) => (
                   <button
@@ -149,15 +212,15 @@ export function BackfillModal({ open, onClose, onAnalysisStarted }: Props) {
           )}
           {error && (
             <div className="px-5 py-10 text-center text-sm" style={{ color: "#dc2626" }}>
-              {error instanceof Error ? error.message : "Erreur de chargement"}
+              {error}
             </div>
           )}
-          {data && data.recordings.length === 0 && (
+          {!isLoading && !error && recordings.length === 0 && (
             <div className="px-5 py-10 text-center text-sm" style={{ color: "#888" }}>
               Aucun meeting Claap trouvé pour toi.
             </div>
           )}
-          {data?.recordings.map((r) => {
+          {recordings.map((r) => {
             // Any recording with a transcript can be analysed manually — the
             // user is opting in explicitly. Even Claap-classified-internal
             // meetings show the "Analyser" button here (the auto webhook
@@ -254,6 +317,25 @@ export function BackfillModal({ open, onClose, onAnalysisStarted }: Props) {
               </div>
             );
           })}
+          {!isLoading && nextCursor && (
+            <div className="px-5 py-4 flex justify-center">
+              <button
+                onClick={loadMore}
+                disabled={isLoadingMore}
+                className="text-xs font-medium px-4 py-2 rounded border disabled:opacity-50"
+                style={{ borderColor: "#e5e5e5", color: "#444", background: "#fafafa" }}
+              >
+                {isLoadingMore ? (
+                  <>
+                    <Loader2 size={12} className="animate-spin inline mr-1.5" />
+                    Chargement…
+                  </>
+                ) : (
+                  "Charger plus de meetings"
+                )}
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

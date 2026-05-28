@@ -17,7 +17,9 @@ type RawLog = {
   input_tokens: number; output_tokens: number; costUsd: number; created_at: string;
 };
 
+// days: 0 = tout, -1 = journée en cours (depuis minuit local), n > 0 = fenêtre glissante de n jours
 const DATE_RANGES = [
+  { label: "Aujourd'hui", days: -1 },
   { label: "7j",    days: 7 },
   { label: "30j",   days: 30 },
   { label: "3 mois", days: 90 },
@@ -52,9 +54,15 @@ function sinceLabel(iso: string) {
   return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" });
 }
 
+function startOfTodayMs() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
 function filterByDays<T extends { created_at: string }>(items: T[], days: number): T[] {
   if (days === 0) return items;
-  const cutoff = Date.now() - days * 86_400_000;
+  const cutoff = days === -1 ? startOfTodayMs() : Date.now() - days * 86_400_000;
   return items.filter((i) => new Date(i.created_at).getTime() >= cutoff);
 }
 

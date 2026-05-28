@@ -3,7 +3,8 @@
 import { use, useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink, AlertTriangle, Loader2, Sparkles, Clock } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowLeft, ExternalLink, AlertTriangle, Loader2, Sparkles, Clock, Trash2, RefreshCw } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { ClientRow } from "@/lib/clients/types";
 import { useUserMe } from "@/lib/hooks/use-user-me";
@@ -14,6 +15,8 @@ import { CoachBriefPanel } from "./_components/coach-brief-panel";
 import { DealRecapPanel } from "./_components/deal-recap-panel";
 import { HealthPanel } from "./_components/health-panel";
 import { NewsPanel } from "./_components/news-panel";
+import { RefreshReportPanel } from "./_components/refresh-report-panel";
+import { BillingPanel } from "./_components/billing-panel";
 
 async function fetcher<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -27,13 +30,13 @@ async function fetcher<T>(url: string): Promise<T> {
 type Resp = { client: ClientRow; meetings: ClientMeeting[] };
 
 function fmtDate(iso: string | null): string {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+  if (!iso) return "-";
+  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "long", year: "numeric" });
 }
 
 function fmtAmount(n: number | null): string {
-  if (n == null) return "—";
-  return `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k€`;
+  if (n == null) return "-";
+  return `€${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
 }
 
 function StatusBanner({ client }: { client: ClientRow }) {
@@ -52,7 +55,7 @@ function StatusBanner({ client }: { client: ClientRow }) {
         }}
       >
         <Loader2 size={14} className="animate-spin" />
-        Enrichissement IA en cours, les fields apparaîtront dans 1-2 minutes.
+        AI enrichment in progress, fields will appear in 1-2 minutes.
       </div>
     );
   }
@@ -72,7 +75,7 @@ function StatusBanner({ client }: { client: ClientRow }) {
         }}
       >
         <Clock size={14} />
-        En attente d&apos;enrichissement. Clique sur <strong style={{ fontWeight: 600 }}>&laquo;&nbsp;Lancer l&apos;enrichissement&nbsp;&raquo;</strong> en haut à droite pour générer la fiche IA.
+        Waiting for enrichment. Click <strong style={{ fontWeight: 600 }}>&quot;Run enrichment&quot;</strong> in the top right to generate the AI profile.
       </div>
     );
   }
@@ -92,7 +95,7 @@ function StatusBanner({ client }: { client: ClientRow }) {
       >
         <AlertTriangle size={14} style={{ marginTop: 2, flexShrink: 0 }} />
         <div>
-          Erreur d&apos;enrichissement.
+          Enrichment error.
           {client.enrichment_error && (
             <div style={{ marginTop: 4, fontSize: 11, opacity: 0.85 }}>{client.enrichment_error}</div>
           )}
@@ -105,9 +108,12 @@ function StatusBanner({ client }: { client: ClientRow }) {
 
 export default function ClientDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const { isAdmin } = useUserMe();
   const [triggering, setTriggering] = useState(false);
   const [triggerError, setTriggerError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Refresh agressif tant que l'enrichissement n'est pas terminé pour que le
   // CS voie les fields apparaître dès la fin du pipeline IA. Une fois "done"
@@ -133,19 +139,59 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       // prendra le relais jusqu'à done.
       await mutate();
     } catch (e) {
-      setTriggerError(e instanceof Error ? e.message : "Erreur");
+      setTriggerError(e instanceof Error ? e.message : "Error");
     } finally {
       setTriggering(false);
     }
   }
 
+  async function triggerRefresh() {
+    setRefreshing(true);
+    setTriggerError(null);
+    try {
+      const res = await fetch(`/api/clients/${id}/refresh`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      // Le refresh ne change pas enrichment_status, donc le polling SWR ne
+      // s'enclenche pas : on refetch tout de suite puis une fois en différé
+      // pour laisser la background function écrire le report.
+      await mutate();
+      setTimeout(() => void mutate(), 8_000);
+    } catch (e) {
+      setTriggerError(e instanceof Error ? e.message : "Error");
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function deleteClient(companyName: string) {
+    if (!window.confirm(`Permanently delete the profile for "${companyName}"? This action cannot be undone.`)) {
+      return;
+    }
+    setDeleting(true);
+    setTriggerError(null);
+    try {
+      const res = await fetch(`/api/clients/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `HTTP ${res.status}`);
+      }
+      router.push("/clients");
+    } catch (e) {
+      setTriggerError(e instanceof Error ? e.message : "Error");
+      setDeleting(false);
+    }
+  }
+
   if (isLoading) {
-    return <div style={{ padding: 24, color: COLORS.ink3 }}>Chargement…</div>;
+    return <div style={{ padding: 24, color: COLORS.ink3 }}>Loading…</div>;
   }
   if (error || !data) {
     return (
       <div style={{ padding: 24, color: COLORS.err }}>
-        {error instanceof Error ? error.message : "Erreur de chargement"}
+        {error instanceof Error ? error.message : "Loading error"}
       </div>
     );
   }
@@ -200,7 +246,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             <HealthBadge health={client.health} />
           </div>
           <div style={{ fontSize: 12, color: COLORS.ink2 }}>
-            {client.owner_name || client.owner_email || "Sans owner"} · Signé le {fmtDate(client.closedwon_at)} ·{" "}
+            {client.owner_name || client.owner_email || "No owner"} · Signed on {fmtDate(client.closedwon_at)} ·{" "}
             {fmtAmount(client.deal_amount)}
           </div>
         </div>
@@ -226,16 +272,40 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
               }}
               title={
                 client.enrichment_status === "done"
-                  ? "Relance l'extraction IA en repartant des données actuelles (HubSpot + Claap)."
+                  ? "Re-runs the AI extraction from the current data (HubSpot + Claap)."
                   : undefined
               }
             >
               {triggering ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
               {triggering
-                ? "Lancement…"
+                ? "Starting…"
                 : client.enrichment_status === "done"
-                  ? "Relancer l'enrichissement"
-                  : "Lancer l'enrichissement"}
+                  ? "Re-run enrichment"
+                  : "Run enrichment"}
+            </button>
+          )}
+          {client.enrichment_status === "done" && (
+            <button
+              type="button"
+              onClick={triggerRefresh}
+              disabled={refreshing}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                fontSize: 12,
+                fontWeight: 500,
+                padding: "6px 12px",
+                borderRadius: 8,
+                border: `1px solid ${COLORS.line}`,
+                background: refreshing ? COLORS.bgSoft : COLORS.bgCard,
+                color: refreshing ? COLORS.ink3 : COLORS.ink1,
+                cursor: refreshing ? "not-allowed" : "pointer",
+              }}
+              title="Takes new activity into account: updates health, news and the fields that changed (without re-analyzing everything)."
+            >
+              {refreshing ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+              {refreshing ? "Refreshing…" : "Refresh"}
             </button>
           )}
           <a
@@ -257,6 +327,30 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             HubSpot deal
             <ExternalLink size={12} />
           </a>
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => deleteClient(client.company_name)}
+              disabled={deleting}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                fontSize: 12,
+                fontWeight: 500,
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: `1px solid ${COLORS.errBg}`,
+                background: deleting ? COLORS.bgSoft : COLORS.errBg,
+                color: deleting ? COLORS.ink3 : COLORS.err,
+                cursor: deleting ? "not-allowed" : "pointer",
+              }}
+              title="Permanently delete this client"
+            >
+              {deleting ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+              {deleting ? "Deleting…" : "Delete"}
+            </button>
+          )}
         </div>
       </header>
 
@@ -270,7 +364,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             borderBottom: `1px solid ${COLORS.line}`,
           }}
         >
-          Erreur trigger : {triggerError}
+          Trigger error: {triggerError}
         </div>
       )}
 
@@ -278,18 +372,31 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 1100, margin: "0 auto" }}>
           <StatusBanner client={client} />
 
+          {/* Petit point du dernier refresh incrémental (bouton Actualiser / cron) */}
+          <RefreshReportPanel report={client.last_refresh_report} />
+
           {/* Recap deal — comment ce deal a été signé */}
-          <DealRecapPanel recap={client.deal_recap} />
+          <DealRecapPanel recap={client.deal_recap} clientId={client.id} onUpdated={() => void mutate()} />
 
           {/* Brief coachs — généré pendant l'enrichissement, copy-paste vers Slack */}
           <CoachBriefPanel
             brief={client.coach_brief ?? null}
             generatedAt={client.coach_brief_generated_at ?? null}
             companyName={client.company_name}
+            clientId={client.id}
+            onUpdated={() => void mutate()}
           />
 
           {/* Health + Actions priorisées */}
-          <HealthPanel health={client.health} insights={client.insights} />
+          <HealthPanel health={client.health} insights={client.insights} clientId={client.id} onUpdated={() => void mutate()} />
+
+          {/* Contexte facturation (onglet Historique du fichier revenue) */}
+          <BillingPanel
+            billing={client.billing}
+            refreshedAt={client.billing_refreshed_at}
+            clientId={client.id}
+            onUpdated={() => void mutate()}
+          />
 
           {/* Sections de fields — éditables inline (double-clic ou icône crayon) */}
           <FieldsSection

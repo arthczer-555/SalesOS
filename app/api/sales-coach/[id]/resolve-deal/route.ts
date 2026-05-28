@@ -132,6 +132,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const updatePayload: Record<string, unknown> = {
     hubspot_deal_id: dealId,
     deal_snapshot: snapshot,
+    // Un meeting rattaché à un deal n'est plus "interne" — on le repasse en
+    // "external" pour qu'il sorte du filtre de la liste Coaching (qui masque
+    // meeting_type = "internal").
+    meeting_type: "external",
     updated_at: new Date().toISOString(),
   };
   if (participantsToBackfill) updatePayload.participants = participantsToBackfill;

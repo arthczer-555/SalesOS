@@ -94,6 +94,10 @@ export type FieldDefinition = {
   label: string;
   kind: "text" | "long_text" | "array_string" | "array_contact" | "array_doc" | "number" | "date" | "enum" | "bool_with_details" | "contact";
   options?: readonly string[];
+  // Libellés d'affichage par valeur d'enum. La valeur stockée reste canonique
+  // (FR) — seul l'affichage est traduit, pour ne pas casser les données ni le
+  // prompt d'extraction.
+  optionLabels?: Record<string, string>;
 };
 
 export const SECTION_DEFINITIONS: ReadonlyArray<{
@@ -103,67 +107,67 @@ export const SECTION_DEFINITIONS: ReadonlyArray<{
 }> = [
   {
     key: "general_info",
-    label: "Informations générales",
+    label: "General information",
     fields: [
-      { key: "entreprise_compte", label: "Entreprise / compte", kind: "text" },
-      { key: "contact_signataire", label: "Contact signataire", kind: "contact" },
-      { key: "contact_principal_rh", label: "Contact principal RH", kind: "contact" },
-      { key: "contact_rh_operationnel", label: "Contact RH opérationnel", kind: "contact" },
-      { key: "autres_parties_prenantes", label: "Autres parties prenantes", kind: "array_contact" },
-      { key: "langues_requises", label: "Langues requises", kind: "array_string" },
-      { key: "zones_geographiques", label: "Zones géographiques", kind: "array_string" },
+      { key: "entreprise_compte", label: "Company / account", kind: "text" },
+      { key: "contact_signataire", label: "Signatory contact", kind: "contact" },
+      { key: "contact_principal_rh", label: "Primary HR contact", kind: "contact" },
+      { key: "contact_rh_operationnel", label: "Operational HR contact", kind: "contact" },
+      { key: "autres_parties_prenantes", label: "Other stakeholders", kind: "array_contact" },
+      { key: "langues_requises", label: "Required languages", kind: "array_string" },
+      { key: "zones_geographiques", label: "Geographic regions", kind: "array_string" },
     ],
   },
   {
     key: "program_scope",
-    label: "Périmètre du programme",
+    label: "Program scope",
     fields: [
-      { key: "type_coaching", label: "Type de coaching", kind: "enum", options: ["humain", "ia", "hybride"] as const },
-      { key: "nom_programme", label: "Nom du programme", kind: "text" },
-      { key: "population_accompagnee", label: "Population accompagnée", kind: "text" },
-      { key: "nb_coaches_estime", label: "Nb de coachés estimé", kind: "number" },
-      { key: "cohortes_format", label: "Cohortes / format", kind: "text" },
+      { key: "type_coaching", label: "Coaching type", kind: "enum", options: ["humain", "ia", "hybride"] as const, optionLabels: { humain: "Human", ia: "AI", hybride: "Hybrid" } },
+      { key: "nom_programme", label: "Program name", kind: "text" },
+      { key: "population_accompagnee", label: "Target population", kind: "text" },
+      { key: "nb_coaches_estime", label: "Estimated number of coachees", kind: "number" },
+      { key: "cohortes_format", label: "Cohorts / format", kind: "text" },
       { key: "auto_assessment", label: "Auto-assessment", kind: "bool_with_details" },
       { key: "flash_feedback", label: "Flash feedback", kind: "bool_with_details" },
       { key: "tripartite", label: "Tripartite", kind: "bool_with_details" },
       { key: "quadripartite", label: "Quadripartite", kind: "bool_with_details" },
-      { key: "offres_associees", label: "Offres associées", kind: "array_string" },
+      { key: "offres_associees", label: "Add-on offers", kind: "array_string" },
     ],
   },
   {
     key: "goals",
-    label: "Objectifs & attentes",
+    label: "Goals & expectations",
     fields: [
-      { key: "objectifs_business_rh", label: "Objectifs business / RH", kind: "array_string" },
-      { key: "kpis_cles", label: "KPIs clés", kind: "array_string" },
-      { key: "attentes_specifiques", label: "Attentes spécifiques", kind: "long_text" },
+      { key: "objectifs_business_rh", label: "Business / HR goals", kind: "array_string" },
+      { key: "kpis_cles", label: "Key KPIs", kind: "array_string" },
+      { key: "attentes_specifiques", label: "Specific expectations", kind: "long_text" },
     ],
   },
   {
     key: "org",
-    label: "Organisation & intégration",
+    label: "Organization & integration",
     fields: [
-      { key: "integration_it", label: "Intégration IT (SSO, SIRH, Slack, …)", kind: "long_text" },
-      { key: "referentiels_documents", label: "Référentiels & documents", kind: "array_doc" },
-      { key: "contraintes_organisationnelles", label: "Contraintes organisationnelles", kind: "long_text" },
+      { key: "integration_it", label: "IT integration (SSO, HRIS, Slack, …)", kind: "long_text" },
+      { key: "referentiels_documents", label: "References & documents", kind: "array_doc" },
+      { key: "contraintes_organisationnelles", label: "Organizational constraints", kind: "long_text" },
     ],
   },
   {
     key: "history",
-    label: "Contexte & historique",
+    label: "Context & history",
     fields: [
-      { key: "relation_commerciale", label: "Relation commerciale", kind: "enum", options: ["nouveau", "renouvellement", "upsell"] as const },
-      { key: "initiatives_rh_paralleles", label: "Initiatives RH parallèles", kind: "long_text" },
-      { key: "points_de_vigilance", label: "Points de vigilance", kind: "array_string" },
+      { key: "relation_commerciale", label: "Commercial relationship", kind: "enum", options: ["nouveau", "renouvellement", "upsell"] as const, optionLabels: { nouveau: "New", renouvellement: "Renewal", upsell: "Upsell" } },
+      { key: "initiatives_rh_paralleles", label: "Parallel HR initiatives", kind: "long_text" },
+      { key: "points_de_vigilance", label: "Watch points", kind: "array_string" },
     ],
   },
   {
     key: "planning",
-    label: "Planning & prochaines étapes",
+    label: "Planning & next steps",
     fields: [
-      { key: "kickoff_envisage_le", label: "Kickoff envisagé le", kind: "date" },
-      { key: "suivi_cs_attendu", label: "Suivi CS attendu", kind: "array_string" },
-      { key: "engagements_sales", label: "Engagements sales", kind: "array_string" },
+      { key: "kickoff_envisage_le", label: "Planned kickoff date", kind: "date" },
+      { key: "suivi_cs_attendu", label: "Expected CS follow-up", kind: "array_string" },
+      { key: "engagements_sales", label: "Sales commitments", kind: "array_string" },
     ],
   },
 ] as const;
@@ -227,6 +231,11 @@ export type HealthSnapshot = {
 };
 export type Health = HealthSnapshot & {
   trend?: "up" | "down" | "stable";
+  // Phrase courte (FR) expliquant le score, ancrée surtout sur les derniers
+  // échanges (meetings récents). Générée par IA à l'enrichissement, best-effort
+  // (null si la génération échoue ou pas de signal). Pas stockée dans les
+  // snapshots d'historique, c'est une lecture du moment présent.
+  summary?: string | null;
 };
 
 export type Insights = {
@@ -235,6 +244,16 @@ export type Insights = {
   observations: string[];
 };
 
+// Catégorie attribuée par le ranking IA (Haiku) pour ne garder que les news
+// intéressantes côté CS. "other" = catégorisé mais hors des buckets clés.
+export type NewsCategory =
+  | "funding"
+  | "hiring"
+  | "acquisition"
+  | "leadership"
+  | "product"
+  | "other";
+
 export type News = {
   refreshed_at: string;
   items: Array<{
@@ -242,8 +261,40 @@ export type News = {
     url: string;
     published_at?: string;
     summary?: string;
-    relevance?: number;
+    relevance?: number; // score brut Tavily
+    category?: NewsCategory; // attribué par rankClientNews (Haiku)
+    interest?: number; // 0..1, attribué par rankClientNews, sert au tri/filtre
   }>;
+};
+
+// ── Refresh report (bouton "Actualiser" + cron) ──────────────────────────────
+// "Petit point" affiché en bandeau sur la fiche après un refresh incrémental :
+// combien de nouvelles activités prises en compte, évolution du health, et la
+// liste des fields qui ont changé. skipped_no_activity = true quand le refresh
+// a tourné mais n'a trouvé aucune activité nouvelle (health/news recalculés
+// quand même, fields inchangés).
+export type RefreshReport = {
+  refreshed_at: string;
+  health_before: number | null;
+  health_after: number | null;
+  new_activity_count: number;
+  changed_fields: Array<{ section: SectionKey; key: string; label: string }>;
+  skipped_no_activity?: boolean;
+  error?: string;
+};
+
+// ── Facturation (onglet "Historique" du fichier revenue Google Drive) ─────────
+// Une ligne par société : Total lifetime + revenu par année + flag RFP. Matché
+// par nom de société normalisé. matched=false si aucune ligne trouvée.
+export type Billing = {
+  matched: boolean;
+  match_key?: string; // valeur du nom de société utilisée pour le match
+  total_contract_value?: number | null; // colonne "Total" (lifetime)
+  revenue_by_year?: Record<string, number>; // { "2022": 38140, ..., "2026": 51391 }
+  current_year_revenue?: number | null;
+  prev_year_revenue?: number | null;
+  yoy_growth?: number | null; // (courant - précédent) / précédent
+  is_rfp?: boolean;
 };
 
 // ── Recordings Claap découverts (live API, pas encore dans sales_coach_analyses) ─
@@ -283,6 +334,11 @@ export type ClientRow = {
   last_enriched_at: string | null;
   last_health_run_at: string | null;
   last_news_run_at: string | null;
+  last_refreshed_at: string | null;
+  last_refresh_report: RefreshReport | null;
+  owner_notified_at: string | null;
+  billing: Billing | null;
+  billing_refreshed_at: string | null;
   created_at: string;
   updated_at: string;
 };

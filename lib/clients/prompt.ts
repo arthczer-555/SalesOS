@@ -32,6 +32,10 @@ Règles ABSOLUES :
   - 0.6..0.8 : info forte, reformulée ou répartie sur plusieurs sources cohérentes.
   - 0.3..0.5 : inférée à partir d'indices indirects, ou unique source douteuse.
   - 0.0..0.2 : tu hésites fortement ou tu n'as rien trouvé (préfère 0 + value=null).
+- LANGUE DES VALEURS : écris le contenu de chaque field (value) dans la langue du client.
+  Si le contexte (transcripts, emails, notes) contient le moindre passage significatif en
+  anglais, écris TOUTES les valeurs en anglais. Sinon écris en français. Ne traduis jamais
+  les noms propres (entreprises, personnes, produits).
 
 Sections à remplir :
 1. general_info : qui est le client (entreprise, signataire, RH principal et opérationnel,
@@ -215,8 +219,9 @@ export const CLIENT_FIELDS_TOOL: Anthropic.Tool = {
   },
 };
 
-// Modèle par défaut pour l'extraction. Haiku 4.5 pendant la phase de test
-// pour diviser le coût par 3 (~0,13 € au lieu de 0,40 € par enrichissement).
-// Le plan §10 prévoyait Sonnet par défaut — à rebasculer quand on validera la
-// qualité d'extraction sur les 30 fields structurés.
-export const CLIENT_EXTRACTION_MODEL = "claude-haiku-4-5-20251001";
+// Sonnet 4.6 pour l'extraction des 30 fields : Haiku 4.5 ignorait le schéma
+// imbriqué et ne renvoyait que la section general_info (les `required` du tool
+// ne sont pas imposés par l'API). Sonnet honore les 6 sections. Le brief et le
+// recap restent sur Haiku (cf. coach-brief.ts / deal-recap.ts), ils marchent
+// bien et ça limite le surcoût au seul appel qui en a besoin.
+export const CLIENT_EXTRACTION_MODEL = "claude-sonnet-4-6";

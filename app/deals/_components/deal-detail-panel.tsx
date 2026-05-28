@@ -33,10 +33,11 @@ import { ScoreGauge } from "@/components/ui/score-gauge";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { IconButton } from "@/components/ui/icon-button";
 import { ProgressBar } from "@/components/ui/progress-bar";
-import type { Analysis, DealDetails } from "../_helpers";
+import type { Analysis, AnalysisEvent, DealDetails } from "../_helpers";
 import { engagementTypeBadge, formatDealForSlack, timeAgo } from "../_helpers";
 import { DealLinkedinCard } from "./deal-linkedin-card";
 import { DealNewsCard } from "./deal-news-card";
+import { DealEventsTimeline } from "./deal-timeline-card";
 
 interface Props {
   details: DealDetails | null;
@@ -88,11 +89,12 @@ export function DealDetailPanel({
   const [sending, setSending] = React.useState(false);
   const [sent, setSent] = React.useState(false);
   const [showComposer, setShowComposer] = React.useState(false);
-  const [showEngagements, setShowEngagements] = React.useState(false);
   const [showScoreDetails, setShowScoreDetails] = React.useState(false);
+  const [showEngagements, setShowEngagements] = React.useState(false);
+  const [engagementsShown, setEngagementsShown] = React.useState(5);
   const [claudeOpen, setClaudeOpen] = React.useState(false);
   const [rescoring, setRescoring] = React.useState(false);
-  const [localScore, setLocalScore] = React.useState<{ score: DealScore; reasoning: string; next_action: string; scoredAt: string; qualification: Record<string, string | null> | null } | null>(null);
+  const [localScore, setLocalScore] = React.useState<{ score: DealScore; reasoning: string; next_action: string; scoredAt: string; qualification: Record<string, string | null> | null; key_events: AnalysisEvent[] } | null>(null);
 
   React.useEffect(() => {
     setAnalysis(null);
@@ -102,8 +104,9 @@ export function DealDetailPanel({
     setEmailDraft(null);
     setShowComposer(false);
     setSent(false);
-    setShowEngagements(false);
     setShowScoreDetails(false);
+    setShowEngagements(false);
+    setEngagementsShown(5);
     setClaudeOpen(false);
     setLocalScore(null);
     setSlackSent(false);
@@ -272,6 +275,7 @@ export function DealDetailPanel({
           next_action: data.next_action ?? "",
           scoredAt: new Date().toISOString(),
           qualification: data.qualification ?? null,
+          key_events: Array.isArray(data.key_events) ? data.key_events : [],
         });
         onRescore(details.id, newScore, data.reasoning ?? "", data.next_action ?? "");
       }
@@ -800,6 +804,17 @@ export function DealDetailPanel({
             </Card>
           )}
 
+          {/* Timeline — étapes pipeline + réunions Claap + événements clés extraits
+              par l'IA (scoring + analyse approfondie, fusionnés) */}
+          <DealEventsTimeline
+            events={details.events}
+            meetings={details.meetings}
+            analysisEvents={[
+              ...((localScore?.key_events ?? details.keyEvents) ?? []),
+              ...(analysis?.evenements_cles ?? []),
+            ]}
+          />
+
           {/* Deep AI analysis — prominent CTA in Coachello brand (placed right under the score) */}
           {!analysis && (
             <button
@@ -1070,47 +1085,67 @@ export function DealDetailPanel({
                 />
               </button>
               {showEngagements && (
-                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
-                  {details.engagements.map((e, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        paddingBottom: 10,
-                        borderBottom:
-                          i < details.engagements.length - 1 ? `1px solid ${COLORS.line}` : "none",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
-                        <span
-                          style={{
-                            fontSize: 10,
-                            padding: "1px 6px",
-                            borderRadius: 999,
-                            background: COLORS.bgSoft,
-                            color: COLORS.ink1,
-                            fontWeight: 600,
-                          }}
-                        >
-                          {engagementTypeBadge(e.type)}
-                        </span>
-                        {e.date && (
-                          <span style={{ fontSize: 10, color: COLORS.ink4 }}>{e.date}</span>
-                        )}
-                      </div>
-                      <p
+                <>
+                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+                    {details.engagements.slice(0, engagementsShown).map((e, i, shown) => (
+                      <div
+                        key={i}
                         style={{
-                          fontSize: 12,
-                          color: COLORS.ink2,
-                          margin: 0,
-                          lineHeight: 1.5,
-                          whiteSpace: "pre-wrap",
+                          paddingBottom: 10,
+                          borderBottom:
+                            i < shown.length - 1 ? `1px solid ${COLORS.line}` : "none",
                         }}
                       >
-                        {e.body}
-                      </p>
-                    </div>
-                  ))}
-                </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+                          <span
+                            style={{
+                              fontSize: 10,
+                              padding: "1px 6px",
+                              borderRadius: 999,
+                              background: COLORS.bgSoft,
+                              color: COLORS.ink1,
+                              fontWeight: 600,
+                            }}
+                          >
+                            {engagementTypeBadge(e.type)}
+                          </span>
+                          {e.date && (
+                            <span style={{ fontSize: 10, color: COLORS.ink4 }}>{e.date}</span>
+                          )}
+                        </div>
+                        <p
+                          style={{
+                            fontSize: 12,
+                            color: COLORS.ink2,
+                            margin: 0,
+                            lineHeight: 1.5,
+                            whiteSpace: "pre-wrap",
+                          }}
+                        >
+                          {e.body}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  {engagementsShown < details.engagements.length && (
+                    <button
+                      type="button"
+                      onClick={() => setEngagementsShown((n) => n + 5)}
+                      style={{
+                        marginTop: 12,
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: COLORS.brand,
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: 0,
+                      }}
+                    >
+                      Charger plus ({details.engagements.length - engagementsShown})
+                    </button>
+                  )}
+                </>
               )}
             </Card>
           )}

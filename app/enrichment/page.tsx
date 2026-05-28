@@ -543,6 +543,7 @@ function EnrichmentPageInner() {
                 initial={lastCriteriaHubspot ?? undefined}
                 onSubmit={onSubmitHubspot}
                 isLoading={searching}
+                scopeCompanies={scopeCompanies}
               />
               <ResultsTable
                 profiles={profiles}

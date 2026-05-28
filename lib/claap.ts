@@ -76,6 +76,27 @@ function extractCursor(res: ListRecordingsResponse): string | null {
 }
 
 /**
+ * Fetch a SINGLE page of Claap recordings with an optional cursor. Returns the
+ * recordings plus the cursor for the next page (`null` when there is no more).
+ * Used by the "Analyser un meeting passé" modal to paginate on demand without
+ * loading the whole history at once (and without risking a Netlify timeout).
+ */
+export async function listClaapRecordingsPage(opts: {
+  limit?: number;
+  cursor?: string | null;
+}): Promise<{ recordings: ClaapRecording[]; nextCursor: string | null }> {
+  const limit = Math.max(1, Math.min(100, opts.limit ?? 50));
+  const qs = new URLSearchParams({ limit: String(limit) });
+  if (opts.cursor) qs.set("after", opts.cursor);
+  const resp = await claapFetch<ListRecordingsResponse>(`/recordings?${qs.toString()}`);
+  const recordings = resp.result?.recordings ?? [];
+  // A short page means we hit the end; otherwise trust the API cursor (which
+  // may itself be null on the last full page).
+  const nextCursor = recordings.length < limit ? null : extractCursor(resp);
+  return { recordings, nextCursor };
+}
+
+/**
  * Paginate les recordings Claap au-delà de la simple `listClaapRecordings`.
  *
  * Stratégie :
@@ -279,8 +300,9 @@ const TITLE_NOISE_WORDS = new Set([
   "meeting", "call", "demo", "review", "discussion", "kickoff", "sync",
   "intro", "discovery", "product", "strategy", "walkthrough", "session",
   "follow", "followup", "weekly", "monthly", "daily", "standup", "checkin",
-  "onboarding", "training", "workshop", "presentation", "platform",
+  "onboarding", "training", "workshop", "presentation", "platform", "planning",
   "partnership", "with", "and", "vs", "for", "from", "the", "via",
+  "coaching", "coachello",
   // French meeting nouns/verbs + prepositions
   "réunion", "reunion", "présentation", "rendez", "rdv", "point",
   "habilitation", "sprint", "planification", "appel", "atelier",
@@ -310,6 +332,7 @@ function escapeRegex(s: string): string {
  *
  * Examples (recorder = coachello.io):
  *   "Coachello x Besins Healthcare"      → "Besins Healthcare"
+ *   "Coachello (coaching) x Assystem"    → "Assystem"
  *   "Boeing x Coachello"                 → "Boeing"
  *   "Plusgrade Strategy Discussion"      → "Plusgrade"
  *   "Xpeng Product Demo Walkthrough"     → "Xpeng"
@@ -323,7 +346,11 @@ export function extractTitleSearchHint(
   if (!title) return null;
   const ownCompany = companyFromEmail(recorderEmail);
 
-  let cleaned = title;
+  // Strip parenthetical/bracketed annotations first. These are almost always
+  // meeting-type tags ("(coaching)", "(1 coaching)", "[POC]"), never the
+  // prospect name — and if left in, the surrounding punctuation inflates the
+  // token length and can win the "longest segment" tiebreak below.
+  let cleaned = title.replace(/[([{][^)\]}]*[)\]}]/g, " ");
   if (ownCompany) {
     cleaned = cleaned.replace(new RegExp(`\\b${escapeRegex(ownCompany)}\\b`, "gi"), " ");
   }

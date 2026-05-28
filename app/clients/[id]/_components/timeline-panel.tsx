@@ -30,7 +30,7 @@ function itemDate(item: TimelineItem): string | null {
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "?";
-  return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+  return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function IndexedRow({ m }: { m: ClientMeeting }) {
@@ -52,7 +52,7 @@ function IndexedRow({ m }: { m: ClientMeeting }) {
       </div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0 }}>
-          {m.meeting_title ?? "Meeting sans titre"}
+          {m.meeting_title ?? "Untitled meeting"}
         </div>
         <div style={{ display: "flex", gap: 8, marginTop: 2, alignItems: "center" }}>
           {m.meeting_kind && <span style={{ fontSize: 11, color: COLORS.ink3 }}>{m.meeting_kind}</span>}
@@ -90,7 +90,7 @@ function DiscoveredRow({ r }: { r: DiscoveredRecording }) {
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0 }}>
-            {r.meeting_title ?? "Meeting sans titre"}
+            {r.meeting_title ?? "Untitled meeting"}
           </span>
           <span
             style={{
@@ -102,9 +102,9 @@ function DiscoveredRow({ r }: { r: DiscoveredRecording }) {
               fontWeight: 600,
               letterSpacing: 0.3,
             }}
-            title="Trouvé sur Claap mais pas encore analysé par Sales Coach"
+            title="Found on Claap but not yet analyzed by Sales Coach"
           >
-            découvert
+            discovered
           </span>
           {r.claap_url && <ExternalLink size={11} style={{ color: COLORS.ink4 }} />}
         </div>
@@ -174,7 +174,7 @@ export function TimelinePanel({
           textAlign: "center",
         }}
       >
-        Aucun meeting Claap analysé sur ce deal.
+        No Claap meeting analyzed on this deal.
       </div>
     );
   }
@@ -202,12 +202,11 @@ export function TimelinePanel({
         }}
       >
         <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink0 }}>
-          Timeline meetings ({items.length})
+          Meetings timeline ({items.length})
         </h3>
         {discoveredCount > 0 && (
           <span style={{ fontSize: 11, color: COLORS.ink3 }}>
-            {indexedCount} analysé{indexedCount > 1 ? "s" : ""} · {discoveredCount} découvert
-            {discoveredCount > 1 ? "s" : ""}
+            {indexedCount} analyzed · {discoveredCount} discovered
           </span>
         )}
       </div>

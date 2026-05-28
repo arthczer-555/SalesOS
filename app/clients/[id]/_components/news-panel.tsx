@@ -2,12 +2,22 @@
 
 import { Newspaper, ExternalLink } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
-import type { News } from "@/lib/clients/types";
+import type { News, NewsCategory } from "@/lib/clients/types";
+
+// Libellés FR + couleur des chips catégorie (attribués par le ranking IA).
+const CATEGORY_META: Record<NewsCategory, { label: string; bg: string; fg: string }> = {
+  funding: { label: "funding", bg: "#E7F5EC", fg: "#1B7F4B" },
+  hiring: { label: "hiring", bg: "#E8F0FE", fg: "#1A56DB" },
+  acquisition: { label: "acquisition", bg: "#F3E8FF", fg: "#7C3AED" },
+  leadership: { label: "leadership", bg: "#FEF3E7", fg: "#B45309" },
+  product: { label: "product", bg: "#E7F6F8", fg: "#0E7490" },
+  other: { label: "other", bg: "#F1F1F3", fg: "#6B7280" },
+};
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return "";
   try {
-    return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "numeric" });
+    return new Date(iso).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
   } catch {
     return iso;
   }
@@ -34,17 +44,17 @@ export function NewsPanel({ news }: { news: News | null }) {
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <Newspaper size={14} style={{ color: COLORS.ink3 }} />
-          <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink2 }}>News entreprise</h3>
+          <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink2 }}>Company news</h3>
           {news && (
             <span style={{ fontSize: 11, color: COLORS.ink3 }}>
-              cherché le {new Date(news.refreshed_at).toLocaleDateString("fr-FR")}
+              searched on {new Date(news.refreshed_at).toLocaleDateString("en-GB")}
             </span>
           )}
         </div>
         <div style={{ fontSize: 12, color: COLORS.ink3, lineHeight: 1.5 }}>
           {news
-            ? "Pas de news pertinente trouvée sur les 90 derniers jours."
-            : "Sera récupéré au prochain enrichissement (via Tavily, recherche sur les 90 derniers jours)."}
+            ? "No relevant news found over the last 90 days."
+            : "Will be fetched on the next enrichment (via Tavily, searching the last 90 days)."}
         </div>
       </div>
     );
@@ -71,10 +81,10 @@ export function NewsPanel({ news }: { news: News | null }) {
       >
         <Newspaper size={14} style={{ color: COLORS.ink1 }} />
         <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink0 }}>
-          News entreprise ({news.items.length})
+          Company news ({news.items.length})
         </h3>
         <span style={{ fontSize: 11, color: COLORS.ink3, marginLeft: "auto" }}>
-          refresh le {new Date(news.refreshed_at).toLocaleDateString("fr-FR")}
+          refreshed on {new Date(news.refreshed_at).toLocaleDateString("en-GB")}
         </span>
       </div>
       <div>
@@ -99,6 +109,23 @@ export function NewsPanel({ news }: { news: News | null }) {
             }}
           >
             <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+              {item.category && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    padding: "1px 7px",
+                    borderRadius: 999,
+                    background: CATEGORY_META[item.category].bg,
+                    color: CATEGORY_META[item.category].fg,
+                    flexShrink: 0,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  {CATEGORY_META[item.category].label}
+                </span>
+              )}
               <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0 }}>
                 {item.title}
               </span>

@@ -117,7 +117,10 @@ function parseSourceField(s: string | null | undefined) {
   return { kind: "inferred" as const };
 }
 
-export async function generateDealRecap(ctx: ClientEnrichmentContext): Promise<DealRecap | null> {
+export async function generateDealRecap(
+  ctx: ClientEnrichmentContext,
+  userId: string | null = null,
+): Promise<DealRecap | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
 
   const prompt = renderClientContextForPrompt(ctx);
@@ -136,7 +139,7 @@ export async function generateDealRecap(ctx: ClientEnrichmentContext): Promise<D
     { label: "clients/deal-recap" },
   );
 
-  logUsage(null, DEAL_RECAP_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "clients_deal_recap");
+  logUsage(userId, DEAL_RECAP_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "clients_deal_recap");
 
   const block = msg.content.find((b) => b.type === "tool_use");
   if (!block || !("input" in block)) return null;

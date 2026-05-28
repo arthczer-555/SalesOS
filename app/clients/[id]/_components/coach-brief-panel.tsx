@@ -4,13 +4,14 @@ import { useState } from "react";
 import { Copy, Check, Users } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { CoachBrief } from "@/lib/clients/types";
+import { EditableText, EditableObjectList } from "./editable";
+import { patchContent } from "./content-client";
 
 // Brief client à destination des coachs Coachello.
-// Le format de rendu suit le template historique partagé sur le canal Slack
-// au staffing (Adyen, ACME, etc.). On le rend ici en deux vues :
-//  - Vue lisible (cards visuelles) pour consultation directe sur la fiche
-//  - Bouton "Copier pour Slack" qui produit la version markdown/texte
-//    formatée prête à coller dans le canal #coaches.
+//  - Champs éditables inline (le CS corrige ce que l'IA a produit).
+//  - Bouton "Copier pour Slack" qui produit la version markdown/texte prête à
+//    coller dans le canal #coaches.
+// Une relance d'enrichissement réécrit le brief (pas de préservation).
 
 function fmtDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -19,9 +20,6 @@ function fmtDate(iso: string | null | undefined): string | null {
   return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
-// Format Slack du brief. On reste fidèle au template original : émojis,
-// structure en bullet points, ton sobre. La fonction est totalement défensive
-// (elle skip les fields null/undefined/empty arrays).
 function renderBriefForSlack(brief: CoachBrief, companyName: string): string {
   const lines: string[] = [];
   lines.push(`*Client brief for coaches*`);
@@ -47,7 +45,7 @@ function renderBriefForSlack(brief: CoachBrief, companyName: string): string {
     lines.push(`*Profiles:*`);
     for (const p of brief.programs) {
       const sessions = p.nb_sessions ? ` (${p.nb_sessions} sessions)` : "";
-      const pop = p.population ? ` — ${p.population}` : "";
+      const pop = p.population ? ` · ${p.population}` : "";
       lines.push(`- *${p.name}*${sessions}: ${p.description}${pop}`);
     }
     lines.push(``);
@@ -99,11 +97,20 @@ function renderBriefForSlack(brief: CoachBrief, companyName: string): string {
   return lines.join("\n");
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+function FieldRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 14, padding: "6px 0" }}>
-      <div style={{ fontSize: 12, color: COLORS.ink3, fontWeight: 500 }}>{label}</div>
-      <div style={{ fontSize: 13, color: COLORS.ink0 }}>{value}</div>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "180px 1fr",
+        gap: 14,
+        padding: "8px 0",
+        borderTop: `1px solid ${COLORS.line}`,
+        alignItems: "flex-start",
+      }}
+    >
+      <div style={{ fontSize: 12, color: COLORS.ink3, fontWeight: 500, paddingTop: 4 }}>{label}</div>
+      <div style={{ minWidth: 0 }}>{children}</div>
     </div>
   );
 }
@@ -112,10 +119,14 @@ export function CoachBriefPanel({
   brief,
   generatedAt,
   companyName,
+  clientId,
+  onUpdated,
 }: {
   brief: CoachBrief | null;
   generatedAt: string | null;
   companyName: string;
+  clientId?: string;
+  onUpdated?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -131,7 +142,7 @@ export function CoachBriefPanel({
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <Users size={14} style={{ color: COLORS.ink3 }} />
-          <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink2 }}>Brief coachs</h3>
+          <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink2 }}>Coach brief</h3>
           <span
             style={{
               fontSize: 10,
@@ -143,23 +154,34 @@ export function CoachBriefPanel({
               letterSpacing: 0.3,
             }}
           >
-            pas encore généré
+            not generated yet
           </span>
         </div>
         <div style={{ fontSize: 12, color: COLORS.ink3, lineHeight: 1.5 }}>
-          Le brief sera créé lors du prochain enrichissement IA (bouton &quot;Lancer
-          l&apos;enrichissement&quot; en haut de la fiche). Il reprend le format du message Slack
-          standard pour les coachs au staffing.
+          The brief will be created on the next AI enrichment (the &quot;Run enrichment&quot;
+          button at the top of the page). It follows the format of the standard Slack message sent
+          to coaches at staffing.
         </div>
       </div>
     );
   }
 
+  const current = brief;
+  async function saveBrief(patch: Partial<CoachBrief>) {
+    if (!clientId) return;
+    await patchContent(clientId, "coach_brief", { ...current, ...patch });
+    onUpdated?.();
+  }
+  const text = (label: string, value: string | null | undefined, key: keyof CoachBrief, multiline = false) => (
+    <FieldRow label={label}>
+      <EditableText value={value ?? null} multiline={multiline} onSave={(v) => saveBrief({ [key]: v ?? undefined } as Partial<CoachBrief>)} />
+    </FieldRow>
+  );
+
   async function copyToClipboard() {
-    if (!brief) return;
-    const text = renderBriefForSlack(brief, companyName);
+    const t = renderBriefForSlack(current, companyName);
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(t);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (e) {
@@ -187,12 +209,10 @@ export function CoachBriefPanel({
         }}
       >
         <Users size={14} style={{ color: COLORS.ink1 }} />
-        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink0 }}>
-          Brief coachs
-        </h3>
+        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink0 }}>Coach brief</h3>
         {generatedAt && (
           <span style={{ fontSize: 11, color: COLORS.ink3 }}>
-            généré le {new Date(generatedAt).toLocaleDateString("fr-FR")}
+            generated on {new Date(generatedAt).toLocaleDateString("en-GB")}
           </span>
         )}
         <button
@@ -214,97 +234,97 @@ export function CoachBriefPanel({
           }}
         >
           {copied ? <Check size={12} /> : <Copy size={12} />}
-          {copied ? "Copié" : "Copier pour Slack"}
+          {copied ? "Copied" : "Copy for Slack"}
         </button>
       </div>
 
-      <div style={{ padding: "12px 16px" }}>
-        {brief.intro && (
-          <p style={{ fontSize: 13, color: COLORS.ink0, margin: "4px 0 14px", lineHeight: 1.5 }}>
-            {brief.intro}
-          </p>
-        )}
+      <div style={{ padding: "4px 16px 12px" }}>
+        {text("Intro", brief.intro, "intro", true)}
+        {text("Industry", brief.industry, "industry")}
+        {text("Website", brief.website, "website")}
+        {text("Context", brief.context, "context", true)}
 
-        <div style={{ display: "flex", flexDirection: "column" }}>
-          {brief.industry && <Row label="Industry" value={brief.industry} />}
-          {brief.website && (
-            <Row
-              label="Website"
-              value={
-                <a href={brief.website} target="_blank" rel="noreferrer" style={{ color: COLORS.brand }}>
-                  {brief.website}
-                </a>
-              }
-            />
-          )}
-          {brief.context && (
-            <Row
-              label="Context"
-              value={<span style={{ whiteSpace: "pre-wrap" }}>{brief.context}</span>}
-            />
-          )}
+        <FieldRow label="Profiles">
+          <EditableObjectList
+            items={brief.programs ?? []}
+            schema={[
+              { key: "name", label: "Name" },
+              { key: "nb_sessions", label: "# of sessions" },
+              { key: "population", label: "Population" },
+              { key: "description", label: "Description", multiline: true },
+            ]}
+            emptyLabel="No profiles"
+            onSave={(v) =>
+              saveBrief({
+                programs:
+                  v?.map((p) => ({
+                    name: p.name ?? "",
+                    description: p.description ?? "",
+                    nb_sessions: p.nb_sessions ? Number(p.nb_sessions) || null : null,
+                    population: p.population ?? null,
+                  })) ?? undefined,
+              })
+            }
+          />
+        </FieldRow>
 
-          {brief.programs && brief.programs.length > 0 && (
-            <Row
-              label="Profiles"
-              value={
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {brief.programs.map((p, i) => (
-                    <div key={i}>
-                      <span style={{ fontWeight: 600 }}>{p.name}</span>
-                      {p.nb_sessions && (
-                        <span style={{ color: COLORS.ink3 }}> ({p.nb_sessions} sessions)</span>
-                      )}
-                      <span style={{ color: COLORS.ink1 }}>: {p.description}</span>
-                      {p.population && (
-                        <span style={{ color: COLORS.ink3 }}> — {p.population}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              }
-            />
-          )}
+        {text("Goal", brief.goal, "goal", true)}
+        {text("Location", brief.location, "location")}
 
-          {brief.goal && <Row label="Goal" value={brief.goal} />}
-          {brief.location && <Row label="Location" value={brief.location} />}
+        <FieldRow label="Coaching languages">
+          <EditableObjectList
+            items={brief.coaching_languages ?? []}
+            schema={[
+              { key: "region", label: "Region" },
+              { key: "languages", label: "Languages (comma-separated)" },
+            ]}
+            emptyLabel="No languages"
+            onSave={(v) =>
+              saveBrief({
+                coaching_languages:
+                  v?.map((cl) => ({
+                    region: cl.region ?? "",
+                    languages: (cl.languages ?? "")
+                      .split(",")
+                      .map((s) => s.trim())
+                      .filter(Boolean),
+                  })) ?? undefined,
+              })
+            }
+          />
+        </FieldRow>
 
-          {brief.coaching_languages && brief.coaching_languages.length > 0 && (
-            <Row
-              label="Coaching languages"
-              value={
-                <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                  {brief.coaching_languages.map((cl, i) => (
-                    <div key={i}>
-                      <span style={{ fontWeight: 600 }}>{cl.region}:</span>{" "}
-                      <span>{cl.languages.join(", ")}</span>
-                    </div>
-                  ))}
-                </div>
-              }
-            />
-          )}
+        {text("Coachee's journey", brief.coachee_journey, "coachee_journey", true)}
 
-          {brief.coachee_journey && <Row label="Coachee's journey" value={brief.coachee_journey} />}
-          {brief.ai_coaching !== null && brief.ai_coaching !== undefined && (
-            <Row label="AI coaching" value={brief.ai_coaching ? "Yes" : "No"} />
-          )}
-          {brief.coachello_app && <Row label="Coachello App" value={brief.coachello_app} />}
-          {brief.briefing_meeting_date && (
-            <Row label="Client Briefing meeting" value={fmtDate(brief.briefing_meeting_date) ?? "—"} />
-          )}
-          {brief.nb_sessions_per_coachee && (
-            <Row label="Sessions per coachee" value={brief.nb_sessions_per_coachee} />
-          )}
-          {brief.tripartite && <Row label="Tripartite" value={brief.tripartite} />}
-          {brief.onboarding_start_date && (
-            <Row label="Program start date" value={fmtDate(brief.onboarding_start_date) ?? "—"} />
-          )}
-          {brief.program_end_date && (
-            <Row label="Program end date" value={fmtDate(brief.program_end_date) ?? "—"} />
-          )}
-          {brief.program_duration && <Row label="Program duration" value={brief.program_duration} />}
-        </div>
+        <FieldRow label="AI coaching">
+          <EditableText
+            value={brief.ai_coaching == null ? null : brief.ai_coaching ? "Yes" : "No"}
+            placeholder="Yes / No"
+            onSave={(v) => {
+              const t = (v ?? "").trim().toLowerCase();
+              const val = t === "" ? null : ["yes", "oui", "true", "1", "y"].includes(t);
+              return saveBrief({ ai_coaching: val });
+            }}
+          />
+        </FieldRow>
+
+        {text("Coachello App", brief.coachello_app, "coachello_app")}
+        {text("Client Briefing meeting", brief.briefing_meeting_date, "briefing_meeting_date")}
+
+        <FieldRow label="Sessions per coachee">
+          <EditableText
+            value={brief.nb_sessions_per_coachee != null ? String(brief.nb_sessions_per_coachee) : null}
+            onSave={(v) => {
+              const n = v ? Number(v) : null;
+              return saveBrief({ nb_sessions_per_coachee: n != null && !Number.isNaN(n) ? n : null });
+            }}
+          />
+        </FieldRow>
+
+        {text("Tripartite", brief.tripartite, "tripartite")}
+        {text("Program start date", brief.onboarding_start_date, "onboarding_start_date")}
+        {text("Program end date", brief.program_end_date, "program_end_date")}
+        {text("Program duration", brief.program_duration, "program_duration")}
       </div>
     </div>
   );

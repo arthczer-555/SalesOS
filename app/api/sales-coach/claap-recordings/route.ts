@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { listClaapRecordings, pickTranscriptUrl, type ClaapRecording } from "@/lib/claap";
+import { listClaapRecordingsPage, pickTranscriptUrl, type ClaapRecording } from "@/lib/claap";
 
 export const dynamic = "force-dynamic";
 
@@ -15,14 +15,18 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = req.nextUrl;
   const scope = searchParams.get("scope"); // "mine" (default) | "all" (admin)
+  const cursor = searchParams.get("cursor"); // pagination cursor (optional)
 
   const { data: userRow } = await db.from("users").select("is_admin").eq("id", user.id).single();
   const isAdmin = !!userRow?.is_admin;
   const wantsAll = scope === "all" && isAdmin;
 
   let recordings: ClaapRecording[];
+  let nextCursor: string | null;
   try {
-    recordings = await listClaapRecordings(50);
+    const page = await listClaapRecordingsPage({ limit: 50, cursor });
+    recordings = page.recordings;
+    nextCursor = page.nextCursor;
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Claap API error" }, { status: 502 });
   }
@@ -64,5 +68,5 @@ export async function GET(req: NextRequest) {
     existing_analysis: existingMap.get(r.id) ?? null,
   }));
 
-  return NextResponse.json({ recordings: items, isAdmin });
+  return NextResponse.json({ recordings: items, isAdmin, nextCursor });
 }

@@ -28,6 +28,16 @@ export async function POST(req: NextRequest) {
       scored_at: new Date().toISOString(),
     }, { onConflict: "deal_id" });
 
+    // Best-effort : persiste les événements clés (colonne ajoutée par la
+    // migration deal_scores_key_events.sql — si absente, on n'échoue pas).
+    if (result.key_events?.length) {
+      const { error: keErr } = await db
+        .from("deal_scores")
+        .update({ key_events: result.key_events })
+        .eq("deal_id", dealId);
+      if (keErr) console.warn("[deals/score] key_events non persistés (migration ?):", keErr.message);
+    }
+
     return NextResponse.json(result);
   } catch (e) {
     console.error("[deals/score] ERROR:", e instanceof Error ? e.stack : e);

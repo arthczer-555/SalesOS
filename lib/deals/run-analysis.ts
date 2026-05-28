@@ -63,8 +63,26 @@ export const analyzeTool: Anthropic.Tool = {
           required: ["action", "priorite", "impact"],
         },
       },
+      evenements_cles: {
+        type: "array",
+        description:
+          "Événements datés marquants qui retracent le parcours du deal, extraits des échanges (devis/proposition envoyé, échange ou réunion important, objection majeure, relance décisive, décision/engagement du prospect…). Uniquement ceux dont la date est identifiable dans le contexte.",
+        items: {
+          type: "object",
+          properties: {
+            date: { type: "string", description: "Date de l'événement au format YYYY-MM-DD" },
+            label: { type: "string", description: "Titre court (ex: 'Devis envoyé', 'Échange important')" },
+            type: {
+              type: "string",
+              enum: ["devis", "contrat", "echange_important", "objection", "relance", "decision", "reunion", "autre"],
+            },
+            description: { type: "string", description: "1 phrase de contexte factuelle" },
+          },
+          required: ["date", "label", "type", "description"],
+        },
+      },
     },
-    required: ["synthese", "riskLevel", "dynamique", "qualification", "signaux", "risques", "scoreInsight", "prochaines_etapes"],
+    required: ["synthese", "riskLevel", "dynamique", "qualification", "signaux", "risques", "scoreInsight", "prochaines_etapes", "evenements_cles"],
   },
 };
 
@@ -358,6 +376,7 @@ Analyse ce deal commercial en profondeur à partir de TOUTES les données dispon
 Sois hyper précis et factuel - base chaque analyse sur des éléments concrets tirés des échanges.
 Les messages Slack sont des conversations internes de l'équipe Coachello - ils contiennent souvent des insights précieux sur l'avancement du deal, les blocages, et le contexte commercial.
 Ne mentionne jamais la probabilité HubSpot du stage - c'est une valeur automatique non pertinente. Raisonne uniquement sur la dynamique réelle (échanges, signaux, engagement).
+Identifie aussi les ÉVÉNEMENTS CLÉS datés qui retracent le parcours du deal (devis/proposition envoyé, échange ou réunion important, objection majeure, relance décisive, décision ou engagement du prospect…). Pour chacun : une date au format YYYY-MM-DD (convertis depuis les dates DD/MM/YYYY du contexte), un label court, un type, une phrase de contexte. N'invente JAMAIS de date : si un événement ne peut pas être daté à partir du contexte, ne l'inclus pas.
 Utilise l'outil deal_analysis pour retourner ton analyse.`,
       messages: [{ role: "user", content: contextBlock }],
       tools: [analyzeTool],

@@ -21,11 +21,31 @@ export interface Deal {
   qualification: Record<string, string | null> | null;
 }
 
+export interface DealMeeting {
+  id: string;
+  claap_recording_id: string;
+  meeting_title: string | null;
+  meeting_started_at: string | null;
+  meeting_kind: string | null;
+  audience: string | null;
+  score_global: number | null;
+  recap_summary: string | null;
+}
+
+export interface DealEvent {
+  kind: "stage" | "created";
+  label: string;
+  iso: string;
+}
+
 export interface DealDetails extends Deal {
   description: string;
   contacts: { id: string; name: string; jobTitle: string; email: string; linkedinUrl: string | null }[];
   company: { name: string; industry: string; employees: string; website: string };
   engagements: { type: string; date: string; body: string }[];
+  meetings: DealMeeting[];
+  events: DealEvent[];
+  keyEvents: AnalysisEvent[];
   reasoning: string | null;
   next_action: string | null;
   scoredAt: string | null;
@@ -39,6 +59,23 @@ export interface Stage {
   probability: number | null;
 }
 
+export type AnalysisEventType =
+  | "devis"
+  | "contrat"
+  | "echange_important"
+  | "objection"
+  | "relance"
+  | "decision"
+  | "reunion"
+  | "autre";
+
+export interface AnalysisEvent {
+  date: string;
+  label: string;
+  type: AnalysisEventType;
+  description?: string;
+}
+
 export interface Analysis {
   synthese: string;
   riskLevel: "Faible" | "Moyen" | "Élevé";
@@ -48,6 +85,7 @@ export interface Analysis {
   risques: { risque: string; severite: "Faible" | "Moyen" | "Élevé" }[];
   scoreInsight: string;
   prochaines_etapes: { action: string; priorite: "Urgent" | "Moyen" | "Faible"; impact: string }[];
+  evenements_cles?: AnalysisEvent[];
   // legacy compat
   summary?: string;
   positiveSignals?: string[];
@@ -93,6 +131,23 @@ export function engagementTypeBadge(type: string): string {
     TASK: "Tâche",
   };
   return map[type?.toUpperCase()] ?? type;
+}
+
+// Normalise un `meeting_kind` Claap (libre, souvent en anglais) vers un label
+// court FR pour l'affichage en badge dans la timeline.
+export function meetingKindBadge(kind: string | null): string {
+  if (!kind) return "Réunion";
+  const k = kind.toLowerCase();
+  if (k.includes("disco")) return "Disco";
+  if (k.includes("demo") || k.includes("démo")) return "Démo";
+  if (k.includes("nego") || k.includes("négo")) return "Négo";
+  if (k.includes("closing") || k.includes("clôture")) return "Closing";
+  if (k.includes("follow") || k.includes("suivi") || k.includes("relance")) return "Suivi";
+  if (k.includes("kickoff") || k.includes("kick-off") || k.includes("onboard")) return "Kickoff";
+  if (k.includes("intern")) return "Interne";
+  if (k.includes("qualif")) return "Qualif";
+  // Fallback : capitalise le kind brut (tronqué) plutôt qu'un générique.
+  return kind.charAt(0).toUpperCase() + kind.slice(1, 16);
 }
 
 export function formatDealForSlack(

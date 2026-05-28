@@ -8,9 +8,11 @@ export default async (req: Request) => {
   }
 
   let id: string | undefined;
+  let userId: string | null = null;
   try {
-    const body = (await req.json()) as { id?: string };
+    const body = (await req.json()) as { id?: string; userId?: string | null };
     id = body.id;
+    userId = body.userId ?? null;
   } catch {
     console.error("[clients-enrich-bg] invalid JSON body");
     return;
@@ -21,7 +23,7 @@ export default async (req: Request) => {
     return;
   }
 
-  const result = await runClientEnrichment(id);
+  const result = await runClientEnrichment(id, userId);
   if (!result.ok) {
     console.error(`[clients-enrich-bg] ${id} failed:`, result.error);
   } else if (result.alreadyDone) {

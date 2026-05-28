@@ -12,7 +12,11 @@ import { parseClientFieldsFromClaude } from "./parse-output";
 import { generateCoachBrief } from "./coach-brief";
 import { generateDealRecap } from "./deal-recap";
 import { fetchClientNews } from "./news";
+import { rankClientNews } from "./rank-news";
+import { getBillingForClient } from "../billing/google-sheet";
 import { computeHealth, computeInsights } from "./health";
+import { generateHealthSummary } from "./health-summary";
+import { notifyOwnerOfEnrichedClient } from "./notify-owner";
 
 export type RunEnrichmentResult =
   | { ok: true; alreadyDone?: boolean }
@@ -37,10 +41,16 @@ export type RunEnrichmentResult =
 //
 // Côté health : on garde un historique snapshot dans health_history pour
 // pouvoir tracer la trend mois après mois (utile quand on branchera le cron).
-export async function runClientEnrichment(clientId: string): Promise<RunEnrichmentResult> {
+// userId : utilisateur à qui imputer le coût IA dans usage_logs. null pour les
+// déclenchements système (webhook closed-won, cron) qui n'ont pas de contexte
+// user. Le trigger manuel (bouton admin) passe l'id de l'admin qui clique.
+export async function runClientEnrichment(
+  clientId: string,
+  userId: string | null = null,
+): Promise<RunEnrichmentResult> {
   const { data: row, error: rowErr } = await db
     .from("clients")
-    .select("id, hubspot_deal_id, enrichment_status, fields_json, updated_at, health, health_history")
+    .select("id, hubspot_deal_id, enrichment_status, updated_at, health, health_history")
     .eq("id", clientId)
     .single();
 
@@ -95,7 +105,7 @@ export async function runClientEnrichment(clientId: string): Promise<RunEnrichme
       { label: `clients/enrich/${clientId}` },
     );
 
-    const briefPromise = generateCoachBrief(ctx).catch((e) => {
+    const briefPromise = generateCoachBrief(ctx, userId).catch((e) => {
       console.warn(
         `[clients/enrich/${clientId}] coach brief generation failed:`,
         e instanceof Error ? e.message : e,
@@ -103,7 +113,7 @@ export async function runClientEnrichment(clientId: string): Promise<RunEnrichme
       return null;
     });
 
-    const recapPromise = generateDealRecap(ctx).catch((e) => {
+    const recapPromise = generateDealRecap(ctx, userId).catch((e) => {
       console.warn(
         `[clients/enrich/${clientId}] deal recap generation failed:`,
         e instanceof Error ? e.message : e,
@@ -120,25 +130,38 @@ export async function runClientEnrichment(clientId: string): Promise<RunEnrichme
       return null;
     });
 
-    const [msg, coachBrief, dealRecap, news] = await Promise.all([
+    // Billing : best-effort, contexte facturation depuis le fichier revenue
+    // (Google Drive). Pas d'IA, coût nul. Affiché immédiatement sur la fiche
+    // sans attendre le cron mensuel.
+    const billingPromise = getBillingForClient(
+      ctx.deal?.company?.name ?? ctx.deal?.name ?? "",
+    ).catch((e) => {
+      console.warn(`[clients/enrich/${clientId}] billing fetch failed:`, e instanceof Error ? e.message : e);
+      return null;
+    });
+
+    const [msg, coachBrief, dealRecap, news, billing] = await Promise.all([
       fieldsPromise,
       briefPromise,
       recapPromise,
       newsPromise,
+      billingPromise,
     ]);
 
-    logUsage(null, CLIENT_EXTRACTION_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "clients_enrich_fields");
+    logUsage(userId, CLIENT_EXTRACTION_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "clients_enrich_fields");
 
     const toolBlock = msg.content.find((b) => b.type === "tool_use");
     if (!toolBlock || !("input" in toolBlock)) {
       throw new Error("No tool_use block in Claude response");
     }
 
+    // Re-enrich écrase : la sortie IA remplace fields_json (le parser renvoie
+    // les 6 sections complètes). Les éditions manuelles ne sont pas préservées,
+    // c'est le comportement voulu (l'IA reprend la main à chaque run).
     const parsed = parseClientFieldsFromClaude(toolBlock.input);
-    const merged = mergeFieldsPreservingManual(row.fields_json ?? {}, parsed);
 
     const updatePayload: Record<string, unknown> = {
-      fields_json: merged,
+      fields_json: parsed,
       enrichment_status: "done",
       enrichment_error: null,
       last_enriched_at: new Date().toISOString(),
@@ -152,8 +175,21 @@ export async function runClientEnrichment(clientId: string): Promise<RunEnrichme
       updatePayload.deal_recap = dealRecap;
     }
     if (news) {
+      // Tri/filtrage IA des news (best-effort). Sans signal pertinent, on
+      // garde la liste brute Tavily.
+      if (news.items.length > 0) {
+        news.items = await rankClientNews(news.items, {
+          companyName: ctx.deal?.company?.name ?? ctx.deal?.name ?? "",
+          userId,
+          feature: "clients_news_rank",
+        }).catch(() => news.items);
+      }
       updatePayload.news = news;
       updatePayload.last_news_run_at = new Date().toISOString();
+    }
+    if (billing) {
+      updatePayload.billing = billing;
+      updatePayload.billing_refreshed_at = new Date().toISOString();
     }
 
     // Persiste les recordings Claap découverts (non indexés dans
@@ -180,6 +216,17 @@ export async function runClientEnrichment(clientId: string): Promise<RunEnrichme
     const health = computeHealth(ctx, Number.isFinite(previousScore) ? previousScore : null);
     const insights = computeInsights(ctx, health);
 
+    // Phrase d'explication du score, ancrée sur les derniers échanges. Séquentiel
+    // (après Promise.all) car elle a besoin du score/label déjà calculés.
+    // Best-effort : un échec ne casse pas l'enrichissement.
+    health.summary = await generateHealthSummary(ctx, health, userId).catch((e) => {
+      console.warn(
+        `[clients/enrich/${clientId}] health summary failed:`,
+        e instanceof Error ? e.message : e,
+      );
+      return null;
+    });
+
     // health_history : on append le snapshot courant (score + label + drivers
     // + computed_at) en gardant les 24 derniers (~ 2 ans si on cron-iser
     // mensuellement). Permet de tracer l'évolution du health sur la fiche.
@@ -197,7 +244,25 @@ export async function runClientEnrichment(clientId: string): Promise<RunEnrichme
     updatePayload.insights = insights;
     updatePayload.last_health_run_at = new Date().toISOString();
 
-    await db.from("clients").update(updatePayload).eq("id", clientId);
+    const { error: updateErr } = await db.from("clients").update(updatePayload).eq("id", clientId);
+    if (updateErr) {
+      // supabase-js ne throw pas sur erreur DB : sans ce check, un PATCH qui
+      // échoue laissait le statut bloqué sur "running" silencieusement (ok:true
+      // renvoyé, aucune exception, aucun message). On la fait remonter au catch
+      // pour basculer en "error" avec le message visible sur la fiche.
+      throw new Error(`final update failed: ${updateErr.message}`);
+    }
+
+    // DM Slack à l'owner (best-effort, fire-and-forget) : la fiche est prête,
+    // il peut aller compléter les infos manquantes. Idempotent via
+    // owner_notified_at — un re-enrich ne re-DM pas. Un échec Slack ne fait
+    // jamais échouer l'enrichissement.
+    void notifyOwnerOfEnrichedClient(clientId).catch((e) =>
+      console.warn(
+        `[clients/enrich/${clientId}] owner notify failed:`,
+        e instanceof Error ? e.message : e,
+      ),
+    );
 
     return { ok: true };
   } catch (e) {
@@ -215,22 +280,3 @@ export async function runClientEnrichment(clientId: string): Promise<RunEnrichme
   }
 }
 
-// Merge IA + manuel : si l'utilisateur a édité un field (source.kind = "manual"),
-// la valeur manuelle gagne. Sinon la nouvelle valeur IA remplace l'ancienne.
-type FieldsLike = Record<string, Record<string, { source?: { kind?: string } | null } | undefined> | undefined>;
-
-function mergeFieldsPreservingManual(existing: FieldsLike, incoming: FieldsLike): FieldsLike {
-  const merged: FieldsLike = { ...existing };
-  for (const sectionKey of Object.keys(incoming)) {
-    const incomingSection = incoming[sectionKey] ?? {};
-    const existingSection = existing[sectionKey] ?? {};
-    const mergedSection: Record<string, unknown> = { ...existingSection };
-    for (const fieldKey of Object.keys(incomingSection)) {
-      const existingField = existingSection[fieldKey];
-      const isManual = existingField?.source?.kind === "manual";
-      if (!isManual) mergedSection[fieldKey] = incomingSection[fieldKey];
-    }
-    merged[sectionKey] = mergedSection as FieldsLike[string];
-  }
-  return merged;
-}

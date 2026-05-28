@@ -42,3 +42,7 @@ next-env.d.ts
 node_modules/
 .next/
 .env.local
+
+# recovery data dumps (contain PII, not for the repo)
+netrows-recovered.csv
+netrows-recovered.json

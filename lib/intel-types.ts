@@ -176,6 +176,8 @@ export type HubspotPreset =
 export interface HubspotCriteria {
   q?: string;
   owner?: string[];
+  // Noms de companies de la watchlist (scope_companies) ; matché sur la propriété `company` du contact (operator IN).
+  companies?: string[];
   lifecyclestage?: string[];
   leadStatus?: string[];
   industry?: string[];

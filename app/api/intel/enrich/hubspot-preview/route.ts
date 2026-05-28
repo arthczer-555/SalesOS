@@ -60,6 +60,7 @@ export async function POST(req: NextRequest) {
   if (c.industry?.length) filters.push({ propertyName: "industry", operator: "IN", values: c.industry });
   if (c.country?.length) filters.push({ propertyName: "country", operator: "IN", values: c.country });
   if (c.companysize?.length) filters.push({ propertyName: "numberofemployees", operator: "IN", values: c.companysize });
+  if (c.companies?.length) filters.push({ propertyName: "company", operator: "IN", values: c.companies });
 
   const cutoff = c.createdRange === "custom" ? c.createdFrom : rangeCutoff(c.createdRange);
   if (cutoff) filters.push({ propertyName: "createdate", operator: "GTE", value: cutoff });

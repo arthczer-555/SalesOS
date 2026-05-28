@@ -103,10 +103,11 @@ export async function POST(req: NextRequest) {
     hubspot_deal_id: resolvedDealId,
     meeting_title: rec.title ?? null,
     meeting_started_at: rec.meeting?.startingAt ?? rec.createdAt ?? null,
-    // Honest classification: store what Claap actually reported. The UI can
-    // surface an "Interne" tag if relevant — analysis still happened because
-    // the user explicitly requested it.
-    meeting_type: rec.meeting?.type ?? null,
+    // L'utilisateur a explicitement demandé l'analyse depuis la modale : on ne
+    // garde pas la classification "internal" de Claap (qui masquerait le
+    // meeting dans la liste Coaching). La modale affiche déjà le tag
+    // "Interne (Claap)" à partir des données Claap live, pas de cette colonne.
+    meeting_type: "external",
     participants: externalParticipants.length > 0 ? externalParticipants : null,
     user_id: recorderUser?.id ?? null,
     status: "pending" as const,

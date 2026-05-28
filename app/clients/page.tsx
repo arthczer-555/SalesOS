@@ -2,7 +2,7 @@
 
 import useSWR from "swr";
 import { useState } from "react";
-import { Search, RefreshCw, Download } from "lucide-react";
+import { Search, RefreshCw, UserPlus } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { ClientsTable, type ClientListItem } from "./_components/clients-table";
 import { BackfillModal } from "./_components/backfill-modal";
@@ -147,22 +147,22 @@ export default function ClientsPage() {
             type="button"
             onClick={() => setBackfillOpen(true)}
             style={{
-              padding: "7px 12px",
+              padding: "7px 14px",
               borderRadius: 8,
-              border: `1px solid ${COLORS.line}`,
-              background: COLORS.bgCard,
-              color: COLORS.ink1,
+              border: `1px solid ${COLORS.brand}`,
+              background: COLORS.brand,
+              color: "#ffffff",
               cursor: "pointer",
               display: "inline-flex",
               alignItems: "center",
-              gap: 5,
+              gap: 6,
               fontSize: 12,
-              fontWeight: 500,
+              fontWeight: 600,
             }}
             title="Importer les closed-won historiques depuis HubSpot"
           >
-            <Download size={13} />
-            Importer historique
+            <UserPlus size={14} />
+            Importer un client
           </button>
         )}
 

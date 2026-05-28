@@ -21,6 +21,24 @@ export interface DealScore {
   reliability: 0 | 1 | 2 | 3 | 4 | 5;
 }
 
+export const KEY_EVENT_TYPES = [
+  "devis",
+  "contrat",
+  "echange_important",
+  "objection",
+  "relance",
+  "decision",
+  "reunion",
+  "autre",
+] as const;
+export type DealKeyEventType = (typeof KEY_EVENT_TYPES)[number];
+export interface DealKeyEvent {
+  date: string;
+  label: string;
+  type: DealKeyEventType;
+  description: string;
+}
+
 // ─── Authority scoring ────────────────────────────────────────────────────────
 const AUTHORITY_VALUES: Record<string, number> = {
   "executive_sponsor": 20,
@@ -297,7 +315,7 @@ const MODEL_MAXES = {
   ai_coaching:    { authority: 15, budget: 15, timeline: 10, business_need: 15, engagement: 25, strategic_fit: 5, competition: 15 },
 };
 
-export async function scoreOneDeal(dealId: string, userId: string | null, claudeModel = DEFAULT_SCORE_MODEL, enableCache = false): Promise<DealScore & { reasoning: string; next_action: string; qualification: Record<string, string | null> }> {
+export async function scoreOneDeal(dealId: string, userId: string | null, claudeModel = DEFAULT_SCORE_MODEL, enableCache = false): Promise<DealScore & { reasoning: string; next_action: string; qualification: Record<string, string | null>; key_events: DealKeyEvent[] }> {
   const DEAL_PROPS = [
     "dealname", "dealstage", "amount", "closedate", "description",
     "hs_deal_stage_probability", "deal_type", "notes_last_contacted", "hs_lastmodifieddate",
@@ -609,8 +627,13 @@ COMPETITION : BetterUp, CoachHub, Ezra, MentorCity, MoovOne, Simundia, Bloom at 
     "needDetailed": "description détaillée du besoin ou null",
     "timeline": "horizon temporel identifié (ex: Q3 2025) ou null",
     "strategicFit": "raison concrète du fit avec Coachello ou null"
-  }
-}`;
+  },
+  "key_events": [
+    { "date": "YYYY-MM-DD", "label": "Titre court (ex: Devis envoyé)", "type": "devis|contrat|echange_important|objection|relance|decision|reunion|autre", "description": "1 phrase de contexte" }
+  ]
+}
+
+key_events : extrais les moments DATÉS qui retracent le parcours du deal (devis/proposition envoyé, échange ou réunion important, objection majeure, relance décisive, décision ou engagement du prospect…). Convertis les dates DD/MM/YYYY du contexte en YYYY-MM-DD. N'invente JAMAIS de date : si un événement ne peut pas être daté depuis le contexte, ne l'inclus pas. Renvoie un tableau vide s'il n'y a aucun événement datable.`;
 
   const client = new Anthropic();
   const message = await client.messages.create({
@@ -678,5 +701,19 @@ COMPETITION : BetterUp, CoachHub, Ezra, MentorCity, MoovOne, Simundia, Bloom at 
     strategicFit:   ai.qualification?.strategicFit  ?? null,
   };
 
-  return { ...score, reasoning, next_action, qualification };
+  const key_events: DealKeyEvent[] = Array.isArray(ai.key_events)
+    ? ai.key_events
+        .map((e: { date?: string; label?: string; type?: string; description?: string }) => {
+          const date = typeof e?.date === "string" ? e.date.trim() : "";
+          const label = typeof e?.label === "string" ? e.label.trim() : "";
+          if (!date || !label || Number.isNaN(new Date(date).getTime())) return null;
+          const type = KEY_EVENT_TYPES.includes(e?.type as DealKeyEventType)
+            ? (e!.type as DealKeyEventType)
+            : "autre";
+          return { date, label, type, description: e?.description?.trim() ?? "" };
+        })
+        .filter((e: DealKeyEvent | null): e is DealKeyEvent => e !== null)
+    : [];
+
+  return { ...score, reasoning, next_action, qualification, key_events };
 }

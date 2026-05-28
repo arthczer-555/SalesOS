@@ -3,6 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { type DealScore } from "@/lib/deal-scoring";
 import { db } from "@/lib/db";
 import { stripHtml } from "@/lib/hubspot";
+import { getClaapRecording } from "@/lib/claap";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +24,7 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
 }
 
 const DEAL_PROPS = [
-  "dealname", "dealstage", "amount", "closedate", "pipeline",
+  "dealname", "dealstage", "amount", "closedate", "createdate", "pipeline",
   "hubspot_owner_id", "hs_lastmodifieddate", "notes_last_contacted",
   "hs_deal_stage_probability", "num_associated_contacts",
   "deal_type", "authority_status", "budget_status", "decision_timeline",
@@ -46,9 +47,9 @@ export async function GET(req: NextRequest) {
       limit: ENGAGEMENT_LIMIT,
     };
 
-    const [dealData, contactAssoc, companyAssoc, emailsRes, meetingsRes, callsRes, notesRes, tasksRes] =
+    const [dealData, contactAssoc, companyAssoc, emailsRes, meetingsRes, callsRes, notesRes, tasksRes, pipelinesRes] =
       await Promise.allSettled([
-        hubspot(`/crm/v3/objects/deals/${id}?properties=${propsQuery}`),
+        hubspot(`/crm/v3/objects/deals/${id}?properties=${propsQuery}&propertiesWithHistory=dealstage`),
         hubspot(`/crm/v3/objects/deals/${id}/associations/contacts`),
         hubspot(`/crm/v3/objects/deals/${id}/associations/companies`),
         hubspot("/crm/v3/objects/emails/search", "POST", {
@@ -71,6 +72,7 @@ export async function GET(req: NextRequest) {
           ...dealFilter,
           properties: ["hs_task_subject", "hs_task_body", "hs_timestamp"],
         }),
+        hubspot("/crm/v3/pipelines/deals"),
       ]);
 
     const deal = dealData.status === "fulfilled" ? dealData.value : null;
@@ -199,12 +201,48 @@ export async function GET(req: NextRequest) {
       .slice(0, ENGAGEMENT_LIMIT)
       .map((e) => ({ type: e.type, date: e.date, body: e.body }));
 
+    // Événements marquants : transitions d'étape du pipeline (devis envoyé,
+    // contrat envoyé, closed won…) + création du deal. Reconstituent le
+    // parcours du deal dans la timeline du haut.
+    type DealEvent = { kind: "stage" | "created"; label: string; iso: string };
+    const events: DealEvent[] = [];
+    type Stage = { id: string; label: string };
+    const pipelines =
+      pipelinesRes.status === "fulfilled"
+        ? ((pipelinesRes.value?.results ?? []) as { stages?: Stage[] }[])
+        : [];
+    const stageLabels: Record<string, string> = {};
+    for (const pl of pipelines) {
+      for (const s of pl.stages ?? []) stageLabels[s.id] = s.label;
+    }
+    const stageHistory = (deal?.propertiesWithHistory?.dealstage ?? []) as {
+      value: string;
+      timestamp: string;
+    }[];
+    // L'historique vient le plus récent en premier : on déduplique les
+    // transitions consécutives vers la même étape et on garde la 1re entrée
+    // (= date d'entrée dans l'étape).
+    const seen = new Set<string>();
+    for (const h of stageHistory) {
+      if (!h.value || seen.has(h.value)) continue;
+      seen.add(h.value);
+      events.push({
+        kind: "stage",
+        label: stageLabels[h.value] ?? h.value,
+        iso: h.timestamp,
+      });
+    }
+    if (p.createdate) {
+      events.push({ kind: "created", label: "Deal créé", iso: p.createdate });
+    }
+
     // Fetch cached AI score
     let cachedScore: DealScore | null = null;
     let reasoning: string | null = null;
     let next_action: string | null = null;
     let scoredAt: string | null = null;
     let qualification: Record<string, string | null> | null = null;
+    let keyEvents: unknown[] = [];
     if (process.env.SUPABASE_URL) {
       const { data: cached } = await db
         .from("deal_scores")
@@ -217,6 +255,76 @@ export async function GET(req: NextRequest) {
         next_action = cached.next_action ?? null;
         scoredAt = cached.scored_at ?? null;
         qualification = (cached.qualification as Record<string, string | null>) ?? null;
+      }
+      // Best-effort : la colonne key_events peut ne pas exister (migration non
+      // appliquée). Select séparé pour ne pas casser le reste si absente.
+      const { data: ke } = await db
+        .from("deal_scores")
+        .select("key_events")
+        .eq("deal_id", id)
+        .maybeSingle();
+      if (ke?.key_events && Array.isArray(ke.key_events)) keyEvents = ke.key_events;
+    }
+
+    // Réunions Claap analysées rattachées au deal (sales_coach_analyses).
+    // Fusionnées avec les engagements HubSpot dans la timeline côté client.
+    type ClaapRow = {
+      id: string;
+      claap_recording_id: string;
+      meeting_title: string | null;
+      meeting_started_at: string | null;
+      meeting_kind: string | null;
+      audience: string | null;
+      score_global: number | null;
+      meeting_recap: { summary?: string | null } | null;
+    };
+    let meetings: {
+      id: string;
+      claap_recording_id: string;
+      meeting_title: string | null;
+      meeting_started_at: string | null;
+      meeting_kind: string | null;
+      audience: string | null;
+      score_global: number | null;
+      recap_summary: string | null;
+    }[] = [];
+    if (process.env.SUPABASE_URL) {
+      const { data: rows } = await db
+        .from("sales_coach_analyses")
+        .select(
+          "id, claap_recording_id, meeting_title, meeting_started_at, meeting_kind, audience, score_global, meeting_recap, status"
+        )
+        .eq("hubspot_deal_id", id)
+        .eq("status", "done")
+        .order("meeting_started_at", { ascending: false });
+      meetings = ((rows ?? []) as ClaapRow[]).map((m) => ({
+        id: m.id,
+        claap_recording_id: m.claap_recording_id,
+        meeting_title: m.meeting_title,
+        meeting_started_at: m.meeting_started_at,
+        meeting_kind: m.meeting_kind,
+        audience: m.audience,
+        score_global: m.score_global,
+        recap_summary: m.meeting_recap?.summary ?? null,
+      }));
+
+      // Date faisant foi = celle de l'API Claap (meeting.startingAt), plus
+      // fiable que `meeting_started_at` stocké en base. On résout en parallèle
+      // et on retombe sur la valeur DB si l'appel Claap échoue.
+      if (process.env.CLAAP_API_TOKEN && meetings.length > 0) {
+        await Promise.allSettled(
+          meetings.map(async (m) => {
+            if (!m.claap_recording_id) return;
+            try {
+              const rec = await getClaapRecording(m.claap_recording_id);
+              const claapDate = rec?.meeting?.startingAt ?? rec?.createdAt ?? null;
+              if (claapDate) m.meeting_started_at = claapDate;
+              if (!m.meeting_title && rec?.title) m.meeting_title = rec.title;
+            } catch {
+              /* garde la date DB en fallback */
+            }
+          }),
+        );
       }
     }
 
@@ -241,6 +349,9 @@ export async function GET(req: NextRequest) {
       contacts,
       company,
       engagements,
+      meetings,
+      events,
+      keyEvents,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Erreur" }, { status: 500 });
