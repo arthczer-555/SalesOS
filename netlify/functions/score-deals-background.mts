@@ -75,6 +75,19 @@ export default async () => {
     }
 
     console.log(`[score-deals-bg] DONE: total ${dealIds.length}, scored ${totalScored}, errors ${totalErrors}, skipped ${totalSkipped}`);
+
+    // Tous les deals sont scorés : on envoie le digest "deal review" par AE.
+    try {
+      const dg = await fetch(`${siteUrl}/api/deals/ae-digest`, {
+        method: "POST",
+        headers: { "X-Cron-Secret": cronSecret, "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const dgData = await dg.json().catch(() => null);
+      console.log(`[score-deals-bg] ae-digest:`, dg.status, dgData);
+    } catch (e) {
+      console.error("[score-deals-bg] ae-digest failed:", e);
+    }
   } catch (e) {
     console.error("[score-deals-bg] fatal:", e);
   }

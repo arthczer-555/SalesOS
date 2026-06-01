@@ -5,8 +5,8 @@ const isPublicRoute = createRouteMatcher([
   "/sign-in(.*)",
   "/api/gmail/callback(.*)", // Google OAuth callback — user browser has session cookie
   "/api/deals/score-all(.*)", // Cron endpoint — authenticated via Bearer CRON_SECRET in handler
+  "/api/deals/ae-digest(.*)", // Cron / admin — accepts X-Cron-Secret OR Clerk session in handler
   "/api/webhooks/claap(.*)", // Claap webhook — authenticated via x-claap-webhook-secret in handler
-  "/api/webhooks/netrows(.*)", // Netrows webhook — authenticated via HMAC SHA-256 (x-netrows-signature) in handler
   "/api/webhooks/hubspot-closed-won(.*)", // HubSpot webhook — authenticated via HMAC SHA-256 v3 (x-hubspot-signature-v3) in handler
   "/api/slack/events(.*)", // Slack Events API — authenticated via HMAC SHA-256 (x-slack-signature) in handler
   "/api/sales-coach/analyze(.*)", // Fire-and-forget internal trigger — authenticated via x-internal-secret in handler
