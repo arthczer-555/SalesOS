@@ -83,6 +83,8 @@ export async function POST(req: NextRequest) {
       // ── @mention du bot dans un canal ────────────────────────────────────
       if (event.type === "app_mention") {
         const cleaned = stripBotMention(event.text ?? "");
+        // Mention seule sans texte (ex: on tague juste le bot) → rien à traiter.
+        if (!cleaned) return NextResponse.json({ ok: true });
         await dispatchToBackground(req, {
           channel: event.channel!,
           // Toujours répondre en thread sur les mentions pour pas polluer le canal
@@ -112,6 +114,11 @@ export async function POST(req: NextRequest) {
         if (!tracked) return NextResponse.json({ ok: true });
 
         const cleaned = stripBotMention(event.text ?? "");
+        // Message qui ne contient que des mentions (ex: on tague un collègue
+        // pour l'inviter dans le fil) → texte vide après nettoyage. Le bot ne
+        // doit pas répondre, sinon on envoie un message user vide à l'API
+        // ("user messages must have non-empty content").
+        if (!cleaned) return NextResponse.json({ ok: true });
         await dispatchToBackground(req, {
           channel: event.channel,
           threadTs: event.thread_ts,

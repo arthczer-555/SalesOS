@@ -136,6 +136,12 @@ export default async (req: Request) => {
 
   const { channel, threadTs, slackUserId, text, teamId } = payload;
 
+  // Garde-fou : un message vide (ex: mention seule d'un collègue) produirait un
+  // message user vide rejeté par l'API Anthropic. On ne déclenche rien.
+  if (!text?.trim()) {
+    return;
+  }
+
   // ── 1) Map Slack user → SalesOS user (sinon refus poli) ───────────────────
   const user = await resolveSlackUser(slackUserId);
   if (!user) {
