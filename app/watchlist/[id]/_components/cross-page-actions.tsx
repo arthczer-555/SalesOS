@@ -2,23 +2,12 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Search, Send, GraduationCap, Radar } from "lucide-react";
+import { List, Send, GraduationCap } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { WatchCompanyDetail } from "@/app/api/watchlist/companies/[id]/route";
-import type { BriefRow, HubspotRecapContent } from "@/lib/watchlist/briefs";
 
-export function CrossPageActions({
-  company,
-  radarProspectIds,
-  hubspotRecap,
-}: {
-  company: WatchCompanyDetail;
-  radarProspectIds: string[];
-  hubspotRecap: BriefRow<HubspotRecapContent> | null;
-}) {
+export function CrossPageActions({ company }: { company: WatchCompanyDetail }) {
   const encodedName = encodeURIComponent(company.name);
-  const firstDealId = hubspotRecap?.content?.deals?.[0]?.id ?? null;
-  const massIds = radarProspectIds.join(",");
 
   return (
     <section
@@ -43,37 +32,22 @@ export function CrossPageActions({
       </h3>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <ActionLink
-          href={`/enrichment?source=watchlist&company=${encodedName}`}
-          icon={<Search size={12} />}
-          label="Enrichissement"
-          sub="Trouver de nouveaux prospects"
+          href="/watchlist?tab=lists"
+          icon={<List size={12} />}
+          label="Gestion des listes"
+          sub="Créer une liste de prospects"
         />
         <ActionLink
-          href={
-            massIds.length > 0
-              ? `/mass-prospection?from=watchlist&ids=${massIds}`
-              : `/mass-prospection?from=watchlist&company=${encodedName}`
-          }
+          href={`/mass-prospection?from=watchlist&company=${encodedName}`}
           icon={<Send size={12} />}
           label="Mass Prospection"
-          sub={
-            radarProspectIds.length > 0
-              ? `${radarProspectIds.length} prospects radar`
-              : "Lancer une campagne"
-          }
+          sub="Lancer une campagne"
         />
         <ActionLink
-          href={firstDealId ? `/sales-coach?dealId=${firstDealId}` : "#"}
+          href="/sales-coach"
           icon={<GraduationCap size={12} />}
           label="Sales Coach"
-          sub={firstDealId ? "Dernier deal HubSpot" : "Aucun deal identifié"}
-          disabled={!firstDealId}
-        />
-        <ActionLink
-          href={`/intel?companyName=${encodedName}`}
-          icon={<Radar size={12} />}
-          label="Intel agents"
-          sub="Signaux marché filtrés"
+          sub="Analyser un deal"
         />
       </div>
     </section>

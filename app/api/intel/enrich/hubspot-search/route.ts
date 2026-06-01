@@ -3,7 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hubspotFetch, hubspotSearchAll } from "@/lib/hubspot";
 import { resolveUsername } from "@/lib/netrows";
-import { loadRadarKeys, matchContactAgainstRadar, type RadarKeys } from "@/lib/radar-overlap";
+import { resolveWatchlistCompanyContactIds } from "@/lib/intel/company-contact-ids";
 import type { EnrichmentProfile, HubspotCriteria } from "@/lib/intel-types";
 
 export const dynamic = "force-dynamic";
@@ -84,10 +84,6 @@ export async function POST(req: NextRequest) {
 
   const c = (await req.json().catch(() => ({}))) as HubspotCriteria;
   const limit = Math.max(10, Math.min(500, c.limit ?? 100));
-  // Défaut: on inclut les profils déjà au Radar (avec un flag) pour les
-  // afficher dans le modal de sélection. Mettre excludeRadar=true les filtre
-  // côté serveur (option pour réduire le payload).
-  const excludeRadar = c.excludeRadar === true;
   const excludeIdSet = new Set(c.excludeIds ?? []);
 
   // ── 1. Resolve owners (default = me)
@@ -119,7 +115,8 @@ export async function POST(req: NextRequest) {
     if (c.industry?.length) filters.push({ propertyName: "industry", operator: "IN", values: c.industry });
     if (c.country?.length) filters.push({ propertyName: "country", operator: "IN", values: c.country });
     if (c.companysize?.length) filters.push({ propertyName: "numberofemployees", operator: "IN", values: c.companysize });
-    if (c.companies?.length) filters.push({ propertyName: "company", operator: "IN", values: c.companies });
+    // c.companies (watchlist) est traité par associations plus bas (section 4b),
+    // pas via la propriété texte `company`.
     if (c.source?.length) filters.push({ propertyName: "hs_lead_source", operator: "IN", values: c.source });
 
     const cutoff = c.createdRange === "custom" ? c.createdFrom : rangeCutoff(c.createdRange);
@@ -221,8 +218,27 @@ export async function POST(req: NextRequest) {
       if (restrictContactIds.size === 0) {
         return NextResponse.json({ profiles: [], total: 0 });
       }
+    }
 
-      // Add the contact-id filter
+    // ── 4b. Restriction par company (watchlist) : on s'aligne sur la fiche
+    // company (associations company→contacts) plutôt que sur la propriété texte
+    // `company` du contact, souvent vide même quand le contact est rattaché.
+    // Combinée en intersection avec une éventuelle restriction deal.
+    if (c.companies?.length) {
+      const companyContactIds = await resolveWatchlistCompanyContactIds(c.companies);
+      if (companyContactIds.size === 0) {
+        return NextResponse.json({ profiles: [], total: 0 });
+      }
+      restrictContactIds = restrictContactIds
+        ? new Set([...restrictContactIds].filter((id) => companyContactIds.has(id)))
+        : companyContactIds;
+    }
+
+    // Applique la restriction par contact-id (deal ∩ company) en un seul filtre.
+    if (restrictContactIds) {
+      if (restrictContactIds.size === 0) {
+        return NextResponse.json({ profiles: [], total: 0 });
+      }
       filters.push({
         propertyName: "hs_object_id",
         operator: "IN",
@@ -240,14 +256,8 @@ export async function POST(req: NextRequest) {
     };
     const sorts = sortMap[c.sort ?? "createdate-desc"];
 
-    // ── 6. Charge les clés Radar (hubspot_id + username + name+company).
-    // Utilisé soit pour exclure (excludeRadar=true), soit pour flagger les
-    // profils déjà au Radar (isOnRadar) afin de les afficher décochés dans le modal.
-    const radarKeys: RadarKeys = await loadRadarKeys(db);
-
-    // ── 7. Run contact search avec sur-échantillonnage pour absorber le filtrage radar/excludeIds
-    const overhead = radarKeys.size + excludeIdSet.size;
-    const oversample = Math.min(1000, limit + overhead + 50);
+    // ── 6. Run contact search avec sur-échantillonnage pour absorber le filtrage excludeIds
+    const oversample = Math.min(1000, limit + excludeIdSet.size + 50);
 
     const searchBody: {
       properties: string[];
@@ -265,56 +275,19 @@ export async function POST(req: NextRequest) {
 
     const rawContacts = await hubspotSearchAll<RawContact>("contacts", searchBody, oversample);
 
-    // Filtre client-side : excludeIds + Radar (skip ou flag selon excludeRadar)
-    let skippedByRadar = 0;
+    // Filtre client-side : excludeIds (déjà chargés via "Charger plus")
     let skippedByExcludeIds = 0;
     const filteredContacts: RawContact[] = [];
-    const onRadarIds = new Set<string>();
-    // Pour backfill opportuniste du hubspot_id sur les rows Radar matchées par nom+entreprise
-    const radarBackfill: { username: string; hubspotId: string }[] = [];
     for (const row of rawContacts) {
       if (excludeIdSet.has(row.id)) {
         skippedByExcludeIds++;
         continue;
-      }
-      const m = matchContactAgainstRadar(
-        {
-          hubspotId: row.id,
-          firstName: row.properties.firstname,
-          lastName: row.properties.lastname,
-          company: row.properties.company,
-          linkedinUrl: row.properties.linkedin_url,
-        },
-        radarKeys,
-      );
-      if (m.matched) {
-        if (m.matchedBy === "name_company" && m.matchedUsername) {
-          radarBackfill.push({ username: m.matchedUsername, hubspotId: row.id });
-        }
-        if (excludeRadar) {
-          skippedByRadar++;
-          continue;
-        }
-        onRadarIds.add(row.id);
       }
       filteredContacts.push(row);
       if (filteredContacts.length >= limit) break;
     }
     let contacts = filteredContacts;
 
-    // Backfill du hubspot_id sur les rows Radar matchées par name+company.
-    // Non-bloquant : on lance les updates en parallèle sans attendre.
-    if (radarBackfill.length > 0) {
-      void Promise.all(
-        radarBackfill.map((b) =>
-          db
-            .from("linkedin_monitored_profiles")
-            .update({ hubspot_id: b.hubspotId })
-            .eq("username", b.username)
-            .is("hubspot_id", null),
-        ),
-      ).catch((e) => console.error("[hubspot-search] radar hubspot_id backfill failed:", e));
-    }
     const hasMore = rawContacts.length >= oversample;
 
     // ── 8. If we didn't already fetch deals (no deal filter), batch-fetch top deals for these contacts (chunké par 100)
@@ -425,7 +398,7 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 9. Map to EnrichmentProfile
-    let profiles: EnrichmentProfile[] = contacts.map((row) => {
+    const profiles: EnrichmentProfile[] = contacts.map((row) => {
       const p = row.properties;
       const linkedinUrl = p.linkedin_url ?? null;
       const username = linkedinUrl ? extractLinkedInUsername(linkedinUrl) : null;
@@ -433,7 +406,6 @@ export async function POST(req: NextRequest) {
       const deals = dealsByContact.get(row.id) ?? [];
       const top = deals.sort((a, b) => (parseFloat(b.properties.amount ?? "0") || 0) - (parseFloat(a.properties.amount ?? "0") || 0))[0];
       const topStage = top ? stagesById.get(top.properties.dealstage ?? "") : null;
-      const isOnRadar = onRadarIds.has(row.id);
       return {
         hubspotId: row.id,
         username,
@@ -451,8 +423,7 @@ export async function POST(req: NextRequest) {
         ownerName: ownerMap.get(p.hubspot_owner_id ?? "") ?? null,
         profileUrl: linkedinUrl,
         source: "hubspot" as const,
-        selected: !isOnRadar,
-        isOnRadar,
+        selected: true,
         lastContactedAt: p.notes_last_contacted ?? null,
         numAssociatedDeals: deals.length,
         topDeal: top
@@ -491,7 +462,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       profiles,
       total: profiles.length,
-      skippedByRadar,
       skippedByExcludeIds,
       hasMore,
     });

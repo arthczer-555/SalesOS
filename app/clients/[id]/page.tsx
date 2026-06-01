@@ -1,10 +1,10 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ExternalLink, AlertTriangle, Loader2, Sparkles, Clock, Trash2, RefreshCw } from "lucide-react";
+import { ArrowLeft, ExternalLink, AlertTriangle, Loader2, Sparkles, Clock, Trash2, RefreshCw, Search, CheckCircle2 } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { ClientRow } from "@/lib/clients/types";
 import { useUserMe } from "@/lib/hooks/use-user-me";
@@ -17,6 +17,7 @@ import { HealthPanel } from "./_components/health-panel";
 import { NewsPanel } from "./_components/news-panel";
 import { RefreshReportPanel } from "./_components/refresh-report-panel";
 import { BillingPanel } from "./_components/billing-panel";
+import { MeetingConfirmationModal } from "./_components/meeting-confirmation-modal";
 
 async function fetcher<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -39,7 +40,47 @@ function fmtAmount(n: number | null): string {
   return `€${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k`;
 }
 
-function StatusBanner({ client }: { client: ClientRow }) {
+function StatusBanner({ client, onConfirmMeetings }: { client: ClientRow; onConfirmMeetings: () => void }) {
+  if (client.enrichment_status === "awaiting_meetings") {
+    return (
+      <div
+        style={{
+          background: COLORS.brandTint,
+          color: COLORS.brand,
+          border: `1px solid ${COLORS.brand}`,
+          padding: "10px 14px",
+          borderRadius: 8,
+          fontSize: 12,
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+        }}
+      >
+        <Search size={14} style={{ flexShrink: 0 }} />
+        <span style={{ flex: 1 }}>
+          We found the Claap meetings for this account. Confirm the list (and add any we missed), then the AI
+          analysis will start.
+        </span>
+        <button
+          type="button"
+          onClick={onConfirmMeetings}
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            padding: "6px 12px",
+            borderRadius: 8,
+            border: "none",
+            background: COLORS.brand,
+            color: "#fff",
+            cursor: "pointer",
+            flexShrink: 0,
+          }}
+        >
+          Confirm meetings
+        </button>
+      </div>
+    );
+  }
   if (client.enrichment_status === "running") {
     return (
       <div
@@ -114,6 +155,10 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  // Distingue une fermeture "confirmée" (on reste sur la fiche, l'enrichissement
+  // démarre) d'une fermeture "abandon" (on renvoie vers la liste, cf. gate).
+  const confirmedMeetings = useRef(false);
 
   // Refresh agressif tant que l'enrichissement n'est pas terminé pour que le
   // CS voie les fields apparaître dès la fin du pipeline IA. Une fois "done"
@@ -125,6 +170,15 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     },
     revalidateOnFocus: false,
   });
+
+  // Tant que les meetings Claap n'ont pas été confirmés (awaiting_meetings), la
+  // fiche n'est pas consultable : le popup de confirmation est un passage obligé.
+  // On le force ouvert quel que soit le chemin d'accès (clic depuis la liste, lien
+  // Slack…) ; sa fermeture sans confirmation renvoie vers la liste (cf. plus bas).
+  const mustConfirmMeetings = data?.client.enrichment_status === "awaiting_meetings";
+  useEffect(() => {
+    if (mustConfirmMeetings) setConfirmOpen(true);
+  }, [mustConfirmMeetings]);
 
   async function triggerEnrich() {
     setTriggering(true);
@@ -252,7 +306,29 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         </div>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          {isAdmin && client.enrichment_status !== "running" && (
+          {client.enrichment_status === "awaiting_meetings" && (
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(true)}
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                fontSize: 12,
+                fontWeight: 600,
+                padding: "6px 12px",
+                borderRadius: 8,
+                border: `1px solid ${COLORS.brand}`,
+                background: COLORS.brand,
+                color: "#fff",
+                cursor: "pointer",
+              }}
+            >
+              <CheckCircle2 size={12} />
+              Confirm meetings
+            </button>
+          )}
+          {isAdmin && client.enrichment_status !== "running" && client.enrichment_status !== "awaiting_meetings" && (
             <button
               type="button"
               onClick={triggerEnrich}
@@ -370,7 +446,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
 
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 20, maxWidth: 1100, margin: "0 auto" }}>
-          <StatusBanner client={client} />
+          <StatusBanner client={client} onConfirmMeetings={() => setConfirmOpen(true)} />
 
           {/* Petit point du dernier refresh incrémental (bouton Actualiser / cron) */}
           <RefreshReportPanel report={client.last_refresh_report} />
@@ -415,6 +491,34 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           />
         </div>
       </div>
+
+      {confirmOpen && (
+        <MeetingConfirmationModal
+          clientId={client.id}
+          blocking={mustConfirmMeetings}
+          onClose={() => {
+            setConfirmOpen(false);
+            // Fermeture sans confirmation alors que c'est obligatoire : la fiche
+            // n'est pas consultable tant que les meetings ne sont pas validés, on
+            // renvoie donc vers la liste plutôt que d'exposer une fiche vide.
+            if (mustConfirmMeetings && !confirmedMeetings.current) {
+              router.push("/clients");
+            }
+            confirmedMeetings.current = false;
+          }}
+          onConfirmed={() => {
+            confirmedMeetings.current = true;
+            void mutate();
+          }}
+          onDeleted={() => {
+            // Le client supprimé depuis le popup : on évite le renvoi "Back to
+            // clients" de onClose et on navigue directement vers la liste.
+            confirmedMeetings.current = true;
+            setConfirmOpen(false);
+            router.push("/clients");
+          }}
+        />
+      )}
     </div>
   );
 }

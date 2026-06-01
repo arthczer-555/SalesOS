@@ -50,7 +50,7 @@ export async function runClientEnrichment(
 ): Promise<RunEnrichmentResult> {
   const { data: row, error: rowErr } = await db
     .from("clients")
-    .select("id, hubspot_deal_id, enrichment_status, updated_at, health, health_history")
+    .select("id, hubspot_deal_id, enrichment_status, updated_at, health, health_history, confirmed_claap_recordings")
     .eq("id", clientId)
     .single();
 
@@ -78,7 +78,18 @@ export async function runClientEnrichment(
     .eq("id", clientId);
 
   try {
-    const ctx = await loadClientContext(row.hubspot_deal_id);
+    // Si l'humain a confirmé une liste de meetings (flux closed-won/import avec
+    // garde-fou), on charge exactement ces recordings. Sinon (re-enrich, refresh
+    // cron) on laisse loadClientContext faire sa discovery automatique.
+    const confirmed = Array.isArray(row.confirmed_claap_recordings)
+      ? (row.confirmed_claap_recordings as Array<{ recording_id?: string }>)
+          .map((r) => r.recording_id)
+          .filter((id): id is string => !!id)
+      : null;
+    const ctx = await loadClientContext(
+      row.hubspot_deal_id,
+      confirmed && confirmed.length > 0 ? { confirmedRecordingIds: confirmed } : undefined,
+    );
     const contextPrompt = renderClientContextForPrompt(ctx);
 
     if (!process.env.ANTHROPIC_API_KEY) {

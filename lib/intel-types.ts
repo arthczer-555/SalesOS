@@ -1,92 +1,4 @@
-// ── Market Intel — types partagés ────────────────────────────────────────────
-
-export type SignalType =
-  | "job_change"
-  | "job_change_icp_match";
-
-export type AgentId = "job-change";
-
-export type ActionType = "email" | "linkedin" | "call" | "monitor";
-
-export type IntelCategory = "first-party" | "social" | "web";
-
-export interface ScoreBreakdown {
-  icp?: number;
-  actionability?: number;
-  freshness?: number;
-  source_reliability?: number;
-  signal_strength?: number;
-}
-
-export interface Intel {
-  id: string;
-  user_id: string;
-  agent_id: AgentId | null;
-  company_name: string | null;
-  signal_type: SignalType;
-  title: string;
-  summary: string | null;
-  strength: number | null;
-  score: number;
-  score_breakdown: ScoreBreakdown | null;
-  source_url: string | null;
-  source_domain: string | null;
-  why_relevant: string | null;
-  suggested_action: string | null;
-  action_type: ActionType | null;
-  company_enrichment: Record<string, unknown> | null;
-  is_read: boolean;
-  is_actioned: boolean;
-  archived: boolean;
-  created_at: string;
-}
-
-export interface IntelFilters {
-  agents?: AgentId[];
-  scoreMin?: number;
-  period?: "24h" | "7d" | "30d" | "all";
-  status?: "all" | "unread" | "actionable" | "archived";
-  q?: string;
-  username?: string;
-}
-
-export interface IntelStats {
-  total: number;
-  unread: number;
-  actionable: number;
-}
-
-// ── Agents ──────────────────────────────────────────────────────────────────
-
-export type AgentStatus = "active" | "partial" | "inactive";
-
-export interface AgentRunMetadata {
-  enabled: boolean;
-  last_run_at: string | null;
-  last_run_status: "ok" | "error" | "partial" | "running" | null;
-  last_run_signals_count: number;
-  last_run_error: string | null;
-  config: Record<string, unknown> | null;
-}
-
-export interface AgentDef {
-  id: AgentId;
-  name: string;
-  description: string;
-  category: IntelCategory;
-  status: AgentStatus;
-  estimatedCreditsPerRun: string;
-  signalTypes: SignalType[];
-  runEndpoint: string | null;            // null = pas de run manuel (push only)
-  iconName: string;                      // nom d'icône lucide-react
-  configurable: boolean;
-}
-
-export interface Agent extends AgentDef, AgentRunMetadata {
-  weeklyIntelsCount?: number;            // calculé à la demande
-}
-
-// ── Enrichissement ──────────────────────────────────────────────────────────
+// ── Listes / enrichissement HubSpot — types partagés ─────────────────────────
 
 export type EnrichmentSource = "netrows" | "hubspot" | "mixed";
 
@@ -94,7 +6,6 @@ export type ProfileSource =
   | "manual"
   | "init"
   | "hubspot"
-  | "netrows-search"
   | "champion"
   | "competitor";
 
@@ -111,8 +22,6 @@ export interface EnrichmentProfile {
   selected?: boolean;
   source?: ProfileSource;
   isChampion?: boolean;
-  addedToRadar?: boolean;
-  isOnRadar?: boolean;
   // HubSpot extras
   jobTitle?: string | null;
   lifecyclestage?: string | null;
@@ -123,6 +32,18 @@ export interface EnrichmentProfile {
   lastContactedAt?: string | null;
   numAssociatedDeals?: number;
   topDeal?: { id: string; name: string; stage: string; stageLabel?: string; amount: string | null; isClosed?: boolean; isWon?: boolean } | null;
+  // Renseignés après un envoi (optionnel) de la liste vers HubSpot.
+  pushedToHubspotAt?: string | null;
+  pushOutcome?: ProfilePushOutcome;
+}
+
+// Résultat de l'envoi d'un contact vers HubSpot (action optionnelle "Pousser
+// dans HubSpot" sur une liste). `company` reflète l'association à une company
+// EXISTANTE uniquement (on ne crée jamais de company, cf. choix produit).
+export interface ProfilePushOutcome {
+  status: "created" | "existing" | "skipped" | "error";
+  company: "associated" | "not_found" | "none";
+  reason?: string;
 }
 
 export interface HubspotPipelineStage {
@@ -139,31 +60,6 @@ export interface HubspotOwner {
   email: string;
 }
 
-export interface NetrowsCriteria {
-  companies?: string[];
-  titles?: string[];
-  sectors?: string[];
-  sizes?: string[];
-  keywords?: string;
-  // Filtres avancés exposés via la doc Netrows /people/search
-  firstName?: string;
-  lastName?: string;
-  geo?: string; // LinkedIn geo ID (numérique). Résolu via /api/intel/enrich/netrows-locations.
-  geoName?: string; // Nom lisible de la ville, conservé pour réafficher dans la form.
-  schoolId?: string; // LinkedIn school ID
-  keywordSchool?: string; // ex: "Harvard", "Stanford"
-}
-
-export interface ComboLog {
-  company: string | null;
-  title: string | null;
-  status: "ok" | "no_match" | "rate_limit" | "credits" | "auth" | "error";
-  http_status: number | null;
-  items_count: number;
-  error: string | null;
-  duration_ms: number;
-}
-
 export type HubspotPreset =
   | "customers"
   | "past-won"
@@ -176,7 +72,9 @@ export type HubspotPreset =
 export interface HubspotCriteria {
   q?: string;
   owner?: string[];
-  // Noms de companies de la watchlist (scope_companies) ; matché sur la propriété `company` du contact (operator IN).
+  // Ids de companies de la watchlist (scope_companies). Côté serveur, on résout
+  // chaque id vers ses contacts HubSpot *associés* (mêmes contacts que la fiche
+  // company), cf. resolveWatchlistCompanyContactIds.
   companies?: string[];
   lifecyclestage?: string[];
   leadStatus?: string[];
@@ -198,8 +96,7 @@ export interface HubspotCriteria {
   // Sort + pagination
   sort?: "createdate-desc" | "lastcontacted-desc" | "lastcontacted-asc" | "alpha" | "deal-amount-desc";
   limit?: number;
-  // Exclusion : profils LinkedIn déjà au Radar (par défaut true) + hubspotIds déjà chargés (pour "Charger plus")
-  excludeRadar?: boolean;
+  // hubspotIds déjà chargés (pour "Charger plus")
   excludeIds?: string[];
   // Preset (UI seulement, mappé en filtres avant POST)
   preset?: HubspotPreset;
@@ -207,47 +104,46 @@ export interface HubspotCriteria {
   autoResolveLinkedin?: boolean;
 }
 
+/** Résumé de la dernière campagne lancée depuis une liste (pour la carte liste). */
+export interface ListLastCampaign {
+  id: string;
+  name: string | null;
+  status: string;
+  created_at: string;
+  emailCount: number;
+  sentCount: number;
+  draftedCount: number;
+}
+
 export interface EnrichmentList {
   id: string;
   user_id: string;
   name: string;
   source: EnrichmentSource;
-  criteria: NetrowsCriteria | HubspotCriteria | null;
+  criteria: HubspotCriteria | Record<string, unknown> | null;
   results: EnrichmentProfile[];
   created_at: string;
   updated_at: string;
+  // Attaché côté API GET : dernière campagne (list_id = cette liste), si elle existe.
+  last_campaign?: ListLastCampaign | null;
 }
 
-export interface RadarSnapshot {
-  summary?: string;
-  skills?: string[];
-  educations?: { schoolName?: string; degree?: string; fieldOfStudy?: string }[];
-  positions?: {
-    companyName?: string;
-    title?: string;
-    location?: string;
-    start?: { year?: number; month?: number };
-    end?: { year?: number; month?: number };
-  }[];
+// État de l'envoi d'une liste vers HubSpot. Persisté dans
+// enrichment_lists.criteria.hubspotPush (pas de colonne dédiée) et lu par l'UI
+// pour le polling + le récap.
+export interface HubspotPushSummary {
+  total: number;
+  created: number;
+  existing: number;
+  skippedNoEmail: number;
+  companyAssociated: number;
+  companyNotFound: number;
+  errors: number;
 }
-
-export interface RadarProfile {
-  id: string;
-  username: string;
-  full_name: string | null;
-  headline: string | null;
-  company: string | null;
-  profile_url: string | null;
-  source: ProfileSource;
-  radar_active: boolean;
-  is_champion: boolean;
-  hubspot_id: string | null;
-  email: string | null;
-  email_confidence: "high" | "medium" | "low" | null;
-  email_source: "hubspot" | "netrows" | null;
-  email_resolved_at: string | null;
-  last_change_at: string | null;
-  last_refreshed_at: string | null;
-  last_snapshot: RadarSnapshot | null;
-  created_at: string;
+export interface HubspotPushState {
+  status: "running" | "done" | "error";
+  startedAt: string;
+  finishedAt?: string;
+  summary?: HubspotPushSummary;
+  error?: string;
 }

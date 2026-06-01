@@ -1,11 +1,11 @@
 import {
   hubspotFetch,
   hubspotGetAssociations,
+  hubspotSearchAll,
   stripHtml,
+  type HubspotObjectType,
 } from "@/lib/hubspot";
 import {
-  finishBriefOk,
-  finishBriefError,
   type HubspotRecapContent,
   type HubspotCompanySnapshot,
   type HubspotDealSummary,
@@ -34,9 +34,10 @@ const DEAL_PROPS = [
   "hs_is_closed_won",
 ];
 
-const ENGAGEMENT_CAP = 30;
+const ENGAGEMENT_CAP = 40;
 const CONTACT_CAP = 10;
 const DEAL_CAP = 25;
+const EMAIL_CAP = 40;
 
 type CompanyFetchResponse = { id: string; properties: Record<string, string> };
 type DealFetchResponse = { id: string; properties: Record<string, string> };
@@ -46,15 +47,16 @@ type OwnersResponse = { results?: { id: string; firstName?: string; lastName?: s
 type PipelinesResponse = { results?: { label?: string; stages: { id: string; label: string }[] }[] };
 
 /**
- * Fetch un récap HubSpot complet pour une scope_company : company snapshot,
- * deals associés (top 25), engagements timeline (cap 30), contacts associés
- * (top 10).
+ * Charge le contexte HubSpot complet d'une scope_company : company snapshot,
+ * deals associés (top 25), engagements timeline (meetings/calls/notes + emails,
+ * cap 40), contacts associés (top 10). Sert d'input interne à l'Analyse AE
+ * (n'est plus persisté comme brief affiché).
  *
  * Hypothèse : appelé depuis un contexte qui a déjà résolu le HubSpot company
  * id. Si pas encore résolu, on appelle resolveHubspotCompanyId() qui persiste
  * le lien sur scope_companies.
  */
-export async function fetchCompanyRecap(scopeCompanyId: string): Promise<HubspotRecapContent> {
+export async function loadCompanyHubspotContext(scopeCompanyId: string): Promise<HubspotRecapContent> {
   const resolved = await resolveHubspotCompanyId(scopeCompanyId);
   const hubspotCompanyId = resolved.hubspot_company_id;
 
@@ -135,9 +137,9 @@ export async function fetchCompanyRecap(scopeCompanyId: string): Promise<Hubspot
     });
   }
 
-  // ── Engagements (meetings/calls/notes via search avec filter on association.company) ──
+  // ── Engagements (meetings/calls/notes/emails via search avec filter on association.company) ──
   const engagements: HubspotEngagementSnapshot[] = [];
-  const [meetingsRes, callsRes, notesRes] = await Promise.allSettled([
+  const [meetingsRes, callsRes, notesRes, emailsRes] = await Promise.allSettled([
     hubspotFetch<{ results?: EngagementSearchRow[] }>("/crm/v3/objects/meetings/search", "POST", {
       filterGroups: [
         { filters: [{ propertyName: "associations.company", operator: "EQ", value: hubspotCompanyId }] },
@@ -162,6 +164,26 @@ export async function fetchCompanyRecap(scopeCompanyId: string): Promise<Hubspot
       sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
       limit: 30,
     }),
+    // Emails échangés avec les contacts du compte : input clé de l'Analyse AE.
+    hubspotSearchAll<EngagementSearchRow>(
+      "emails" as HubspotObjectType,
+      {
+        filterGroups: [
+          { filters: [{ propertyName: "associations.company", operator: "EQ", value: hubspotCompanyId }] },
+        ],
+        properties: [
+          "hs_email_subject",
+          "hs_email_text",
+          "hs_email_html",
+          "hs_timestamp",
+          "hs_email_direction",
+          "hs_email_from_email",
+        ],
+        sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
+        limit: 100,
+      },
+      EMAIL_CAP,
+    ).then((results) => ({ results })),
   ]);
 
   let totalFetched = 0;
@@ -201,6 +223,23 @@ export async function fetchCompanyRecap(scopeCompanyId: string): Promise<Hubspot
         title: null,
         body: stripHtml(np.hs_note_body ?? "").slice(0, 2000),
         outcome: null,
+      });
+    }
+  }
+  if (emailsRes.status === "fulfilled") {
+    for (const e of emailsRes.value.results ?? []) {
+      totalFetched++;
+      const ep = e.properties ?? {};
+      const direction = ep.hs_email_direction === "INCOMING_EMAIL" ? "in" : "out";
+      const bodyRaw = ep.hs_email_text || stripHtml(ep.hs_email_html ?? "");
+      engagements.push({
+        type: "email",
+        date: ep.hs_timestamp ?? null,
+        title: ep.hs_email_subject ?? null,
+        body: bodyRaw.slice(0, 2500),
+        outcome: null,
+        direction,
+        from_email: ep.hs_email_from_email ?? null,
       });
     }
   }
@@ -263,22 +302,4 @@ function snapshotCompany(res: CompanyFetchResponse): HubspotCompanySnapshot {
   };
 }
 
-/**
- * Pipeline complet : fetch + finishBriefOk/Error. Appelable depuis :
- * - la Background Function Netlify (BG fn léger)
- * - le dispatcher en dev via `after()`
- */
-export async function runHubspotRecap(input: {
-  scopeCompanyId: string;
-}): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const content = await fetchCompanyRecap(input.scopeCompanyId);
-    await finishBriefOk({ scopeCompanyId: input.scopeCompanyId, kind: "hubspot_recap", content });
-    return { ok: true };
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    await finishBriefError({ scopeCompanyId: input.scopeCompanyId, kind: "hubspot_recap", error: msg });
-    return { ok: false, error: msg };
-  }
-}
 

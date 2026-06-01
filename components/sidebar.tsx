@@ -12,7 +12,6 @@ import {
   Crosshair,
   Target,
   Megaphone,
-  Radar,
   Settings,
   ShieldCheck,
   Menu,
@@ -38,7 +37,6 @@ const nav: NavEntry[] = [
   { href: "/prospecting", label: "Prospection", icon: Crosshair },
   { href: "/mass-prospection", label: "Mass Prospection", icon: Target },
   // { href: "/watchlist", label: "Watch List", icon: Eye },
-  //{ href: "/intel", label: "Market Intel", icon: Radar },
   { href: "/marketing", label: "Marketing", icon: Megaphone }
 ];
 

@@ -8,18 +8,7 @@ import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { slugifyCompany } from "@/lib/netrows";
 import type { WatchCompanyDetail } from "@/app/api/watchlist/companies/[id]/route";
 
-export function DetailHeader({
-  company,
-  radarCount,
-  signals30d,
-  champions,
-}: {
-  company: WatchCompanyDetail;
-  radarCount: number;
-  signals30d: number;
-  champions: number;
-}) {
-  const score = Math.min(100, signals30d * 10 + radarCount * 3 + champions * 15);
+export function DetailHeader({ company }: { company: WatchCompanyDetail }) {
   const linkedinSlug = slugifyCompany(company.name);
   const linkedinUrl = `https://www.linkedin.com/company/${linkedinSlug}/`;
 
@@ -69,8 +58,6 @@ export function DetailHeader({
         </p>
       </div>
 
-      <ScorePill score={score} />
-
       <div style={{ display: "flex", gap: 6 }}>
         <a
           href={linkedinUrl}
@@ -94,29 +81,6 @@ export function DetailHeader({
         )}
       </div>
     </header>
-  );
-}
-
-function ScorePill({ score }: { score: number }) {
-  const fg = score >= 75 ? COLORS.ok : score >= 50 ? COLORS.warn : COLORS.ink3;
-  const bg = score >= 75 ? COLORS.okBg : score >= 50 ? COLORS.warnBg : COLORS.bgSoft;
-  return (
-    <div
-      title="Score = signaux 30j × 10 + radar × 3 + champions × 15"
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 6,
-        padding: "4px 10px",
-        borderRadius: 999,
-        background: bg,
-        color: fg,
-        fontSize: 11,
-        fontWeight: 700,
-      }}
-    >
-      Score {score}
-    </div>
   );
 }
 

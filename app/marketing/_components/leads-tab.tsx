@@ -253,6 +253,51 @@ export default function LeadsTab() {
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       {errorMsg && <div style={{ fontSize: 12, color: "#ef4444" }}>{errorMsg}</div>}
 
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <Link
+          href="/marketing/leads"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            background: "#fff",
+            border: "1px solid #e5e5e5",
+            borderRadius: 8,
+            padding: "10px 14px",
+            textDecoration: "none",
+            color: "#111",
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <Settings size={15} />
+          Gestion des leads
+          <span style={{ color: "#888", fontWeight: 500 }}>
+            · {counts.pending} non validé{counts.pending > 1 ? "s" : ""}
+          </span>
+          {counts.pending > 0 && (
+            <span
+              style={{
+                minWidth: 20,
+                height: 20,
+                borderRadius: 10,
+                background: "#ef4444",
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 700,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: "0 6px",
+                marginLeft: 4,
+              }}
+            >
+              {counts.pending > 99 ? "99+" : counts.pending}
+            </span>
+          )}
+        </Link>
+      </div>
+
       <div
         style={{
           display: "grid",
@@ -294,50 +339,6 @@ export default function LeadsTab() {
           label="Avec contact"
           count={counts.validatedWithContact}
         />
-
-        <Link
-          href="/marketing/leads"
-          style={{
-            marginLeft: "auto",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-            background: "#fff",
-            border: "1px solid #e5e5e5",
-            borderRadius: 8,
-            padding: "10px 14px",
-            textDecoration: "none",
-            color: "#111",
-            fontSize: 13,
-            fontWeight: 600,
-          }}
-        >
-          <Settings size={15} />
-          Gestion des leads
-          <span style={{ color: "#888", fontWeight: 500 }}>
-            · {counts.pending} non validé{counts.pending > 1 ? "s" : ""}
-          </span>
-          {counts.pending > 0 && (
-            <span
-              style={{
-                minWidth: 20,
-                height: 20,
-                borderRadius: 10,
-                background: "#ef4444",
-                color: "#fff",
-                fontSize: 11,
-                fontWeight: 700,
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                padding: "0 6px",
-                marginLeft: 4,
-              }}
-            >
-              {counts.pending > 99 ? "99+" : counts.pending}
-            </span>
-          )}
-        </Link>
       </div>
 
       {/* List */}

@@ -92,6 +92,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         await db.from("mass_campaign_emails").update({ status: "generating" }).eq("id", email.id);
 
         const extra = (typeof email.extra_data === "object" && email.extra_data) ? email.extra_data as Record<string, string> : {};
+        const extraRaw = (typeof email.extra_data === "object" && email.extra_data) ? email.extra_data as Record<string, unknown> : {};
+        const previousEmail = (extraRaw.previous_email && typeof extraRaw.previous_email === "object")
+          ? extraRaw.previous_email as { subject?: string; body?: string; sent_at?: string }
+          : null;
 
         const [companyContext, linkedin] = await Promise.all([
           email.company ? getCompanyContext(email.company) : Promise.resolve(""),
@@ -119,11 +123,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           campaign.qcm_length ? `Longueur souhaitée : ${campaign.qcm_length}` : null,
           campaign.qcm_tone ? `Ton : ${campaign.qcm_tone}` : null,
           campaign.qcm_objectif ? `Objectif : ${{ rdv: "Obtenir un RDV", ressource: "Partager une ressource", qualifier: "Qualifier le besoin", reactiver: "Réactiver la relation" }[campaign.qcm_objectif as string] ?? campaign.qcm_objectif}` : null,
+          previousEmail?.body
+            ? `EMAIL PRÉCÉDENT DÉJÀ ENVOYÉ À CE PROSPECT${previousEmail.sent_at ? ` (le ${new Date(previousEmail.sent_at).toLocaleDateString("fr-FR")})` : ""} :\nObjet : ${previousEmail.subject ?? "(sans objet)"}\n${previousEmail.body}`
+            : null,
         ].filter(Boolean).join("\n\n");
 
         const userPrompt = [
           `OBJECTIF DE LA CAMPAGNE :\n${campaign.objective}`,
           `\nINFORMATIONS SUR LE PROSPECT :\n${prospectBlock}`,
+          previousEmail?.body
+            ? "\nC'est une RELANCE. Écris un follow-up court qui s'appuie sur l'email précédent (rappelle brièvement le contexte sans le copier-coller), apporte un nouvel angle ou une nouvelle raison de répondre, et reste poli sans culpabiliser le prospect."
+            : "",
           linkedin.text ? `\nPROFIL LINKEDIN ENRICHI (utilise-le pour personnaliser : 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé) :\n${linkedin.text}` : "",
           companyLinkedIn ? `\nFICHE LINKEDIN ENTREPRISE :\n${companyLinkedIn}` : "",
           companyContext ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyContext}` : "",

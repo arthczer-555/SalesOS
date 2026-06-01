@@ -1,11 +1,13 @@
 import { db } from "../../lib/db";
 import { fetchBillingRows, matchBillingRow } from "../../lib/billing/google-sheet";
 import { runClientRefresh } from "../../lib/clients/run-refresh";
+import { resolveCronUserId } from "../../lib/cron-user";
 
 // Job mensuel : (1) sync facturation pour tous les clients 'done' (1 download
 // du fichier revenue, match en mémoire), puis (2) refresh incrémental de chaque
-// client 'done' (séquentiel, best-effort). userId = null -> imputé au système
-// dans usage_logs. Tourne en Background Function (runtime long).
+// client 'done' (séquentiel, best-effort). Les appels Claude sont imputés au
+// user résolu par resolveCronUserId (CRON_USER_ID / CRON_USER_EMAIL) plutôt
+// qu'au système. Tourne en Background Function (runtime long).
 export default async (req: Request) => {
   const internalSecret = process.env.INTERNAL_SECRET;
   if (!internalSecret || req.headers.get("x-internal-secret") !== internalSecret) {
@@ -23,7 +25,10 @@ export default async (req: Request) => {
     return;
   }
   const list = clients ?? [];
-  console.log(`[clients-monthly-refresh-bg] ${list.length} clients 'done' à traiter`);
+  const cronUserId = await resolveCronUserId();
+  console.log(
+    `[clients-monthly-refresh-bg] ${list.length} clients 'done' à traiter (imputé à ${cronUserId ?? "système"})`,
+  );
 
   // ── (1) Sync facturation — 1 seul download du fichier revenue ───────────────
   let billingUpdated = 0;
@@ -52,7 +57,7 @@ export default async (req: Request) => {
   let errors = 0;
   for (const c of list) {
     try {
-      const result = await runClientRefresh(c.id, null);
+      const result = await runClientRefresh(c.id, cronUserId);
       if (!result.ok) errors++;
       else if ("skipped" in result) skipped++;
       else refreshed++;

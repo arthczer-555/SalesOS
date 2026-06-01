@@ -1,7 +1,10 @@
 import { db } from "@/lib/db";
 import type { CompanyPost } from "@/lib/netrows";
 
-export type BriefKind = "ai_summary" | "news" | "hubspot_recap";
+// `hubspot_recap` n'est plus un brief affiché : la donnée HubSpot est désormais
+// un input interne de l'Analyse AE. On garde ses types (plus bas) car le fetch
+// HubSpot les réutilise.
+export type BriefKind = "ae_analysis" | "news";
 export type BriefStatus = "idle" | "running" | "ok" | "error";
 
 export interface BriefRow<TContent = unknown> {
@@ -21,16 +24,26 @@ export interface BriefRow<TContent = unknown> {
 
 // ── Typed content shapes per kind ───────────────────────────────────────────
 
-export interface AiSummaryContent {
-  headline: string;
-  prose: string;
-  key_findings: string[];
+/** Un contact à prioriser dans le compte, avec l'angle de prospection. */
+export interface AeContact {
+  name: string;
+  role: string | null;
+  rationale: string; // pourquoi cibler cette personne
+  angle: string; // accroche / angle d'approche concret
+  email: string | null;
+  hubspot_id: string | null;
+}
+
+/** Analyse AE : reco de prospection sur un compte (remplace l'ancienne synthèse IA). */
+export interface AeAnalysisContent {
+  strategy: string; // 2 à 4 paragraphes : comment aborder ce compte
+  priority_contacts: AeContact[]; // classés par priorité
   next_actions: string[];
+  watch_outs: string[]; // risques / à éviter
   sources_used: {
-    hubspot: boolean;
+    emails: boolean;
     news: boolean;
-    radar: boolean;
-    signals: boolean;
+    sector: boolean;
   };
 }
 
@@ -74,11 +87,14 @@ export interface HubspotDealSummary {
 }
 
 export interface HubspotEngagementSnapshot {
-  type: "meeting" | "call" | "note";
+  type: "meeting" | "call" | "note" | "email";
   date: string | null;
   title: string | null;
   body: string;
   outcome: string | null;
+  // Pour les emails uniquement : sens (entrant/sortant) et expéditeur.
+  direction?: "in" | "out";
+  from_email?: string | null;
 }
 
 export interface HubspotContactSnapshot {
@@ -98,20 +114,17 @@ export interface HubspotRecapContent {
   truncated: boolean;
 }
 
-export type BriefContent<K extends BriefKind> = K extends "ai_summary"
-  ? AiSummaryContent
+export type BriefContent<K extends BriefKind> = K extends "ae_analysis"
+  ? AeAnalysisContent
   : K extends "news"
     ? NewsContent
-    : K extends "hubspot_recap"
-      ? HubspotRecapContent
-      : never;
+    : never;
 
 // ── DB helpers ──────────────────────────────────────────────────────────────
 
 export async function getBriefs(scopeCompanyId: string): Promise<{
-  ai_summary: BriefRow<AiSummaryContent> | null;
+  ae_analysis: BriefRow<AeAnalysisContent> | null;
   news: BriefRow<NewsContent> | null;
-  hubspot_recap: BriefRow<HubspotRecapContent> | null;
 }> {
   const { data } = await db
     .from("watchlist_company_briefs")
@@ -120,9 +133,8 @@ export async function getBriefs(scopeCompanyId: string): Promise<{
 
   const rows = (data ?? []) as BriefRow[];
   return {
-    ai_summary: (rows.find((r) => r.kind === "ai_summary") as BriefRow<AiSummaryContent>) ?? null,
+    ae_analysis: (rows.find((r) => r.kind === "ae_analysis") as BriefRow<AeAnalysisContent>) ?? null,
     news: (rows.find((r) => r.kind === "news") as BriefRow<NewsContent>) ?? null,
-    hubspot_recap: (rows.find((r) => r.kind === "hubspot_recap") as BriefRow<HubspotRecapContent>) ?? null,
   };
 }
 

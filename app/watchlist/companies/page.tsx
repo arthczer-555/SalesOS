@@ -3,25 +3,9 @@
 import * as React from "react";
 import Link from "next/link";
 import { useSWRConfig } from "swr";
-import {
-  Plus,
-  Upload,
-  Download,
-  Trash2,
-  Search,
-  ChevronLeft,
-  Cloud,
-} from "lucide-react";
+import { Download, Trash2, Search, ChevronLeft, Cloud } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { HubspotImportPanel } from "./_components/hubspot-import-panel";
-import {
-  parseCsvAll,
-  autoDetectMapping,
-  rewriteCsvWithMapping,
-  type ColumnMapping,
-  type TargetField,
-  TARGET_FIELDS,
-} from "./_components/csv-helpers";
 
 type ScopeCompany = {
   id: string;
@@ -33,22 +17,6 @@ type ScopeCompany = {
 };
 
 type SalesRep = { id: string; name: string };
-
-type ImportSummary = {
-  parsed: number;
-  deduped: number;
-  toInsert: number;
-  toUpdate: number;
-  skipped: number;
-  errors: { line: number; reason: string }[];
-};
-
-type MappingState = {
-  headers: string[];
-  rows: string[][];
-  mapping: ColumnMapping;
-  defaultOwner: string | null;
-};
 
 type View = "list" | "hubspot";
 
@@ -63,12 +31,6 @@ export default function MesCompaniesPage() {
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const [view, setView] = React.useState<View>("list");
-
-  const [importing, setImporting] = React.useState(false);
-  const [importPreview, setImportPreview] = React.useState<{ csv: string; summary: ImportSummary } | null>(null);
-  const [mappingState, setMappingState] = React.useState<MappingState | null>(null);
-  const [mappingLoading, setMappingLoading] = React.useState(false);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const invalidateWatchlist = React.useCallback(() => {
     swrMutate(
@@ -95,24 +57,6 @@ export default function MesCompaniesPage() {
       .catch((e) => setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur" }))
       .finally(() => setLoading(false));
   }, [reloadCompanies, reloadReps]);
-
-  async function addCompany() {
-    const name = prompt("Nom de l'entreprise");
-    if (!name?.trim()) return;
-    setFeedback(null);
-    const r = await fetch("/api/intel/admin/scope-companies", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
-    });
-    const j = await r.json();
-    if (!r.ok) {
-      setFeedback({ kind: "err", msg: j.error ?? "Erreur ajout" });
-      return;
-    }
-    await reloadCompanies();
-    invalidateWatchlist();
-  }
 
   async function patchCompany(id: string, patch: Partial<ScopeCompany>) {
     setFeedback(null);
@@ -219,92 +163,6 @@ export default function MesCompaniesPage() {
     URL.revokeObjectURL(url);
   }
 
-  function onPickFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const csv = String(reader.result ?? "");
-      const { headers, rows } = parseCsvAll(csv);
-      if (headers.length === 0 || rows.length === 0) {
-        setFeedback({ kind: "err", msg: "CSV vide ou illisible." });
-        return;
-      }
-      setFeedback(null);
-      setMappingState({
-        headers,
-        rows,
-        mapping: autoDetectMapping(headers),
-        defaultOwner: null,
-      });
-    };
-    reader.readAsText(file);
-    e.target.value = "";
-  }
-
-  async function confirmMapping() {
-    if (!mappingState) return;
-    if (mappingState.mapping.name < 0) {
-      setFeedback({ kind: "err", msg: "La colonne Entreprise est obligatoire." });
-      return;
-    }
-    const ownerMapped = mappingState.mapping.owner >= 0;
-    const defaultOwner = (mappingState.defaultOwner ?? "").trim();
-    if (!ownerMapped && !defaultOwner) {
-      setFeedback({
-        kind: "err",
-        msg: "Owner obligatoire : choisis un owner par défaut ou mappe la colonne owner.",
-      });
-      return;
-    }
-    setMappingLoading(true);
-    setFeedback(null);
-    try {
-      const csv = rewriteCsvWithMapping(mappingState.rows, mappingState.mapping, mappingState.defaultOwner);
-      const r = await fetch("/api/intel/admin/scope-companies/bulk-import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csv, dryRun: true }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error ?? "Erreur import");
-      setMappingState(null);
-      setImportPreview({ csv, summary: j.summary as ImportSummary });
-    } catch (e) {
-      setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur" });
-    } finally {
-      setMappingLoading(false);
-    }
-  }
-
-  async function commitImport(mode: "skip" | "update") {
-    if (!importPreview) return;
-    setImporting(true);
-    setFeedback(null);
-    try {
-      const r = await fetch("/api/intel/admin/scope-companies/bulk-import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csv: importPreview.csv, mode }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error ?? "Erreur import");
-      const s = j.summary as ImportSummary;
-      const parts: string[] = [];
-      if (s.toInsert > 0) parts.push(`${s.toInsert} ajoutée${s.toInsert > 1 ? "s" : ""}`);
-      if (s.toUpdate > 0) parts.push(`${s.toUpdate} mise${s.toUpdate > 1 ? "s" : ""} à jour`);
-      if (s.skipped > 0) parts.push(`${s.skipped} doublon${s.skipped > 1 ? "s" : ""} ignoré${s.skipped > 1 ? "s" : ""}`);
-      setFeedback({ kind: "ok", msg: parts.join(" · ") || "Aucun changement." });
-      setImportPreview(null);
-      await Promise.all([reloadCompanies(), reloadReps()]);
-      invalidateWatchlist();
-    } catch (e) {
-      setFeedback({ kind: "err", msg: e instanceof Error ? e.message : "Erreur" });
-    } finally {
-      setImporting(false);
-    }
-  }
-
   const f = filter.trim().toLowerCase();
   const owners = React.useMemo(
     () =>
@@ -369,11 +227,11 @@ export default function MesCompaniesPage() {
         <div style={{ width: 1, height: 16, background: COLORS.line }} />
         <div>
           <h1 style={{ fontSize: 16, fontWeight: 600, color: COLORS.ink0, margin: 0, lineHeight: 1.2 }}>
-            Mes companies
+            Comptes prioritaires
           </h1>
           <p style={{ fontSize: 11, color: COLORS.ink3, margin: 0 }}>
             {companies.length} compan{companies.length > 1 ? "ies" : "y"} suivie
-            {companies.length > 1 ? "s" : ""} · alimentent Watch List, Market Intel et le Radar.
+            {companies.length > 1 ? "s" : ""} · sélectionnées depuis HubSpot.
           </p>
         </div>
 
@@ -388,19 +246,11 @@ export default function MesCompaniesPage() {
               background: COLORS.bgSoft,
             }}
           >
-            <button
-              type="button"
-              onClick={() => setView("list")}
-              style={tabBtn(view === "list")}
-            >
+            <button type="button" onClick={() => setView("list")} style={tabBtn(view === "list")}>
               Liste
             </button>
-            <button
-              type="button"
-              onClick={() => setView("hubspot")}
-              style={tabBtn(view === "hubspot")}
-            >
-              <Cloud size={12} /> Importer depuis HubSpot
+            <button type="button" onClick={() => setView("hubspot")} style={tabBtn(view === "hubspot")}>
+              <Cloud size={12} /> Choisir depuis HubSpot
             </button>
           </div>
         </div>
@@ -481,32 +331,14 @@ export default function MesCompaniesPage() {
             </select>
 
             <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6, alignItems: "center" }}>
-              <button type="button" onClick={addCompany} style={btnSecondary()}>
-                <Plus size={12} /> Ajouter
-              </button>
-              <button type="button" onClick={() => fileInputRef.current?.click()} style={btnSecondary()}>
-                <Upload size={12} /> Importer CSV
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".csv,text/csv"
-                onChange={onPickFile}
-                style={{ display: "none" }}
-              />
               <button
                 type="button"
                 onClick={() => setView("hubspot")}
                 style={{ ...btnSecondary(), borderColor: COLORS.brand, color: COLORS.brand }}
               >
-                <Cloud size={12} /> Importer HubSpot
+                <Cloud size={12} /> Choisir depuis HubSpot
               </button>
-              <button
-                type="button"
-                onClick={exportCsv}
-                disabled={companies.length === 0}
-                style={btnSecondary()}
-              >
+              <button type="button" onClick={exportCsv} disabled={companies.length === 0} style={btnSecondary()}>
                 <Download size={12} /> Exporter CSV
               </button>
             </span>
@@ -630,7 +462,7 @@ export default function MesCompaniesPage() {
                   <tr>
                     <td colSpan={7} style={{ padding: 32, textAlign: "center", color: COLORS.ink3, fontSize: 12 }}>
                       {companies.length === 0
-                        ? "Aucune company. Ajoutes-en ou importe un CSV / HubSpot."
+                        ? "Aucune company. Choisis-en depuis HubSpot."
                         : "Aucun résultat avec ces filtres."}
                     </td>
                   </tr>
@@ -657,26 +489,6 @@ export default function MesCompaniesPage() {
             invalidateWatchlist();
             setView("list");
           }}
-        />
-      )}
-
-      {mappingState && (
-        <ColumnMappingModal
-          state={mappingState}
-          reps={reps}
-          loading={mappingLoading}
-          onChange={setMappingState}
-          onCancel={() => setMappingState(null)}
-          onConfirm={confirmMapping}
-        />
-      )}
-
-      {importPreview && (
-        <ImportPreviewModal
-          summary={importPreview.summary}
-          importing={importing}
-          onCancel={() => setImportPreview(null)}
-          onConfirm={commitImport}
         />
       )}
     </div>
@@ -815,321 +627,6 @@ function InlineEditable({
   );
 }
 
-function ColumnMappingModal({
-  state,
-  reps,
-  loading,
-  onChange,
-  onCancel,
-  onConfirm,
-}: {
-  state: MappingState;
-  reps: SalesRep[];
-  loading: boolean;
-  onChange: (s: MappingState) => void;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  const { headers, rows, mapping, defaultOwner } = state;
-  const setField = (key: TargetField, idx: number) => {
-    onChange({ ...state, mapping: { ...mapping, [key]: idx } });
-  };
-  const setDefaultOwner = (v: string | null) => onChange({ ...state, defaultOwner: v });
-  const [customOwner, setCustomOwner] = React.useState("");
-  const sample = rows.slice(0, 5);
-  const nameOk = mapping.name >= 0;
-  const ownerColMapped = mapping.owner >= 0;
-  const fallbackOwner = (defaultOwner ?? "").trim();
-  const ownerOk = ownerColMapped || fallbackOwner.length > 0;
-  const canContinue = nameOk && ownerOk && !loading;
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.5)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={onCancel}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 720,
-          maxWidth: "94%",
-          maxHeight: "88vh",
-          background: COLORS.bgCard,
-          borderRadius: 12,
-          padding: 20,
-          display: "flex",
-          flexDirection: "column",
-          gap: 14,
-          overflow: "hidden",
-        }}
-      >
-        <div>
-          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: COLORS.ink0 }}>
-            Mapper les colonnes du CSV
-          </h3>
-          <p style={{ margin: "4px 0 0", fontSize: 12, color: COLORS.ink2 }}>
-            {rows.length} ligne{rows.length > 1 ? "s" : ""} détectée{rows.length > 1 ? "s" : ""}. Owner obligatoire (mappé ou défaut).
-          </p>
-        </div>
-
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "160px 1fr",
-            rowGap: 8,
-            columnGap: 12,
-            alignItems: "center",
-          }}
-        >
-          {TARGET_FIELDS.map((field) => (
-            <React.Fragment key={field.key}>
-              <label style={{ fontSize: 12, color: COLORS.ink1 }}>
-                {field.label}
-                {field.required && <span style={{ color: COLORS.err }}> *</span>}
-              </label>
-              <select
-                value={mapping[field.key]}
-                onChange={(e) => setField(field.key, Number(e.target.value))}
-                style={inputStyle()}
-              >
-                {!field.required && <option value={-1}>— Ignorer —</option>}
-                {field.required && mapping[field.key] < 0 && (
-                  <option value={-1} disabled>
-                    — Choisir une colonne —
-                  </option>
-                )}
-                {headers.map((h, idx) => (
-                  <option key={idx} value={idx}>
-                    {h || `Colonne ${idx + 1}`}
-                  </option>
-                ))}
-              </select>
-            </React.Fragment>
-          ))}
-
-          <label style={{ fontSize: 12, color: COLORS.ink1 }}>
-            Owner par défaut
-            {!ownerColMapped && <span style={{ color: COLORS.err }}> *</span>}
-          </label>
-          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-            <select
-              value={
-                fallbackOwner && reps.some((r) => r.name === fallbackOwner)
-                  ? fallbackOwner
-                  : fallbackOwner
-                  ? "__custom__"
-                  : ""
-              }
-              onChange={(e) => {
-                const v = e.target.value;
-                if (v === "") setDefaultOwner(null);
-                else if (v === "__custom__") setDefaultOwner(customOwner || "");
-                else {
-                  setCustomOwner("");
-                  setDefaultOwner(v);
-                }
-              }}
-              style={{ ...inputStyle(), flex: 1 }}
-            >
-              <option value="">— Aucun —</option>
-              {reps.map((r) => (
-                <option key={r.id} value={r.name}>
-                  {r.name}
-                </option>
-              ))}
-              <option value="__custom__">+ Nouveau owner…</option>
-            </select>
-            {fallbackOwner && !reps.some((r) => r.name === fallbackOwner) && (
-              <input
-                value={customOwner || fallbackOwner}
-                onChange={(e) => {
-                  setCustomOwner(e.target.value);
-                  setDefaultOwner(e.target.value || null);
-                }}
-                placeholder="Nom du owner"
-                style={{ ...inputStyle(), width: 160 }}
-              />
-            )}
-          </div>
-        </div>
-
-        {!ownerOk && (
-          <p style={{ margin: 0, fontSize: 11, color: COLORS.err }}>
-            Owner obligatoire : choisis un owner par défaut ou mappe la colonne owner.
-          </p>
-        )}
-
-        <div
-          style={{
-            border: `1px solid ${COLORS.line}`,
-            borderRadius: 8,
-            overflow: "auto",
-            flex: 1,
-            minHeight: 0,
-          }}
-        >
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead style={{ background: COLORS.bgSoft }}>
-              <tr>
-                {TARGET_FIELDS.map((field) => (
-                  <th
-                    key={field.key}
-                    style={{
-                      textAlign: "left",
-                      padding: "6px 10px",
-                      fontSize: 10,
-                      fontWeight: 700,
-                      color: COLORS.ink3,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.04em",
-                      borderBottom: `1px solid ${COLORS.line}`,
-                    }}
-                  >
-                    {field.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sample.map((cells, i) => (
-                <tr key={i} style={{ borderBottom: `1px solid ${COLORS.line}` }}>
-                  {TARGET_FIELDS.map((field) => {
-                    const idx = mapping[field.key];
-                    const raw = idx >= 0 ? (cells[idx] ?? "").trim() : "";
-                    const v = field.key === "owner" && !raw && fallbackOwner ? fallbackOwner : raw;
-                    const fromDefault = field.key === "owner" && !raw && fallbackOwner;
-                    return (
-                      <td
-                        key={field.key}
-                        style={{
-                          padding: "6px 10px",
-                          color: v ? COLORS.ink1 : COLORS.ink3,
-                          fontStyle: fromDefault ? "italic" : "normal",
-                          maxWidth: 200,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {v || "—"}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-              {rows.length > sample.length && (
-                <tr>
-                  <td
-                    colSpan={TARGET_FIELDS.length}
-                    style={{ padding: "6px 10px", fontSize: 11, color: COLORS.ink3, fontStyle: "italic" }}
-                  >
-                    + {rows.length - sample.length} ligne{rows.length - sample.length > 1 ? "s" : ""}
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button type="button" onClick={onCancel} style={btnSecondary()}>
-            Annuler
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            disabled={!canContinue}
-            style={{ ...btnPrimary(), opacity: canContinue ? 1 : 0.6 }}
-          >
-            {loading ? "Analyse…" : "Continuer"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ImportPreviewModal({
-  summary,
-  importing,
-  onCancel,
-  onConfirm,
-}: {
-  summary: ImportSummary;
-  importing: boolean;
-  onCancel: () => void;
-  onConfirm: (mode: "skip" | "update") => void;
-}) {
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: "rgba(0,0,0,0.5)",
-        zIndex: 200,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={onCancel}
-    >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          width: 420,
-          background: COLORS.bgCard,
-          borderRadius: 12,
-          padding: 20,
-          display: "flex",
-          flexDirection: "column",
-          gap: 12,
-        }}
-      >
-        <h3 style={{ margin: 0, fontSize: 14, fontWeight: 600, color: COLORS.ink0 }}>Aperçu import CSV</h3>
-        <ul style={{ margin: 0, padding: "0 0 0 16px", fontSize: 12, color: COLORS.ink1, lineHeight: 1.6 }}>
-          <li>
-            {summary.parsed} ligne{summary.parsed > 1 ? "s" : ""} lue{summary.parsed > 1 ? "s" : ""}
-          </li>
-          <li>
-            {summary.toInsert} nouvelle{summary.toInsert > 1 ? "s" : ""} compan{summary.toInsert > 1 ? "ies" : "y"}
-          </li>
-          <li>
-            {summary.deduped - summary.toInsert} doublon{summary.deduped - summary.toInsert > 1 ? "s" : ""} avec l&apos;existant
-          </li>
-          {summary.errors.length > 0 && (
-            <li style={{ color: COLORS.err }}>
-              {summary.errors.length} erreur{summary.errors.length > 1 ? "s" : ""}
-              {summary.errors.slice(0, 3).map((e) => ` · ${e.reason}`).join("")}
-            </li>
-          )}
-        </ul>
-        <p style={{ margin: 0, fontSize: 12, color: COLORS.ink2 }}>
-          Pour les doublons (case-insensitive sur le nom), tu veux :
-        </p>
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button type="button" onClick={onCancel} style={btnSecondary()}>
-            Annuler
-          </button>
-          <button type="button" onClick={() => onConfirm("skip")} disabled={importing} style={btnSecondary()}>
-            Ignorer les doublons
-          </button>
-          <button type="button" onClick={() => onConfirm("update")} disabled={importing} style={btnPrimary()}>
-            Écraser owner/notes
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function tabBtn(active: boolean): React.CSSProperties {
   return {
     display: "inline-flex",
@@ -1163,18 +660,6 @@ function td(): React.CSSProperties {
   return { padding: "4px 8px", verticalAlign: "middle" };
 }
 
-function inputStyle(): React.CSSProperties {
-  return {
-    padding: "6px 8px",
-    fontSize: 12,
-    border: `1px solid ${COLORS.line}`,
-    borderRadius: 6,
-    background: COLORS.bgCard,
-    color: COLORS.ink1,
-    outline: "none",
-  };
-}
-
 function btnSecondary(): React.CSSProperties {
   return {
     display: "inline-flex",
@@ -1186,22 +671,6 @@ function btnSecondary(): React.CSSProperties {
     border: `1px solid ${COLORS.line}`,
     background: COLORS.bgCard,
     color: COLORS.ink1,
-    cursor: "pointer",
-  };
-}
-
-function btnPrimary(): React.CSSProperties {
-  return {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 4,
-    padding: "6px 12px",
-    fontSize: 12,
-    fontWeight: 600,
-    borderRadius: 6,
-    border: `1px solid ${COLORS.brand}`,
-    background: COLORS.brand,
-    color: "white",
     cursor: "pointer",
   };
 }

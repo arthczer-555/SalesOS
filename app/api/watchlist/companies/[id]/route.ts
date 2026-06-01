@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { getBriefs, type BriefRow, type AiSummaryContent, type NewsContent, type HubspotRecapContent } from "@/lib/watchlist/briefs";
-import type { WatchProspect } from "@/app/api/watchlist/accounts/[id]/prospects/route";
+import { getBriefs, type BriefRow, type AeAnalysisContent, type NewsContent } from "@/lib/watchlist/briefs";
 
 export const dynamic = "force-dynamic";
+
+// Conservé pour compat de signature : la prospection passe désormais par les listes.
+export interface WatchProspect {
+  id: string;
+  is_champion: boolean;
+  hubspot_id: string | null;
+}
 
 export interface WatchCompanyDetail {
   id: string;
@@ -20,9 +26,8 @@ export interface WatchCompanyDetailResponse {
   company: WatchCompanyDetail | null;
   prospects: WatchProspect[];
   briefs: {
-    ai_summary: BriefRow<AiSummaryContent> | null;
+    ae_analysis: BriefRow<AeAnalysisContent> | null;
     news: BriefRow<NewsContent> | null;
-    hubspot_recap: BriefRow<HubspotRecapContent> | null;
   };
   signals_30d: { count: number; last_at: string | null };
   outreach_count: number;
@@ -34,7 +39,7 @@ const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
 const EMPTY: Omit<WatchCompanyDetailResponse, "error"> = {
   company: null,
   prospects: [],
-  briefs: { ai_summary: null, news: null, hubspot_recap: null },
+  briefs: { ae_analysis: null, news: null },
   signals_30d: { count: 0, last_at: null },
   outreach_count: 0,
 };
@@ -66,16 +71,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const sinceIso = new Date(Date.now() - THIRTY_DAYS_MS).toISOString();
 
-  const [prospectsRes, briefs, signalsRes] = await Promise.all([
-    db
-      .from("linkedin_monitored_profiles")
-      .select(
-        "id, username, full_name, headline, company, profile_url, source, is_champion, hubspot_id, email, last_change_at, last_refreshed_at, created_at",
-      )
-      .eq("radar_active", true)
-      .ilike("company", company.name)
-      .order("is_champion", { ascending: false })
-      .order("last_change_at", { ascending: false, nullsFirst: false }),
+  const [briefs, signalsRes] = await Promise.all([
     getBriefs(company.id),
     db
       .from("market_signals")
@@ -86,8 +82,6 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       .gte("created_at", sinceIso),
   ]);
 
-  const prospects = (prospectsRes.data ?? []) as WatchProspect[];
-
   const signals = signalsRes.data ?? [];
   const signals_30d = {
     count: signals.length,
@@ -97,23 +91,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     ),
   };
 
-  const hubspotIds = prospects.map((p) => p.hubspot_id).filter((h): h is string => !!h);
-  let outreach_count = 0;
-  if (hubspotIds.length > 0) {
-    const { data: outreach } = await db
-      .from("outreach_log")
-      .select("hubspot_id")
-      .eq("user_id", user.id)
-      .in("hubspot_id", hubspotIds);
-    outreach_count = outreach?.length ?? 0;
-  }
-
   const response: WatchCompanyDetailResponse = {
     company,
-    prospects,
+    prospects: [],
     briefs,
     signals_30d,
-    outreach_count,
+    outreach_count: 0,
   };
 
   return NextResponse.json(response);

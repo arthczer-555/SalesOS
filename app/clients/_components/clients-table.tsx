@@ -15,7 +15,7 @@ export type ClientListItem = {
   closedwon_at: string;
   deal_amount: number | null;
   health: Health | null;
-  enrichment_status: "pending" | "running" | "done" | "error";
+  enrichment_status: "pending" | "awaiting_meetings" | "running" | "done" | "error";
   enrichment_error: string | null;
   last_enriched_at: string | null;
 };
@@ -33,6 +33,7 @@ function fmtDate(iso: string | null): string {
 function StatusPill({ status }: { status: ClientListItem["enrichment_status"] }) {
   const map: Record<ClientListItem["enrichment_status"], { fg: string; bg: string; label: string }> = {
     pending: { fg: COLORS.ink2, bg: COLORS.bgSoft, label: "En attente" },
+    awaiting_meetings: { fg: COLORS.brand, bg: COLORS.brandTint, label: "Meetings à confirmer" },
     running: { fg: COLORS.info, bg: COLORS.infoBg, label: "Enrichissement…" },
     done: { fg: COLORS.ok, bg: COLORS.okBg, label: "Enrichi" },
     error: { fg: COLORS.err, bg: COLORS.errBg, label: "Erreur" },

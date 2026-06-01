@@ -35,6 +35,7 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = req.nextUrl;
   const q = searchParams.get("q")?.trim() ?? "";
+  const company = searchParams.get("company")?.trim() ?? "";
   const lifecyclestage = searchParams.get("lifecyclestage")?.trim() ?? "";
   const industry = searchParams.get("industry")?.trim() ?? "";
   const country = searchParams.get("country")?.trim() ?? "";
@@ -62,6 +63,7 @@ export async function GET(req: NextRequest) {
     if (myOwnerId) filters.push({ propertyName: "hubspot_owner_id", operator: "EQ", value: myOwnerId });
   }
 
+  if (company) filters.push({ propertyName: "company", operator: "CONTAINS_TOKEN", value: `*${company}*` });
   if (lifecyclestage) filters.push({ propertyName: "lifecyclestage", operator: "EQ", value: lifecyclestage });
   if (industry) filters.push({ propertyName: "industry", operator: "EQ", value: industry });
   if (country) filters.push({ propertyName: "country", operator: "EQ", value: country });

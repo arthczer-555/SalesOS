@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { hubspotSearchAll } from "@/lib/hubspot";
+import { hubspotFetch } from "@/lib/hubspot";
 import { maybeCreateSalesRep } from "@/lib/scope-companies";
 
 export const dynamic = "force-dynamic";
@@ -16,6 +16,10 @@ type Filters = {
   employeesMin?: number;
   employeesMax?: number;
   domain?: string;
+  // Ajout récent dans HubSpot (createdate >= maintenant - N).
+  createdRange?: "7d" | "30d" | "90d" | "year";
+  // Tri des résultats.
+  sort?: "name" | "created-desc";
 };
 
 type HubspotCompanyRow = {
@@ -32,6 +36,7 @@ type PreviewCompany = {
   domain: string | null;
   lifecyclestage: string | null;
   ownerId: string | null;
+  createdAt: string | null;
   alreadyInScope: boolean;
 };
 
@@ -43,7 +48,15 @@ const COMPANY_PROPS = [
   "numberofemployees",
   "lifecyclestage",
   "hubspot_owner_id",
+  "createdate",
 ];
+
+const RANGE_DAYS: Record<NonNullable<Filters["createdRange"]>, number> = {
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+  year: 365,
+};
 
 function toInt(v: string | null | undefined): number | null {
   if (!v) return null;
@@ -59,6 +72,10 @@ function buildFilterGroups(f: Filters): Array<{ filters: Array<{ propertyName: s
   if (typeof f.employeesMax === "number")
     filters.push({ propertyName: "numberofemployees", operator: "LTE", value: String(f.employeesMax) });
   if (f.domain) filters.push({ propertyName: "domain", operator: "CONTAINS_TOKEN", value: f.domain });
+  if (f.createdRange) {
+    const cutoff = Date.now() - RANGE_DAYS[f.createdRange] * 24 * 60 * 60 * 1000;
+    filters.push({ propertyName: "createdate", operator: "GTE", value: String(cutoff) });
+  }
 
   // Industries / countries / lifecycles : OR via plusieurs filterGroups
   const groups: Array<{ filters: Array<{ propertyName: string; operator: string; value?: string }> }> = [];
@@ -84,19 +101,45 @@ function buildFilterGroups(f: Filters): Array<{ filters: Array<{ propertyName: s
   return groups;
 }
 
-async function searchHubspotCompanies(filters: Filters, max: number): Promise<HubspotCompanyRow[]> {
+type SearchResponse = {
+  results?: HubspotCompanyRow[];
+  paging?: { next?: { after?: string } };
+};
+
+/** Une page de résultats HubSpot (max 100) + le curseur pour la suivante. */
+async function searchHubspotCompaniesPage(
+  filters: Filters,
+  after: string | undefined,
+  limit: number,
+): Promise<{ rows: HubspotCompanyRow[]; nextAfter: string | null }> {
   const filterGroups = buildFilterGroups(filters);
-  return hubspotSearchAll<HubspotCompanyRow>(
-    "companies",
-    {
-      properties: COMPANY_PROPS,
-      ...(filterGroups.length > 0 ? { filterGroups } : {}),
-      ...(filters.q ? { query: filters.q } : {}),
-      sorts: [{ propertyName: "name", direction: "ASCENDING" }],
-      limit: 100,
-    },
-    max
-  );
+  const sorts = filters.sort === "created-desc"
+    ? [{ propertyName: "createdate", direction: "DESCENDING" as const }]
+    : [{ propertyName: "name", direction: "ASCENDING" as const }];
+  const page = await hubspotFetch<SearchResponse>("/crm/v3/objects/companies/search", "POST", {
+    properties: COMPANY_PROPS,
+    ...(filterGroups.length > 0 ? { filterGroups } : {}),
+    ...(filters.q ? { query: filters.q } : {}),
+    sorts,
+    limit,
+    ...(after ? { after } : {}),
+  });
+  return { rows: page.results ?? [], nextAfter: page.paging?.next?.after ?? null };
+}
+
+/** Lit les companies sélectionnées par id (batch read), pour le commit. */
+async function fetchCompaniesByIds(ids: string[]): Promise<HubspotCompanyRow[]> {
+  const out: HubspotCompanyRow[] = [];
+  for (let i = 0; i < ids.length; i += 100) {
+    const chunk = ids.slice(i, i + 100);
+    const res = await hubspotFetch<{ results?: HubspotCompanyRow[] }>(
+      "/crm/v3/objects/companies/batch/read",
+      "POST",
+      { properties: COMPANY_PROPS, inputs: chunk.map((id) => ({ id })) },
+    );
+    out.push(...(res.results ?? []));
+  }
+  return out;
 }
 
 export async function POST(req: NextRequest) {
@@ -111,56 +154,62 @@ export async function POST(req: NextRequest) {
     dryRun?: boolean;
     selectedIds?: string[];
     mode?: "skip" | "update";
-    max?: number;
+    after?: string;
+    pageSize?: number;
   } | null;
   if (!body) return NextResponse.json({ error: "Body invalide" }, { status: 400 });
 
   const filters = body.filters ?? {};
   const dryRun = body.dryRun !== false && !body.selectedIds; // dryRun par défaut si pas de selection
-  const max = Math.min(Math.max(body.max ?? 200, 1), 500);
   const mode: "skip" | "update" = body.mode === "update" ? "update" : "skip";
 
   try {
-    const rows = await searchHubspotCompanies(filters, max);
-
-    // Build preview en croisant avec scope_companies existantes (dedup case-insensitive sur name).
+    // Companies déjà dans la scope (dedup case-insensitive sur name).
     const { data: existing } = await db.from("scope_companies").select("id, name");
     const existingNames = new Set((existing ?? []).map((r) => (r.name as string).toLowerCase()));
 
-    const preview: PreviewCompany[] = rows
-      .map((r) => {
-        const name = (r.properties.name ?? "").trim();
-        if (!name) return null;
-        return {
-          hubspotId: r.id,
-          name,
-          industry: r.properties.industry?.trim() || null,
-          country: r.properties.country?.trim() || null,
-          employees: toInt(r.properties.numberofemployees),
-          domain: r.properties.domain?.trim() || null,
-          lifecyclestage: r.properties.lifecyclestage?.trim() || null,
-          ownerId: r.properties.hubspot_owner_id?.trim() || null,
-          alreadyInScope: existingNames.has(name.toLowerCase()),
-        };
-      })
-      .filter((p): p is PreviewCompany => p !== null);
+    const toPreview = (rows: HubspotCompanyRow[]): PreviewCompany[] =>
+      rows
+        .map((r) => {
+          const name = (r.properties.name ?? "").trim();
+          if (!name) return null;
+          return {
+            hubspotId: r.id,
+            name,
+            industry: r.properties.industry?.trim() || null,
+            country: r.properties.country?.trim() || null,
+            employees: toInt(r.properties.numberofemployees),
+            domain: r.properties.domain?.trim() || null,
+            lifecyclestage: r.properties.lifecyclestage?.trim() || null,
+            ownerId: r.properties.hubspot_owner_id?.trim() || null,
+            createdAt: r.properties.createdate?.trim() || null,
+            alreadyInScope: existingNames.has(name.toLowerCase()),
+          };
+        })
+        .filter((p): p is PreviewCompany => p !== null);
 
     if (dryRun) {
+      const pageSize = Math.min(Math.max(body.pageSize ?? 50, 1), 100);
+      const { rows, nextAfter } = await searchHubspotCompaniesPage(filters, body.after, pageSize);
+      const preview = toPreview(rows);
       return NextResponse.json({
         dryRun: true,
         preview,
         total: preview.length,
-        truncated: rows.length >= max,
+        nextAfter, // null = plus de page
       });
     }
 
-    // ── Commit
+    // ── Commit : on lit les companies sélectionnées par id.
     const defaultOwner = (body.defaultOwner ?? "").trim();
     if (!defaultOwner) {
       return NextResponse.json({ error: "Owner par défaut obligatoire" }, { status: 400 });
     }
-    const selectedSet = new Set(body.selectedIds ?? []);
-    const toImport = preview.filter((p) => selectedSet.has(p.hubspotId));
+    const selectedIds = (body.selectedIds ?? []).filter(Boolean);
+    if (selectedIds.length === 0) {
+      return NextResponse.json({ error: "Aucune company sélectionnée" }, { status: 400 });
+    }
+    const toImport = toPreview(await fetchCompaniesByIds(selectedIds));
     if (toImport.length === 0) {
       return NextResponse.json({ error: "Aucune company sélectionnée" }, { status: 400 });
     }
@@ -177,10 +226,14 @@ export async function POST(req: NextRequest) {
     for (const c of toImport) {
       const lower = c.name.toLowerCase();
       const existingId = existingByLower.get(lower);
+      // La company vient de HubSpot : on persiste directement le lien
+      // (hubspot_company_id) pour relier contacts/emails sans fuzzy match.
       const payload = {
         name: c.name,
         owner: defaultOwner,
         sector: c.industry,
+        hubspot_company_id: c.hubspotId,
+        hubspot_resolved_at: new Date().toISOString(),
       };
       if (existingId) {
         if (mode === "skip") {

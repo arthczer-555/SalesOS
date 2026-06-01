@@ -4,7 +4,7 @@ import type { WatchCompanyDetailResponse } from "@/app/api/watchlist/companies/[
 import type { BriefsResponse } from "@/app/api/watchlist/companies/[id]/briefs/route";
 import type { BriefKind } from "@/lib/watchlist/briefs";
 
-const EMPTY_BRIEFS = { ai_summary: null, news: null, hubspot_recap: null } as const;
+const EMPTY_BRIEFS = { ae_analysis: null, news: null } as const;
 
 export function useWatchCompanyDetail(id: string | null) {
   const key = id ? `/api/watchlist/companies/${id}` : null;
@@ -60,14 +60,13 @@ export async function patchCompanyNotes(
  * (`isRefreshing`) et expose l'erreur la plus récente.
  *
  * - News : POST inline, ~3-5s avec spinner.
- * - HubSpot recap & AI summary : POST 202 fire-and-forget. La page poll
- *   ensuite via useBriefsPolling et useWatchCompanyDetail.reload().
+ * - Analyse AE : POST 202 fire-and-forget. La page poll ensuite via
+ *   useBriefsPolling et useWatchCompanyDetail.reload().
  */
 export function useBriefRefresh(id: string | null, onComplete?: () => void) {
   const [isRefreshing, setIsRefreshing] = React.useState<Record<BriefKind, boolean>>({
-    ai_summary: false,
+    ae_analysis: false,
     news: false,
-    hubspot_recap: false,
   });
   const [errorByKind, setErrorByKind] = React.useState<Partial<Record<BriefKind, string>>>({});
 
@@ -103,7 +102,6 @@ export function useBriefRefresh(id: string | null, onComplete?: () => void) {
 }
 
 function kindToPath(kind: BriefKind): string {
-  if (kind === "ai_summary") return "ai-summary";
-  if (kind === "hubspot_recap") return "hubspot-recap";
+  if (kind === "ae_analysis") return "ae-analysis";
   return "news";
 }

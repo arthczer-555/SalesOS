@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { X, Download, Loader2, Search, Check } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
+import { MeetingConfirmationModal } from "../[id]/_components/meeting-confirmation-modal";
 
 // Modal admin pour importer des closed-won historiques HubSpot vers la table
 // clients. UX : un dropdown searchable (multi-select) qui liste tous les
@@ -64,6 +65,9 @@ export function BackfillModal({
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<{ imported: number; alreadyExisted: number; errors: number } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
+  // Id du client à confirmer (import single) → ouvre le popup de confirmation
+  // des meetings par-dessus le modal d'import.
+  const [confirmClientId, setConfirmClientId] = useState<string | null>(null);
 
   // Reset à chaque ouverture pour ne pas garder une sélection morte d'une
   // session précédente
@@ -73,6 +77,7 @@ export function BackfillModal({
       setSelected(new Set());
       setResult(null);
       setImportError(null);
+      setConfirmClientId(null);
     }
   }, [open]);
 
@@ -124,6 +129,7 @@ export function BackfillModal({
         imported?: number;
         alreadyExisted?: number;
         errors?: number;
+        singleClientId?: string | null;
         error?: string;
       };
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -132,6 +138,9 @@ export function BackfillModal({
         alreadyExisted: body.alreadyExisted ?? 0,
         errors: body.errors ?? 0,
       });
+      // Import d'un seul deal : on ouvre directement le popup de confirmation
+      // des meetings (les autres cas se confirment depuis chaque fiche).
+      if (body.singleClientId) setConfirmClientId(body.singleClientId);
       onDone();
     } catch (e) {
       setImportError(e instanceof Error ? e.message : "Erreur");
@@ -143,6 +152,18 @@ export function BackfillModal({
   if (!open) return null;
 
   return (
+    <>
+    {confirmClientId && (
+      <MeetingConfirmationModal
+        clientId={confirmClientId}
+        onClose={() => setConfirmClientId(null)}
+        onConfirmed={onDone}
+        onDeleted={() => {
+          setConfirmClientId(null);
+          onDone();
+        }}
+      />
+    )}
     <div
       onClick={onClose}
       style={{
@@ -392,6 +413,12 @@ export function BackfillModal({
             <strong>{result.imported}</strong> deal(s) importé(s)
             {result.alreadyExisted > 0 && <>, <strong>{result.alreadyExisted}</strong> déjà présent(s)</>}
             {result.errors > 0 && <>, <strong>{result.errors}</strong> erreur(s)</>}.
+            {result.imported > 1 && (
+              <div style={{ marginTop: 4, color: COLORS.ink2 }}>
+                Confirme les meetings depuis chaque fiche (les AE ont été notifiés sur Slack), puis l&apos;analyse
+                démarre.
+              </div>
+            )}
           </div>
         )}
         {importError && (
@@ -454,5 +481,6 @@ export function BackfillModal({
         </div>
       </div>
     </div>
+    </>
   );
 }

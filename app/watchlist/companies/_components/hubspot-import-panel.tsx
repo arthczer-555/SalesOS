@@ -17,8 +17,17 @@ type PreviewCompany = {
   domain: string | null;
   lifecyclestage: string | null;
   ownerId: string | null;
+  createdAt: string | null;
   alreadyInScope: boolean;
 };
+
+const CREATED_RANGES: { value: string; label: string }[] = [
+  { value: "", label: "Toutes dates" },
+  { value: "7d", label: "7 derniers jours" },
+  { value: "30d", label: "30 derniers jours" },
+  { value: "90d", label: "90 derniers jours" },
+  { value: "year", label: "12 derniers mois" },
+];
 
 const LIFECYCLES: { value: string; label: string }[] = [
   { value: "subscriber", label: "Subscriber" },
@@ -58,6 +67,8 @@ export function HubspotImportPanel({
   const [employeesMax, setEmployeesMax] = React.useState<string>("");
   const [ownerId, setOwnerId] = React.useState("");
   const [domain, setDomain] = React.useState("");
+  const [createdRange, setCreatedRange] = React.useState("");
+  const [sortRecent, setSortRecent] = React.useState(false);
 
   const [owners, setOwners] = React.useState<HubspotOwner[]>([]);
   const [results, setResults] = React.useState<PreviewCompany[]>([]);
@@ -65,11 +76,14 @@ export function HubspotImportPanel({
   const [defaultOwner, setDefaultOwner] = React.useState<string>("");
   const [customOwner, setCustomOwner] = React.useState("");
   const [searching, setSearching] = React.useState(false);
+  const [loadingMore, setLoadingMore] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
-  const [truncated, setTruncated] = React.useState(false);
+  const [nextAfter, setNextAfter] = React.useState<string | null>(null);
   const [mode, setMode] = React.useState<"skip" | "update">("skip");
+
+  const PAGE_SIZE = 50;
 
   React.useEffect(() => {
     fetch("/api/intel/enrich/hubspot-owners")
@@ -87,44 +101,79 @@ export function HubspotImportPanel({
     });
   }
 
+  function buildFilters(): Record<string, unknown> {
+    const filters: Record<string, unknown> = {};
+    if (q.trim()) filters.q = q.trim();
+    if (industry.trim()) filters.industry = [industry.trim()];
+    if (country.trim()) filters.country = [country.trim()];
+    if (lifecycles.size > 0) filters.lifecyclestage = Array.from(lifecycles);
+    if (employeesMin) filters.employeesMin = Number(employeesMin);
+    if (employeesMax) filters.employeesMax = Number(employeesMax);
+    if (ownerId) filters.ownerId = ownerId;
+    if (domain.trim()) filters.domain = domain.trim();
+    if (createdRange) filters.createdRange = createdRange;
+    if (sortRecent) filters.sort = "created-desc";
+    return filters;
+  }
+
   async function runSearch() {
     setSearching(true);
     setError(null);
     setSuccess(null);
     setResults([]);
     setSelectedHsIds(new Set());
+    setNextAfter(null);
     try {
-      const filters: Record<string, unknown> = {};
-      if (q.trim()) filters.q = q.trim();
-      if (industry.trim()) filters.industry = [industry.trim()];
-      if (country.trim()) filters.country = [country.trim()];
-      if (lifecycles.size > 0) filters.lifecyclestage = Array.from(lifecycles);
-      if (employeesMin) filters.employeesMin = Number(employeesMin);
-      if (employeesMax) filters.employeesMax = Number(employeesMax);
-      if (ownerId) filters.ownerId = ownerId;
-      if (domain.trim()) filters.domain = domain.trim();
+      const filters = buildFilters();
 
       const res = await fetch("/api/intel/admin/scope-companies/hubspot-import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ filters, dryRun: true, max: 200 }),
+        body: JSON.stringify({ filters, dryRun: true, pageSize: PAGE_SIZE }),
       });
       const j = await res.json();
       if (!res.ok) throw new Error(j.error ?? "Erreur recherche");
-      setResults((j.preview ?? []) as PreviewCompany[]);
-      setTruncated(Boolean(j.truncated));
+      const preview = (j.preview ?? []) as PreviewCompany[];
+      setResults(preview);
+      setNextAfter(j.nextAfter ?? null);
       // Auto-select tout ce qui n'est pas déjà dans la scope
-      setSelectedHsIds(
-        new Set(
-          (j.preview as PreviewCompany[])
-            .filter((p) => !p.alreadyInScope)
-            .map((p) => p.hubspotId)
-        )
-      );
+      setSelectedHsIds(new Set(preview.filter((p) => !p.alreadyInScope).map((p) => p.hubspotId)));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
     } finally {
       setSearching(false);
+    }
+  }
+
+  async function loadMore() {
+    if (!nextAfter || loadingMore) return;
+    setLoadingMore(true);
+    setError(null);
+    try {
+      const filters = buildFilters();
+      const res = await fetch("/api/intel/admin/scope-companies/hubspot-import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filters, dryRun: true, pageSize: PAGE_SIZE, after: nextAfter }),
+      });
+      const j = await res.json();
+      if (!res.ok) throw new Error(j.error ?? "Erreur");
+      const more = (j.preview ?? []) as PreviewCompany[];
+      setResults((prev) => {
+        const seen = new Set(prev.map((p) => p.hubspotId));
+        return [...prev, ...more.filter((m) => !seen.has(m.hubspotId))];
+      });
+      // Auto-select les nouvelles companies pas encore dans la scope (cohérent avec la 1re page).
+      setSelectedHsIds((prev) => {
+        const next = new Set(prev);
+        more.filter((m) => !m.alreadyInScope).forEach((m) => next.add(m.hubspotId));
+        return next;
+      });
+      setNextAfter(j.nextAfter ?? null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erreur");
+    } finally {
+      setLoadingMore(false);
     }
   }
 
@@ -159,15 +208,7 @@ export function HubspotImportPanel({
     setError(null);
     setSuccess(null);
     try {
-      const filters: Record<string, unknown> = {};
-      if (q.trim()) filters.q = q.trim();
-      if (industry.trim()) filters.industry = [industry.trim()];
-      if (country.trim()) filters.country = [country.trim()];
-      if (lifecycles.size > 0) filters.lifecyclestage = Array.from(lifecycles);
-      if (employeesMin) filters.employeesMin = Number(employeesMin);
-      if (employeesMax) filters.employeesMax = Number(employeesMax);
-      if (ownerId) filters.ownerId = ownerId;
-      if (domain.trim()) filters.domain = domain.trim();
+      const filters = buildFilters();
 
       const res = await fetch("/api/intel/admin/scope-companies/hubspot-import", {
         method: "POST",
@@ -305,6 +346,27 @@ export function HubspotImportPanel({
             </select>
           </Field>
 
+          <Field label="Ajouté dans HubSpot">
+            <select value={createdRange} onChange={(e) => setCreatedRange(e.target.value)} style={inputStyle()}>
+              {CREATED_RANGES.map((r) => (
+                <option key={r.value} value={r.value}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Tri">
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.ink1, cursor: "pointer", padding: "6px 0" }}>
+              <input
+                type="checkbox"
+                checked={sortRecent}
+                onChange={(e) => setSortRecent(e.target.checked)}
+              />
+              Plus récemment ajoutées d&apos;abord
+            </label>
+          </Field>
+
           <Field label="Lifecycle stage (multi)">
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
               {LIFECYCLES.map((l) => {
@@ -346,11 +408,6 @@ export function HubspotImportPanel({
           >
             <Search size={12} /> {searching ? "Recherche…" : "Rechercher dans HubSpot"}
           </button>
-          {truncated && (
-            <span style={{ fontSize: 11, color: COLORS.warn }}>
-              ⚠ Résultats tronqués à 200, affine les filtres.
-            </span>
-          )}
           {error && (
             <span style={{ fontSize: 11, color: COLORS.err }}>{error}</span>
           )}
@@ -470,6 +527,7 @@ export function HubspotImportPanel({
                   <th style={th(100)}>Employés</th>
                   <th style={th(140)}>Lifecycle</th>
                   <th style={th(140)}>Domaine</th>
+                  <th style={th(120)}>Ajouté</th>
                   <th style={th(120)}></th>
                 </tr>
               </thead>
@@ -503,6 +561,7 @@ export function HubspotImportPanel({
                       <td style={{ ...td(), color: COLORS.ink2, fontFamily: "ui-monospace, monospace", fontSize: 11 }}>
                         {p.domain ?? "—"}
                       </td>
+                      <td style={{ ...td(), color: COLORS.ink2, fontSize: 11 }}>{fmtCreated(p.createdAt)}</td>
                       <td style={{ ...td(), textAlign: "right" }}>
                         {p.alreadyInScope && (
                           <span
@@ -524,6 +583,19 @@ export function HubspotImportPanel({
                 })}
               </tbody>
             </table>
+
+            {nextAfter && (
+              <div style={{ padding: 12, textAlign: "center", borderTop: `1px solid ${COLORS.line}` }}>
+                <button
+                  type="button"
+                  onClick={loadMore}
+                  disabled={loadingMore}
+                  style={{ ...btnSecondary(), opacity: loadingMore ? 0.6 : 1, cursor: loadingMore ? "wait" : "pointer" }}
+                >
+                  {loadingMore ? "Chargement…" : "Charger plus"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -619,4 +691,13 @@ function th(width?: number): React.CSSProperties {
 
 function td(): React.CSSProperties {
   return { padding: "8px 12px", verticalAlign: "middle" };
+}
+
+function fmtCreated(iso: string | null): string {
+  if (!iso) return "—";
+  try {
+    return new Date(iso).toLocaleDateString("fr-FR", { day: "2-digit", month: "short", year: "2-digit" });
+  } catch {
+    return "—";
+  }
 }

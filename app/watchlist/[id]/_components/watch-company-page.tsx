@@ -11,20 +11,15 @@ import {
   useBriefsPolling,
 } from "@/lib/hooks/use-watchlist-company";
 import { DetailHeader } from "./detail-header";
-import { StatsMini } from "./stats-mini";
-import { RadarProspectsCard } from "./radar-prospects-card";
 import { CrossPageActions } from "./cross-page-actions";
-import { AiSummaryCard } from "./ai-summary-card";
-import { HubspotRecapCard } from "./hubspot-recap-card";
+import { AeAnalysisCard } from "./ae-analysis-card";
+import { ContactsCard } from "./contacts-card";
 import { NewsCard } from "./news-card";
 
 export function WatchCompanyPage({ id }: { id: string }) {
   const {
     company,
-    prospects,
     briefs,
-    signals_30d,
-    outreach_count,
     isLoading,
     error,
     reload,
@@ -40,12 +35,10 @@ export function WatchCompanyPage({ id }: { id: string }) {
   // qu'on a un POST en vol côté client. Le tick appelle reload() pour
   // synchroniser le payload complet.
   const isAnyRunning =
-    briefs.ai_summary?.status === "running" ||
+    briefs.ae_analysis?.status === "running" ||
     briefs.news?.status === "running" ||
-    briefs.hubspot_recap?.status === "running" ||
-    isRefreshing.ai_summary ||
-    isRefreshing.news ||
-    isRefreshing.hubspot_recap;
+    isRefreshing.ae_analysis ||
+    isRefreshing.news;
 
   useBriefsPolling(id, isAnyRunning, reload);
 
@@ -106,9 +99,6 @@ export function WatchCompanyPage({ id }: { id: string }) {
     );
   }
 
-  const championsCount = prospects.filter((p) => p.is_champion).length;
-  const radarProspectIds = prospects.map((p) => p.id);
-
   return (
     <div
       style={{
@@ -119,12 +109,7 @@ export function WatchCompanyPage({ id }: { id: string }) {
         overflow: "hidden",
       }}
     >
-      <DetailHeader
-        company={company}
-        radarCount={prospects.length}
-        signals30d={signals_30d.count}
-        champions={championsCount}
-      />
+      <DetailHeader company={company} />
 
       <div
         style={{
@@ -153,41 +138,20 @@ export function WatchCompanyPage({ id }: { id: string }) {
               top: 0,
             }}
           >
-            <RadarProspectsCard
-              companyName={company.name}
-              owner={company.owner}
-              prospects={prospects}
-              isLoading={isLoading}
-            />
-            <StatsMini
-              radar={prospects.length}
-              signals30d={signals_30d.count}
-              outreach={outreach_count}
-              champions={championsCount}
-            />
-            <CrossPageActions
-              company={company}
-              radarProspectIds={radarProspectIds}
-              hubspotRecap={briefs.hubspot_recap}
-            />
+            <CrossPageActions company={company} />
           </aside>
 
           <main style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
-            <AiSummaryCard
+            <AeAnalysisCard
               companyId={company.id}
               notes={company.notes}
-              brief={briefs.ai_summary}
-              dependencies={{ news: briefs.news, hubspot_recap: briefs.hubspot_recap }}
-              onRefresh={() => refresh("ai_summary")}
-              isRefreshing={isRefreshing.ai_summary}
-              clientError={errorByKind.ai_summary ?? null}
+              brief={briefs.ae_analysis}
+              dependencies={{ news: briefs.news }}
+              onRefresh={() => refresh("ae_analysis")}
+              isRefreshing={isRefreshing.ae_analysis}
+              clientError={errorByKind.ae_analysis ?? null}
             />
-            <HubspotRecapCard
-              brief={briefs.hubspot_recap}
-              onRefresh={() => refresh("hubspot_recap")}
-              isRefreshing={isRefreshing.hubspot_recap}
-              clientError={errorByKind.hubspot_recap ?? null}
-            />
+            <ContactsCard companyId={company.id} />
             <NewsCard
               brief={briefs.news}
               onRefresh={() => refresh("news")}

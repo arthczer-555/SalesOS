@@ -21,6 +21,9 @@ export type BackfillStats = {
   errors: number;
   oldestClosedAt: string | null;
   newestClosedAt: string | null;
+  // Ids des clients réellement créés (pour déclencher la prépa meetings et,
+  // si un seul, ouvrir le popup de confirmation côté UI).
+  importedClientIds: string[];
 };
 
 export type BackfillOpts = {
@@ -38,7 +41,7 @@ export async function backfillClosedWonDeals(opts: BackfillOpts): Promise<Backfi
 
   const requestedIds = Array.from(new Set((opts.dealIds ?? []).filter((id) => /^\d+$/.test(id))));
   if (requestedIds.length === 0) {
-    return { imported: 0, alreadyExisted: 0, skipped: 0, errors: 0, oldestClosedAt: null, newestClosedAt: null };
+    return { imported: 0, alreadyExisted: 0, skipped: 0, errors: 0, oldestClosedAt: null, newestClosedAt: null, importedClientIds: [] };
   }
 
   // 1. Batch fetch les deals (chunks de 100, limite HubSpot)
@@ -61,7 +64,7 @@ export async function backfillClosedWonDeals(opts: BackfillOpts): Promise<Backfi
   }
 
   if (deals.length === 0) {
-    return { imported: 0, alreadyExisted: 0, skipped: requestedIds.length, errors: 0, oldestClosedAt: null, newestClosedAt: null };
+    return { imported: 0, alreadyExisted: 0, skipped: requestedIds.length, errors: 0, oldestClosedAt: null, newestClosedAt: null, importedClientIds: [] };
   }
 
   const dealIds = deals.map((d) => d.id);
@@ -122,6 +125,7 @@ export async function backfillClosedWonDeals(opts: BackfillOpts): Promise<Backfi
   // 3. Upsert dans clients
   let imported = 0;
   let errors = 0;
+  let importedClientIds: string[] = [];
   let oldestClosedAt: string | null = null;
   let newestClosedAt: string | null = null;
 
@@ -154,12 +158,18 @@ export async function backfillClosedWonDeals(opts: BackfillOpts): Promise<Backfi
   if (rows.length > 0) {
     // Insert en bulk (Supabase). On utilise upsert pour rester idempotent même
     // si une row a été créée entre le SELECT et l'INSERT par le webhook.
-    const { error } = await db.from("clients").upsert(rows, { onConflict: "hubspot_deal_id", ignoreDuplicates: true });
+    // ignoreDuplicates → ON CONFLICT DO NOTHING : le .select() ne renvoie donc
+    // QUE les rows réellement insérées, ce qui nous donne pile les nouveaux ids.
+    const { data: insertedRows, error } = await db
+      .from("clients")
+      .upsert(rows, { onConflict: "hubspot_deal_id", ignoreDuplicates: true })
+      .select("id");
     if (error) {
       console.error(`[clients/backfill] bulk upsert error:`, error.message);
       errors = rows.length;
     } else {
-      imported = rows.length;
+      importedClientIds = (insertedRows ?? []).map((r: { id: string }) => r.id);
+      imported = importedClientIds.length;
     }
   }
 
@@ -170,5 +180,6 @@ export async function backfillClosedWonDeals(opts: BackfillOpts): Promise<Backfi
     errors,
     oldestClosedAt,
     newestClosedAt,
+    importedClientIds,
   };
 }

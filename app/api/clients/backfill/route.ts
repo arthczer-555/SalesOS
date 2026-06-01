@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { backfillClosedWonDeals } from "@/lib/clients/backfill";
+import { triggerPrepareMeetings } from "@/lib/clients/trigger-prepare";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -38,7 +39,19 @@ export async function POST(req: NextRequest) {
 
   try {
     const stats = await backfillClosedWonDeals({ dealIds });
-    return NextResponse.json({ ok: true, ...stats });
+
+    // Garde-fou meetings : pour chaque client créé, on déclenche la découverte
+    // des meetings Claap + DM Slack à l'AE (la row passe en 'awaiting_meetings').
+    // L'analyse ne démarrera qu'après confirmation depuis la fiche.
+    for (const clientId of stats.importedClientIds) {
+      await triggerPrepareMeetings(clientId, req.nextUrl.origin);
+    }
+
+    // Import d'un seul deal : on renvoie son id pour que l'UI ouvre directement
+    // le popup de confirmation des meetings. Import multiple : confirmation
+    // différée sur chaque fiche (les AE sont notifiés par Slack).
+    const singleClientId = stats.importedClientIds.length === 1 ? stats.importedClientIds[0] : null;
+    return NextResponse.json({ ok: true, ...stats, singleClientId });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("[clients/backfill] failed:", msg);

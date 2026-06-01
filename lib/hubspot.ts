@@ -304,23 +304,38 @@ export async function fetchDealContext(dealId: string): Promise<DealSnapshot | n
 
   let contacts: DealContactSnapshot[] = [];
   if (contactAssoc.status === "fulfilled") {
-    const ids = (contactAssoc.value.results ?? []).slice(0, 5).map((r) => r.id);
+    // TOUS les contacts associés au deal (plus de limite à 5). L'attribution des
+    // meetings Claap se fait sur le domaine email des participants : rater un
+    // contact = rater ses meetings (cf. lib/clients/claap-discovery.ts). On lit
+    // par batch (100 = max HubSpot/appel) plutôt qu'un GET par contact.
+    const ids = (contactAssoc.value.results ?? []).map((r) => r.id);
     if (ids.length > 0) {
-      const details = await Promise.allSettled(
-        ids.map((cid) => hubspotFetch<{ id: string; properties: Record<string, string> }>(
-          `/crm/v3/objects/contacts/${cid}?properties=firstname,lastname,jobtitle,email,hs_analytics_source,hs_analytics_source_data_1`,
-        )),
+      const CONTACT_PROPS = [
+        "firstname", "lastname", "jobtitle", "email",
+        "hs_analytics_source", "hs_analytics_source_data_1",
+      ];
+      const chunks: string[][] = [];
+      for (let i = 0; i < ids.length; i += 100) chunks.push(ids.slice(i, i + 100));
+      type BatchReadResp = { results?: { id: string; properties: Record<string, string> }[] };
+      const batches = await Promise.allSettled(
+        chunks.map((chunk) =>
+          hubspotFetch<BatchReadResp>("/crm/v3/objects/contacts/batch/read", "POST", {
+            properties: CONTACT_PROPS,
+            inputs: chunk.map((id) => ({ id })),
+          }),
+        ),
       );
-      contacts = details
-        .filter((c): c is PromiseFulfilledResult<{ id: string; properties: Record<string, string> }> => c.status === "fulfilled")
+      contacts = batches
+        .filter((b): b is PromiseFulfilledResult<BatchReadResp> => b.status === "fulfilled")
+        .flatMap((b) => b.value.results ?? [])
         .map((c) => ({
-          id: c.value.id,
-          firstname: c.value.properties.firstname ?? "",
-          lastname: c.value.properties.lastname ?? "",
-          jobtitle: c.value.properties.jobtitle ?? "",
-          email: c.value.properties.email ?? "",
-          lead_source: c.value.properties.hs_analytics_source || null,
-          lead_source_detail: c.value.properties.hs_analytics_source_data_1 || null,
+          id: c.id,
+          firstname: c.properties.firstname ?? "",
+          lastname: c.properties.lastname ?? "",
+          jobtitle: c.properties.jobtitle ?? "",
+          email: c.properties.email ?? "",
+          lead_source: c.properties.hs_analytics_source || null,
+          lead_source_detail: c.properties.hs_analytics_source_data_1 || null,
         }));
     }
   }

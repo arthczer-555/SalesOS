@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 import { db } from "@/lib/db";
 import { hubspotFetch } from "@/lib/hubspot";
-import { runClientEnrichment } from "@/lib/clients/run-enrichment";
+import { triggerPrepareMeetings } from "@/lib/clients/trigger-prepare";
 import { decideAutoEnrich } from "@/lib/clients/auto-enrich";
 
 export const dynamic = "force-dynamic";
@@ -246,68 +246,26 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    // Gate auto-enrich pour la phase de test : si CLIENTS_AUTO_ENRICH=false
-    // ou si une whitelist exclut ce dealId, on s'arrête après la création de
-    // la row. Le user lancera l'enrichissement manuellement depuis l'UI.
+    // Garde-fou meetings : au lieu de lancer l'enrichissement directement, on
+    // déclenche la découverte des meetings Claap + DM Slack à l'AE. L'analyse
+    // ne démarrera qu'une fois la liste confirmée depuis la fiche. Le gate
+    // CLIENTS_AUTO_ENRICH (phase de test) court-circuite même cette préparation :
+    // la row reste 'pending' sans rien déclencher.
     if (clientId) {
       const decision = decideAutoEnrich(dealId);
       if (decision.auto) {
-        await triggerEnrichmentBackground(req, clientId);
+        await triggerPrepareMeetings(clientId, req.nextUrl.origin);
       } else {
         console.log(
-          `[hubspot-closed-won] auto-enrich skipped for deal ${dealId} (${decision.reason}) — manual trigger required`,
+          `[hubspot-closed-won] meeting-prep skipped for deal ${dealId} (${decision.reason}) — manual trigger required`,
         );
         processed[processed.length - 1].status += `:auto_enrich_${decision.reason}`;
       }
     }
   }
 
-  // 202 : on accuse réception côté HubSpot mais l'enrichissement tourne en
-  // background. HubSpot considère le webhook livré tant qu'on répond 2xx.
+  // 202 : on accuse réception côté HubSpot. La découverte des meetings + le DM
+  // Slack tournent en background ; l'enrichissement ne démarrera qu'après
+  // confirmation humaine. HubSpot considère le webhook livré tant qu'on répond 2xx.
   return NextResponse.json({ ok: true, processed }, { status: 202 });
-}
-
-// Lance l'enrichissement IA. En prod (Netlify) : POST vers la Background
-// Function pour profiter du runtime long (>15 min). En dev : on lance
-// runClientEnrichment en fire-and-forget dans le même process pour pouvoir
-// tester sans Netlify (le webhook répond immédiatement, l'enrich tourne en
-// arrière-plan, on poll côté UI sur enrichment_status).
-async function triggerEnrichmentBackground(req: NextRequest, clientId: string) {
-  const isNetlifyEnv = !!(process.env.NETLIFY || process.env.URL || process.env.DEPLOY_URL);
-
-  if (!isNetlifyEnv) {
-    void runClientEnrichment(clientId).catch((e) => {
-      console.error(`[hubspot-closed-won] inline enrichment failed for ${clientId}:`, e instanceof Error ? e.message : e);
-    });
-    return;
-  }
-
-  const internalSecret = process.env.INTERNAL_SECRET;
-  if (!internalSecret) {
-    console.warn(`[hubspot-closed-won] missing INTERNAL_SECRET — enrichment for ${clientId} not started`);
-    return;
-  }
-  const triggerUrl = `${req.nextUrl.origin}/.netlify/functions/clients-enrich-background`;
-
-  try {
-    const res = await fetch(triggerUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-secret": internalSecret,
-      },
-      body: JSON.stringify({ id: clientId }),
-      signal: AbortSignal.timeout(8000),
-    });
-    // Les Background Functions Netlify répondent 202 dès la mise en file.
-    if (!res.ok && res.status !== 202) {
-      const text = await res.text().catch(() => "");
-      console.error(`[hubspot-closed-won] enrichment trigger ${res.status} for ${clientId}:`, text.slice(0, 200));
-    }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!msg.includes("aborted") && !msg.includes("timeout")) {
-      console.error(`[hubspot-closed-won] trigger fetch failed for ${clientId}:`, msg);
-    }
-  }
 }

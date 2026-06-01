@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hubspotFetch, hubspotSearchAll } from "@/lib/hubspot";
+import { resolveWatchlistCompanyContactIds } from "@/lib/intel/company-contact-ids";
 import type { HubspotCriteria } from "@/lib/intel-types";
 
 export const dynamic = "force-dynamic";
@@ -60,7 +61,7 @@ export async function POST(req: NextRequest) {
   if (c.industry?.length) filters.push({ propertyName: "industry", operator: "IN", values: c.industry });
   if (c.country?.length) filters.push({ propertyName: "country", operator: "IN", values: c.country });
   if (c.companysize?.length) filters.push({ propertyName: "numberofemployees", operator: "IN", values: c.companysize });
-  if (c.companies?.length) filters.push({ propertyName: "company", operator: "IN", values: c.companies });
+  // c.companies (watchlist) : traité par associations plus bas, pas via `company`.
 
   const cutoff = c.createdRange === "custom" ? c.createdFrom : rangeCutoff(c.createdRange);
   if (cutoff) filters.push({ propertyName: "createdate", operator: "GTE", value: cutoff });
@@ -74,6 +75,9 @@ export async function POST(req: NextRequest) {
   }
 
   const wantsDealFilter = (c.dealStages && c.dealStages.length > 0) || (c.dealStatus && c.dealStatus !== "any");
+
+  // Restriction par contact-id : intersection des sources actives (deal, company).
+  let restrictContactIds: Set<string> | null = null;
 
   if (wantsDealFilter) {
     const dealFilters: Array<{ propertyName: string; operator: string; value?: string; values?: string[] }> = [];
@@ -112,10 +116,25 @@ export async function POST(req: NextRequest) {
         for (const t of r.to ?? []) contactIds.add(String(t.toObjectId));
       }
       if (contactIds.size === 0) return NextResponse.json({ profiles: [] });
-      filters.push({ propertyName: "hs_object_id", operator: "IN", values: Array.from(contactIds).slice(0, 1000) });
+      restrictContactIds = contactIds;
     } catch {
       return NextResponse.json({ profiles: [] });
     }
+  }
+
+  // Restriction par company (watchlist) : associations company→contacts (mêmes
+  // contacts que la fiche company), intersectée avec l'éventuelle restriction deal.
+  if (c.companies?.length) {
+    const companyContactIds = await resolveWatchlistCompanyContactIds(c.companies);
+    if (companyContactIds.size === 0) return NextResponse.json({ profiles: [] });
+    restrictContactIds = restrictContactIds
+      ? new Set([...restrictContactIds].filter((id) => companyContactIds.has(id)))
+      : companyContactIds;
+  }
+
+  if (restrictContactIds) {
+    if (restrictContactIds.size === 0) return NextResponse.json({ profiles: [] });
+    filters.push({ propertyName: "hs_object_id", operator: "IN", values: Array.from(restrictContactIds).slice(0, 1000) });
   }
 
   try {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hubspotFetch, hubspotSearchAll } from "@/lib/hubspot";
-import { loadRadarKeys, matchContactAgainstRadar } from "@/lib/radar-overlap";
+import { resolveWatchlistCompanyContactIds } from "@/lib/intel/company-contact-ids";
 import type { HubspotCriteria } from "@/lib/intel-types";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,6 @@ export const maxDuration = 60;
 // Gère aussi les filtres deal en faisant la jointure deals → contacts associés.
 
 const MAX_DEAL_SAMPLE = 500; // hard limit pour borner le coût
-const RADAR_SCAN_CAP = 300;  // borne pour le calcul de l'overlap Radar
 
 function rangeCutoff(range: HubspotCriteria["createdRange"]): string | null {
   const now = Date.now();
@@ -60,7 +59,7 @@ export async function POST(req: NextRequest) {
   if (c.industry?.length) filters.push({ propertyName: "industry", operator: "IN", values: c.industry });
   if (c.country?.length) filters.push({ propertyName: "country", operator: "IN", values: c.country });
   if (c.companysize?.length) filters.push({ propertyName: "numberofemployees", operator: "IN", values: c.companysize });
-  if (c.companies?.length) filters.push({ propertyName: "company", operator: "IN", values: c.companies });
+  // c.companies (watchlist) : traité par associations plus bas, pas via `company`.
 
   const cutoff = c.createdRange === "custom" ? c.createdFrom : rangeCutoff(c.createdRange);
   if (cutoff) filters.push({ propertyName: "createdate", operator: "GTE", value: cutoff });
@@ -79,6 +78,18 @@ export async function POST(req: NextRequest) {
 
   let deal_total: number | null = null;
   let truncated = false;
+
+  // Restriction par company (watchlist) : associations company→contacts (mêmes
+  // contacts que la fiche company). Calculée en amont pour pouvoir être
+  // intersectée avec une éventuelle restriction deal.
+  let restrictContactIds: Set<string> | null = null;
+  if (c.companies?.length) {
+    const companyContactIds = await resolveWatchlistCompanyContactIds(c.companies);
+    if (companyContactIds.size === 0) {
+      return NextResponse.json({ count: 0, dealCount: null, truncated: false });
+    }
+    restrictContactIds = companyContactIds;
+  }
 
   if (wantsDealFilter) {
     const dealFilters: Array<{ propertyName: string; operator: string; value?: string; values?: string[] }> = [];
@@ -138,8 +149,13 @@ export async function POST(req: NextRequest) {
         for (const t of r.to ?? []) contactIds.add(String(t.toObjectId));
       }
 
+      // Intersection avec la restriction company (si filtre company actif).
+      if (restrictContactIds) {
+        for (const id of [...contactIds]) if (!restrictContactIds.has(id)) contactIds.delete(id);
+      }
+
       if (contactIds.size === 0) {
-        return NextResponse.json({ count: 0, dealCount: deal_total, truncated, radarCount: 0 });
+        return NextResponse.json({ count: 0, dealCount: deal_total, truncated });
       }
 
       // HubSpot limite les `values` à ~100 par filtre. Si on a plus de contactIds,
@@ -151,8 +167,6 @@ export async function POST(req: NextRequest) {
           dealCount: deal_total,
           truncated: true,
           approximated: true,
-          radarCount: null,
-          radarApproximated: true,
         });
       }
 
@@ -163,75 +177,35 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // ── 3. Final count of contacts + overlap avec le Radar (en parallèle)
-  try {
-    const radarKeys = await loadRadarKeys(db);
+  // ── 2b. Company-only : pas de filtre deal, on applique directement la
+  // restriction company en filtre contact-id (même comportement que la recherche).
+  if (!wantsDealFilter && restrictContactIds) {
+    filters.push({
+      propertyName: "hs_object_id",
+      operator: "IN",
+      values: Array.from(restrictContactIds).slice(0, 1000),
+    });
+  }
 
+  // ── 3. Final count of contacts
+  try {
     const baseBody = {
       filterGroups: filters.length ? [{ filters }] : undefined,
       ...(c.q?.trim() ? { query: c.q.trim() } : {}),
     };
 
-    // On échantillonne TOUS les contacts qui matchent (pas seulement ceux
-    // avec linkedin_url) — l'overlap se calcule désormais aussi via
-    // hubspot_id et nom+entreprise, donc le linkedin_url n'est plus requis.
-    const shouldScanRadar = radarKeys.size > 0;
-
-    interface SampleRow {
-      id: string;
-      properties: { firstname?: string; lastname?: string; company?: string; linkedin_url?: string };
-    }
-
-    const [countData, sampleRows] = await Promise.all([
-      hubspotFetch<{ total: number }>(`/crm/v3/objects/contacts/search`, "POST", {
-        ...baseBody,
-        properties: ["firstname"],
-        limit: 1,
-      }),
-      shouldScanRadar
-        ? hubspotSearchAll<SampleRow>(
-            "contacts",
-            {
-              ...baseBody,
-              properties: ["firstname", "lastname", "company", "linkedin_url"],
-              limit: 100,
-            },
-            RADAR_SCAN_CAP,
-          ).catch(() => [] as SampleRow[])
-        : Promise.resolve([] as SampleRow[]),
-    ]);
+    const countData = await hubspotFetch<{ total: number }>(`/crm/v3/objects/contacts/search`, "POST", {
+      ...baseBody,
+      properties: ["firstname"],
+      limit: 1,
+    });
 
     const total = countData.total ?? 0;
-
-    let radarHits = 0;
-    for (const row of sampleRows) {
-      const p = row.properties ?? {};
-      const res = matchContactAgainstRadar(
-        {
-          hubspotId: row.id,
-          firstName: p.firstname,
-          lastName: p.lastname,
-          company: p.company,
-          linkedinUrl: p.linkedin_url,
-        },
-        radarKeys,
-      );
-      if (res.matched) radarHits++;
-    }
-
-    // Si le sample ne couvre qu'une fraction des contacts, on extrapole
-    // linéairement pour donner une estimation utile.
-    const radarApproximated = sampleRows.length > 0 && total > sampleRows.length;
-    const radarCount = radarApproximated
-      ? Math.round((radarHits / sampleRows.length) * total)
-      : radarHits;
 
     return NextResponse.json({
       count: total,
       dealCount: deal_total,
       truncated,
-      radarCount,
-      radarApproximated,
     });
   } catch (e) {
     console.error("[hubspot-count] contact search error:", e);

@@ -310,6 +310,31 @@ export type DiscoveredRecording = {
   discovered_at: string;
 };
 
+// ── Confirmation des meetings (garde-fou avant analyse) ───────────────────
+// À l'import (webhook ou backfill), on découvre les meetings Claap du compte
+// et on les propose dans un popup pour qu'un humain confirme/complète avant que
+// l'analyse démarre. Cf. migration clients_meeting_confirmation.sql.
+//
+// Candidat affiché dans le popup. `source` distingue les meetings déjà analysés
+// (sales_coach_analyses) des meetings découverts en direct sur Claap.
+export type MeetingCandidate = {
+  recording_id: string;
+  meeting_title: string | null;
+  meeting_started_at: string | null;
+  claap_url: string | null;
+  source: "indexed" | "discovered";
+};
+
+// Recording validé par l'humain (gardé depuis les candidats ou ajouté à la
+// main via recherche/URL). C'est la liste que l'enrichissement consomme.
+export type ConfirmedRecording = {
+  recording_id: string;
+  meeting_title: string | null;
+  meeting_started_at: string | null;
+  claap_url: string | null;
+  added_manually: boolean;
+};
+
 // ── Row Supabase ─────────────────────────────────────────────────────────
 export type ClientRow = {
   id: string;
@@ -329,8 +354,15 @@ export type ClientRow = {
   insights: Insights | null;
   news: News | null;
   discovered_claap_recordings: DiscoveredRecording[];
-  enrichment_status: "pending" | "running" | "done" | "error";
+  // 'awaiting_meetings' : import effectué, en attente que l'humain confirme la
+  // liste des meetings Claap avant que l'analyse démarre.
+  enrichment_status: "pending" | "awaiting_meetings" | "running" | "done" | "error";
   enrichment_error: string | null;
+  pending_meeting_candidates: MeetingCandidate[] | null;
+  confirmed_claap_recordings: ConfirmedRecording[] | null;
+  meetings_confirmed_at: string | null;
+  meetings_confirmed_by: string | null;
+  meeting_confirmation_requested_at: string | null;
   last_enriched_at: string | null;
   last_health_run_at: string | null;
   last_news_run_at: string | null;

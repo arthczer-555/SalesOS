@@ -1,11 +1,13 @@
 import {
   listClaapRecordingsPaginated,
+  getClaapRecording,
   pickTranscriptUrl,
   extractTitleSearchHint,
   type ClaapRecording,
 } from "../claap";
 import type { DealSnapshot } from "../hubspot";
 import type { ClaapMeetingForClient } from "./context";
+import type { MeetingCandidate } from "./types";
 
 // Quand sales_coach_analyses ne contient pas TOUS les meetings du deal — par
 // exemple parce qu'ils sont trop anciens ou n'ont jamais été poussés via le
@@ -46,41 +48,106 @@ const PUBLIC_EMAIL_DOMAINS = new Set([
   "neuf.fr", "aol.com",
 ]);
 
+// Notre propre domaine (le vendeur). Il est présent dans QUASI tous les
+// recordings Claap (le recorder = nous), donc il n'est jamais distinctif : si un
+// contact interne se retrouve sur un deal, matcher dessus ramènerait tous nos
+// meetings internes. On l'exclut des domaines de match, comme un domaine public.
+const OWN_EMAIL_DOMAINS = new Set(["coachello.io"]);
+
+// Tokens NON distinctifs : formes juridiques + descripteurs génériques. Un
+// compte "Fassi Group" ne doit PAS attirer tous les meetings "... Group ..." :
+// seul le token distinctif "fassi" peut servir au match par titre. Si le nom de
+// company ne contient QUE des tokens génériques, on retombe sur le match par
+// domaine email uniquement (aucun match par titre).
+const GENERIC_NAME_TOKENS = new Set([
+  // formes juridiques (FR / EN / DE / intl)
+  "group", "groupe", "holding", "holdings", "company", "compagnie",
+  "corp", "corporation", "inc", "incorporated", "ltd", "limited", "llc",
+  "llp", "plc", "sas", "sasu", "sarl", "sci", "snc", "gmbh",
+  "spa", "srl", "bv", "nv",
+  // descripteurs génériques fréquents dans les raisons sociales
+  "international", "global", "worldwide", "europe", "france", "labs",
+  "solutions", "services", "service", "consulting", "technologies",
+  "technology", "systems", "system", "digital", "ventures", "partners",
+  "associates", "industries", "industrie", "finance",
+  "capital", "invest", "investment", "and",
+]);
+
+// Mots de cycle de vente / titres de deal. Le nom d'un deal HubSpot ("Fassi
+// Group - New Deal", "Renault — Renewal 2026", "Acme Expansion Q3") contient
+// presque toujours ces mots ; s'ils servaient de token de match par titre, ils
+// attireraient des dizaines de meetings sans aucun rapport (tout meeting dont
+// le titre contient "new" ou "deal"…). On les filtre EN PLUS des tokens
+// génériques quand on dérive des tokens depuis le NOM DU DEAL (pas la company).
+const DEAL_LIFECYCLE_TOKENS = new Set([
+  "new", "deal", "renewal", "renew", "expansion", "expand", "upsell", "upgrade",
+  "cross", "sell", "opportunity", "opp", "contract", "quote", "proposal", "poc",
+  "pilot", "trial", "demo", "call", "meeting", "review", "won", "lost", "deals",
+  "account", "sales", "prospect", "prospection", "lead", "discovery", "kickoff",
+  "onboarding", "qbr", "followup", "follow", "intro", "introduction", "sync",
+  "checkin", "strategic", "alliance", "project", "projet", "phase", "round",
+]);
+const DEAL_NAME_NOISE_TOKENS = new Set([...GENERIC_NAME_TOKENS, ...DEAL_LIFECYCLE_TOKENS]);
+
+// Normalise pour comparaison : minuscules + suppression des accents.
+function normalizeText(s: string): string {
+  return s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+// Découpe une chaîne en mots normalisés (séparateurs = tout sauf alphanumérique).
+function tokenizeWords(s: string): string[] {
+  return normalizeText(s).split(/[^a-z0-9]+/).filter(Boolean);
+}
+
 function extractDomainsFromDeal(deal: DealSnapshot): Set<string> {
   const domains = new Set<string>();
+  const isExcluded = (d: string) => PUBLIC_EMAIL_DOMAINS.has(d) || OWN_EMAIL_DOMAINS.has(d);
+
   const companyDomain = deal.company?.domain?.toLowerCase().trim();
-  if (companyDomain && !PUBLIC_EMAIL_DOMAINS.has(companyDomain)) domains.add(companyDomain);
+  if (companyDomain && !isExcluded(companyDomain)) domains.add(companyDomain);
 
   for (const c of deal.contacts ?? []) {
     const email = c.email?.toLowerCase().trim();
     if (!email || !email.includes("@")) continue;
     const dom = email.split("@")[1];
-    if (dom && !PUBLIC_EMAIL_DOMAINS.has(dom)) domains.add(dom);
+    if (dom && !isExcluded(dom)) domains.add(dom);
   }
   return domains;
 }
 
 function extractCompanyNameTokens(deal: DealSnapshot): string[] {
-  // Tokens utilisés pour matcher le titre d'un recording. Sources :
+  // Tokens DISTINCTIFS utilisés pour matcher le titre d'un recording. Sources :
   //  - nom de la company HubSpot (le plus fiable)
   //  - extraction depuis le nom du deal via le helper existant
+  //
+  // On normalise (accents), on garde les mots >= 3 caractères, on jette les
+  // tokens purement numériques ET les tokens génériques (group, holding, sas…).
+  // Sans ce filtre, "Fassi Group" matchait tout meeting contenant "group".
   const tokens = new Set<string>();
+  const add = (raw: string, blocklist: Set<string>) => {
+    for (const w of tokenizeWords(raw)) {
+      if (w.length < 3) continue;
+      if (/^\d+$/.test(w)) continue;
+      if (blocklist.has(w)) continue;
+      tokens.add(w);
+    }
+  };
+
+  // Source la plus fiable : le nom de la company HubSpot. On ne filtre que les
+  // formes juridiques / descripteurs génériques.
   const companyName = deal.company?.name?.trim();
-  if (companyName) {
-    for (const w of companyName.split(/\s+/)) {
-      if (w.length >= 3) tokens.add(w.toLowerCase());
-    }
+  if (companyName) add(companyName, GENERIC_NAME_TOKENS);
+
+  // Fallback UNIQUEMENT si la company n'a donné aucun token (nom manquant ou
+  // purement générique). Le nom du deal est truffé de mots de cycle de vente
+  // ("New Deal", "Renewal", "Expansion"…) qui matcheraient des meetings sans
+  // rapport : on les filtre en plus (DEAL_NAME_NOISE_TOKENS). On garde l'email
+  // recorder "anything@coachello.io" comme proxy pour virer "Coachello".
+  if (tokens.size === 0) {
+    const hint = extractTitleSearchHint(deal.name, "anything@coachello.io");
+    if (hint) add(hint, DEAL_NAME_NOISE_TOKENS);
   }
-  // Fallback : extraction depuis le dealname via la même heuristique que le
-  // résolveur Claap inverse (titre → company). On utilise l'email du recorder
-  // = "anything@coachello.io" comme proxy ; l'extracteur va virer "Coachello"
-  // mais garder le nom du prospect.
-  const hint = extractTitleSearchHint(deal.name, "anything@coachello.io");
-  if (hint) {
-    for (const w of hint.split(/\s+/)) {
-      if (w.length >= 3) tokens.add(w.toLowerCase());
-    }
-  }
+
   return Array.from(tokens);
 }
 
@@ -103,14 +170,16 @@ function recordingMatchesDeal(
       if (dom && domains.has(dom)) return true;
     }
   }
-  // 2. Fallback : titre du recording contient un token significatif du nom
-  // de la company. Risque de faux positifs (ex: "Acme" matche aussi "Acme
-  // Corp" qui n'est pas notre client) — on l'utilise seulement quand le
-  // match par email a échoué.
+  // 2. Fallback : le titre du recording contient un token DISTINCTIF du nom de
+  // la company, en match MOT ENTIER (pas sous-chaîne). Les tokens génériques
+  // ont déjà été retirés en amont (cf. extractCompanyNameTokens), donc "Fassi
+  // Group" ne matche que sur "fassi", jamais sur "group" / "groupe". Le match
+  // mot entier évite aussi que "group" matche "groupe". Utilisé seulement quand
+  // le match par domaine email a échoué.
   if (nameTokens.length > 0 && rec.title) {
-    const title = rec.title.toLowerCase();
+    const titleWords = new Set(tokenizeWords(rec.title));
     for (const tok of nameTokens) {
-      if (title.includes(tok)) return true;
+      if (titleWords.has(tok)) return true;
     }
   }
   return false;
@@ -126,10 +195,14 @@ async function fetchTranscriptText(url: string): Promise<string | null> {
   }
 }
 
-export async function discoverExtraClaapMeetings(
+// Scan partagé : paginate Claap et renvoie les recordings non indexés qui
+// matchent le deal (par domaine participant ou token de titre). C'est le cœur
+// commun de la discovery complète (avec transcripts, pour l'enrichissement) et
+// de la discovery "candidats" (metadata only, pour le popup de confirmation).
+async function scanMatchingRecordings(
   deal: DealSnapshot | null,
   alreadyIndexed: Set<string>,
-): Promise<ClaapMeetingForClient[]> {
+): Promise<ClaapRecording[]> {
   if (!deal || !process.env.CLAAP_API_TOKEN) return [];
 
   const domains = extractDomainsFromDeal(deal);
@@ -171,47 +244,106 @@ export async function discoverExtraClaapMeetings(
   // Filtre : (date >= windowStart) ET (pas déjà indexé) ET (matche le deal).
   // Pas de borne haute — on accepte explicitement les meetings dans le futur
   // par rapport au close_date (CS post-signature, etc).
-  const matchesMeta: Array<{ rec: ClaapRecording; transcriptUrl: string | null }> = [];
+  const matches: ClaapRecording[] = [];
   for (const rec of recordings) {
     if (alreadyIndexed.has(rec.id)) continue;
     const ms = recordingDateMs(rec);
     if (ms !== null && ms < windowStart) continue;
     if (!recordingMatchesDeal(rec, domains, nameTokens)) continue;
-    const transcriptUrl = pickTranscriptUrl(rec);
-    matchesMeta.push({ rec, transcriptUrl });
-    if (matchesMeta.length >= MAX_EXTRA_MATCHES) break;
+    matches.push(rec);
+    if (matches.length >= MAX_EXTRA_MATCHES) break;
   }
-  if (matchesMeta.length === 0) {
-    console.log(
-      `[clients/claap-discovery] deal=${deal.id} : 0 match (scanned ${recordings.length} recordings ` +
-        `since ${new Date(windowStart).toISOString().slice(0, 10)})`,
-    );
-    return [];
-  }
+
+  console.log(
+    `[clients/claap-discovery] deal=${deal.id} : matched ${matches.length} Claap recording(s) non indexé(s) ` +
+      `(scanned=${recordings.length}, domains=[${Array.from(domains).join(",")}], tokens=[${nameTokens.join(",")}], ` +
+      `since=${new Date(windowStart).toISOString().slice(0, 10)})`,
+  );
+  return matches;
+}
+
+export async function discoverExtraClaapMeetings(
+  deal: DealSnapshot | null,
+  alreadyIndexed: Set<string>,
+): Promise<ClaapMeetingForClient[]> {
+  const matches = await scanMatchingRecordings(deal, alreadyIndexed);
+  if (matches.length === 0) return [];
 
   // Fetch transcripts en parallèle (max 15 = OK, pas de rate limit côté
   // Claap signed URL S3)
   const transcripts = await Promise.all(
-    matchesMeta.map((m) => (m.transcriptUrl ? fetchTranscriptText(m.transcriptUrl) : Promise.resolve(null))),
+    matches.map((rec) => {
+      const url = pickTranscriptUrl(rec);
+      return url ? fetchTranscriptText(url) : Promise.resolve(null);
+    }),
   );
 
-  const meetings: ClaapMeetingForClient[] = matchesMeta.map((m, i) => ({
-    recording_id: m.rec.id,
-    meeting_title: m.rec.title ?? null,
-    meeting_started_at: m.rec.meeting?.startingAt ?? m.rec.createdAt ?? null,
+  return matches.map((rec, i) => recordingToMeeting(rec, transcripts[i]));
+}
+
+// Variante "candidats" : metadata seulement (titre/date/url/id), SANS fetch des
+// transcripts. Utilisée à l'import pour peupler le popup de confirmation des
+// meetings, où l'humain valide la liste avant que l'analyse (coûteuse) démarre.
+export async function discoverClaapMeetingCandidates(
+  deal: DealSnapshot | null,
+  alreadyIndexed: Set<string>,
+): Promise<MeetingCandidate[]> {
+  const matches = await scanMatchingRecordings(deal, alreadyIndexed);
+  return matches.map((rec) => ({
+    recording_id: rec.id,
+    meeting_title: rec.title ?? null,
+    meeting_started_at: rec.meeting?.startingAt ?? rec.createdAt ?? null,
+    claap_url: rec.url ?? null,
+    source: "discovered" as const,
+  }));
+}
+
+// Construit un ClaapMeetingForClient à partir d'un recording brut + son
+// transcript déjà chargé.
+function recordingToMeeting(rec: ClaapRecording, transcript: string | null): ClaapMeetingForClient {
+  return {
+    recording_id: rec.id,
+    meeting_title: rec.title ?? null,
+    meeting_started_at: rec.meeting?.startingAt ?? rec.createdAt ?? null,
     meeting_kind: null,
     audience: null,
     meeting_recap_summary: null,
-    transcript_text: transcripts[i],
+    transcript_text: transcript,
     is_discovered: true,
-    claap_url: m.rec.url ?? null,
-  }));
+    claap_url: rec.url ?? null,
+  };
+}
 
-  console.log(
-    `[clients/claap-discovery] deal=${deal.id} : matched ${meetings.length} Claap recording(s) non indexé(s) ` +
-      `(scanned=${recordings.length}, domains=[${Array.from(domains).join(",")}], tokens=[${nameTokens.join(",")}], ` +
-      `since=${new Date(windowStart).toISOString().slice(0, 10)})`,
+// Charge des recordings Claap précis par leur id (le set confirmé par l'humain),
+// transcripts inclus. Utilisé par l'enrichissement post-confirmation : au lieu
+// de re-deviner via la discovery aveugle, on traite exactement la liste validée.
+// Les ids déjà indexés (alreadyIndexed) sont ignorés, ils arrivent déjà via
+// sales_coach_analyses avec leur recap. Best-effort par id : un fetch raté est
+// simplement omis.
+export async function fetchClaapRecordingsByIds(
+  ids: string[],
+  alreadyIndexed: Set<string> = new Set(),
+): Promise<ClaapMeetingForClient[]> {
+  if (!process.env.CLAAP_API_TOKEN) return [];
+  const wanted = Array.from(new Set(ids)).filter((id) => id && !alreadyIndexed.has(id));
+  if (wanted.length === 0) return [];
+
+  const recs = await Promise.all(
+    wanted.map((id) =>
+      getClaapRecording(id).catch((e) => {
+        console.warn(`[clients/claap-discovery] fetch by id ${id} failed:`, e instanceof Error ? e.message : e);
+        return null;
+      }),
+    ),
   );
 
-  return meetings;
+  const present = recs.filter((r): r is ClaapRecording => !!r);
+  const transcripts = await Promise.all(
+    present.map((rec) => {
+      const url = pickTranscriptUrl(rec);
+      return url ? fetchTranscriptText(url) : Promise.resolve(null);
+    }),
+  );
+
+  return present.map((rec, i) => recordingToMeeting(rec, transcripts[i]));
 }

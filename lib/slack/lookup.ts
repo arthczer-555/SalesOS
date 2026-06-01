@@ -37,6 +37,27 @@ export async function lookupSlackIdByEmail(email: string): Promise<string | null
   }
 }
 
+/**
+ * Résout le nom d'affichage Slack d'un memberId via `users.info`. Renvoie
+ * `display_name` (le handle choisi) ou `real_name` à défaut, `null` si rien ne
+ * résout. Utilisé à l'onboarding pour remplir `slack_display_name` sans saisie
+ * manuelle.
+ */
+export async function getSlackDisplayNameById(memberId: string): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://slack.com/api/users.info?user=${encodeURIComponent(memberId)}`,
+      { headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` } },
+    );
+    const data = await res.json();
+    if (!data.ok) return null;
+    const profile = data.user?.profile ?? {};
+    return profile.display_name?.trim() || profile.real_name?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function findSlackIdByDisplayName(displayName: string): Promise<string | null> {
   const res = await fetch(`https://slack.com/api/users.list?limit=200`, {
     headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },

@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { fetchDealContext, renderDealContextForPrompt, type DealSnapshot } from "../hubspot";
-import { discoverExtraClaapMeetings } from "./claap-discovery";
+import { discoverExtraClaapMeetings, fetchClaapRecordingsByIds } from "./claap-discovery";
 
 // Charge et rend le contexte d'un closed-won pour l'extraction des fields :
 //  - snapshot HubSpot complet du deal (engagements, contacts, company),
@@ -75,19 +75,29 @@ export type ClientEnrichmentContext = {
   meetings: ClaapMeetingForClient[];
 };
 
-export async function loadClientContext(dealId: string): Promise<ClientEnrichmentContext> {
+export async function loadClientContext(
+  dealId: string,
+  opts?: { confirmedRecordingIds?: string[] },
+): Promise<ClientEnrichmentContext> {
   const [deal, indexed] = await Promise.all([
     fetchDealContext(dealId),
     loadClaapMeetingsForDeal(dealId),
   ]);
 
-  // Étape 2 : on cherche sur Claap directement les meetings qui ne sont pas
-  // dans sales_coach_analyses (anciens deals, meetings ratés). Best-effort —
-  // si Claap est down ou si on n'a pas de signaux de match (pas de company),
-  // on continue avec seulement les indexés.
+  // Deux modes pour les meetings non indexés dans sales_coach_analyses :
+  //  - confirmedRecordingIds fourni (enrichissement post-confirmation) : on
+  //    traite EXACTEMENT la liste validée par l'humain, on saute la discovery
+  //    aveugle. Garantit que l'analyse couvre les meetings confirmés (ni plus,
+  //    ni moins).
+  //  - sinon (refresh mensuel / cron) : discovery automatique par domaine/titre
+  //    comme historiquement.
   const alreadyIndexed = new Set(indexed.map((m) => m.recording_id));
-  const extras = await discoverExtraClaapMeetings(deal, alreadyIndexed).catch((e) => {
-    console.warn(`[clients/context] Claap discovery failed:`, e instanceof Error ? e.message : e);
+  const confirmedIds = opts?.confirmedRecordingIds;
+  const extras = await (confirmedIds
+    ? fetchClaapRecordingsByIds(confirmedIds, alreadyIndexed)
+    : discoverExtraClaapMeetings(deal, alreadyIndexed)
+  ).catch((e) => {
+    console.warn(`[clients/context] Claap meetings load failed:`, e instanceof Error ? e.message : e);
     return [] as ClaapMeetingForClient[];
   });
 

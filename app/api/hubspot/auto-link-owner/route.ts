@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { resolveHubspotOwnerId } from "@/lib/onboarding/resolve-mappings";
 
 export const dynamic = "force-dynamic";
 
@@ -9,17 +10,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const res = await fetch("https://api.hubapi.com/crm/v3/owners?limit=100", {
-      headers: { Authorization: `Bearer ${process.env.HUBSPOT_ACCESS_TOKEN}` },
-    });
-    if (!res.ok) throw new Error(`HubSpot ${res.status}`);
-    const data = await res.json();
-
-    const owner = (data.results ?? []).find(
-      (o: { email?: string; id: string }) =>
-        o.email?.toLowerCase() === user.email?.toLowerCase()
-    );
-    const hubspotOwnerId = owner?.id ?? null;
+    const hubspotOwnerId = await resolveHubspotOwnerId(user.email);
 
     if (hubspotOwnerId) {
       await db.from("users").update({ hubspot_owner_id: hubspotOwnerId }).eq("id", user.id);

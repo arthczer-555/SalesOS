@@ -123,31 +123,6 @@ async function netrows<T>(path: string, params?: Record<string, string>): Promis
   return res.json();
 }
 
-async function netrowsPost<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}${path}`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${getApiKey()}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(NETROWS_TIMEOUT_MS),
-    });
-  } catch (e) {
-    if (isAbortTimeout(e)) throw new NetrowsTimeoutError(path);
-    throw e;
-  }
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Netrows POST ${res.status} ${path}: ${text.slice(0, 200)}`);
-  }
-
-  return res.json();
-}
-
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface LinkedInProfile {
@@ -188,16 +163,6 @@ export interface CompanyPost {
   postedAt: string;
   likes: number;
   comments: number;
-}
-
-export interface RadarWebhookPayload {
-  event: "profile.changed" | "company.changed";
-  timestamp: string;
-  profile?: { username: string; url: string };
-  company?: { username: string; url: string };
-  changes: { field: string; oldValue: unknown; newValue: unknown }[];
-  summary: string;
-  newSnapshot: Record<string, unknown>;
 }
 
 // ── People ───────────────────────────────────────────────────────────────────
@@ -341,75 +306,6 @@ export async function searchPosts(keyword: string, sortBy = "date_posted", dateP
     throw e;
   }
 }
-
-// ── Radar ────────────────────────────────────────────────────────────────────
-
-/** List monitored companies (free). Renvoie `[]` si rien n'est encore monitoré. */
-export async function listRadarCompanies(): Promise<{ data: { id: string; username: string; is_active: boolean }[] }> {
-  try {
-    return await netrows("/radar/companies");
-  } catch (e) {
-    if (e instanceof NetrowsNotFoundError) return { data: [] };
-    throw e;
-  }
-}
-
-/** Add company to Radar (1 credit one-time, monitoring free forever) */
-export async function addCompanyToRadar(username: string): Promise<{ success: boolean }> {
-  return netrowsPost("/radar/companies", { username });
-}
-
-/** List monitored profiles (free). Renvoie `[]` si rien n'est encore monitoré. */
-export async function listRadarProfiles(): Promise<{ data: { id: string; username: string; is_active: boolean }[] }> {
-  try {
-    return await netrows("/radar/profiles");
-  } catch (e) {
-    if (e instanceof NetrowsNotFoundError) return { data: [] };
-    throw e;
-  }
-}
-
-/** Add profile to Radar (1 credit one-time) */
-export async function addProfileToRadar(username: string): Promise<{ success: boolean }> {
-  return netrowsPost("/radar/profiles", { username });
-}
-
-// ── Config — mots-clés pour le scan ─────────────────────────────────────────
-
-/** Mots-clés pour détecter les changements de poste dans les posts LinkedIn */
-export const JOB_CHANGE_KEYWORDS = [
-  "ravi de rejoindre",
-  "nouvelle aventure",
-  "nouveau challenge",
-  "nouveau poste",
-  "je suis heureux d'annoncer",
-  "thrilled to join",
-  "excited to announce",
-  "new role",
-  "nouveau chapitre",
-  "nommé DRH",
-  "nommé Head of",
-  "nommée Directrice",
-];
-
-/** Mots-clés pour détecter les posts coaching/L&D */
-export const COACHING_KEYWORDS = [
-  "coaching managers",
-  "coaching leadership",
-  "développement managérial",
-  "formation managers",
-  "talent development",
-  "learning development",
-  "coaching professionnel",
-  "leadership development",
-  "coaching équipe",
-  "développement leadership",
-  "onboarding managers",
-  "executive coaching",
-  "rétention talents",
-  "engagement collaborateurs",
-  "qualité vie travail",
-];
 
 // ── Wrappers additionnels (Market Intel v2) ─────────────────────────────────
 

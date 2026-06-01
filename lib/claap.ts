@@ -57,12 +57,13 @@ export async function listClaapRecordings(limit = 30): Promise<ClaapRecording[]>
   return data.result?.recordings ?? [];
 }
 
-// Réponse Claap "list recordings" — la forme exacte du curseur varie selon
-// la version d'API. On essaie plusieurs clés communes (`cursor`, `next`,
-// `nextCursor`) et on tombe sur la première qui répond.
+// Réponse Claap "list recordings". Le curseur de page suivante est dans
+// `result.pagination.nextCursor` (vérifié sur l'API v1). On garde quelques
+// clés legacy en fallback au cas où la forme changerait.
 type ListRecordingsResponse = {
   result?: {
     recordings?: ClaapRecording[];
+    pagination?: { nextCursor?: string | null; totalCount?: number };
     cursor?: string | null;
     next?: string | null;
     nextCursor?: string | null;
@@ -72,7 +73,7 @@ type ListRecordingsResponse = {
 
 function extractCursor(res: ListRecordingsResponse): string | null {
   const r = res.result ?? {};
-  return r.cursor ?? r.next ?? r.nextCursor ?? null;
+  return r.pagination?.nextCursor ?? r.cursor ?? r.next ?? r.nextCursor ?? null;
 }
 
 /**
@@ -87,7 +88,7 @@ export async function listClaapRecordingsPage(opts: {
 }): Promise<{ recordings: ClaapRecording[]; nextCursor: string | null }> {
   const limit = Math.max(1, Math.min(100, opts.limit ?? 50));
   const qs = new URLSearchParams({ limit: String(limit) });
-  if (opts.cursor) qs.set("after", opts.cursor);
+  if (opts.cursor) qs.set("cursor", opts.cursor);
   const resp = await claapFetch<ListRecordingsResponse>(`/recordings?${qs.toString()}`);
   const recordings = resp.result?.recordings ?? [];
   // A short page means we hit the end; otherwise trust the API cursor (which
@@ -113,12 +114,15 @@ export async function listClaapRecordingsPage(opts: {
 export async function listClaapRecordingsPaginated(opts: {
   maxTotal?: number;
   pageSize?: number;
+  /** Plafond dur de pages (default 10 = 1000 recordings). Remonté ponctuellement
+   * par la recherche manuelle "scan profond" (cap absolu 50 = 5000 recordings). */
+  maxPages?: number;
   /** Retourne `false` pour stopper la pagination après la page courante. */
   shouldContinue?: (lastRec: ClaapRecording) => boolean;
 }): Promise<ClaapRecording[]> {
   const maxTotal = Math.max(1, Math.min(5000, opts.maxTotal ?? 1000));
   const pageSize = Math.max(1, Math.min(100, opts.pageSize ?? 100));
-  const MAX_PAGES = 10;
+  const MAX_PAGES = Math.max(1, Math.min(50, opts.maxPages ?? 10));
 
   const all: ClaapRecording[] = [];
   let cursor: string | null = null;
@@ -127,7 +131,7 @@ export async function listClaapRecordingsPaginated(opts: {
   while (all.length < maxTotal && page < MAX_PAGES) {
     page++;
     const qs = new URLSearchParams({ limit: String(pageSize) });
-    if (cursor) qs.set("after", cursor);
+    if (cursor) qs.set("cursor", cursor);
 
     let resp: ListRecordingsResponse;
     try {
@@ -441,8 +445,13 @@ export async function searchClaapMeetings(opts: {
   since?: string;
   until?: string;
   limit?: number;
+  /** Profondeur de scan (nb max de recordings parcourus, newest-first). Default
+   * 1000. La recherche manuelle pousse plus loin pour retrouver des meetings
+   * anciens dont le titre/participant n'apparaît pas dans la fenêtre récente. */
+  scanMaxTotal?: number;
 }): Promise<ClaapMeetingMatch[]> {
   const limit = Math.max(1, Math.min(50, opts.limit ?? 20));
+  const scanMaxTotal = Math.max(100, Math.min(5000, opts.scanMaxTotal ?? 1000));
   const sinceMs = opts.since ? new Date(opts.since).getTime() : null;
   const untilMs = opts.until ? new Date(opts.until).getTime() : null;
   const emailLc = opts.participant_email?.toLowerCase().trim() || null;
@@ -458,8 +467,9 @@ export async function searchClaapMeetings(opts: {
   const titleLc = opts.title_query?.toLowerCase().trim() || null;
 
   const recordings = await listClaapRecordingsPaginated({
-    maxTotal: 1000,
+    maxTotal: scanMaxTotal,
     pageSize: 100,
+    maxPages: Math.ceil(scanMaxTotal / 100),
     shouldContinue: (lastRec) => {
       if (sinceMs === null) return true;
       const ms = recordingStartMs(lastRec);
@@ -506,6 +516,94 @@ export async function searchClaapMeetings(opts: {
     if (matches.length >= limit) break;
   }
   return matches;
+}
+
+/**
+ * Recherche incrémentale par curseur : scanne l'historique Claap page par page
+ * (newest-first) depuis `cursor`, filtre par titre / participant / plage de
+ * dates, et s'arrête dès qu'elle a accumulé `maxMatches` résultats OU parcouru
+ * `maxPagesPerCall` pages (garde-fou anti-timeout Netlify). Renvoie les matches
+ * du batch + un `nextCursor` pour continuer (null = historique épuisé, ou borne
+ * `since` atteinte). Permet un "Load more" qui cherche dans TOUT l'historique
+ * sans tout charger d'un coup.
+ */
+export async function searchClaapMeetingsPage(opts: {
+  participant_email?: string;
+  title_query?: string;
+  since?: string;
+  until?: string;
+  cursor?: string | null;
+  /** Nb de matches visé pour ce batch avant de rendre la main (default 25). */
+  maxMatches?: number;
+  /** Garde-fou : nb max de pages scannées par appel (default 30). */
+  maxPagesPerCall?: number;
+  /** Taille de page Claap (default 100). Le mode "browse" (sans filtre) la met
+   * à 50 pour des batches "charger plus" propres de 50. */
+  pageSize?: number;
+}): Promise<{ matches: ClaapMeetingMatch[]; nextCursor: string | null }> {
+  const maxMatches = Math.max(1, Math.min(100, opts.maxMatches ?? 25));
+  const maxPagesPerCall = Math.max(1, Math.min(50, opts.maxPagesPerCall ?? 30));
+  const pageSize = Math.max(1, Math.min(100, opts.pageSize ?? 100));
+  const sinceMs = opts.since ? new Date(opts.since).getTime() : null;
+  const untilMs = opts.until ? new Date(opts.until).getTime() : null;
+  const emailLc = opts.participant_email?.toLowerCase().trim() || null;
+  const titleLc = opts.title_query?.toLowerCase().trim() || null;
+
+  const matches: ClaapMeetingMatch[] = [];
+  let cursor: string | null = opts.cursor ?? null;
+  let pages = 0;
+
+  while (pages < maxPagesPerCall && matches.length < maxMatches) {
+    pages++;
+    let page: { recordings: ClaapRecording[]; nextCursor: string | null };
+    try {
+      page = await listClaapRecordingsPage({ limit: pageSize, cursor });
+    } catch (e) {
+      console.warn("[searchClaapMeetingsPage] page failed:", e instanceof Error ? e.message : e);
+      cursor = null;
+      break;
+    }
+    if (page.recordings.length === 0) { cursor = null; break; }
+
+    let reachedSince = false;
+    for (const rec of page.recordings) {
+      const ms = recordingStartMs(rec);
+      // Recordings triés newest-first : dès qu'on passe sous `since`, tout le
+      // reste est encore plus ancien → on note la borne et on arrête après.
+      if (sinceMs !== null && ms !== null && ms < sinceMs) { reachedSince = true; continue; }
+      if (untilMs !== null && ms !== null && ms > untilMs) continue;
+      if (titleLc && !(rec.title?.toLowerCase() ?? "").includes(titleLc)) continue;
+      if (emailLc) {
+        // Match participant OU recorder : un sales est souvent celui qui a
+        // enregistré le meeting, pas forcément listé dans participants.
+        let ok = rec.recorder?.email?.toLowerCase().trim() === emailLc;
+        for (const p of rec.meeting?.participants ?? []) {
+          if (ok) break;
+          if (p.email?.toLowerCase().trim() === emailLc) ok = true;
+        }
+        if (!ok) continue;
+      }
+      matches.push({
+        recording_id: rec.id,
+        title: rec.title ?? null,
+        started_at: rec.meeting?.startingAt ?? rec.createdAt ?? null,
+        ended_at: rec.meeting?.endingAt ?? null,
+        duration_seconds: rec.durationSeconds ?? null,
+        url: rec.url ?? null,
+        participants: (rec.meeting?.participants ?? []).map((p) => ({
+          name: p.name ?? null,
+          email: p.email ?? null,
+          attended: p.attended ?? null,
+        })),
+      });
+    }
+
+    cursor = page.nextCursor;
+    if (reachedSince) { cursor = null; break; }
+    if (!cursor) break;
+  }
+
+  return { matches, nextCursor: cursor };
 }
 
 /**

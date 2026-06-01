@@ -87,7 +87,7 @@ function SalesCoachInner() {
         >
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <h1 style={{ fontSize: 16, fontWeight: 700, color: COLORS.ink0, margin: 0, letterSpacing: "-0.01em" }}>
-              Sales Coach <span style={{ fontSize: 11, fontWeight: 500, color: COLORS.ink3 }}>(beta)</span>
+              Sales Coach
             </h1>
             <button
               onClick={() => reload()}

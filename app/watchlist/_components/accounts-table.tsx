@@ -2,12 +2,12 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Search, Send, UserSearch } from "lucide-react";
+import { Search, UserSearch } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import type { WatchAccount } from "@/app/api/watchlist/accounts/route";
 
-type SortKey = "name" | "sector" | "platform" | "radar_count" | "signals_30d" | "outreach_count";
+type SortKey = "name" | "sector" | "platform" | "signals_30d";
 
 export function AccountsTable({
   accounts,
@@ -20,7 +20,7 @@ export function AccountsTable({
   const [query, setQuery] = React.useState("");
   const [sectorFilter, setSectorFilter] = React.useState<string>("");
   const [platformFilter, setPlatformFilter] = React.useState<string>("");
-  const [sortKey, setSortKey] = React.useState<SortKey>("radar_count");
+  const [sortKey, setSortKey] = React.useState<SortKey>("signals_30d");
   const [sortDir, setSortDir] = React.useState<"asc" | "desc">("desc");
 
   const sectors = React.useMemo(
@@ -60,12 +60,8 @@ export function AccountsTable({
           return (a.sector ?? "").localeCompare(b.sector ?? "") * mul;
         case "platform":
           return (a.current_coaching_platform ?? "").localeCompare(b.current_coaching_platform ?? "") * mul;
-        case "radar_count":
-          return (a.radar_count - b.radar_count) * mul;
         case "signals_30d":
           return (a.signals_30d - b.signals_30d) * mul;
-        case "outreach_count":
-          return (a.outreach_count - b.outreach_count) * mul;
         default:
           return 0;
       }
@@ -81,26 +77,9 @@ export function AccountsTable({
     }
   }
 
-  async function prospectCompany(account: WatchAccount, e: React.MouseEvent) {
+  function prospectCompany(e: React.MouseEvent) {
     e.stopPropagation();
-    if (account.radar_count === 0) {
-      router.push(`/enrichment?source=watchlist&company=${encodeURIComponent(account.name)}`);
-      return;
-    }
-    try {
-      const r = await fetch(`/api/watchlist/accounts/${account.id}/prospects`);
-      const j = await r.json();
-      const ids = (j.prospects ?? [])
-        .map((p: { id?: string }) => p.id)
-        .filter((id: string | undefined): id is string => Boolean(id));
-      if (ids.length === 0) {
-        router.push(`/enrichment?source=watchlist&company=${encodeURIComponent(account.name)}`);
-        return;
-      }
-      router.push(`/mass-prospection?from=watchlist&ids=${ids.join(",")}`);
-    } catch {
-      router.push(`/enrichment?source=watchlist&company=${encodeURIComponent(account.name)}`);
-    }
+    router.push("/watchlist?tab=lists");
   }
 
   return (
@@ -178,9 +157,7 @@ export function AccountsTable({
                 <th style={th()} onClick={() => toggleSort("name")}>Entreprise {sortIndicator(sortKey === "name", sortDir)}</th>
                 <th style={th(120)} onClick={() => toggleSort("sector")}>Secteur {sortIndicator(sortKey === "sector", sortDir)}</th>
                 <th style={th(140)} onClick={() => toggleSort("platform")}>Plateforme {sortIndicator(sortKey === "platform", sortDir)}</th>
-                <th style={th(80, "right")} onClick={() => toggleSort("radar_count")}>Radar {sortIndicator(sortKey === "radar_count", sortDir)}</th>
                 <th style={th(80, "right")} onClick={() => toggleSort("signals_30d")}>Signaux 30j {sortIndicator(sortKey === "signals_30d", sortDir)}</th>
-                <th style={th(80, "right")} onClick={() => toggleSort("outreach_count")}>Échanges {sortIndicator(sortKey === "outreach_count", sortDir)}</th>
                 <th style={th(80, "right")}>Owner</th>
                 <th style={th(140, "right")}></th>
               </tr>
@@ -201,34 +178,17 @@ export function AccountsTable({
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <CompanyAvatar name={a.name} size={24} />
                       <span style={{ fontWeight: 500, color: COLORS.ink0 }}>{a.name}</span>
-                      {a.champions > 0 && (
-                        <span
-                          title="Champions"
-                          style={{
-                            fontSize: 9,
-                            padding: "1px 6px",
-                            borderRadius: 999,
-                            background: "#fef3c7",
-                            color: "#92400e",
-                            fontWeight: 600,
-                          }}
-                        >
-                          ★ {a.champions}
-                        </span>
-                      )}
                     </div>
                   </td>
                   <td style={td()}>{a.sector ?? "—"}</td>
                   <td style={td()}>{a.current_coaching_platform ?? "—"}</td>
-                  <td style={{ ...td(), textAlign: "right" }}>{a.radar_count}</td>
                   <td style={{ ...td(), textAlign: "right" }}>{a.signals_30d}</td>
-                  <td style={{ ...td(), textAlign: "right" }}>{a.outreach_count}</td>
                   <td style={{ ...td(), textAlign: "right", color: COLORS.ink2 }}>{a.owner ?? "—"}</td>
                   <td style={{ ...td(), textAlign: "right", whiteSpace: "nowrap" }}>
                     <button
                       type="button"
-                      onClick={(e) => prospectCompany(a, e)}
-                      title={a.radar_count > 0 ? `Prospecter les ${a.radar_count} contact${a.radar_count > 1 ? "s" : ""} de cette company` : "Aucun prospect : ouvrir l'enrichissement pour en trouver"}
+                      onClick={prospectCompany}
+                      title="Gérer les listes de prospection"
                       style={{
                         display: "inline-flex",
                         alignItems: "center",
@@ -236,15 +196,15 @@ export function AccountsTable({
                         padding: "4px 10px",
                         fontSize: 11,
                         borderRadius: 6,
-                        border: `1px solid ${a.radar_count > 0 ? COLORS.brand : COLORS.line}`,
-                        background: a.radar_count > 0 ? COLORS.brand : COLORS.bgCard,
-                        color: a.radar_count > 0 ? "white" : COLORS.ink2,
+                        border: `1px solid ${COLORS.line}`,
+                        background: COLORS.bgCard,
+                        color: COLORS.ink2,
                         cursor: "pointer",
                         fontWeight: 500,
                       }}
                     >
-                      {a.radar_count > 0 ? <Send size={11} /> : <UserSearch size={11} />}
-                      {a.radar_count > 0 ? "Prospecter" : "Enrichir"}
+                      <UserSearch size={11} />
+                      Prospecter
                     </button>
                   </td>
                 </tr>

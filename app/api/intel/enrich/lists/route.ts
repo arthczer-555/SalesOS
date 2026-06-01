@@ -16,7 +16,39 @@ export async function GET(_req: NextRequest) {
     .limit(100);
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-  return NextResponse.json({ lists: data ?? [] });
+
+  const lists = data ?? [];
+
+  // Attache la dernière campagne par liste (list_id), avec compteurs d'emails.
+  const { data: campaigns } = await db
+    .from("mass_campaigns")
+    .select("id, name, status, created_at, list_id, mass_campaign_emails(status)")
+    .eq("user_id", user.id)
+    .not("list_id", "is", null)
+    .order("created_at", { ascending: false });
+
+  const lastByList = new Map<string, unknown>();
+  for (const c of (campaigns ?? []) as Array<Record<string, unknown>>) {
+    const listId = c.list_id as string;
+    if (lastByList.has(listId)) continue; // déjà la plus récente (tri desc)
+    const emails = (c.mass_campaign_emails ?? []) as { status: string }[];
+    lastByList.set(listId, {
+      id: c.id,
+      name: c.name ?? null,
+      status: c.status,
+      created_at: c.created_at,
+      emailCount: emails.length,
+      sentCount: emails.filter((e) => e.status === "sent").length,
+      draftedCount: emails.filter((e) => ["drafted", "edited"].includes(e.status)).length,
+    });
+  }
+
+  const withCampaign = lists.map((l) => ({
+    ...l,
+    last_campaign: lastByList.get(l.id) ?? null,
+  }));
+
+  return NextResponse.json({ lists: withCampaign });
 }
 
 export async function POST(req: NextRequest) {

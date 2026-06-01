@@ -1,6 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { db } from "./db";
 import { DEFAULT_BOT_GUIDE } from "./guides/bot";
+import { resolveAndStoreUserMappings } from "./onboarding/resolve-mappings";
 
 export interface DbUser {
   id: string;
@@ -9,6 +10,7 @@ export interface DbUser {
   name: string | null;
   is_admin: boolean;
   created_at: string;
+  mappings_resolved_at: string | null;
 }
 
 export async function getAuthenticatedUser(): Promise<DbUser | null> {
@@ -22,7 +24,15 @@ export async function getAuthenticatedUser(): Promise<DbUser | null> {
     .eq("clerk_id", userId)
     .single();
 
-  if (existing) return existing as DbUser;
+  if (existing) {
+    const u = existing as DbUser;
+    // Filet de sécurité pour les sales créés avant l'onboarding auto : on résout
+    // leurs mappings une seule fois (le timestamp est ensuite toujours posé).
+    if (!u.mappings_resolved_at && u.email) {
+      await resolveAndStoreUserMappings(u.id, u.email);
+    }
+    return u;
+  }
 
   // First login — create row from Clerk data
   const clerkUser = await currentUser();
@@ -42,6 +52,12 @@ export async function getAuthenticatedUser(): Promise<DbUser | null> {
     })
     .select()
     .single();
+
+  // Onboarding auto : résout et stocke Slack + HubSpot owner depuis l'email,
+  // une seule fois, best-effort (ne bloque jamais le login).
+  if (created && email) {
+    await resolveAndStoreUserMappings((created as DbUser).id, email);
+  }
 
   return (created as DbUser) ?? null;
 }

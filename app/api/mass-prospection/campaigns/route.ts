@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
   if (!user) return NextResponse.json({ error: "Non authentifié" }, { status: 401 });
 
   const body = await req.json();
-  const { name, objective, qcm_type, qcm_length, qcm_tone, qcm_objectif } = body;
+  const { name, objective, qcm_type, qcm_length, qcm_tone, qcm_objectif, list_id, parent_campaign_id } = body;
 
   const { data, error } = await db
     .from("mass_campaigns")
@@ -51,6 +51,8 @@ export async function POST(req: NextRequest) {
       qcm_length: qcm_length || null,
       qcm_tone: qcm_tone || null,
       qcm_objectif: qcm_objectif || null,
+      list_id: list_id || null,
+      parent_campaign_id: parent_campaign_id || null,
     })
     .select()
     .single();
