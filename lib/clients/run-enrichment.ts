@@ -264,11 +264,13 @@ export async function runClientEnrichment(
       throw new Error(`final update failed: ${updateErr.message}`);
     }
 
-    // DM Slack à l'owner (best-effort, fire-and-forget) : la fiche est prête,
-    // il peut aller compléter les infos manquantes. Idempotent via
-    // owner_notified_at — un re-enrich ne re-DM pas. Un échec Slack ne fait
-    // jamais échouer l'enrichissement.
-    void notifyOwnerOfEnrichedClient(clientId).catch((e) =>
+    // DM Slack à l'owner (best-effort) : la fiche est prête, il peut aller
+    // compléter les infos manquantes. Idempotent via owner_notified_at — un
+    // re-enrich ne re-DM pas. Un échec Slack ne fait jamais échouer
+    // l'enrichissement. On AWAIT : en background function Netlify l'instance est
+    // gelée dès le return, ce qui tuait un fire-and-forget en plein vol (DM
+    // jamais envoyé en prod). Le .catch garde le caractère best-effort.
+    await notifyOwnerOfEnrichedClient(clientId).catch((e) =>
       console.warn(
         `[clients/enrich/${clientId}] owner notify failed:`,
         e instanceof Error ? e.message : e,

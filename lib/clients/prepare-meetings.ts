@@ -72,8 +72,12 @@ export async function prepareMeetingConfirmation(clientId: string): Promise<Prep
 
     // DM Slack à l'AE (best-effort, idempotent). Un échec Slack ne fait pas
     // échouer la préparation : le client est quand même en attente, visible sur
-    // la fiche.
-    void notifyOwnerToConfirmMeetings(clientId).catch((e) =>
+    // la fiche. On AWAIT (au lieu d'un fire-and-forget) : en background function
+    // Netlify, l'instance est gelée dès que le handler retourne, ce qui tuait
+    // l'appel HTTP Slack en plein vol (DM jamais envoyé via le webhook, alors
+    // qu'il partait en local où l'event loop reste vivant). Le .catch garde le
+    // caractère best-effort.
+    await notifyOwnerToConfirmMeetings(clientId).catch((e) =>
       console.warn(
         `[clients/prepare-meetings/${clientId}] owner notify failed:`,
         e instanceof Error ? e.message : e,
