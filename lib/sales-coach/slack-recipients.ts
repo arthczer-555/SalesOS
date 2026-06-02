@@ -1,24 +1,28 @@
 /**
  * Helpers partagés entre le recap meeting et le debrief coaching pour :
- *  - identifier les participants Coachello (même domaine que le recorder) du
- *    meeting Claap et les résoudre vers leurs DM Slack ;
- *  - fallback sur Arthur (CLAAP_NOTE_SLACK_TEST_USER) si aucun participant
- *    interne n'a pu être identifié, pour qu'aucun message ne soit perdu ;
+ *  - résoudre l'owner HubSpot du deal vers son DM Slack (destinataire
+ *    principal) via `resolveDealOwnerRecipient` ;
+ *  - identifier les autres internes Coachello (même domaine que le recorder)
+ *    présents dans le meeting Claap, RECORDER EXCLU, et les résoudre vers
+ *    leurs DM Slack ;
+ *  - fallback sur Arthur (CLAAP_NOTE_SLACK_TEST_USER) si aucun destinataire
+ *    n'a pu être identifié, pour qu'aucun message ne soit perdu ;
  *  - formater les 2 headers ajoutés aux messages :
  *      • un header "test mode" (mode dm) indiquant qui aurait reçu le DM
  *        en mode channels ;
  *      • un header "modifie et envoie" pour le recap, audience-aware
  *        (#11-everything-prospects vs #12-everything-clients).
  *
- * Routing strict : on cible UNIQUEMENT les internes effectivement présents
- * dans le meeting. Pas de deal owner ajouté en backup. Si aucun interne :
- * fallback Arthur (jamais d'envoi vide). Cf. plan d'attaque.
+ * Routing : owner du deal + autres internes présents (recorder exclu, car
+ * celui qui enregistre n'est pas toujours le responsable du deal). Si rien
+ * ne résout : fallback Arthur (jamais d'envoi vide).
  */
 
 import type { Audience } from "./meeting-recap";
 import {
   dmRecipient,
   findArthurFallbackRecipient,
+  findSlackIdByDisplayName,
   lookupSlackIdByEmail,
   type SlackRecipient,
 } from "../slack/lookup";
@@ -35,6 +39,12 @@ export { dmRecipient, findArthurFallbackRecipient };
  * Slack. "Interne" = email avec le même domaine que le recorder. Renvoie
  * l'email aussi, utilisé par le header test pour montrer qui aurait reçu le
  * DM en mode channels.
+ *
+ * Le recorder est volontairement EXCLU : celui qui enregistre n'est pas
+ * toujours le responsable du deal (souvent un collègue, un manager, un SE).
+ * Le destinataire principal est l'owner du deal, ajouté séparément via
+ * `resolveDealOwnerRecipient`. Si le recorder EST l'owner, il reçoit quand
+ * même le DM par ce biais.
  *
  * Lazy-import de `getClaapRecording` pour éviter une dépendance circulaire
  * potentielle quand le helper est consommé par le pipeline.
@@ -53,16 +63,20 @@ export async function resolveMeetingParticipantRecipients(
   const recorderDomain = recorderEmail.split("@")[1];
   if (!recorderDomain) return [];
 
-  // Claap ne liste pas systématiquement le recorder dans `meeting.participants`
-  // (cas typique : meeting où l'enregistreur n'est pas sur l'invite calendar).
-  // On l'injecte explicitement pour que l'alerte parte au recorder et pas
-  // uniquement à Arthur en fallback. Dédupliqué via Set.
+  // Autres internes présents (même domaine que le recorder), recorder exclu.
+  // Le recorderDomain sert uniquement à distinguer interne / externe ; le
+  // recorder lui-même n'est jamais notifié à ce titre.
   const internalEmails = Array.from(
     new Set(
-      [
-        recorderEmail,
-        ...(rec.meeting?.participants ?? []).map((p) => p.email?.toLowerCase().trim() ?? ""),
-      ].filter((e) => !!e && e.includes("@") && e.split("@")[1] === recorderDomain),
+      (rec.meeting?.participants ?? [])
+        .map((p) => p.email?.toLowerCase().trim() ?? "")
+        .filter(
+          (e) =>
+            !!e &&
+            e.includes("@") &&
+            e.split("@")[1] === recorderDomain &&
+            e !== recorderEmail,
+        ),
     ),
   );
 
@@ -72,6 +86,52 @@ export async function resolveMeetingParticipantRecipients(
     if (memberId) recipients.push({ memberId, email });
   }
   return recipients;
+}
+
+/**
+ * Résout l'owner HubSpot du deal vers son DM Slack. On le DM en plus des
+ * participants internes du meeting, car l'AE responsable du deal n'est pas
+ * toujours celui qui a enregistré le call (cas typique : un collègue lance le
+ * Claap, ou l'AE était invité mais absent / sans email côté Claap).
+ *
+ * Résolution par email d'abord (fiable), puis fallback par nom d'affichage —
+ * indispensable pour les analyses dont le `deal_snapshot` a été figé avant
+ * l'ajout de `owner_email` (le snapshot ne porte alors que `owner_name`).
+ */
+export async function resolveDealOwnerRecipient(
+  snapshot: { owner_email?: string | null; owner_name?: string | null } | null,
+): Promise<MeetingRecipient | null> {
+  if (!snapshot) return null;
+
+  const email = snapshot.owner_email?.toLowerCase().trim();
+  if (email) {
+    const memberId = await lookupSlackIdByEmail(email);
+    if (memberId) return { memberId, email };
+  }
+
+  const name = snapshot.owner_name?.trim();
+  if (name) {
+    const memberId = await findSlackIdByDisplayName(name);
+    if (memberId) return { memberId, email: email || name };
+  }
+
+  return null;
+}
+
+/**
+ * Déduplique une liste de destinataires par memberId (un même collègue peut
+ * être à la fois recorder/participant ET owner du deal — on ne le DM qu'une
+ * fois). Préserve l'ordre d'apparition.
+ */
+export function dedupeRecipients(recipients: MeetingRecipient[]): MeetingRecipient[] {
+  const seen = new Set<string>();
+  const out: MeetingRecipient[] = [];
+  for (const r of recipients) {
+    if (seen.has(r.memberId)) continue;
+    seen.add(r.memberId);
+    out.push(r);
+  }
+  return out;
 }
 
 /**

@@ -234,6 +234,7 @@ export type DealSnapshot = {
   close_date: string | null;
   owner_id: string | null;
   owner_name: string | null;
+  owner_email: string | null;
   deal_type: string | null;
   description: string | null;
   is_closed: boolean | null;
@@ -284,9 +285,13 @@ export async function fetchDealContext(dealId: string): Promise<DealSnapshot | n
   const p = dealRes.value.properties ?? {};
 
   let ownerName: string | null = null;
+  let ownerEmail: string | null = null;
   if (ownersRes.status === "fulfilled" && p.hubspot_owner_id) {
     const owner = (ownersRes.value.results ?? []).find((o) => o.id === p.hubspot_owner_id);
-    if (owner) ownerName = `${owner.firstName ?? ""} ${owner.lastName ?? ""}`.trim() || owner.email || null;
+    if (owner) {
+      ownerName = `${owner.firstName ?? ""} ${owner.lastName ?? ""}`.trim() || owner.email || null;
+      ownerEmail = owner.email ?? null;
+    }
   }
 
   let stageLabel: string | null = null;
@@ -484,6 +489,7 @@ export async function fetchDealContext(dealId: string): Promise<DealSnapshot | n
     close_date: p.closedate ?? null,
     owner_id: p.hubspot_owner_id ?? null,
     owner_name: ownerName,
+    owner_email: ownerEmail,
     deal_type: p.deal_type ?? null,
     description: p.description ?? null,
     is_closed: p.hs_is_closed ? p.hs_is_closed === "true" : null,

@@ -5,10 +5,12 @@ import type { DealSnapshot } from "../hubspot";
 import { renderDealContextForPrompt } from "../hubspot";
 import { extractTitleSearchHint } from "../claap";
 import {
+  dedupeRecipients,
   dmRecipient,
   findArthurFallbackRecipient,
   formatForwardChannelHeader,
   formatTestModeHeader,
+  resolveDealOwnerRecipient,
   resolveMeetingParticipantRecipients,
   type MeetingRecipient,
 } from "./slack-recipients";
@@ -436,6 +438,15 @@ export async function sendMeetingRecapSlack(
 
   const mode = process.env.SLACK_MODE === "prod" ? "prod" : "test";
 
+  // Cibles prod = participants internes du meeting + owner HubSpot du deal
+  // (dédupliqués), pour que l'AE responsable reçoive le recap même absent du
+  // call.
+  const ownerRecipient = await resolveDealOwnerRecipient(snapshot);
+  const prodRecipients = dedupeRecipients([
+    ...meetingParticipants,
+    ...(ownerRecipient ? [ownerRecipient] : []),
+  ]);
+
   let recipients: MeetingRecipient[];
   let isFallback = false;
 
@@ -445,8 +456,8 @@ export async function sendMeetingRecapSlack(
       return { ok: false, error: `Slack user "${process.env.CLAAP_NOTE_SLACK_TEST_USER ?? "Arthur Czernichow"}" not found (mode=test)` };
     }
     recipients = [arthur];
-  } else if (meetingParticipants.length > 0) {
-    recipients = meetingParticipants;
+  } else if (prodRecipients.length > 0) {
+    recipients = prodRecipients;
   } else {
     const arthur = await findArthurFallbackRecipient();
     if (!arthur) {
@@ -462,7 +473,7 @@ export async function sendMeetingRecapSlack(
   // devrait forwarder).
   const text = mode === "test"
     ? `${formatTestModeHeader({
-        theoreticalRecipientEmails: isFallback ? [] : meetingParticipants.map((r) => r.email),
+        theoreticalRecipientEmails: isFallback ? [] : prodRecipients.map((r) => r.email),
         audience,
         kind: "recap",
       })}\n\n${titledBody}`

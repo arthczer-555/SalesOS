@@ -13,9 +13,11 @@ import {
 import type { DealSnapshot } from "@/lib/hubspot";
 import type { Audience } from "./meeting-recap";
 import {
+  dedupeRecipients,
   dmRecipient,
   findArthurFallbackRecipient,
   formatTestModeHeader,
+  resolveDealOwnerRecipient,
   resolveMeetingParticipantRecipients,
   type MeetingRecipient,
 } from "./slack-recipients";
@@ -156,6 +158,15 @@ export async function sendSalesCoachSlack(
       })
     : [];
 
+  // Cibles prod = participants internes du meeting + owner HubSpot du deal
+  // (dédupliqués). L'owner est ajouté pour que l'AE responsable reçoive son
+  // debrief même s'il n'a pas enregistré ni participé au call.
+  const ownerRecipient = await resolveDealOwnerRecipient(row.deal_snapshot as DealSnapshot | null);
+  const prodRecipients = dedupeRecipients([
+    ...meetingParticipants,
+    ...(ownerRecipient ? [ownerRecipient] : []),
+  ]);
+
   let recipients: MeetingRecipient[];
   let isFallback = false;
 
@@ -165,8 +176,8 @@ export async function sendSalesCoachSlack(
       return { ok: false, error: `Slack user "${process.env.CLAAP_NOTE_SLACK_TEST_USER ?? "Arthur Czernichow"}" not found (mode=test)` };
     }
     recipients = [arthur];
-  } else if (meetingParticipants.length > 0) {
-    recipients = meetingParticipants;
+  } else if (prodRecipients.length > 0) {
+    recipients = prodRecipients;
   } else {
     const arthur = await findArthurFallbackRecipient();
     if (!arthur) {
@@ -202,7 +213,7 @@ export async function sendSalesCoachSlack(
   // directement aux concernés, pas besoin d'expliquer.
   const text = mode === "test"
     ? `${formatTestModeHeader({
-        theoreticalRecipientEmails: isFallback ? [] : meetingParticipants.map((r) => r.email),
+        theoreticalRecipientEmails: isFallback ? [] : prodRecipients.map((r) => r.email),
         audience,
         kind: "coaching",
       })}\n\n${body}`
