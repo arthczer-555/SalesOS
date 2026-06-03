@@ -40,11 +40,14 @@ export { dmRecipient, findArthurFallbackRecipient };
  * l'email aussi, utilisé par le header test pour montrer qui aurait reçu le
  * DM en mode channels.
  *
- * Le recorder est volontairement EXCLU : celui qui enregistre n'est pas
- * toujours le responsable du deal (souvent un collègue, un manager, un SE).
- * Le destinataire principal est l'owner du deal, ajouté séparément via
- * `resolveDealOwnerRecipient`. Si le recorder EST l'owner, il reçoit quand
- * même le DM par ce biais.
+ * Le recorder n'est JAMAIS exclu : s'il fait partie des participants du
+ * meeting, il reçoit le message comme n'importe quel autre interne. En
+ * revanche on ne le force pas dans la liste s'il n'apparaît pas parmi les
+ * participants renvoyés par Claap (le recorderDomain ne sert qu'à distinguer
+ * interne / externe).
+ *
+ * Le destinataire principal reste l'owner du deal, ajouté séparément via
+ * `resolveDealOwnerRecipient`.
  *
  * Lazy-import de `getClaapRecording` pour éviter une dépendance circulaire
  * potentielle quand le helper est consommé par le pipeline.
@@ -63,9 +66,8 @@ export async function resolveMeetingParticipantRecipients(
   const recorderDomain = recorderEmail.split("@")[1];
   if (!recorderDomain) return [];
 
-  // Autres internes présents (même domaine que le recorder), recorder exclu.
-  // Le recorderDomain sert uniquement à distinguer interne / externe ; le
-  // recorder lui-même n'est jamais notifié à ce titre.
+  // Tous les internes présents (même domaine que le recorder). Le recorder
+  // n'est pas filtré : s'il est participant, il est notifié comme les autres.
   const internalEmails = Array.from(
     new Set(
       (rec.meeting?.participants ?? [])
@@ -74,8 +76,7 @@ export async function resolveMeetingParticipantRecipients(
           (e) =>
             !!e &&
             e.includes("@") &&
-            e.split("@")[1] === recorderDomain &&
-            e !== recorderEmail,
+            e.split("@")[1] === recorderDomain,
         ),
     ),
   );

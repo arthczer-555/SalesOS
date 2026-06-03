@@ -38,10 +38,10 @@ export async function sendManualDealAlert(
 
   const mode = process.env.SLACK_MODE === "prod" ? "prod" : "test";
 
-  // Participants Coachello internes du meeting (recorder + organizer + autres).
-  // Identique au pattern du recap : on cible TOUT le monde côté Coachello, pas
-  // seulement le recorder, parce que l'organizer (souvent ≠ recorder) doit
-  // aussi pouvoir associer le deal.
+  // Participants Coachello internes du meeting (recorder inclus s'il est
+  // présent). On cible tout le monde côté Coachello, pas seulement le recorder,
+  // parce que l'organizer (souvent ≠ recorder) doit aussi pouvoir associer le
+  // deal.
   const internalRecipients: MeetingRecipient[] = ctx.claapRecordingId
     ? await resolveMeetingParticipantRecipients(
         ctx.claapRecordingId,
