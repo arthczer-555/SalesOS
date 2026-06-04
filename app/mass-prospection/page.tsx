@@ -232,6 +232,31 @@ export default function MassProspectionPage() {
   // ── Restore campaign from localStorage + URL params on mount ─────────
   useEffect(() => {
     const url = new URL(window.location.href);
+
+    // Deep-link depuis la Watch List : contacts HubSpot préchargés en
+    // sessionStorage. On démarre une campagne fraîche en setup, on ignore la
+    // restauration de la campagne active.
+    if (url.searchParams.get("from") === "watchlist") {
+      try {
+        const raw = sessionStorage.getItem("mass-prospection-preload");
+        if (raw) {
+          const preload = JSON.parse(raw) as { company?: string; prospects?: Prospect[] };
+          if (Array.isArray(preload.prospects) && preload.prospects.length > 0) {
+            setProspects(preload.prospects);
+          }
+          if (preload.company) setHsCompany(preload.company);
+        }
+      } catch { /* ignore preload corrompu */ }
+      sessionStorage.removeItem("mass-prospection-preload");
+      localStorage.removeItem("mass-prospection-active-campaign");
+      setSourceTab("hubspot");
+      setView("setup");
+      url.searchParams.delete("from");
+      window.history.replaceState({}, "", url.pathname + (url.search ? `?${url.searchParams.toString()}` : ""));
+      loadPrevCampaigns();
+      return;
+    }
+
     const urlView = url.searchParams.get("view");
     const urlEmailId = url.searchParams.get("emailId");
     const urlCampaignId = url.searchParams.get("campaignId");
@@ -998,7 +1023,7 @@ export default function MassProspectionPage() {
                   ) : savedLists.length === 0 ? (
                     <span className="text-[11px] text-center py-8" style={{ color: "#aaa" }}>
                       Aucune liste sauvegardée.{" "}
-                      <Link href="/watchlist?tab=lists" className="underline" style={{ color: "#f01563" }}>
+                      <Link href="/watchlist/lists" className="underline" style={{ color: "#f01563" }}>
                         Créer une liste
                       </Link>
                     </span>

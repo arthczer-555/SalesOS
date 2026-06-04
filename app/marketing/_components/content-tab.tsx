@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, useCallback, useEffect, Component, type ReactNode } from "react";
-import { Sparkles, TrendingUp, AlertCircle, Search, Check, Download, Link2, Loader2, Trash2, RefreshCw, FileText, ChevronRight } from "lucide-react";
+import { Sparkles, TrendingUp, AlertCircle, Search, Check, Download, Link2, Loader2, Trash2, RefreshCw, FileText, ChevronRight, BookOpen, Linkedin } from "lucide-react";
 import { useMarketingContent } from "@/lib/hooks/use-marketing";
 import type { ArticleRecommendation, ArticleDraft, ContentAnalysis } from "@/lib/marketing-types";
+import LinkedInTab from "./linkedin-tab";
+
+type FactoryMode = "articles" | "linkedin";
 
 const PRIORITY_STYLES = {
   high: { bg: "#fee2e2", color: "#dc2626" },
@@ -40,9 +43,31 @@ class ContentErrorBoundary extends Component<{ children: ReactNode }, { error: E
 }
 
 export default function ContentTabWrapper() {
+  const [mode, setMode] = useState<FactoryMode>("articles");
   return (
     <ContentErrorBoundary>
-      <ContentTab />
+      <div className="space-y-2">
+        {/* Articles vs LinkedIn posts switch */}
+        <div className="flex items-center justify-center">
+          <div className="inline-flex items-center gap-1 rounded-xl p-1" style={{ background: "#f5f5f5", border: "1px solid #eeeeee" }}>
+            <button
+              onClick={() => setMode("articles")}
+              className="flex items-center gap-1.5 text-xs font-medium rounded-lg px-4 py-2 transition-all"
+              style={{ background: mode === "articles" ? "#fff" : "transparent", color: mode === "articles" ? "#f01563" : "#888", boxShadow: mode === "articles" ? "0 1px 2px rgba(0,0,0,0.06)" : undefined }}
+            >
+              <BookOpen size={14} /> Articles
+            </button>
+            <button
+              onClick={() => setMode("linkedin")}
+              className="flex items-center gap-1.5 text-xs font-medium rounded-lg px-4 py-2 transition-all"
+              style={{ background: mode === "linkedin" ? "#fff" : "transparent", color: mode === "linkedin" ? "#0a66c2" : "#888", boxShadow: mode === "linkedin" ? "0 1px 2px rgba(0,0,0,0.06)" : undefined }}
+            >
+              <Linkedin size={14} /> LinkedIn Posts
+            </button>
+          </div>
+        </div>
+        {mode === "articles" ? <ContentTab /> : <LinkedInTab />}
+      </div>
     </ContentErrorBoundary>
   );
 }

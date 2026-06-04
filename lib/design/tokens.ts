@@ -110,6 +110,31 @@ export function companyAvatarGradient(name: string | null | undefined): {
 }
 
 /**
+ * Couleur d'accent stable par sales (board d'attribution). Hash déterministe du
+ * nom → palette curée. Utilisée sur l'anneau d'avatar, la barre de charge et le
+ * glow de drop.
+ */
+const REP_PALETTE = [
+  "#f01563", // brand
+  "#3b82f6", // blue
+  "#10b981", // green
+  "#8b5cf6", // violet
+  "#f59e0b", // amber
+  "#14b8a6", // teal
+  "#f97316", // orange
+  "#6366f1", // indigo
+  "#ec4899", // pink
+  "#0ea5e9", // sky
+] as const;
+
+export function repAccent(name: string | null | undefined): string {
+  const key = (name || "?").trim().toLowerCase();
+  let h = 0;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) | 0;
+  return REP_PALETTE[Math.abs(h) % REP_PALETTE.length];
+}
+
+/**
  * Confidence badge style mapping.
  * Accepts "high"|"medium"|"low" or French equivalents.
  */

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-// La gestion des listes vit désormais dans un onglet de la Watch List.
+// La gestion des listes vit désormais sur /watchlist/lists.
 export default function ListsRedirect() {
-  redirect("/watchlist?tab=lists");
+  redirect("/watchlist/lists");
 }

@@ -97,6 +97,17 @@ export async function hubspotAssociate(
   );
 }
 
+// Crée une company dans HubSpot (name + domain optionnel). Renvoie son id.
+// Utilisé par l'enrich (option "créer les companies manquantes"). Ne pas passer
+// un domaine grand public (gmail, etc.) : laisser domain vide dans ce cas.
+export async function createCompany(name: string, domain?: string | null): Promise<string> {
+  const properties: Record<string, string> = { name: name.trim() };
+  const dom = domain?.trim().toLowerCase();
+  if (dom) properties.domain = dom;
+  const res = await hubspotFetch<{ id: string }>("/crm/v3/objects/companies", "POST", { properties });
+  return res.id;
+}
+
 export async function hubspotGetAssociations(
   fromType: HubspotObjectType,
   fromId: string,
@@ -584,7 +595,7 @@ export function renderDealContextForPrompt(snapshot: DealSnapshot | null): strin
 // Public/free email domains never identify a company — exclude them from any
 // domain-based lookup. Kept here (not imported from lib/claap.ts) to avoid a
 // cross-module dep just for one constant.
-const PUBLIC_EMAIL_DOMAINS_FOR_DEAL_LOOKUP = new Set([
+export const PUBLIC_EMAIL_DOMAINS_FOR_DEAL_LOOKUP = new Set([
   "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "hotmail.fr",
   "yahoo.com", "yahoo.fr", "icloud.com", "me.com", "live.com", "live.fr",
   "msn.com", "protonmail.com", "proton.me", "pm.me",

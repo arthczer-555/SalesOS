@@ -199,6 +199,49 @@ export interface ArticleDraft {
   author?: ArticleAuthor | null;
 }
 
+// LinkedIn Posts Factory
+export interface LinkedInContentAnalysis {
+  /** Tendances LinkedIn captées (posts/articles qui rankent). */
+  linkedinTrends: { title: string; url: string; snippet: string; source: string }[];
+  /** Tendances web (actus coaching). */
+  webTrends: { title: string; url: string; source: string }[];
+  /** Idées d'angles proposées par Claude. */
+  postIdeas: { topic: string; angle: string; rationale: string }[];
+  summary: string;
+  dataSources?: {
+    linkedin: { ok: boolean; count: number };
+    web: { ok: boolean; count: number };
+  };
+}
+
+export interface LinkedInPostRecommendation {
+  id: string;
+  topic: string;
+  angle: string;
+  targetAudience: string;
+  justification: string;
+  priority: "high" | "medium" | "low";
+  status: "recommended" | "approved" | "writing" | "published";
+  createdAt?: string;
+  author?: ArticleAuthor | null;
+}
+
+export interface GeneratedLinkedInPost {
+  angle: string;
+  hook: string;
+  /** Full post body, English only. */
+  body: string;
+  hashtags: string[];
+}
+
+export interface LinkedInPostDraft {
+  recommendationId: string;
+  topic: string;
+  posts: GeneratedLinkedInPost[];
+  inspiration: { title: string; url: string; snippet: string }[];
+  author?: ArticleAuthor | null;
+}
+
 // Recommendations
 export interface DynamicCompetitorBenchmark {
   topic: string;

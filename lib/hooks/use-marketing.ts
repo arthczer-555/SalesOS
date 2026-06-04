@@ -9,6 +9,9 @@ import type {
   ContentAnalysis,
   ArticleRecommendation,
   ArticleDraft,
+  LinkedInContentAnalysis,
+  LinkedInPostRecommendation,
+  LinkedInPostDraft,
   PageTrend,
   SeoTrendsResponse,
   DeviceBreakdown,
@@ -167,6 +170,29 @@ interface ContentResponse {
 export function useMarketingContent() {
   const { data, error, isLoading, mutate } = useSWR<ContentResponse>(
     `/api/marketing/content`,
+    SWR_OPTS,
+  );
+  return {
+    analysis: data?.analysis ?? null,
+    recommendations: data?.recommendations ?? [],
+    drafts: data?.drafts ?? [],
+    isLoading,
+    error: error ? "Loading error" : "",
+    reload: () => mutate(),
+  };
+}
+
+// ─── LinkedIn Posts Factory ──────────────────────────────────────────────────
+
+interface LinkedInContentResponse {
+  analysis: LinkedInContentAnalysis | null;
+  recommendations: LinkedInPostRecommendation[];
+  drafts: LinkedInPostDraft[];
+}
+
+export function useLinkedInContent() {
+  const { data, error, isLoading, mutate } = useSWR<LinkedInContentResponse>(
+    `/api/marketing/linkedin-content`,
     SWR_OPTS,
   );
   return {

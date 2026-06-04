@@ -97,7 +97,11 @@ function buildFilterGroups(f: Filters): Array<{ filters: Array<{ propertyName: s
     expandedGroups.length = 0;
     expandedGroups.push(...next);
   }
-  for (const g of expandedGroups) groups.push({ filters: g });
+  // On n'émet que les groupes ayant au moins un filtre. Si aucun filtre n'est
+  // posé, on renvoie [] => la recherche HubSpot tourne sans filterGroups et
+  // liste toutes les companies (triées), au lieu de renvoyer 0 résultat sur un
+  // groupe vide.
+  for (const g of expandedGroups) if (g.length > 0) groups.push({ filters: g });
   return groups;
 }
 
@@ -112,7 +116,15 @@ async function searchHubspotCompaniesPage(
   after: string | undefined,
   limit: number,
 ): Promise<{ rows: HubspotCompanyRow[]; nextAfter: string | null }> {
-  const filterGroups = buildFilterGroups(filters);
+  let filterGroups = buildFilterGroups(filters);
+  // HubSpot /search ne renvoie rien sans aucun critère. Si ni filtre ni requête
+  // ne sont fournis (chargement initial "toutes les companies"), on injecte un
+  // catch-all `name HAS_PROPERTY` : liste toutes les companies AYANT un nom
+  // (le tri par nom ASC ferait sinon remonter en premier les companies sans nom,
+  // qui sont ensuite filtrées => 0 résultat affiché).
+  if (filterGroups.length === 0 && !filters.q) {
+    filterGroups = [{ filters: [{ propertyName: "name", operator: "HAS_PROPERTY" }] }];
+  }
   const sorts = filters.sort === "created-desc"
     ? [{ propertyName: "createdate", direction: "DESCENDING" as const }]
     : [{ propertyName: "name", direction: "ASCENDING" as const }];

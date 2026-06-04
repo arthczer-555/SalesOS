@@ -419,6 +419,8 @@ function HubspotPushRow({ state }: { state: HubspotPushState | undefined }) {
     `${s.existing} existant${s.existing > 1 ? "s" : ""}`,
     `${s.companyAssociated} associé${s.companyAssociated > 1 ? "s" : ""}`,
   ];
+  if (s.companyCreated > 0) parts.push(`${s.companyCreated} company créée${s.companyCreated > 1 ? "s" : ""}`);
+  if (s.scopeUpserted > 0) parts.push(`${s.scopeUpserted} ajoutée${s.scopeUpserted > 1 ? "s" : ""} au scope`);
   if (s.skippedNoEmail > 0) parts.push(`${s.skippedNoEmail} sans email`);
   if (s.errors > 0) parts.push(`${s.errors} erreur${s.errors > 1 ? "s" : ""}`);
 

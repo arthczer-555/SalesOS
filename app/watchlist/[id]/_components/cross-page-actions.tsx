@@ -2,12 +2,51 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { List, Send, GraduationCap } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { List, Send, GraduationCap, Loader2 } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { WatchCompanyDetail } from "@/app/api/watchlist/companies/[id]/route";
+import type { CompanyContactsResponse } from "@/app/api/watchlist/companies/[id]/contacts/route";
 
 export function CrossPageActions({ company }: { company: WatchCompanyDetail }) {
-  const encodedName = encodeURIComponent(company.name);
+  const router = useRouter();
+  const [loadingProspection, setLoadingProspection] = React.useState(false);
+
+  // Charge les contacts HubSpot de la company, les pousse en sessionStorage,
+  // puis ouvre Mass Prospection avec ces prospects déjà sélectionnés.
+  async function goToMassProspection() {
+    if (loadingProspection) return;
+    setLoadingProspection(true);
+    try {
+      let prospects: Array<Record<string, unknown>> = [];
+      try {
+        const res = await fetch(`/api/watchlist/companies/${company.id}/contacts`);
+        if (res.ok) {
+          const data = (await res.json()) as CompanyContactsResponse;
+          prospects = (data.contacts ?? [])
+            .filter((c) => !!c.email)
+            .map((c) => ({
+              hubspot_id: c.id,
+              firstName: c.firstname ?? "",
+              lastName: c.lastname ?? "",
+              email: c.email as string,
+              jobTitle: c.jobtitle ?? undefined,
+              company: company.name,
+              extraData: { source: "watchlist" },
+            }));
+        }
+      } catch {
+        /* on ouvre quand même Mass Prospection, juste sans présélection */
+      }
+      sessionStorage.setItem(
+        "mass-prospection-preload",
+        JSON.stringify({ company: company.name, prospects }),
+      );
+      router.push("/mass-prospection?from=watchlist");
+    } finally {
+      setLoadingProspection(false);
+    }
+  }
 
   return (
     <section
@@ -32,16 +71,17 @@ export function CrossPageActions({ company }: { company: WatchCompanyDetail }) {
       </h3>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         <ActionLink
-          href="/watchlist?tab=lists"
+          href="/watchlist/lists"
           icon={<List size={12} />}
           label="Gestion des listes"
           sub="Créer une liste de prospects"
         />
         <ActionLink
-          href={`/mass-prospection?from=watchlist&company=${encodedName}`}
-          icon={<Send size={12} />}
+          onClick={goToMassProspection}
+          icon={loadingProspection ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
           label="Mass Prospection"
-          sub="Lancer une campagne"
+          sub={loadingProspection ? "Chargement des contacts…" : "Contacts HubSpot présélectionnés"}
+          disabled={loadingProspection}
         />
         <ActionLink
           href="/sales-coach"
@@ -56,12 +96,14 @@ export function CrossPageActions({ company }: { company: WatchCompanyDetail }) {
 
 function ActionLink({
   href,
+  onClick,
   icon,
   label,
   sub,
   disabled = false,
 }: {
-  href: string;
+  href?: string;
+  onClick?: () => void;
   icon: React.ReactNode;
   label: string;
   sub: string;
@@ -91,8 +133,15 @@ function ActionLink({
   );
 
   if (disabled) return <div>{content}</div>;
+  if (onClick) {
+    return (
+      <div role="button" tabIndex={0} onClick={onClick} style={{ outline: "none" }}>
+        {content}
+      </div>
+    );
+  }
   return (
-    <Link href={href} style={{ textDecoration: "none" }}>
+    <Link href={href ?? "#"} style={{ textDecoration: "none" }}>
       {content}
     </Link>
   );

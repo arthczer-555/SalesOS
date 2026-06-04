@@ -42,7 +42,9 @@ export interface EnrichmentProfile {
 // EXISTANTE uniquement (on ne crée jamais de company, cf. choix produit).
 export interface ProfilePushOutcome {
   status: "created" | "existing" | "skipped" | "error";
-  company: "associated" | "not_found" | "none";
+  // "created" = la company n'existait pas dans HubSpot et a été créée (option
+  // createMissingCompanies de l'enrich), puis associée.
+  company: "associated" | "created" | "not_found" | "none";
   reason?: string;
 }
 
@@ -138,12 +140,26 @@ export interface HubspotPushSummary {
   skippedNoEmail: number;
   companyAssociated: number;
   companyNotFound: number;
+  // Companies créées dans HubSpot (option createMissingCompanies).
+  companyCreated: number;
+  // Companies ajoutées à scope_companies (watchlist) avec un owner (option
+  // addToScopeOwner de l'enrich).
+  scopeUpserted: number;
   errors: number;
 }
+
+// Options de l'enrich (CSV → HubSpot). Persistées dans
+// criteria.hubspotPush.options et passées à pushListToHubspot.
+export interface HubspotPushOptions {
+  createMissingCompanies: boolean;
+  addToScopeOwner: string | null;
+}
+
 export interface HubspotPushState {
   status: "running" | "done" | "error";
   startedAt: string;
   finishedAt?: string;
   summary?: HubspotPushSummary;
+  options?: HubspotPushOptions;
   error?: string;
 }
