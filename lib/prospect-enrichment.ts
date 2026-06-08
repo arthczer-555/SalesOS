@@ -1,6 +1,7 @@
 import { searchTavily } from "./tavily";
 import { getCompanyDetails, getProfile, resolveUsername, slugifyCompany, type LinkedInProfile } from "./brightdata/linkedin";
 import { BRIGHTDATA_API_KEY } from "./brightdata/serp";
+import type { ProvenanceWebSource } from "./prospection/provenance";
 
 // Le scrape de profil/entreprise Bright Data est asynchrone (10-60s).
 // - Défaut COURT (~15s) : sûr pour les routes synchrones (prospection/generate,
@@ -68,28 +69,42 @@ export async function fetchLinkedInContext(
   }
 }
 
-export async function fetchCompanyWebContext(company: string): Promise<string> {
+/** Contexte web entreprise : `text` pour le prompt, `sources` pour la provenance. */
+export interface CompanyWebContext {
+  text: string;
+  sources: ProvenanceWebSource[];
+}
+
+const EMPTY_WEB_CONTEXT: CompanyWebContext = { text: "", sources: [] };
+
+export async function fetchCompanyWebContext(company: string): Promise<CompanyWebContext> {
   const name = company?.trim();
-  if (!name) return "";
+  if (!name) return EMPTY_WEB_CONTEXT;
   const results = await searchTavily(
     `${name} entreprise actualités initiative RH stratégie talents`,
     { days: 180, maxResults: 4 },
   );
-  if (!results.length) return "";
-  return results
+  if (!results.length) return EMPTY_WEB_CONTEXT;
+  const text = results
     .map((r) => {
       const snippet = (r.content || "").replace(/\s+/g, " ").trim().slice(0, 320);
       const date = r.published_date ? ` (${r.published_date.slice(0, 10)})` : "";
       return `• ${r.title}${date}\n  ${snippet}`;
     })
     .join("\n");
+  const sources: ProvenanceWebSource[] = results.map((r) => ({
+    title: r.title,
+    url: r.url,
+    date: r.published_date ? r.published_date.slice(0, 10) : null,
+  }));
+  return { text, sources };
 }
 
 export function createCompanyContextCache() {
-  const cache = new Map<string, Promise<string>>();
-  return (company: string): Promise<string> => {
+  const cache = new Map<string, Promise<CompanyWebContext>>();
+  return (company: string): Promise<CompanyWebContext> => {
     const key = company?.trim().toLowerCase();
-    if (!key) return Promise.resolve("");
+    if (!key) return Promise.resolve(EMPTY_WEB_CONTEXT);
     const existing = cache.get(key);
     if (existing) return existing;
     const p = fetchCompanyWebContext(company);

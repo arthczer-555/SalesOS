@@ -9,6 +9,7 @@ import {
   fetchCompanyWebContext,
   fetchLinkedInContext,
 } from "@/lib/prospect-enrichment";
+import type { DraftProvenance } from "@/lib/prospection/provenance";
 
 export const dynamic = "force-dynamic";
 
@@ -66,9 +67,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   ].filter(Boolean).join("\n");
 
   const extra = (typeof email.extra_data === "object" && email.extra_data) ? email.extra_data as Record<string, string> : {};
+  const extraRaw = (typeof email.extra_data === "object" && email.extra_data) ? email.extra_data as Record<string, unknown> : {};
 
   const [companyContext, linkedin] = await Promise.all([
-    email.company ? fetchCompanyWebContext(email.company) : Promise.resolve(""),
+    email.company ? fetchCompanyWebContext(email.company) : Promise.resolve({ text: "", sources: [] }),
     fetchLinkedInContext({
       firstName: email.first_name,
       lastName: email.last_name,
@@ -94,7 +96,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     `\nINFORMATIONS SUR LE PROSPECT :\n${prospectBlock}`,
     linkedin.text ? `\nPROFIL LINKEDIN ENRICHI (utilise-le pour personnaliser : 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé) :\n${linkedin.text}` : "",
     companyLinkedIn ? `\nFICHE LINKEDIN ENTREPRISE :\n${companyLinkedIn}` : "",
-    companyContext ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyContext}` : "",
+    companyContext.text ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyContext.text}` : "",
     `\nEMAIL ACTUEL (à améliorer) :\nObjet : ${email.subject}\n\n${email.body}`,
     instructions ? `\nINSTRUCTIONS DE L'UTILISATEUR POUR LA RÉÉCRITURE :\n${instructions}` : "",
     "\nRéécris cet email en tenant compte des instructions ci-dessus.",
@@ -124,6 +126,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     body = raw;
   }
 
+  const provenance: DraftProvenance = {
+    linkedinProfile: Boolean(linkedin.text),
+    companyLinkedin: Boolean(companyLinkedIn),
+    webSources: companyContext.sources,
+    contexts: [
+      "Prospection guide",
+      "Previous draft (rewrite)",
+      instructions ? "Rewrite instructions" : null,
+    ].filter((c): c is string => Boolean(c)),
+  };
+
   await db.from("mass_campaign_emails").update({
     subject,
     body,
@@ -131,7 +144,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     generated_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     error_message: null,
+    extra_data: { ...extraRaw, provenance },
   }).eq("id", emailId);
 
-  return NextResponse.json({ subject, body });
+  return NextResponse.json({ subject, body, provenance });
 }

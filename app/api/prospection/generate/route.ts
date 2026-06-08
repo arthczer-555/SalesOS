@@ -9,6 +9,7 @@ import {
   fetchCompanyWebContext,
   fetchLinkedInContext,
 } from "@/lib/prospect-enrichment";
+import type { DraftProvenance } from "@/lib/prospection/provenance";
 
 export const dynamic = "force-dynamic";
 
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
       company: contactInfo.company,
       linkedinUrl: contactInfo.linkedinUrl ?? null,
     }),
-    contactInfo.company ? fetchCompanyWebContext(contactInfo.company) : Promise.resolve(""),
+    contactInfo.company ? fetchCompanyWebContext(contactInfo.company) : Promise.resolve({ text: "", sources: [] }),
   ]);
   const companyLinkedIn = contactInfo.company
     ? await fetchCompanyLinkedInContext(contactInfo.company, linkedin.currentCompanyUsername)
@@ -112,7 +113,7 @@ export async function POST(req: NextRequest) {
     `Voici les informations sur le prospect :\n\n${prospectBlock}`,
     linkedin.text ? `\nPROFIL LINKEDIN ENRICHI (utilise-le pour personnaliser : 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé) :\n${linkedin.text}` : "",
     companyLinkedIn ? `\nFICHE LINKEDIN ENTREPRISE :\n${companyLinkedIn}` : "",
-    companyWeb ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyWeb}` : "",
+    companyWeb.text ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyWeb.text}` : "",
     "\nRédige un email de prospection personnalisé pour cette personne.",
   ].filter(Boolean).join("\n");
 
@@ -140,5 +141,19 @@ export async function POST(req: NextRequest) {
     body = raw;
   }
 
-  return NextResponse.json({ subject, body, linkedinEnriched });
+  const provenance: DraftProvenance = {
+    linkedinProfile: linkedinEnriched,
+    companyLinkedin: Boolean(companyLinkedIn),
+    webSources: companyWeb.sources,
+    contexts: [
+      contactInfo.crmSummary ? "CRM history" : null,
+      recentNews ? "Provided context/news" : null,
+      companyContext ? "Company context" : null,
+      coachingNeed ? "Coaching angle" : null,
+      "Prospection guide",
+      userInstructions ? "Your instructions" : null,
+    ].filter((c): c is string => Boolean(c)),
+  };
+
+  return NextResponse.json({ subject, body, linkedinEnriched, provenance });
 }

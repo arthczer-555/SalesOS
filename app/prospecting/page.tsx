@@ -4,6 +4,8 @@ import React, { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { useGmailStatus } from "@/lib/hooks/use-gmail-status";
 import { useOutreachCounts } from "@/lib/hooks/use-outreach-counts";
 import { ExchangesBadge } from "@/components/ui/exchanges-badge";
+import { DraftProvenanceCard } from "@/components/draft-provenance";
+import type { DraftProvenance } from "@/lib/prospection/provenance";
 import { useUser } from "@clerk/nextjs";
 import { Paperclip, Send, Save, X, Search, Loader2, Sparkles, RotateCcw, ChevronDown, ChevronRight, ChevronUp, Linkedin, Copy, Check, Mail, MailOpen, Phone, Calendar, MessageSquare } from "lucide-react";
 import Link from "next/link";
@@ -356,6 +358,7 @@ export default function ProspectingPage() {
   const [showBcc, setShowBcc] = useState(false);
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
+  const [provenance, setProvenance] = useState<DraftProvenance | null>(null);
   const [attachments, setAttachments] = useState<File[]>([]);
   const [sending, setSending] = useState(false);
   const [drafting, setDrafting] = useState(false);
@@ -697,6 +700,7 @@ export default function ProspectingPage() {
       if (selectedContact.email) setTo([selectedContact.email]);
       if (data.subject) setSubject(data.subject);
       if (data.body) setBody(data.body);
+      setProvenance(data.provenance ?? null);
       setAgentStep(3);
     } catch (e) {
       setGenError(e instanceof Error ? e.message : "Generation failed");
@@ -740,6 +744,7 @@ export default function ProspectingPage() {
       if (!r.ok) throw new Error(data.error);
       if (data.subject) setSubject(data.subject);
       if (data.body) setBody(data.body);
+      setProvenance(data.provenance ?? null);
     } catch (e) {
       setManualError(e instanceof Error ? e.message : "Generation failed");
     } finally {
@@ -750,6 +755,7 @@ export default function ProspectingPage() {
   const backToResults = () => {
     setAgentStep(1);
     setSelectedContact(null);
+    setProvenance(null);
     setAnalysis("");
     setRecentNews("");
     setCompanyContext("");
@@ -1098,6 +1104,13 @@ export default function ProspectingPage() {
               <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Write your email here…"
                 className="flex-1 resize-none outline-none text-sm leading-relaxed p-4"
                 style={{ color: "#111", minHeight: "200px" }} />
+
+              {/* Provenance : comment ce brouillon a été rédigé */}
+              {provenance && (
+                <div className="px-4 pb-3 shrink-0">
+                  <DraftProvenanceCard provenance={provenance} />
+                </div>
+              )}
 
               {/* Attachments */}
               {attachments.length > 0 && (

@@ -17,6 +17,7 @@ import {
   createCompanyLinkedInCache,
   fetchLinkedInContext,
 } from "@/lib/prospect-enrichment";
+import type { DraftProvenance } from "@/lib/prospection/provenance";
 
 const BATCH_SIZE = 5;
 
@@ -97,7 +98,7 @@ export async function runCampaignGeneration(
           : null;
 
         const [companyContext, linkedin] = await Promise.all([
-          email.company ? getCompanyContext(email.company) : Promise.resolve(""),
+          email.company ? getCompanyContext(email.company) : Promise.resolve({ text: "", sources: [] }),
           fetchLinkedInContext({
             firstName: email.first_name,
             lastName: email.last_name,
@@ -135,7 +136,7 @@ export async function runCampaignGeneration(
             : "",
           linkedin.text ? `\nPROFIL LINKEDIN ENRICHI (utilise-le pour personnaliser : 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé) :\n${linkedin.text}` : "",
           companyLinkedIn ? `\nFICHE LINKEDIN ENTREPRISE :\n${companyLinkedIn}` : "",
-          companyContext ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyContext}` : "",
+          companyContext.text ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyContext.text}` : "",
           "\nRédige un email de prospection personnalisé pour cette personne.",
         ].filter(Boolean).join("\n");
 
@@ -162,6 +163,17 @@ export async function runCampaignGeneration(
           body = raw;
         }
 
+        const provenance: DraftProvenance = {
+          linkedinProfile: Boolean(linkedin.text),
+          companyLinkedin: Boolean(companyLinkedIn),
+          webSources: companyContext.sources,
+          contexts: [
+            extra.crmSummary ? "CRM history" : null,
+            previousEmail?.body ? "Previous email (follow-up)" : null,
+            "Prospection guide",
+          ].filter((c): c is string => Boolean(c)),
+        };
+
         await db.from("mass_campaign_emails").update({
           subject,
           body,
@@ -169,6 +181,7 @@ export async function runCampaignGeneration(
           generated_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           error_message: null,
+          extra_data: { ...extraRaw, provenance },
         }).eq("id", email.id);
 
         generated++;

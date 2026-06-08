@@ -6,6 +6,8 @@ import { useOutreachCounts } from "@/lib/hooks/use-outreach-counts";
 import { useEnrichmentLists } from "@/lib/hooks/use-enrichment";
 import type { EnrichmentProfile } from "@/lib/intel-types";
 import { ExchangesBadge } from "@/components/ui/exchanges-badge";
+import { DraftProvenanceCard } from "@/components/draft-provenance";
+import type { DraftProvenance } from "@/lib/prospection/provenance";
 import {
   Search, Loader2, Sparkles, X, Upload, Plus, ChevronLeft, ChevronRight,
   Send, Save, RotateCcw, AlertCircle, Check, Users,
@@ -649,6 +651,7 @@ export default function MassProspectionPage() {
   // ── Detail view helpers ──────────────────────────────────────────────
   const currentEmail = emails.find((e) => e.id === detailEmailId);
   const currentIndex = emails.findIndex((e) => e.id === detailEmailId);
+  const currentProvenance = (currentEmail?.extra_data?.provenance as DraftProvenance | undefined) ?? null;
 
   function openDetail(emailId: string) {
     const email = emails.find((e) => e.id === emailId);
@@ -701,7 +704,9 @@ export default function MassProspectionPage() {
         setEditSubject(data.subject);
         setEditBody(data.body);
         setEmails((prev) =>
-          prev.map((e) => e.id === detailEmailId ? { ...e, subject: data.subject, body: data.body, status: "drafted" } : e)
+          prev.map((e) => e.id === detailEmailId
+            ? { ...e, subject: data.subject, body: data.body, status: "drafted", extra_data: { ...e.extra_data, provenance: data.provenance } }
+            : e)
         );
         setRedraftInstructions("");
       }
@@ -1680,6 +1685,13 @@ export default function MassProspectionPage() {
               )}
               <StatusBadge status={currentEmail.status} />
             </div>
+
+            {/* Provenance : comment ce brouillon a été rédigé */}
+            {currentProvenance && (
+              <div className="p-4 border-b" style={{ borderColor: "#eee" }}>
+                <DraftProvenanceCard provenance={currentProvenance} />
+              </div>
+            )}
 
             {/* Redraft section */}
             <div className="p-4 flex flex-col gap-3">
