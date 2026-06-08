@@ -28,6 +28,8 @@ export default async (req: Request) => {
     console.error(`[sales-coach-analyze-bg] ${id} failed:`, result.error);
   } else if ("already" in result) {
     console.log(`[sales-coach-analyze-bg] ${id} already ${result.already}`);
+  } else if ("skipped" in result) {
+    console.log(`[sales-coach-analyze-bg] ${id} skipped: ${result.skipped}`);
   } else {
     console.log(`[sales-coach-analyze-bg] ${id} done, score=${result.scoreGlobal}`);
   }

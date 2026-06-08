@@ -66,6 +66,8 @@ Valeurs possibles :
 
 Dans "meeting_kind_reasoning" : 1 phrase qui justifie.
 
+Pondération selon le type : pour un meeting "demo", la qualité de la démonstration elle-même (clarté, adaptation aux enjeux du prospect, storytelling produit, gestion des questions et objections en direct) est le facteur le plus important de la réussite du meeting, davantage que l'identification du besoin. Évalue et commente les axes en conséquence (Value articulation et Objection handling priment, Discovery pèse moins), tout en restant factuel et sans inventer.
+
 ## 1. Grille 6 axes coaching (TOUJOURS remplie, tous types de meetings)
 
 1. **Opening & first impressions** : ouverture claire, contrat initial (objectif, durée, agenda, prochaines étapes), énergie, écoute active dès le début.
@@ -387,13 +389,20 @@ function safeScore(x: { score?: number } | undefined | null): number {
 /**
  * Weighted global score (0-10).
  *
- * - Prospect (shape avec `meddic` + `bosche`) : 50% axes + 30% MEDDIC + 20%
- *   BOSCHE (si discovery ET exit_criteria_met, sinon redistribué 60/40 sur
- *   axes + MEDDIC).
- * - Client (shape avec `customer_health`) : 100% axes (moyenne des 6 axes
- *   CS). Pas de grille de qualif à pondérer.
+ * Prospect (shape avec `meddic` + `bosche`), pondération du score global :
+ * - Démo (meeting_kind = "demo") : 70% axes + 30% MEDDIC. L'exécution prime
+ *   nettement sur la grille de qualif (le besoin/MEDDIC compte moins).
+ * - Discovery (r1/deeper) avec exit_criteria_met : 48% axes + 32% MEDDIC + 20%
+ *   BOSCHE (ratio axes:MEDDIC = 60:40 sur les 80% restants, BOSCHE garde 20%).
+ * - Tous les autres cas : 60% axes + 40% MEDDIC.
+ * Les 6 axes pèsent à parts égales dans la moyenne axes ; l'accent démo sur
+ * Value articulation est porté par le prompt, pas par une pondération par axe.
  *
- * Defensive contre les outputs partiels du modèle.
+ * Client (shape avec `customer_health`) : 100% axes (moyenne des 6 axes CS).
+ * Pas de grille de qualif à pondérer.
+ *
+ * Si une grille est vide, son poids est redistribué sur les autres (normalisation
+ * par wSum). Defensive contre les outputs partiels du modèle.
  */
 export function computeGlobalScore(analysis: Partial<AnySalesCoachAnalysis>): number {
   if (isClientAnalysis(analysis)) {
@@ -455,13 +464,17 @@ export function computeGlobalScore(analysis: Partial<AnySalesCoachAnalysis>): nu
 
   const isDisco = isDiscoveryKind(prospect.meeting_kind ?? null);
   const useBosche = isDisco && !!b?.exit_criteria_met;
+  // Démo : l'exécution (axes, où vit la qualité de la démo) prime sur la grille
+  // de qualif (MEDDIC, où vit l'identification du besoin). Une démo n'est jamais
+  // une discovery, donc isDemo et useBosche sont mutuellement exclusifs.
+  const isDemo = prospect.meeting_kind === "demo";
 
   // If a grid is empty, weight redistributes across the remaining ones.
   const hasAxes = axesScores.length > 0;
   const hasMeddic = meddicVals.length > 0;
   const parts: { val: number; w: number }[] = [];
-  if (hasAxes) parts.push({ val: axesAvg, w: useBosche ? 0.4 : 0.5 });
-  if (hasMeddic) parts.push({ val: meddicAvg, w: useBosche ? 0.4 : 0.5 });
+  if (hasAxes) parts.push({ val: axesAvg, w: useBosche ? 0.48 : isDemo ? 0.7 : 0.6 });
+  if (hasMeddic) parts.push({ val: meddicAvg, w: useBosche ? 0.32 : isDemo ? 0.3 : 0.4 });
   if (useBosche) parts.push({ val: boscheAvg, w: 0.2 });
   const wSum = parts.reduce((a, p) => a + p.w, 0);
   if (wSum === 0) return 0;

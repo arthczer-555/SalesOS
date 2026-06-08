@@ -35,6 +35,10 @@ import { scoreOneDeal } from "../deal-scoring";
 
 const DEFAULT_ANALYZE_MODEL = "claude-haiku-4-5-20251001";
 const MAX_TRANSCRIPT_CHARS_FOR_CLAUDE = 150_000;
+// En dessous de ce seuil, le transcript est trop court pour produire une analyse
+// utile (ex. un meeting de 2 répliques). On passe l'analyse en "skipped" plutôt
+// que de la faire échouer ou de lancer Claude sur du vide.
+const MIN_TRANSCRIPT_CHARS = 1000;
 
 type PriorAnalysisRow = {
   id: string;
@@ -62,6 +66,7 @@ function renderPriorAnalyses(rows: PriorAnalysisRow[]): string {
 
 export type RunAnalysisResult =
   | { ok: true; already: "done" | "analyzing" }
+  | { ok: true; skipped: string }
   | { ok: true; scoreGlobal: number | null }
   | { ok: false; status: number; error: string };
 
@@ -97,7 +102,23 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
     const txtRes = await fetch(transcriptUrl);
     if (!txtRes.ok) throw new Error(`Transcript fetch failed: ${txtRes.status}`);
     const rawText = await txtRes.text();
-    if (!rawText.trim()) throw new Error("Empty transcript");
+    const transcriptLength = rawText.trim().length;
+    if (transcriptLength < MIN_TRANSCRIPT_CHARS) {
+      const reason = `transcript_too_short_${transcriptLength}_chars`;
+      console.log(
+        `[sales-coach/analyze/${id}] transcript ${transcriptLength} chars (< ${MIN_TRANSCRIPT_CHARS}), skipping analysis`,
+      );
+      await db
+        .from("sales_coach_analyses")
+        .update({
+          status: "skipped",
+          error_message: reason,
+          transcript_text: rawText,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+      return { ok: true, skipped: reason };
+    }
 
     const transcriptForClaude = rawText.length > MAX_TRANSCRIPT_CHARS_FOR_CLAUDE
       ? rawText.slice(0, MAX_TRANSCRIPT_CHARS_FOR_CLAUDE)
