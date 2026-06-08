@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect } from "react";
-import { Sparkles, AlertCircle, Check, Loader2, Trash2, RefreshCw, Linkedin, Copy, ExternalLink, ChevronRight } from "lucide-react";
+import { Sparkles, AlertCircle, Check, Loader2, Trash2, RefreshCw, Linkedin, Copy, ExternalLink, ChevronRight, User } from "lucide-react";
 import { useLinkedInContent } from "@/lib/hooks/use-marketing";
 import type { LinkedInContentAnalysis, LinkedInPostRecommendation, LinkedInPostDraft } from "@/lib/marketing-types";
 
@@ -25,6 +25,13 @@ export default function LinkedInTab() {
   const [generationStartedAt, setGenerationStartedAt] = useState<Map<string, number>>(new Map());
   const [generateErrors, setGenerateErrors] = useState<Map<string, string>>(new Map());
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Target length for the generated posts (LinkedIn sweet spot 1000-1200).
+  const [targetChars, setTargetChars] = useState(1100);
+  // Custom theme to research instead of the default coaching trends.
+  const [themeInput, setThemeInput] = useState("");
+  const [suggestingTheme, setSuggestingTheme] = useState(false);
+  const [themeSummary, setThemeSummary] = useState<string | null>(null);
+  const [themeError, setThemeError] = useState<string | null>(null);
 
   // Hydrate from server on mount.
   useEffect(() => {
@@ -136,6 +143,35 @@ export default function LinkedInTab() {
     });
   }, []);
 
+  // Propose recommendations from a custom theme. Still grounded in real research:
+  // the API fetches live LinkedIn + web trends seeded with the theme.
+  const handleSuggestTheme = useCallback(async () => {
+    const theme = themeInput.trim();
+    if (!theme) return;
+    setSuggestingTheme(true);
+    setThemeError(null);
+    setThemeSummary(null);
+    try {
+      const res = await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "suggest_theme", theme }),
+      });
+      const data = await res.json();
+      if (data.error) setThemeError(data.error);
+      else {
+        if (data.analysis) setAnalysis(data.analysis);
+        if (data.recommendations) setLocalRecs(data.recommendations);
+        if (data.summary) setThemeSummary(data.summary);
+        setThemeInput("");
+      }
+    } catch (e) {
+      setThemeError(e instanceof Error ? e.message : "Network error");
+    } finally {
+      setSuggestingTheme(false);
+    }
+  }, [themeInput]);
+
   const handleGenerate = useCallback(async (id: string) => {
     setGeneratingIds((prev) => new Set(prev).add(id));
     setGenerateErrors((prev) => { const m = new Map(prev); m.delete(id); return m; });
@@ -145,7 +181,7 @@ export default function LinkedInTab() {
       const res = await fetch(API, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "generate", recommendationId: id }),
+        body: JSON.stringify({ action: "generate", recommendationId: id, targetChars }),
       });
       const text = await res.text();
       const contentType = res.headers.get("content-type") || "";
@@ -170,7 +206,7 @@ export default function LinkedInTab() {
       setLocalRecs((prev) => prev.map((r) => (r.id === id ? { ...r, status: "approved" as const } : r)));
       setGeneratingIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
     }
-  }, []);
+  }, [targetChars]);
 
   const handleRegenerate = useCallback(async (id: string) => {
     setDrafts((prev) => { const m = new Map(prev); m.delete(id); return m; });
@@ -306,10 +342,17 @@ export default function LinkedInTab() {
               {analysis.linkedinTrends.length > 0 ? (
                 <div className="space-y-2.5">
                   {analysis.linkedinTrends.slice(0, 8).map((t, i) => (
-                    <a key={`${t.url}-${i}`} href={t.url} target="_blank" rel="noreferrer" className="block text-sm group">
-                      <p className="font-medium leading-tight group-hover:underline" style={{ color: "#111" }}>{t.title}</p>
-                      {t.snippet && <p className="text-xs mt-0.5 leading-snug" style={{ color: "#888", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{t.snippet}</p>}
-                    </a>
+                    <div key={`${t.url}-${i}`} className="text-sm group">
+                      <a href={t.url} target="_blank" rel="noreferrer" className="block">
+                        <p className="font-medium leading-tight group-hover:underline" style={{ color: "#111" }}>{t.title}</p>
+                        {t.snippet && <p className="text-xs mt-0.5 leading-snug" style={{ color: "#888", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{t.snippet}</p>}
+                      </a>
+                      {t.authorUrl && (
+                        <a href={t.authorUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-0.5 text-[10px] hover:underline" style={{ color: "#555" }}>
+                          <User size={10} /> {t.authorName || "Author"}
+                        </a>
+                      )}
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -359,6 +402,45 @@ export default function LinkedInTab() {
             )}
           </div>
 
+          {/* Propose your own theme — still grounded in real LinkedIn + web research */}
+          <div className="rounded-xl" style={{ background: "#fff", border: "1px solid #eeeeee", padding: "16px 20px" }}>
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles size={14} style={{ color: "#0a66c2" }} />
+              <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#888" }}>Propose your own theme</p>
+            </div>
+            <p className="text-xs mb-3" style={{ color: "#888" }}>
+              Enter a theme and Claude researches what&apos;s currently being posted on LinkedIn (and the web) around it, then proposes post recommendations grounded in that real analysis.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={themeInput}
+                onChange={(e) => setThemeInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !suggestingTheme && handleSuggestTheme()}
+                placeholder="e.g. manager burnout, AI coaching, psychological safety, return-to-office..."
+                disabled={suggestingTheme}
+                className="flex-1 text-sm rounded-lg px-3 py-2 outline-none disabled:opacity-70"
+                style={{ border: "1px solid #ddd", color: "#555" }}
+              />
+              <button
+                onClick={handleSuggestTheme}
+                disabled={!themeInput.trim() || suggestingTheme}
+                className="flex items-center gap-1.5 text-sm font-medium rounded-lg px-4 py-2 disabled:opacity-50"
+                style={{ background: "#0a66c2", color: "#fff", cursor: suggestingTheme ? "wait" : "pointer" }}
+              >
+                {suggestingTheme ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {suggestingTheme ? "Researching..." : "Suggest"}
+              </button>
+            </div>
+            {themeError && <p className="text-xs mt-2" style={{ color: "#dc2626" }}>{themeError}</p>}
+            {themeSummary && (
+              <div className="mt-3 rounded-lg flex items-start gap-2" style={{ background: "#eff6ff", border: "1px solid #bfdbfe", padding: "10px 14px" }}>
+                <Sparkles size={12} className="shrink-0 mt-0.5" style={{ color: "#0a66c2" }} />
+                <p className="text-xs" style={{ color: "#1e3a8a", lineHeight: 1.5 }}>{themeSummary}</p>
+              </div>
+            )}
+          </div>
+
           {pendingRecs.length === 0 ? (
             <div className="rounded-xl text-center" style={{ background: "#fafafa", border: "1px dashed #e5e5e5", padding: "32px 20px" }}>
               <p className="text-sm" style={{ color: "#888" }}>No new recommendations.</p>
@@ -403,6 +485,8 @@ export default function LinkedInTab() {
               draft={drafts.get(selected.id)}
               isGenerating={generatingIds.has(selected.id)}
               generateError={generateErrors.get(selected.id)}
+              targetChars={targetChars}
+              setTargetChars={setTargetChars}
               onGenerate={() => handleGenerate(selected.id)}
               onRegenerate={() => handleRegenerate(selected.id)}
               onDeleteDraft={() => handleDeleteDraft(selected.id)}
@@ -463,12 +547,14 @@ function PostList({
 }
 
 function PostDetail({
-  rec, draft, isGenerating, generateError, onGenerate, onRegenerate, onDeleteDraft,
+  rec, draft, isGenerating, generateError, targetChars, setTargetChars, onGenerate, onRegenerate, onDeleteDraft,
 }: {
   rec: LinkedInPostRecommendation;
   draft: LinkedInPostDraft | undefined;
   isGenerating: boolean;
   generateError: string | undefined;
+  targetChars: number;
+  setTargetChars: (n: number) => void;
   onGenerate: () => void;
   onRegenerate: () => void;
   onDeleteDraft: () => void;
@@ -502,6 +588,30 @@ function PostDetail({
         </div>
       </div>
 
+      {/* Target length — drives the post length at generation time */}
+      <div className="rounded-lg mt-3 mb-1" style={{ background: "#f9fafb", border: "1px solid #eeeeee", padding: "12px 16px" }}>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-xs font-medium" style={{ color: "#555" }}>Target length</span>
+          <span className="text-xs font-mono font-semibold" style={{ color: "#0a66c2" }}>{targetChars} chars</span>
+        </div>
+        <input
+          type="range"
+          min={500}
+          max={2200}
+          step={50}
+          value={targetChars}
+          onChange={(e) => setTargetChars(Number(e.target.value))}
+          disabled={isGenerating}
+          className="w-full"
+          style={{ accentColor: "#0a66c2" }}
+        />
+        <div className="flex items-center justify-between mt-0.5 text-[10px]" style={{ color: "#aaa" }}>
+          <span>Short (500)</span>
+          <span>Sweet spot 1000–1200</span>
+          <span>Long (2200)</span>
+        </div>
+      </div>
+
       {generateError && (
         <div className="rounded-lg mb-4 mt-2" style={{ background: "#fef2f2", border: "1px solid #fecaca", padding: "10px 14px" }}>
           <p className="text-xs font-medium" style={{ color: "#dc2626" }}>Generation failed</p>
@@ -520,11 +630,19 @@ function PostDetail({
           {draft.inspiration.length > 0 && (
             <div className="rounded-xl" style={{ background: "#f9fafb", border: "1px solid #eeeeee", padding: "16px" }}>
               <p className="text-[10px] uppercase tracking-wider mb-2 font-semibold" style={{ color: "#888" }}>Inspired by these LinkedIn posts</p>
-              <div className="space-y-1.5">
-                {draft.inspiration.slice(0, 5).map((s, i) => (
-                  <a key={i} href={s.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 text-xs hover:underline" style={{ color: "#0a66c2" }}>
-                    <ExternalLink size={11} className="shrink-0" /> <span className="truncate">{s.title}</span>
-                  </a>
+              <div className="space-y-2">
+                {draft.inspiration.slice(0, 6).map((s, i) => (
+                  <div key={i} className="flex items-center justify-between gap-3 text-xs">
+                    <a href={s.url} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 hover:underline min-w-0" style={{ color: "#0a66c2" }}>
+                      <ExternalLink size={11} className="shrink-0" /> <span className="truncate">{s.title}</span>
+                    </a>
+                    {s.authorUrl && (
+                      <a href={s.authorUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 shrink-0 hover:underline" style={{ color: "#555" }} title="View author profile">
+                        <User size={11} className="shrink-0" />
+                        <span className="whitespace-nowrap">{s.authorName || "Author"}</span>
+                      </a>
+                    )}
+                  </div>
                 ))}
               </div>
             </div>

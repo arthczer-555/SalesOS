@@ -200,9 +200,18 @@ export interface ArticleDraft {
 }
 
 // LinkedIn Posts Factory
+export interface LinkedInTrendRef {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  authorName?: string;
+  authorUrl?: string;
+}
+
 export interface LinkedInContentAnalysis {
   /** Tendances LinkedIn captées (posts/articles qui rankent). */
-  linkedinTrends: { title: string; url: string; snippet: string; source: string }[];
+  linkedinTrends: LinkedInTrendRef[];
   /** Tendances web (actus coaching). */
   webTrends: { title: string; url: string; source: string }[];
   /** Idées d'angles proposées par Claude. */
@@ -238,7 +247,7 @@ export interface LinkedInPostDraft {
   recommendationId: string;
   topic: string;
   posts: GeneratedLinkedInPost[];
-  inspiration: { title: string; url: string; snippet: string }[];
+  inspiration: LinkedInTrendRef[];
   author?: ArticleAuthor | null;
 }
 

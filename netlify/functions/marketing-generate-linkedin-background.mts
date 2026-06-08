@@ -9,10 +9,12 @@ export default async (req: Request) => {
 
   let userId: string | undefined;
   let recommendationId: string | undefined;
+  let targetChars: number | undefined;
   try {
-    const body = (await req.json()) as { userId?: string; recommendationId?: string };
+    const body = (await req.json()) as { userId?: string; recommendationId?: string; targetChars?: number };
     userId = body.userId;
     recommendationId = body.recommendationId;
+    targetChars = body.targetChars;
   } catch {
     console.error("[marketing-generate-linkedin-bg] invalid JSON body");
     return;
@@ -23,7 +25,7 @@ export default async (req: Request) => {
     return;
   }
 
-  const result = await runLinkedInPostGeneration(userId, recommendationId);
+  const result = await runLinkedInPostGeneration(userId, recommendationId, { targetChars });
   if (!result.ok) {
     console.error(`[marketing-generate-linkedin-bg] ${recommendationId} failed:`, result.error);
   } else {

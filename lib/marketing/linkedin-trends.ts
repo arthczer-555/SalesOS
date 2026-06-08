@@ -20,6 +20,10 @@ export interface LinkedInTrendItem {
   snippet: string;
   /** Hostname normalisé ou "linkedin.com". */
   source: string;
+  /** Nom de l'auteur déduit du slug (best-effort, posts uniquement). */
+  authorName?: string;
+  /** URL du profil LinkedIn de l'auteur (best-effort, posts uniquement). */
+  authorUrl?: string;
 }
 
 export interface WebTrendItem {
@@ -51,6 +55,32 @@ function hostOf(url: string, fallback: string): string {
 // Clé de dédup : hostname + titre normalisé (court).
 function dedupKey(url: string, title: string): string {
   return `${hostOf(url, url)}|${title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().slice(0, 80)}`;
+}
+
+/**
+ * Déduit l'auteur d'un post LinkedIn depuis son URL.
+ * Les URLs de posts ont la forme `linkedin.com/posts/<authorSlug>_<activité…>`,
+ * où `<authorSlug>` est l'identifiant public du profil → on reconstruit le lien
+ * `/in/<authorSlug>` et un nom lisible. Best-effort : renvoie {} si on ne peut
+ * pas extraire (ex. articles /pulse/, où l'auteur n'est pas dans le chemin).
+ */
+function authorFromPostUrl(url: string): { authorName?: string; authorUrl?: string } {
+  const m = url.match(/linkedin\.com\/posts\/([^_/?#]+)_/i);
+  if (!m) return {};
+  const slug = decodeURIComponent(m[1]).toLowerCase();
+  if (!slug) return {};
+  // Nom lisible : on enlève les tokens "hash" (contenant un chiffre) que LinkedIn
+  // ajoute en fin de slug, puis on title-case ("jane-doe-7b3a" → "Jane Doe").
+  const name = slug
+    .split("-")
+    .filter((tok) => tok && !/\d/.test(tok))
+    .map((tok) => tok.charAt(0).toUpperCase() + tok.slice(1))
+    .join(" ")
+    .trim();
+  return {
+    authorName: name || undefined,
+    authorUrl: `https://www.linkedin.com/in/${slug}`,
+  };
 }
 
 /**
@@ -96,6 +126,7 @@ export async function fetchLinkedInTrends(
         url,
         snippet: (o.description || o.snippet || "").trim(),
         source: hostOf(url, "linkedin.com"),
+        ...authorFromPostUrl(url),
       });
     }
   }

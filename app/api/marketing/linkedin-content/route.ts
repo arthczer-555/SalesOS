@@ -263,7 +263,8 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === "generate" && recommendationId) {
-    return await triggerGeneration(req, user.id, recommendationId);
+    const targetChars = typeof body.targetChars === "number" ? body.targetChars : undefined;
+    return await triggerGeneration(req, user.id, recommendationId, targetChars);
   }
 
   if (action === "publish" && recommendationId) {
@@ -370,7 +371,7 @@ Call \`propose_linkedin_posts\`.`;
   };
 
   const analysis: LinkedInContentAnalysis = {
-    linkedinTrends: linkedinTrends.map((t) => ({ title: t.title, url: t.url, snippet: t.snippet, source: t.source })),
+    linkedinTrends: linkedinTrends.map((t) => ({ title: t.title, url: t.url, snippet: t.snippet, source: t.source, authorName: t.authorName, authorUrl: t.authorUrl })),
     webTrends: webTrends.map((t) => ({ title: t.title, url: t.url, source: t.source })),
     postIdeas: parsed.postIdeas.map((p) => ({ topic: p.topic, angle: p.angle, rationale: p.rationale })),
     summary: parsed.summary,
@@ -404,7 +405,7 @@ Call \`propose_linkedin_posts\`.`;
  * Generation runs as a Netlify Background Function (15 min cap), like the
  * article factory. In local dev / non-Netlify it runs inline.
  */
-async function triggerGeneration(req: NextRequest, userId: string, recommendationId: string): Promise<NextResponse> {
+async function triggerGeneration(req: NextRequest, userId: string, recommendationId: string, targetChars?: number): Promise<NextResponse> {
   const rec = await getRec(recommendationId);
   if (!rec) return NextResponse.json({ error: "Recommendation not found" }, { status: 404 });
 
@@ -425,7 +426,7 @@ async function triggerGeneration(req: NextRequest, userId: string, recommendatio
       const bgRes = await fetch(`${siteUrl}/.netlify/functions/marketing-generate-linkedin-background`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-internal-secret": internalSecret },
-        body: JSON.stringify({ userId, recommendationId }),
+        body: JSON.stringify({ userId, recommendationId, targetChars }),
         signal: AbortSignal.timeout(8000),
       });
       if (bgRes.status !== 202 && !bgRes.ok) {
@@ -444,7 +445,7 @@ async function triggerGeneration(req: NextRequest, userId: string, recommendatio
   }
 
   // Local dev / non-Netlify: run inline.
-  const result = await runLinkedInPostGeneration(userId, recommendationId);
+  const result = await runLinkedInPostGeneration(userId, recommendationId, { targetChars });
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: result.status });
   }

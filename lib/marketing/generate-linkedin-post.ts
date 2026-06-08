@@ -73,9 +73,16 @@ export type RunLinkedInGenerationResult =
 export async function runLinkedInPostGeneration(
   userId: string,
   recommendationId: string,
+  opts: { targetChars?: number } = {},
 ): Promise<RunLinkedInGenerationResult> {
   const rec = await getRec(recommendationId);
   if (!rec) return { ok: false, status: 404, error: "Recommendation not found" };
+
+  // Longueur cible (curseur côté UI). Défaut 1100 (milieu de 1000-1200),
+  // borné pour rester crédible sur LinkedIn.
+  const targetChars = Math.min(2600, Math.max(400, Math.round(opts.targetChars ?? 1100)));
+  const minChars = Math.max(300, targetChars - 150);
+  const maxChars = targetChars + 150;
 
   await updateRecStatus(rec.id, "writing");
 
@@ -86,10 +93,10 @@ export async function runLinkedInPostGeneration(
     // le précise).
     let inspiration: LinkedInTrendItem[] = [];
     try {
-      const seeds = [rec.topic, `${rec.angle} coaching`, "leadership coaching", "executive coaching"]
-        .map((s) => s.trim())
+      const seeds = [rec.topic, `${rec.angle} coaching`, rec.targetAudience, "leadership coaching", "executive coaching"]
+        .map((s) => (s ?? "").trim())
         .filter(Boolean);
-      inspiration = await fetchLinkedInTrends(seeds, { num: 10 });
+      inspiration = await fetchLinkedInTrends(seeds, { num: 12 });
     } catch {
       // tendances best-effort
     }
@@ -108,8 +115,8 @@ export async function runLinkedInPostGeneration(
 - Target audience: ${rec.targetAudience || "HR/L&D leaders and managers"}
 - Why now (data-driven): ${rec.justification}
 
-## Real LinkedIn posts on this theme (inspiration — what is currently working)
-Study these for the hook style, structure, and tone that earn engagement. Do NOT copy them — extract the patterns (how they open, how they break lines, how they land a point) and apply them to Coachello's own POV.
+## Real, CURRENT LinkedIn posts on this theme (inspiration — what is working right now)
+These were just pulled live from LinkedIn. Take them seriously: study the hook style, the structure, the line breaks, the tone, and the kind of claims that earn engagement. Do NOT copy them — extract the patterns and apply them to Coachello's own POV. If they reveal a current conversation or a recurring objection, address it.
 ${inspirationText}
 
 ## LinkedIn best practices (non-negotiable)
@@ -117,7 +124,7 @@ ${inspirationText}
 - Short lines. Generous line breaks. White space between ideas. No dense paragraphs.
 - One clear idea per post, defended with a concrete example or a specific number — never generic advice.
 - Conversational, opinionated, human. No corporate jargon, no "In today's fast-paced world".
-- Length: 1200–1800 characters (LinkedIn sweet spot).
+- Length: aim for ~${targetChars} characters (keep each post between ${minChars} and ${maxChars}).
 - End with ONE engagement CTA (a question, an invitation to comment) — not a hard sell.
 - NO external links inside the body (LinkedIn throttles them) — a soft mention of Coachello is fine.
 - 3 to 5 relevant hashtags, returned separately (not inside the body).
@@ -142,7 +149,7 @@ Write the posts in ENGLISH only.`;
               properties: {
                 angle: { type: "string", description: "Short label of the angle (e.g. 'Contrarian take', 'Practical how-to')" },
                 hook: { type: "string", description: "The first line / scroll-stopper" },
-                body: { type: "string", description: "Full post body in English (1200-1800 chars, line breaks included, no hashtags)" },
+                body: { type: "string", description: `Full post body in English (~${targetChars} chars, between ${minChars} and ${maxChars}; line breaks included, no hashtags)` },
                 hashtags: { type: "array", items: { type: "string" }, description: "3-5 hashtags without the # sign" },
               },
               required: ["angle", "hook", "body", "hashtags"],
@@ -194,7 +201,14 @@ Call the \`write_linkedin_posts\` tool with your complete output.`;
       recommendationId: rec.id,
       topic: rec.topic,
       posts,
-      inspiration: inspiration.map((p) => ({ title: p.title, url: p.url, snippet: p.snippet })),
+      inspiration: inspiration.map((p) => ({
+        title: p.title,
+        url: p.url,
+        snippet: p.snippet,
+        source: p.source,
+        authorName: p.authorName,
+        authorUrl: p.authorUrl,
+      })),
     };
 
     await deleteDraftsForRec(rec.id);
