@@ -178,8 +178,12 @@ export async function fetchCompanyMarketNews(
     })();
 
   const name = `"${company.trim()}"`;
-  const signals = `(levée OR "tour de table" OR rachat OR acquisition OR fusion OR nomination OR recrute OR licenciement OR restructuration OR partenariat OR expansion)`;
-  const queries = [`${name} after:${since}`, `${name} ${signals} after:${since}`];
+  // Vrais déclencheurs de prospection (signaux d'ACHAT), pas du brand/marketing.
+  // On bannit "partenariat/expansion" et la requête "nom seul", qui ne ramènent
+  // que du sponsoring, de la pub et des lancements de contenu grand public.
+  const growth = `(levée OR "tour de table" OR financement OR valorisation OR acquisition OR rachat OR fusion OR "chiffre d'affaires" OR "résultats annuels" OR raises OR funding OR acquires)`;
+  const org = `(recrute OR recrutement OR embauche OR nomination OR "nouveau directeur" OR "nouvelle directrice" OR licenciement OR "plan social" OR restructuration OR réorganisation OR régulation OR conformité OR sanction OR amende OR hiring OR layoffs OR appoints)`;
+  const queries = [`${name} ${growth} after:${since}`, `${name} ${org} after:${since}`];
 
   const urls = queries.map(
     (q) =>

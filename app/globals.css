@@ -284,6 +284,39 @@
   margin-bottom: 8px;
 }
 
+/* Video Studio — two-column studio layout */
+.vs-studio-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 16px;
+  align-items: start;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.vs-library-col {
+  position: sticky;
+  top: 0;
+}
+@media (max-width: 900px) {
+  .vs-studio-grid {
+    grid-template-columns: 1fr;
+  }
+  .vs-library-col {
+    position: static;
+  }
+}
+.vs-indeterminate {
+  animation: vs-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes vs-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
 /* Chip primitives */
 .ds-chip {
   display: inline-flex;

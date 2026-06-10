@@ -24,9 +24,11 @@ LANGUE : détecte la langue dominante des articles et réponds dans cette langue
 
 Règles ABSOLUES :
 - N'invente RIEN. Appuie-toi UNIQUEMENT sur les articles fournis.
-- Écarte le bruit (keep=false) : articles hors-sujet, doublons, contenus génériques sur le secteur sans rapport direct avec l'entreprise.
-- Pour chaque article gardé, écris un "insight" : une phrase courte expliquant POURQUOI ça compte pour un commercial (signal d'achat, trigger décideur, risque, momentum).
-- "summary" : 2 à 4 phrases synthétisant le momentum du compte (que se passe-t-il, signaux d'achat, points de vigilance). Si rien d'intéressant, dis-le.
+- OBJECTIF = signaux d'ACHAT, pas notoriété. Ne garde (keep=true) qu'un article qui donne au commercial une RAISON DE CONTACTER MAINTENANT : levée/financement, acquisition/fusion, arrivée ou départ d'un dirigeant, recrutement ou forte croissance d'équipe, ouverture de site/marché, restructuration/plan social, pression réglementaire ou risque de conformité, résultats financiers marquants.
+- ÉCARTE (keep=false) tout le bruit brand/marketing : sponsoring, partenariats média, campagnes pub, lancements de produits/contenus/émissions grand public, retransmissions, opérations commerciales B2C, classements et récompenses. Ces nouvelles parlent de NOTORIÉTÉ, pas d'un besoin. Exception : ne les garde QUE si elles impliquent explicitement un recrutement, un budget, une réorganisation ou une douleur opérationnelle.
+- Dans le doute, keep=false. Mieux vaut 3 vrais signaux que 11 articles tièdes.
+- Pour chaque article gardé, écris un "insight" : une phrase disant POURQUOI contacter maintenant (le trigger + l'angle d'ouverture pour le commercial).
+- "summary" : 2 à 4 phrases sur les vrais signaux d'achat du moment. S'il n'y a AUCUN signal d'achat, dis-le clairement plutôt que de meubler avec du marketing.
 - Tu RÉPONDS UNIQUEMENT via l'outil emit_market_intel.`;
 
 const INTEL_TOOL: Anthropic.Tool = {
@@ -47,8 +49,8 @@ const INTEL_TOOL: Anthropic.Tool = {
           properties: {
             index: { type: "number", description: "Index de l'article dans la liste fournie." },
             category: { type: "string", enum: CATEGORIES as unknown as string[] },
-            keep: { type: "boolean", description: "false si c'est du bruit." },
-            insight: { type: "string", description: "Pourquoi ça compte pour un commercial (1 phrase)." },
+            keep: { type: "boolean", description: "true UNIQUEMENT si c'est un signal d'achat actionnable ; false pour tout brand/marketing/PR/notoriété." },
+            insight: { type: "string", description: "Le trigger + pourquoi contacter maintenant (1 phrase)." },
           },
           required: ["index", "category", "keep", "insight"],
         },

@@ -8,6 +8,7 @@ import {
   type ClientRosterEntry,
 } from "@/lib/watchlist/clients-roster";
 import {
+  startBriefRun,
   finishBriefOk,
   finishBriefError,
   type AeAnalysisContent,
@@ -16,6 +17,7 @@ import {
   type NewsContent,
   type BriefRow,
 } from "@/lib/watchlist/briefs";
+import { fetchWatchlistNews } from "@/lib/watchlist/fetch-news";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -112,6 +114,10 @@ export async function runAeAnalysis(input: {
       throw new Error("Compte introuvable");
     }
 
+    // Rafraîchit d'abord la recherche de news pour que l'analyse parte de
+    // signaux frais (presse + LinkedIn), puis relit le brief news ci-dessous.
+    await refreshNewsForAnalysis({ scopeCompanyId, companyName: company.name, userId });
+
     // Contexte HubSpot (emails/contacts/deals) + brief news + roster clients.
     const [hubspot, briefsRes, clientsRoster] = await Promise.all([
       loadCompanyHubspotContext(scopeCompanyId),
@@ -181,6 +187,31 @@ export async function runAeAnalysis(input: {
     const msg = e instanceof Error ? e.message : String(e);
     await finishBriefError({ scopeCompanyId, kind: "ae_analysis", error: msg });
     return { ok: false, error: msg };
+  }
+}
+
+/**
+ * Rafraîchit le brief news AVANT l'analyse AE, pour que l'AE parte de signaux
+ * frais (presse + LinkedIn). Best-effort : un échec n'empêche pas l'analyse,
+ * qui retombe alors sur le dernier brief news connu. Respecte le lock anti-
+ * double-dispatch : si une génération news est déjà en cours (ex. l'utilisateur
+ * a cliqué Refresh sur la News card), on la laisse finir sans refetch.
+ */
+async function refreshNewsForAnalysis(input: {
+  scopeCompanyId: string;
+  companyName: string;
+  userId: string;
+}): Promise<void> {
+  const { scopeCompanyId, companyName, userId } = input;
+  const { alreadyRunning } = await startBriefRun({ scopeCompanyId, kind: "news", userId });
+  if (alreadyRunning) return;
+  try {
+    const content = await fetchWatchlistNews({ scopeCompanyId, userId, companyName });
+    await finishBriefOk({ scopeCompanyId, kind: "news", content });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[watchlist/ae-analysis] refresh news échoué pour "${companyName}":`, msg);
+    await finishBriefError({ scopeCompanyId, kind: "news", error: msg });
   }
 }
 
@@ -281,6 +312,18 @@ function buildPrompt(input: {
   lines.push("## News & signaux récents");
   let hasNews = false;
   if (news) {
+    if (news.intel_summary) {
+      hasNews = true;
+      lines.push(`Synthèse veille : ${news.intel_summary}`);
+    }
+    if (news.signals.length > 0) {
+      hasNews = true;
+      lines.push(`### Signaux marché / presse (${news.signals.length})`);
+      for (const s of news.signals.slice(0, 8)) {
+        const date = s.created_at ? ` [${s.created_at}]` : "";
+        lines.push(`- (${s.type})${date} ${s.title}${s.excerpt ? ` : ${s.excerpt}` : ""}`);
+      }
+    }
     if (news.posts.length > 0) {
       hasNews = true;
       lines.push(`### Posts LinkedIn (${news.posts.length})`);
