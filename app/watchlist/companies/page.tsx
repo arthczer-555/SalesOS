@@ -2,14 +2,16 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Cloud, Sparkles, List as ListIcon } from "lucide-react";
+import { Cloud, Sparkles, List as ListIcon, Building2 } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { BoardView } from "./_components/board-view";
 import { EnrichWizard } from "./_components/enrich-wizard";
+import { NewHubspotCompanyDialog } from "./_components/new-hubspot-company-dialog";
 import type { RosterRep } from "@/app/api/intel/admin/sales-reps/route";
 
 export default function WatchlistHubPage() {
   const [showEnrich, setShowEnrich] = React.useState(false);
+  const [showNewCompany, setShowNewCompany] = React.useState(false);
   const [reps, setReps] = React.useState<RosterRep[]>([]);
 
   React.useEffect(() => {
@@ -44,6 +46,13 @@ export default function WatchlistHubPage() {
           </Link>
           <button
             type="button"
+            onClick={() => setShowNewCompany(true)}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", fontSize: 12, fontWeight: 600, borderRadius: 8, border: `1px solid ${COLORS.line}`, background: COLORS.bgCard, color: COLORS.ink1, cursor: "pointer" }}
+          >
+            <Building2 size={13} /> New company
+          </button>
+          <button
+            type="button"
             onClick={() => setShowEnrich(true)}
             style={{ display: "inline-flex", alignItems: "center", gap: 6, padding: "7px 14px", fontSize: 12, fontWeight: 600, borderRadius: 8, border: "none", background: COLORS.brand, color: "#fff", cursor: "pointer" }}
           >
@@ -68,6 +77,8 @@ export default function WatchlistHubPage() {
           onDone={() => {}}
         />
       )}
+
+      {showNewCompany && <NewHubspotCompanyDialog onClose={() => setShowNewCompany(false)} />}
     </div>
   );
 }

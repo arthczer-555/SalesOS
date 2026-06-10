@@ -55,10 +55,16 @@ export async function fetchWatchlistNews(input: FetchNewsInput): Promise<NewsCon
     })
     .sort((a, b) => (Date.parse(b.postedAt) || 0) - (Date.parse(a.postedAt) || 0));
 
-  // Signaux presse : tri par date décroissante (les plus récents en premier).
-  const freshSignals = [...intel.signals].sort(
-    (a, b) => (parseGoogleDate(b.created_at) ?? 0) - (parseGoogleDate(a.created_at) ?? 0),
-  );
+  // Signaux presse : on écarte les news plus vieilles que la fenêtre 90j (date
+  // non parseable = on garde, par prudence, comme pour les posts) puis tri par
+  // date décroissante. Le filtre `after:` Google + le fallback sans Claude
+  // peuvent laisser passer des articles hors fenêtre : on coupe ici aussi.
+  const freshSignals = intel.signals
+    .filter((s) => {
+      const t = parseGoogleDate(s.created_at);
+      return t === null || t >= cutoff;
+    })
+    .sort((a, b) => (parseGoogleDate(b.created_at) ?? 0) - (parseGoogleDate(a.created_at) ?? 0));
 
   return {
     posts: freshPosts,

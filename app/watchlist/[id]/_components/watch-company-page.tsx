@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
+import { useSWRConfig } from "swr";
 import { Loader2, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { COLORS } from "@/lib/design/tokens";
@@ -16,6 +17,7 @@ import { AeAnalysisCard } from "./ae-analysis-card";
 import { ContactsCard } from "./contacts-card";
 import { NewsCard } from "./news-card";
 import { MailDrafter, type DraftRecipient } from "./mail-drafter";
+import { ApolloEnrichModal } from "../../_components/apollo-enrich-modal";
 
 export function WatchCompanyPage({ id }: { id: string }) {
   const {
@@ -31,6 +33,8 @@ export function WatchCompanyPage({ id }: { id: string }) {
   // le payload détaillé pour récupérer la dernière brief (cas inline) ou
   // déclencher le polling (cas BG fn).
   const { refresh, isRefreshing, errorByKind } = useBriefRefresh(id, reload);
+  const { mutate } = useSWRConfig();
+  const [apolloOpen, setApolloOpen] = React.useState(false);
 
   // Polling actif tant qu'au moins un brief est en running côté DB OU
   // qu'on a un POST en vol côté client. Le tick appelle reload() pour
@@ -146,7 +150,7 @@ export function WatchCompanyPage({ id }: { id: string }) {
           className="watch-detail-grid"
         >
           <main style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
-            <CrossPageActions company={company} />
+            <CrossPageActions company={company} onEnrichApollo={() => setApolloOpen(true)} />
             <AeAnalysisCard
               companyId={company.id}
               notes={company.notes}
@@ -197,6 +201,21 @@ export function WatchCompanyPage({ id }: { id: string }) {
           }
         }
       `}</style>
+
+      {apolloOpen && (
+        <ApolloEnrichModal
+          prefill={{
+            hubspotCompanyId: company.hubspot_company_id,
+            companyName: company.name,
+            scopeCompanyId: company.id,
+          }}
+          onClose={() => setApolloOpen(false)}
+          onDone={() => {
+            reload();
+            mutate(`/api/watchlist/companies/${company.id}/contacts`);
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,0 +1,36 @@
+import type { Context } from "@netlify/functions";
+import { runApolloEnrichment } from "../../lib/apollo/run-enrichment";
+
+// Background Function : enrichissement Apollo -> HubSpot. Pour chaque profil ICP
+// coché, révèle l'email (crédit Apollo) puis crée/dédup le contact HubSpot et
+// l'associe à la company choisie. Sorti du chemin sync car reveal + 2-3 appels
+// HubSpot par contact dépassent le timeout d'une fonction sync Netlify.
+//
+// Auth : Bearer CRON_SECRET (posé par /api/apollo/enrich).
+// Body : { jobId: string }
+export default async (req: Request, _ctx: Context) => {
+  const cronSecret = process.env.CRON_SECRET;
+  const authHeader = req.headers.get("authorization");
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return new Response("unauthorized", { status: 401 });
+  }
+
+  let jobId: string | undefined;
+  try {
+    const body = (await req.json()) as { jobId?: string };
+    jobId = body.jobId;
+  } catch {
+    return new Response("invalid body", { status: 400 });
+  }
+
+  if (!jobId) return new Response("missing jobId", { status: 400 });
+
+  try {
+    const res = await runApolloEnrichment({ jobId });
+    if (!res.ok) console.error("[apollo-enrich-background] failed:", res.error);
+  } catch (e) {
+    console.error("[apollo-enrich-background] unexpected:", e);
+  }
+
+  return new Response(null, { status: 200 });
+};

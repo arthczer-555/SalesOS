@@ -32,7 +32,13 @@ const DEAL_PROPS = [
   "hubspot_owner_id",
   "hs_is_closed",
   "hs_is_closed_won",
+  "pipeline",
 ];
+
+// Pipeline Sales (prospection). Les deals Customer Success (clients déjà gagnés)
+// vivent dans une autre pipeline et ne doivent pas alimenter le contexte AE /
+// le draft email : ils fausseraient l'angle de prospection.
+const SALES_PIPELINE_ID = "default";
 
 const ENGAGEMENT_CAP = 40;
 const CONTACT_CAP = 10;
@@ -116,6 +122,9 @@ export async function loadCompanyHubspotContext(scopeCompanyId: string): Promise
     for (const r of dealResults) {
       if (r.status !== "fulfilled") continue;
       const p = r.value.properties ?? {};
+      // Sales-only : on ignore les deals d'une autre pipeline (Customer Success).
+      // Pipeline absente = on garde (HubSpot la renvoie toujours, mais prudence).
+      if (p.pipeline && p.pipeline !== SALES_PIPELINE_ID) continue;
       deals.push({
         id: r.value.id,
         dealname: p.dealname ?? null,

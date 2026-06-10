@@ -13,6 +13,7 @@ import {
   type ParsedCsv,
 } from "@/lib/csv/contacts-csv";
 import { saveList } from "@/lib/hooks/use-enrichment";
+import { ApolloEnrichPanel } from "../../_components/apollo-enrich-panel";
 import type { EnrichmentProfile, HubspotPushState, HubspotPushSummary } from "@/lib/intel-types";
 import type { ResolvedCompany } from "@/app/api/intel/admin/scope-companies/resolve-hubspot/route";
 
@@ -46,6 +47,7 @@ export function EnrichWizard({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const [mode, setMode] = React.useState<"csv" | "apollo">("apollo");
   const [step, setStep] = React.useState<1 | 2 | 3>(1);
   const [fileName, setFileName] = React.useState<string | null>(null);
   const [parsed, setParsed] = React.useState<ParsedCsv | null>(null);
@@ -183,7 +185,19 @@ export function EnrichWizard({
   return (
     <Overlay onClose={onClose}>
       <div style={{ width: 620, maxWidth: "94vw", maxHeight: "88vh", display: "flex", flexDirection: "column" }}>
-        <Header title="Enrich - CSV → HubSpot" onClose={onClose} />
+        <Header title="Enrich" onClose={onClose} />
+
+        <div style={{ display: "flex", gap: 2, margin: "10px 16px 0", border: `1px solid ${COLORS.line}`, borderRadius: 8, padding: 2, background: COLORS.bgSoft, alignSelf: "flex-start" }}>
+          <button type="button" onClick={() => setMode("apollo")} style={modeTab(mode === "apollo")}>From Apollo</button>
+          <button type="button" onClick={() => setMode("csv")} style={modeTab(mode === "csv")}>From CSV</button>
+        </div>
+
+        {mode === "apollo" ? (
+          <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
+            <ApolloEnrichPanel />
+          </div>
+        ) : (
+        <>
         <Steps step={step} />
 
         {err && (
@@ -326,9 +340,27 @@ export function EnrichWizard({
             )}
           </div>
         </div>
+        </>
+        )}
       </div>
     </Overlay>
   );
+}
+
+function modeTab(active: boolean): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "5px 12px",
+    fontSize: 12,
+    borderRadius: 6,
+    border: "none",
+    cursor: "pointer",
+    background: active ? COLORS.brand : "transparent",
+    color: active ? "white" : COLORS.ink2,
+    fontWeight: 500,
+  };
 }
 
 function PushResult({ state }: { state: HubspotPushState | null }) {

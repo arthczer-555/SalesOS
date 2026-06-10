@@ -3,12 +3,18 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { List, Send, Loader2 } from "lucide-react";
+import { List, Send, Loader2, UserPlus } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { WatchCompanyDetail } from "@/app/api/watchlist/companies/[id]/route";
 import type { CompanyContactsResponse } from "@/app/api/watchlist/companies/[id]/contacts/route";
 
-export function CrossPageActions({ company }: { company: WatchCompanyDetail }) {
+export function CrossPageActions({
+  company,
+  onEnrichApollo,
+}: {
+  company: WatchCompanyDetail;
+  onEnrichApollo?: () => void;
+}) {
   const router = useRouter();
   const [loadingProspection, setLoadingProspection] = React.useState(false);
 
@@ -70,6 +76,14 @@ export function CrossPageActions({ company }: { company: WatchCompanyDetail }) {
         🔗 Open in
       </h3>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {onEnrichApollo && (
+          <ActionLink
+            onClick={onEnrichApollo}
+            icon={<UserPlus size={12} />}
+            label="Enrich with Apollo"
+            sub="Find ICP contacts + emails"
+          />
+        )}
         <ActionLink
           href="/watchlist/lists"
           icon={<List size={12} />}
