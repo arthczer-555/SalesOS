@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import useSWR from "swr";
 import { useSearchParams } from "next/navigation";
-import { Loader2, Video, Sparkles, Download, Clapperboard, Building2, Info, Clock, AlertTriangle } from "lucide-react";
+import { Loader2, Video, Sparkles, Download, Clapperboard, Building2, Info, Clock, AlertTriangle, GraduationCap, X, FileText, LayoutTemplate, Scissors, ImageDown, ArrowRight } from "lucide-react";
 import { COLORS, RADIUS, SHADOWS } from "@/lib/design/tokens";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
@@ -102,6 +102,7 @@ function VideoStudio() {
   const [scripting, setScripting] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showTutorial, setShowTutorial] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Client effectivement rattaché à la vidéo : sélection explicite (dropdown /
@@ -211,23 +212,47 @@ function VideoStudio() {
         }
         subtitle="Describe the video. Mention a client and the AI pulls its context automatically."
         actions={
-          jobs.length > 0 ? (
-            <span
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            {jobs.length > 0 && (
+              <span
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: COLORS.ink2,
+                  background: COLORS.bgSoft,
+                  border: `1px solid ${COLORS.line}`,
+                  padding: "3px 10px",
+                  borderRadius: 999,
+                }}
+              >
+                {jobs.length} {jobs.length === 1 ? "video" : "videos"}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => setShowTutorial(true)}
               style={{
-                fontSize: 11,
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                fontSize: 12,
                 fontWeight: 600,
-                color: COLORS.ink2,
-                background: COLORS.bgSoft,
-                border: `1px solid ${COLORS.line}`,
-                padding: "3px 10px",
-                borderRadius: 999,
+                padding: "5px 12px",
+                borderRadius: 8,
+                border: `1px solid ${COLORS.brand}`,
+                background: COLORS.brandTint,
+                color: COLORS.brand,
+                cursor: "pointer",
               }}
             >
-              {jobs.length} {jobs.length === 1 ? "video" : "videos"}
-            </span>
-          ) : undefined
+              <GraduationCap size={14} />
+              Tutorial: finish your video
+            </button>
+          </div>
         }
       />
+
+      {showTutorial && <TutorialModal onClose={() => setShowTutorial(false)} />}
 
       <div style={{ flex: 1, overflowY: "auto", padding: "20px 24px" }}>
         <div className="vs-studio-grid">
@@ -486,6 +511,342 @@ function VideoStudio() {
   );
 }
 
+function TutorialModal({ onClose }: { onClose: () => void }) {
+  // Fermer sur Échap + verrouiller le scroll de la page tant que le modal est ouvert.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(17,17,17,0.45)",
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "center",
+        padding: "5vh 16px",
+        overflowY: "auto",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width: "100%",
+          maxWidth: 760,
+          background: COLORS.bgCard,
+          borderRadius: RADIUS.xl,
+          boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+          overflow: "hidden",
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 12,
+            padding: "18px 22px",
+            borderBottom: `1px solid ${COLORS.line}`,
+            background: COLORS.brandTintSoft,
+          }}
+        >
+          <div
+            style={{
+              width: 36,
+              height: 36,
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              borderRadius: 10,
+              background: COLORS.brandTint,
+              color: COLORS.brand,
+            }}
+          >
+            <GraduationCap size={20} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: COLORS.ink0, letterSpacing: "-0.01em" }}>
+              How to finish your video
+            </div>
+            <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 2, lineHeight: 1.45 }}>
+              Three stages: generate the avatar video here, build the slides with Claude, then assemble
+              everything in CapCut.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            style={{
+              flexShrink: 0,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 30,
+              height: 30,
+              borderRadius: 8,
+              border: `1px solid ${COLORS.line}`,
+              background: "white",
+              color: COLORS.ink2,
+              cursor: "pointer",
+            }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: "20px 22px", display: "flex", flexDirection: "column", gap: 18 }}>
+          <TutorialStep index={1} icon={<FileText size={15} />} title="Transcript & avatar video — here, in Video Studio">
+            <ol style={tutOl}>
+              <li>
+                In <b>1. Brief</b>, pick a client (or leave on <b>Auto</b>) and write the prompt: who it&apos;s for,
+                the goal, the one key message, the tone and the call to action.
+              </li>
+              <li>
+                Click <b>Propose transcript</b>, then review and edit the text the avatar will read. Spell tricky
+                words phonetically so they sound right (e.g. <b>Coachello → kotchélo</b>).
+              </li>
+              <li>
+                Set the <b>speech speed</b> (the banner recommends 1.0x for French, 0.85x for English) and check the
+                estimated duration.
+              </li>
+              <li>
+                Click <b>Generate video</b>. It renders in ~1-3 min and appears in the <b>Library</b> on the right.
+              </li>
+              <li>
+                <b>Download</b> the avatar video (.mp4). You&apos;ll drop it into CapCut at step 3.
+              </li>
+            </ol>
+          </TutorialStep>
+
+          <TutorialStep index={2} icon={<LayoutTemplate size={15} />} title="Slides with Claude, then Google Slides">
+            <ol style={tutOl}>
+              <li>
+                Open Claude, paste your final transcript and ask for the slides — e.g.{" "}
+                <i>&quot;here&apos;s the transcript, make the slides for this video&quot;</i>. This triggers the{" "}
+                <b>video-slides</b> skill.
+              </li>
+              <li>
+                Claude gives you three things:
+                <ul style={tutUl}>
+                  <li>a <b>PPTX</b> in the Coachello design (editable);</li>
+                  <li>a <b>PNG of every slide</b> at 1920×1080 (ready for editing);</li>
+                  <li>
+                    an <b>editing plan</b>: a table of timestamps + cue words telling you, beat by beat,{" "}
+                    <b>where to cut</b> and which slide to show.
+                  </li>
+                </ul>
+              </li>
+              <li>
+                Each slide keeps the <b>top-right corner empty</b> on purpose — that&apos;s where the avatar will sit.
+              </li>
+              <li>
+                <i>(Optional)</i> Import the PPTX into <b>Google Slides</b> to tweak wording or branding. Then
+                re-export each slide as PNG: <b>File → Download → PNG image</b>, one slide at a time. Keep the PNGs —
+                those go into CapCut, not the PPTX.
+              </li>
+              <li>
+                Keep the <b>editing plan</b> open beside you — it&apos;s your cut sheet for step 3.
+              </li>
+            </ol>
+          </TutorialStep>
+
+          <TutorialStep index={3} icon={<Scissors size={15} />} title="Assemble in CapCut">
+            <ol style={tutOl}>
+              <li>
+                New <b>1920×1080</b> project. Import the <b>avatar .mp4</b> and <b>all the slide PNGs</b> (
+                <ImageDown size={12} style={{ display: "inline", verticalAlign: "-1px", margin: "0 1px" }} /> import as
+                PNG, not the PPTX).
+              </li>
+              <li>
+                Put the <b>avatar on the top track</b>, the <b>slide PNGs on the track below</b>.
+              </li>
+              <li>
+                Follow the editing plan&apos;s <b>cue words</b> (more reliable than the timestamps — the real pace
+                varies). At each cue, put the playhead on the word, <b>Split</b> the avatar clip, and switch layout:
+                <ul style={tutUl}>
+                  <li>
+                    <b>Intro & final CTA → avatar full-screen.</b> Hide the slide and scale the avatar to fill the
+                    frame.
+                  </li>
+                  <li>
+                    <b>Content beats → slide full-screen + avatar small, top-right.</b> Show the slide PNG underneath;
+                    select the avatar clip and, in <b>Player → Scale</b>, set it to <b>~25%</b> width, then drag it into
+                    the <b>top-right corner</b> (the empty zone the slides left for it).
+                  </li>
+                </ul>
+              </li>
+              <li>
+                Trim each slide PNG so it stays on screen for the whole beat (<b>≥ 5 s</b> to stay readable), aligned
+                to the avatar cuts.
+              </li>
+              <li>
+                End on the <b>end-card</b> slide for ~3 s, then <b>Export</b> in 1080p.
+              </li>
+            </ol>
+
+            <LayoutDiagram />
+          </TutorialStep>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 8,
+              fontSize: 12,
+              color: COLORS.ink2,
+              background: COLORS.bgSoft,
+              border: `1px solid ${COLORS.line}`,
+              borderRadius: RADIUS.md,
+              padding: "10px 12px",
+              lineHeight: 1.5,
+            }}
+          >
+            <Info size={14} style={{ flexShrink: 0, marginTop: 1, color: COLORS.brand }} />
+            <span>
+              The <b>cue words</b> in Claude&apos;s editing plan are your source of truth for where to cut — line them
+              up with the avatar&apos;s voice, not the clock.
+            </span>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "flex-end",
+            padding: "14px 22px",
+            borderTop: `1px solid ${COLORS.line}`,
+            background: COLORS.bgSoft,
+          }}
+        >
+          <button type="button" onClick={onClose} style={{ ...primaryBtn(false), padding: "8px 18px" }}>
+            Got it
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TutorialStep({
+  index,
+  icon,
+  title,
+  children,
+}: {
+  index: number;
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div style={{ display: "flex", gap: 12 }}>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
+        <span
+          style={{
+            width: 28,
+            height: 28,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 13,
+            fontWeight: 800,
+            color: "#fff",
+            background: COLORS.brand,
+            borderRadius: 999,
+          }}
+        >
+          {index}
+        </span>
+        <span style={{ flex: 1, width: 2, background: COLORS.line, marginTop: 4, borderRadius: 999 }} />
+      </div>
+      <div style={{ flex: 1, minWidth: 0, paddingBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
+          <span style={{ color: COLORS.brand, display: "inline-flex" }}>{icon}</span>
+          <span style={{ fontSize: 14, fontWeight: 800, color: COLORS.ink0, letterSpacing: "-0.01em" }}>{title}</span>
+        </div>
+        <div style={{ fontSize: 13, color: COLORS.ink1, lineHeight: 1.55 }}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// Mini-schéma 16:9 des deux dispositions du montage : avatar plein écran vs
+// slide plein écran avec avatar incrusté en haut à droite.
+function LayoutDiagram() {
+  const frame: React.CSSProperties = {
+    position: "relative",
+    flex: 1,
+    aspectRatio: "16 / 9",
+    borderRadius: 8,
+    border: `1px solid ${COLORS.lineStrong}`,
+    overflow: "hidden",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 11,
+    fontWeight: 700,
+  };
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ ...frame, background: COLORS.brandTint, color: COLORS.brand }}>Avatar</div>
+          <div style={{ fontSize: 11, color: COLORS.ink3, textAlign: "center", marginTop: 5 }}>
+            Intro & CTA — avatar full-screen
+          </div>
+        </div>
+        <ArrowRight size={16} style={{ color: COLORS.ink4, flexShrink: 0 }} />
+        <div style={{ flex: 1 }}>
+          <div style={{ ...frame, background: COLORS.bgSoft, color: COLORS.ink3 }}>
+            Slide
+            <div
+              style={{
+                position: "absolute",
+                top: 6,
+                right: 6,
+                width: "26%",
+                aspectRatio: "16 / 9",
+                borderRadius: 4,
+                background: COLORS.brandTint,
+                color: COLORS.brand,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 8,
+                fontWeight: 700,
+                border: `1px solid ${COLORS.brand}`,
+              }}
+            >
+              Avatar
+            </div>
+          </div>
+          <div style={{ fontSize: 11, color: COLORS.ink3, textAlign: "center", marginTop: 5 }}>
+            Content — slide + avatar top-right
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function StepTitle({ index, label }: { index: number; label: string }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -590,6 +951,23 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     </div>
   );
 }
+
+const tutOl: React.CSSProperties = {
+  margin: 0,
+  paddingLeft: 18,
+  display: "flex",
+  flexDirection: "column",
+  gap: 7,
+};
+
+const tutUl: React.CSSProperties = {
+  margin: "5px 0 0",
+  paddingLeft: 16,
+  display: "flex",
+  flexDirection: "column",
+  gap: 4,
+  color: COLORS.ink2,
+};
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
