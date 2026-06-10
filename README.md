@@ -22,7 +22,8 @@ Plateforme interne de l'équipe commerciale et marketing de Coachello. Connecté
 12. [Architecture & flux principaux](#12-architecture--flux-principaux)
 13. [Lancer en local](#13-lancer-en-local)
 14. [Déploiement](#14-déploiement)
-15. [Modifier les fonctionnalités](#15-modifier-les-fonctionnalités)
+15. [Ajouter un utilisateur](#15-ajouter-un-utilisateur)
+16. [Modifier les fonctionnalités](#16-modifier-les-fonctionnalités)
 
 ---
 
@@ -1161,7 +1162,29 @@ git push origin main
 
 ---
 
-## 15. Modifier les fonctionnalités
+## 15. Ajouter un utilisateur
+
+Onboarder un nouveau membre se fait en 2 temps : créer son compte côté Clerk (authentification), puis lui assigner une clé API Claude depuis l'admin SalesOS.
+
+### 1. Créer le compte sur Clerk
+1. Se connecter au [dashboard Clerk](https://dashboard.clerk.com) avec le compte `gaspard@coachello.io`.
+2. Sélectionner l'application SalesOS, puis ouvrir l'onglet **Users**.
+3. Cliquer sur **Add user**, renseigner l'email du nouvel utilisateur et valider.
+
+L'authentification se fait via Google OAuth uniquement. Au tout premier login, `getAuthenticatedUser()` ([lib/auth.ts](lib/auth.ts)) crée automatiquement la row dans la table `users` et tente de résoudre `hubspot_owner_id` + `slack_user_id` + `slack_display_name` à partir de l'email (voir l'onboarding, section 9).
+
+### 2. Assigner une clé API Claude (après le 1er login de l'utilisateur)
+Tant que l'utilisateur n'a pas sa propre clé, les features IA retombent sur le fallback global `ANTHROPIC_API_KEY` (ou échouent s'il n'est pas défini). Étapes :
+
+1. Créer une clé API sur la [console Anthropic](https://console.anthropic.com) (**API Keys** > **Create Key**).
+2. Dans SalesOS, aller sur `/admin` > **Gestion des utilisateurs**. L'utilisateur doit déjà apparaître dans la liste (donc s'être connecté au moins une fois pour que sa row soit créée).
+3. Coller la clé `sk-ant-...` dans le champ dédié et valider. Elle est chiffrée (AES-256-GCM) en DB via `/api/admin/set-key`.
+
+> (optionnel) Cocher le toggle **Sales** sur l'utilisateur s'il doit recevoir le deal digest par AE sur Slack (`users.is_sales`, défaut `false`). Les droits admin (`users.is_admin`) se règlent directement en DB.
+
+---
+
+## 16. Modifier les fonctionnalités
 
 ### Changer le modèle IA
 Via `/settings` → Préférences de modèle, ou directement dans `guide_defaults` (clé `model_preferences`).
