@@ -72,3 +72,14 @@ export const BUSINESS_CONTEXT_PROMPT_BLOCK = `
 - EXPLICITLY EXCLUDE (not Coachello's market): ${BUSINESS_CONTEXT.excludedTopics.join(", ")}
 - Tone: ${BUSINESS_CONTEXT.tone}
 `.trim();
+
+// Bloc orienté VENTE (prospection, analyse de compte). Contrairement au bloc
+// ci-dessus (filtrage SEO/veille), celui-ci dit au modèle QUI achète chez nous
+// et contre qui on vend. Réutilisable par les prompts AE analysis / drafts.
+export const SALES_CONTEXT_PROMPT_BLOCK = `
+## Contexte vente Coachello
+- On vend : ${BUSINESS_CONTEXT.coreActivities.join("; ")}.
+- Buyer personas, du plus au moins décisionnaire : CHRO / DRH, VP People / Talent, Head of L&D, L&D manager, HRBP. Les managers opérationnels sont des utilisateurs finaux, pas des acheteurs.
+- Pains qu'on adresse côté acheteur : développer les managers à l'échelle sans exploser le budget, prouver le ROI du coaching, passer de la formation théorique à la pratique, engagement et rétention des talents, premiers managers livrés à eux-mêmes.
+- Concurrents fréquents (plateformes de coaching) : BetterUp, CoachHub, Ezra, Simundia, MoovOne. Si le compte utilise déjà l'un d'eux, l'angle est le différenciateur (hybride humain + IA dans Teams/Slack, ROI mesuré), jamais le dénigrement.
+`.trim();

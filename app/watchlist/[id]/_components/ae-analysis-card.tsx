@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Target, MailPlus, BookOpen } from "lucide-react";
+import { Target, MailPlus, BookOpen, Copy, Check } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { BriefSection } from "./brief-section";
 import { NotesEditor } from "./notes-editor";
@@ -10,8 +10,17 @@ import type {
   BriefRow,
   AeAnalysisContent,
   AeContact,
+  AeRelationshipState,
   NewsContent,
 } from "@/lib/watchlist/briefs";
+
+const RELATIONSHIP_LABELS: Record<AeRelationshipState, string> = {
+  never_contacted: "Never contacted",
+  cold: "Cold",
+  warm: "Warm",
+  active: "Active deal",
+  lost_deal: "Lost deal",
+};
 
 export function AeAnalysisCard({
   companyId,
@@ -50,7 +59,37 @@ export function AeAnalysisCard({
     >
       {status === "ok" && content ? (
         <div>
-          {content.strategy && (
+          {(content.relationship_state || content.state_summary) && (
+            <div style={{ margin: "0 0 14px" }}>
+              {content.relationship_state && (
+                <span
+                  style={{
+                    display: "inline-block",
+                    padding: "2px 8px",
+                    marginBottom: 6,
+                    borderRadius: 999,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.05em",
+                    background: COLORS.brandTintSoft,
+                    border: `1px solid ${COLORS.brandTint}`,
+                    color: COLORS.brandDark,
+                  }}
+                >
+                  {RELATIONSHIP_LABELS[content.relationship_state]}
+                </span>
+              )}
+              {content.state_summary && (
+                <p style={{ margin: 0, fontSize: 12, color: COLORS.ink1, lineHeight: 1.6 }}>
+                  {content.state_summary}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Legacy v1 : les analyses générées avant la v2 ont un long strategy. */}
+          {!content.state_summary && content.strategy && (
             <p style={{ margin: "0 0 14px", fontSize: 12, color: COLORS.ink1, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
               {content.strategy}
             </p>
@@ -107,6 +146,7 @@ export function AeAnalysisCard({
             </div>
           )}
 
+          {/* Legacy v1 : la v2 ne génère plus de next_actions (redondant avec les contacts). */}
           {content.next_actions.length > 0 && <Block title="➡ Next actions" items={content.next_actions} />}
           {content.watch_outs.length > 0 && <Block title="⚠ Watch-outs" items={content.watch_outs} />}
         </div>
@@ -190,18 +230,84 @@ function ContactRow({
               cursor: "pointer",
             }}
           >
-            <MailPlus size={11} /> Prospecter
+            <MailPlus size={11} /> Prospect
           </button>
         )}
       </div>
       {contact.rationale && (
         <p style={{ margin: "6px 0 0", fontSize: 11, color: COLORS.ink2, lineHeight: 1.5 }}>{contact.rationale}</p>
       )}
-      {contact.angle && (
-        <p style={{ margin: "4px 0 0", fontSize: 11, color: COLORS.ink1, lineHeight: 1.5 }}>
-          <strong style={{ color: COLORS.ink2 }}>Angle:</strong> {contact.angle}
-        </p>
+      {contact.opening_message ? (
+        <OpeningMessage text={contact.opening_message} />
+      ) : (
+        contact.angle && (
+          <p style={{ margin: "4px 0 0", fontSize: 11, color: COLORS.ink1, lineHeight: 1.5 }}>
+            <strong style={{ color: COLORS.ink2 }}>Angle:</strong> {contact.angle}
+          </p>
+        )
       )}
+    </div>
+  );
+}
+
+function OpeningMessage({ text }: { text: string }) {
+  const [copied, setCopied] = React.useState(false);
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard indisponible (http, permissions) : on ignore
+    }
+  }
+
+  return (
+    <div
+      style={{
+        marginTop: 8,
+        padding: "8px 10px",
+        borderRadius: 6,
+        background: COLORS.bgCard,
+        border: `1px solid ${COLORS.line}`,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", marginBottom: 4 }}>
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.05em",
+            color: COLORS.ink3,
+          }}
+        >
+          Opening message
+        </span>
+        <button
+          type="button"
+          onClick={copy}
+          title="Copy message"
+          style={{
+            marginLeft: "auto",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            padding: "2px 6px",
+            fontSize: 10,
+            fontWeight: 500,
+            borderRadius: 5,
+            border: `1px solid ${COLORS.line}`,
+            background: COLORS.bgSoft,
+            color: copied ? COLORS.brandDark : COLORS.ink2,
+            cursor: "pointer",
+          }}
+        >
+          {copied ? <Check size={10} /> : <Copy size={10} />} {copied ? "Copied" : "Copy"}
+        </button>
+      </div>
+      <p style={{ margin: 0, fontSize: 11, color: COLORS.ink1, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{text}</p>
     </div>
   );
 }

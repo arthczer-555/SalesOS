@@ -18,28 +18,48 @@ import {
   type BriefRow,
 } from "@/lib/watchlist/briefs";
 import { fetchWatchlistNews } from "@/lib/watchlist/fetch-news";
+import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
+import { SALES_CONTEXT_PROMPT_BLOCK } from "@/lib/business-context";
+import type { AeRelationshipState } from "@/lib/watchlist/briefs";
 
 const MODEL = "claude-sonnet-4-6";
 
-const SYSTEM_PROMPT = `Tu es un Account Executive sénior. Tu prépares la prospection d'un compte cible (Watch List).
-À partir du contexte fourni (emails échangés avec les contacts du compte, contacts HubSpot, deals, news récentes, secteur),
-tu produis une analyse AE actionnable : QUI prospecter en priorité dans ce compte, et COMMENT.
+const RELATIONSHIP_STATES: AeRelationshipState[] = [
+  "never_contacted",
+  "cold",
+  "warm",
+  "active",
+  "lost_deal",
+];
 
-Ton style : direct, concret, orienté action. Pas de tirets longs (em dash), utilise des virgules, des parenthèses ou des tirets courts.
+function buildSystemPrompt(prospectionGuide: string): string {
+  return `Tu es un Account Executive sénior chez Coachello. Tu prépares la prospection d'un compte cible (Watch List) :
+QUI contacter en priorité dans ce compte, et avec QUEL message d'ouverture. Sortie courte et actionnable, pas un rapport.
+
+${SALES_CONTEXT_PROMPT_BLOCK}
+
+## Guide de prospection (chaque opening_message doit le suivre)
+${prospectionGuide}
+
+Ton style : direct, concret. Pas de tirets longs (em dash), utilise des virgules, des parenthèses ou des tirets courts.
 LANGUE : détecte la langue dominante du contexte (emails, news, secteur). Si le compte échange en anglais, réponds en anglais ; sinon en français.
 
-Règles :
-- Ne jamais inventer un fait, un nom, un chiffre ou un email. Appuie chaque reco sur un élément réel du contexte.
-- Pour les contacts prioritaires, classe-les du plus au moins prioritaire. Pour chacun : pourquoi le cibler (rationale, ancrée sur l'historique email ou son rôle) et l'angle d'approche concret.
-- Si tu n'as pas d'emails échangés, dis-le dans la stratégie et base-toi sur les contacts/deals/news.
+Règles anti-générique :
+- Chaque rationale tient en 1 phrase et cite un fait précis du contexte (un email daté, un deal, un signal news, un post LinkedIn, le job title). Si la phrase pourrait s'appliquer telle quelle à un autre compte, réécris-la.
+- Pour rendre l'ouverture intéressante, complète le contexte fourni avec ce que tu sais réellement de cette entreprise (son marché, ses produits, son modèle, ses enjeux connus). Uniquement des faits dont tu es sûr, formulés prudemment, jamais de chiffres, de noms ou d'actualités inventés. Si tu utilises cette connaissance, mets sources_used.world_knowledge à true.
+- Ne jamais inventer un fait, un nom, un chiffre, un email ou un client.
+- Interdits : "mettre en avant la valeur", "proposer un échange", "construire la relation", et toute action vague du même genre.
 
-Réponds UNIQUEMENT via l'outil emit_ae_analysis avec :
-- strategy : 2 à 4 paragraphes courts. Comment aborder ce compte (état de la relation d'après les emails, momentum news/secteur, points d'entrée).
-- story_to_tell : une accroche de social proof prête à dire/écrire, basée sur le secteur du prospect ET notre liste de clients actuels fournie en contexte. Exemple : "On coache déjà X et Y, deux acteurs de votre secteur, sur exactement ce type d'enjeu." Cite uniquement des clients RÉELS de la liste fournie, idéalement du même secteur ou d'un secteur proche. Si aucun client de la liste n'est pertinent (secteur trop éloigné ou liste vide), renvoie une chaîne vide. N'invente jamais un client.
-- priority_contacts : liste classée. Pour chaque contact : name, role, rationale, angle, email (si connu), hubspot_id (si connu).
-- next_actions : 2 à 4 actions concrètes pour cette semaine.
-- watch_outs : risques ou choses à éviter (ex : contact froid, deal perdu récent, mauvais timing).
-- sources_used : { emails, news, sector } selon ce qui était réellement disponible.`;
+Priorisation des contacts (3 à 5 max) : buyer économique d'abord (CHRO, DRH, VP People, Head of L&D), puis influenceurs (L&D manager, HRBP, Talent), puis relais. Exception : un historique d'échange chaud bat un titre senior jamais contacté.
+
+Réponds UNIQUEMENT via l'outil emit_ae_analysis :
+- relationship_state : never_contacted | cold (échanges anciens ou restés sans réponse) | warm (échanges récents et positifs) | active (deal ouvert en cours) | lost_deal (deal perdu récemment).
+- state_summary : 1 à 2 phrases max. L'essentiel : où on en est avec ce compte et le point d'entrée. Pas de paragraphe, pas de liste d'actions (l'action, c'est contacter les contacts listés).
+- story_to_tell : une accroche de social proof prête à dire/écrire, basée sur le secteur du prospect ET notre liste de clients actuels fournie en contexte. Cite uniquement des clients RÉELS de la liste fournie, du même secteur ou d'un secteur proche. Chaîne vide si aucun client pertinent.
+- priority_contacts : 3 à 5 contacts classés. Pour chacun : name, role, rationale (1 phrase, fait précis), opening_message (le message complet prêt à adapter : signal réel ou fait entreprise en ouverture, problème nommé avant Coachello, 100-200 mots, un seul CTA, signé "[Prénom expéditeur]"), email et hubspot_id si connus. Varie les ouvertures d'un contact à l'autre, adaptées à son rôle.
+- watch_outs : 0 à 3 points courts, uniquement des risques réels du contexte (contact parti, deal perdu récent, concurrent en place, mauvais timing). Liste vide si rien de réel.
+- sources_used : { emails, news, sector, world_knowledge } selon ce qui a réellement servi.`;
+}
 
 const ANALYSIS_TOOL = {
   name: "emit_ae_analysis",
@@ -47,7 +67,15 @@ const ANALYSIS_TOOL = {
   input_schema: {
     type: "object" as const,
     properties: {
-      strategy: { type: "string", description: "2 à 4 paragraphes : comment aborder ce compte" },
+      relationship_state: {
+        type: "string",
+        enum: RELATIONSHIP_STATES,
+        description: "État de la relation avec le compte",
+      },
+      state_summary: {
+        type: "string",
+        description: "1 à 2 phrases max : où on en est et le point d'entrée",
+      },
       story_to_tell: {
         type: "string",
         description:
@@ -55,35 +83,65 @@ const ANALYSIS_TOOL = {
       },
       priority_contacts: {
         type: "array",
-        description: "Contacts à cibler, classés par priorité",
+        description: "3 à 5 contacts à cibler, classés par priorité",
         items: {
           type: "object",
           properties: {
             name: { type: "string" },
             role: { type: ["string", "null"] },
-            rationale: { type: "string", description: "Pourquoi cibler cette personne" },
-            angle: { type: "string", description: "Angle d'approche / accroche concrète" },
+            rationale: {
+              type: "string",
+              description: "1 phrase : pourquoi cibler cette personne, ancrée sur un fait précis du contexte",
+            },
+            opening_message: {
+              type: "string",
+              description:
+                "Message d'ouverture complet prêt à adapter, conforme au guide de prospection (100-200 mots, 1 CTA)",
+            },
             email: { type: ["string", "null"] },
             hubspot_id: { type: ["string", "null"] },
           },
-          required: ["name", "rationale", "angle"],
+          required: ["name", "rationale", "opening_message"],
         },
       },
-      next_actions: { type: "array", items: { type: "string" }, description: "2 à 4 actions concrètes" },
-      watch_outs: { type: "array", items: { type: "string" }, description: "Risques / à éviter" },
+      watch_outs: {
+        type: "array",
+        items: { type: "string" },
+        description: "0 à 3 risques réels, courts. Vide si rien.",
+      },
       sources_used: {
         type: "object",
         properties: {
           emails: { type: "boolean" },
           news: { type: "boolean" },
           sector: { type: "boolean" },
+          world_knowledge: { type: "boolean" },
         },
-        required: ["emails", "news", "sector"],
+        required: ["emails", "news", "sector", "world_knowledge"],
       },
     },
-    required: ["strategy", "story_to_tell", "priority_contacts", "next_actions", "watch_outs", "sources_used"],
+    required: [
+      "relationship_state",
+      "state_summary",
+      "story_to_tell",
+      "priority_contacts",
+      "watch_outs",
+      "sources_used",
+    ],
   },
 };
+
+/**
+ * Résout le guide de prospection avec la même cascade que le drafter :
+ * guide perso de l'utilisateur, sinon défaut global (admin), sinon hardcodé.
+ */
+async function loadProspectionGuide(userId: string): Promise<string> {
+  const [{ data: userRow }, { data: globalGuide }] = await Promise.all([
+    db.from("users").select("prospection_guide").eq("id", userId).maybeSingle(),
+    db.from("guide_defaults").select("content").eq("key", "prospection").maybeSingle(),
+  ]);
+  return userRow?.prospection_guide ?? globalGuide?.content ?? DEFAULT_PROSPECTION_GUIDE;
+}
 
 interface ScopeCompanyRow {
   id: string;
@@ -118,8 +176,9 @@ export async function runAeAnalysis(input: {
     // signaux frais (presse + LinkedIn), puis relit le brief news ci-dessous.
     await refreshNewsForAnalysis({ scopeCompanyId, companyName: company.name, userId });
 
-    // Contexte HubSpot (emails/contacts/deals) + brief news + roster clients.
-    const [hubspot, briefsRes, clientsRoster] = await Promise.all([
+    // Contexte HubSpot (emails/contacts/deals) + brief news + roster clients
+    // + guide de prospection (pour les opening_message).
+    const [hubspot, briefsRes, clientsRoster, prospectionGuide] = await Promise.all([
       loadCompanyHubspotContext(scopeCompanyId),
       db
         .from("watchlist_company_briefs")
@@ -127,6 +186,7 @@ export async function runAeAnalysis(input: {
         .eq("scope_company_id", scopeCompanyId)
         .eq("kind", "news"),
       loadClientsRoster(),
+      loadProspectionGuide(userId),
     ]);
 
     const newsBrief =
@@ -145,8 +205,8 @@ export async function runAeAnalysis(input: {
     const client = new Anthropic({ timeout: 120_000, maxRetries: 1 });
     const message = await client.messages.create({
       model: MODEL,
-      max_tokens: 2500,
-      system: SYSTEM_PROMPT,
+      max_tokens: 3500,
+      system: buildSystemPrompt(prospectionGuide),
       messages: [{ role: "user", content: userPrompt }],
       tools: [ANALYSIS_TOOL],
       tool_choice: { type: "tool", name: "emit_ae_analysis" },
@@ -160,16 +220,18 @@ export async function runAeAnalysis(input: {
     }
     const parsed = toolBlock.input as Partial<AeAnalysisContent>;
     const content: AeAnalysisContent = {
-      strategy: typeof parsed.strategy === "string" ? parsed.strategy : "",
+      relationship_state: RELATIONSHIP_STATES.includes(parsed.relationship_state as AeRelationshipState)
+        ? (parsed.relationship_state as AeRelationshipState)
+        : null,
+      state_summary: typeof parsed.state_summary === "string" ? parsed.state_summary : "",
+      strategy: "", // legacy v1, plus généré
       story_to_tell: typeof parsed.story_to_tell === "string" ? parsed.story_to_tell : "",
       priority_contacts: Array.isArray(parsed.priority_contacts)
         ? (parsed.priority_contacts as unknown[])
             .filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
             .map(normalizeContact)
         : [],
-      next_actions: Array.isArray(parsed.next_actions)
-        ? parsed.next_actions.filter((s): s is string => typeof s === "string")
-        : [],
+      next_actions: [], // legacy v1, redondant avec les contacts
       watch_outs: Array.isArray(parsed.watch_outs)
         ? parsed.watch_outs.filter((s): s is string => typeof s === "string")
         : [],
@@ -220,7 +282,8 @@ function normalizeContact(c: Record<string, unknown>): AeContact {
     name: typeof c.name === "string" ? c.name : "",
     role: typeof c.role === "string" ? c.role : null,
     rationale: typeof c.rationale === "string" ? c.rationale : "",
-    angle: typeof c.angle === "string" ? c.angle : "",
+    angle: "", // legacy v1, plus généré
+    opening_message: typeof c.opening_message === "string" ? c.opening_message : null,
     email: typeof c.email === "string" ? c.email : null,
     hubspot_id: typeof c.hubspot_id === "string" ? c.hubspot_id : null,
   };

@@ -24,19 +24,37 @@ export interface BriefRow<TContent = unknown> {
 
 // ── Typed content shapes per kind ───────────────────────────────────────────
 
-/** Un contact à prioriser dans le compte, avec l'angle de prospection. */
+/** État de la relation avec le compte (v2, affiché en pill). */
+export type AeRelationshipState =
+  | "never_contacted"
+  | "cold"
+  | "warm"
+  | "active"
+  | "lost_deal";
+
+/** Un contact à prioriser dans le compte, avec son message d'ouverture. */
 export interface AeContact {
   name: string;
   role: string | null;
-  rationale: string; // pourquoi cibler cette personne
-  angle: string; // accroche / angle d'approche concret
+  rationale: string; // 1 phrase, ancrée sur un fait précis du contexte
+  angle: string; // legacy v1 (vide en v2, remplacé par opening_message)
+  /**
+   * v2 : exemple de message d'ouverture complet, prêt à adapter, qui suit le
+   * guide de prospection (signal réel, problème avant solution, 1 CTA).
+   * Absent sur les analyses générées avant la v2.
+   */
+  opening_message?: string | null;
   email: string | null;
   hubspot_id: string | null;
 }
 
 /** Analyse AE : reco de prospection sur un compte (remplace l'ancienne synthèse IA). */
 export interface AeAnalysisContent {
-  strategy: string; // 2 à 4 paragraphes : comment aborder ce compte
+  /** v2 : état de la relation. Absent sur les anciennes analyses. */
+  relationship_state?: AeRelationshipState | null;
+  /** v2 : l'essentiel de la situation en 1 à 2 phrases. */
+  state_summary?: string;
+  strategy: string; // legacy v1 (2 à 4 paragraphes, vide en v2)
   /**
    * Histoire à raconter : accroche de social proof basée sur le secteur du
    * prospect et nos clients actuels (ex : "on coache déjà XXX dans votre
@@ -44,12 +62,14 @@ export interface AeAnalysisContent {
    */
   story_to_tell: string;
   priority_contacts: AeContact[]; // classés par priorité
-  next_actions: string[];
+  next_actions: string[]; // legacy v1 (vide en v2, redondant avec les contacts)
   watch_outs: string[]; // risques / à éviter
   sources_used: {
     emails: boolean;
     news: boolean;
     sector: boolean;
+    /** v2 : le modèle a complété avec sa connaissance générale de l'entreprise. */
+    world_knowledge?: boolean;
   };
 }
 

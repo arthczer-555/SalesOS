@@ -195,12 +195,16 @@ function buildPrompt(input: {
   if (ae) {
     lines.push("");
     lines.push("## Analyse AE (contexte stratégique)");
+    if (ae.relationship_state) lines.push(`État de la relation : ${ae.relationship_state}`);
+    if (ae.state_summary) lines.push(`Situation : ${ae.state_summary}`);
     if (ae.strategy) lines.push(`Stratégie : ${ae.strategy}`);
     if (ae.story_to_tell) lines.push(`Histoire à raconter (social proof) : ${ae.story_to_tell}`);
     if (ae.priority_contacts?.length) {
-      lines.push("Contacts prioritaires et angles :");
+      lines.push("Contacts prioritaires (rationale, et message d'ouverture proposé par l'analyse AE, à réutiliser comme base si le destinataire correspond) :");
       for (const c of ae.priority_contacts.slice(0, 5)) {
-        lines.push(`- ${c.name}${c.role ? ` (${c.role})` : ""} - angle : ${c.angle}`);
+        const hook = c.opening_message ?? c.angle;
+        lines.push(`- ${c.name}${c.role ? ` (${c.role})` : ""} - ${c.rationale}`);
+        if (hook) lines.push(`  Message proposé : ${hook.replace(/\n/g, " / ")}`);
       }
     }
   }
