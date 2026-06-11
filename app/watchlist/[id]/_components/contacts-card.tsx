@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import useSWR from "swr";
-import { Users, Mail, ExternalLink, Loader2, MailPlus } from "lucide-react";
+import { Users, History, ExternalLink, Loader2, MailPlus } from "lucide-react";
 import { COLORS, SHADOWS } from "@/lib/design/tokens";
 import { ContactHistoryModal } from "./contact-history-modal";
 import { ExchangesBadge } from "@/components/ui/exchanges-badge";
@@ -21,7 +21,7 @@ export function ContactsCard({
     `/api/watchlist/companies/${companyId}/contacts`,
     { revalidateOnFocus: false, dedupingInterval: 30_000 },
   );
-  const [historyTarget, setHistoryTarget] = React.useState<{ name: string; email: string } | null>(null);
+  const [historyTarget, setHistoryTarget] = React.useState<{ name: string; email: string; contactId: string } | null>(null);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
 
   const contacts = data?.contacts ?? [];
@@ -150,7 +150,7 @@ export function ContactsCard({
                       {c.email ? (
                         <button
                           type="button"
-                          onClick={() => setHistoryTarget({ name, email: c.email as string })}
+                          onClick={() => setHistoryTarget({ name, email: c.email as string, contactId: c.id })}
                           title="View history"
                           style={{
                             padding: 0,
@@ -193,11 +193,11 @@ export function ContactsCard({
                   {c.email && (
                     <button
                       type="button"
-                      onClick={() => setHistoryTarget({ name, email: c.email as string })}
-                      title="View history (SalesOS + Gmail)"
+                      onClick={() => setHistoryTarget({ name, email: c.email as string, contactId: c.id })}
+                      title="Conversation history (SalesOS + HubSpot + Gmail)"
                       style={iconBtn()}
                     >
-                      <Mail size={13} />
+                      <History size={13} />
                     </button>
                   )}
                   <a
@@ -220,6 +220,7 @@ export function ContactsCard({
         <ContactHistoryModal
           fullName={historyTarget.name}
           email={historyTarget.email}
+          contactId={historyTarget.contactId}
           onClose={() => setHistoryTarget(null)}
         />
       )}
