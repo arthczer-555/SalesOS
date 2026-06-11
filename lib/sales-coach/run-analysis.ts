@@ -9,7 +9,7 @@ import {
   resolveCompanyFromParticipants,
   type CompanyMatchSnapshot,
 } from "../hubspot";
-import { getClaapRecording, fetchTranscriptSegments, pickTranscriptJsonUrl, extractTitleSearchHint } from "../claap";
+import { getClaapRecording, fetchTranscriptSegments, pickTranscriptJsonUrl, extractInternalEmails, extractTitleSearchHint } from "../claap";
 import { computeTalkRatio } from "./talk-ratio";
 import {
   SALES_COACH_SYSTEM_PROMPT,
@@ -159,6 +159,19 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
       try {
         const rec = await getClaapRecording(row.claap_recording_id);
         const participants = rec?.meeting?.participants ?? [];
+
+        // Lazy backfill: rows created before the internal_emails column keep
+        // getting filled whenever they're (re)analyzed, so the "My meetings"
+        // attendee filter progressively covers legacy meetings too.
+        if (row.recorder_email) {
+          const internalEmails = extractInternalEmails(participants, row.recorder_email);
+          if (internalEmails.length > 0) {
+            await db
+              .from("sales_coach_analyses")
+              .update({ internal_emails: internalEmails })
+              .eq("id", id);
+          }
+        }
 
         if (!dealId && row.recorder_email) {
           const participantEmails = participants

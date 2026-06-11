@@ -29,7 +29,24 @@ export async function GET(req: NextRequest) {
     .limit(200);
 
   if (ownerParam !== "all") {
-    query = query.eq("user_id", user.id);
+    // "My meetings" = meetings I'm involved in, not just the ones I recorded:
+    //  - user_id: I recorded the meeting (legacy behavior)
+    //  - recorder_email: same, for rows whose user_id was never resolved
+    //  - internal_emails: I attended the meeting (same routing as the Slack DM)
+    //  - deal_snapshot owner_email: I own the HubSpot deal (also DM'd)
+    const email = (user.email ?? "").toLowerCase().trim();
+    if (email) {
+      query = query.or(
+        [
+          `user_id.eq.${user.id}`,
+          `recorder_email.ilike.${email}`,
+          `internal_emails.cs.{"${email}"}`,
+          `deal_snapshot->>owner_email.ilike.${email}`,
+        ].join(","),
+      );
+    } else {
+      query = query.eq("user_id", user.id);
+    }
   }
 
   if (dealParam) {
@@ -48,7 +65,33 @@ export async function GET(req: NextRequest) {
     query = query.lte("meeting_started_at", to);
   }
 
-  const { data, error } = await query;
+  let { data, error } = await query;
+
+  // Safety net for the deploy window where the internal_emails migration
+  // isn't applied yet: fall back to the legacy recorder-only filter instead
+  // of 500ing the whole list.
+  if (error && error.message.includes("internal_emails") && ownerParam !== "all") {
+    console.warn("[sales-coach/list] internal_emails column missing — falling back to user_id filter. Apply supabase/migrations/sales_coach_internal_emails.sql");
+    let legacyQuery = db
+      .from("sales_coach_analyses")
+      .select(
+        "id, claap_recording_id, user_id, recorder_email, hubspot_deal_id, meeting_title, meeting_started_at, meeting_type, meeting_kind, audience, status, score_global, slack_sent_at, created_at, error_message, participants, deal_snapshot",
+      )
+      .neq("meeting_type", "internal")
+      .neq("status", "skipped")
+      .eq("user_id", user.id)
+      .order("meeting_started_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (dealParam) legacyQuery = legacyQuery.eq("hubspot_deal_id", dealParam);
+    if (fromParam) legacyQuery = legacyQuery.gte("meeting_started_at", fromParam);
+    if (toParam) {
+      const to = toParam.length === 10 ? `${toParam}T23:59:59.999Z` : toParam;
+      legacyQuery = legacyQuery.lte("meeting_started_at", to);
+    }
+    ({ data, error } = await legacyQuery);
+  }
+
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   // Derive a lightweight `primary_contact` from deal_snapshot so legacy rows

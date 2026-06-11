@@ -5,6 +5,7 @@ import {
   getClaapRecording,
   pickTranscriptUrl,
   extractExternalParticipants,
+  extractInternalEmails,
   extractTitleSearchHint,
 } from "@/lib/claap";
 import { resolveDealFromParticipants } from "@/lib/hubspot";
@@ -95,6 +96,9 @@ export async function POST(req: NextRequest) {
   const externalParticipants = recorderEmail
     ? extractExternalParticipants(rec.meeting?.participants, recorderEmail)
     : [];
+  const internalEmails = recorderEmail
+    ? extractInternalEmails(rec.meeting?.participants, recorderEmail)
+    : [];
 
   const baseRow = {
     claap_recording_id: rec.id,
@@ -109,6 +113,7 @@ export async function POST(req: NextRequest) {
     // "Interne (Claap)" à partir des données Claap live, pas de cette colonne.
     meeting_type: "external",
     participants: externalParticipants.length > 0 ? externalParticipants : null,
+    internal_emails: internalEmails.length > 0 ? internalEmails : null,
     user_id: recorderUser?.id ?? null,
     status: "pending" as const,
     error_message: null,

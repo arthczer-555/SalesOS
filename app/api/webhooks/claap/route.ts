@@ -5,7 +5,7 @@ import {
   resolveCompanyFromParticipants,
   type CompanyMatchSnapshot,
 } from "@/lib/hubspot";
-import { extractExternalParticipants, extractTitleSearchHint } from "@/lib/claap";
+import { extractExternalParticipants, extractInternalEmails, extractTitleSearchHint } from "@/lib/claap";
 import { sendManualDealAlert } from "@/lib/sales-coach/admin-alert";
 
 export const dynamic = "force-dynamic";
@@ -168,6 +168,9 @@ export async function POST(req: NextRequest) {
     const externalParticipants = recorderEmail
       ? extractExternalParticipants(rec.meeting?.participants, recorderEmail)
       : [];
+    const internalEmails = recorderEmail
+      ? extractInternalEmails(rec.meeting?.participants, recorderEmail)
+      : [];
 
     const baseRow = {
       claap_recording_id: rec.id,
@@ -180,6 +183,7 @@ export async function POST(req: NextRequest) {
       meeting_started_at: rec.meeting?.startingAt ?? null,
       meeting_type: meetingType || null,
       participants: externalParticipants.length > 0 ? externalParticipants : null,
+      internal_emails: internalEmails.length > 0 ? internalEmails : null,
       updated_at: new Date().toISOString(),
     };
 

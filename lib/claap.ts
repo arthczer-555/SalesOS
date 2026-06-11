@@ -406,6 +406,27 @@ export function extractExternalParticipants(
     }));
 }
 
+/**
+ * Emails of the internal participants (same domain as the recorder, recorder
+ * included if Claap lists them), lowercased and deduped. Persisted on the row
+ * so the "My meetings" filter also matches colleagues who attended the
+ * meeting, not just the recorder.
+ */
+export function extractInternalEmails(
+  participants: ClaapParticipant[] | undefined,
+  recorderEmail: string,
+): string[] {
+  const recorderDomain = recorderEmail.split("@")[1]?.toLowerCase();
+  if (!recorderDomain) return [];
+  return Array.from(
+    new Set(
+      (participants ?? [])
+        .map((p) => p.email?.toLowerCase().trim() ?? "")
+        .filter((e) => !!e && e.includes("@") && e.split("@")[1] === recorderDomain),
+    ),
+  );
+}
+
 // ── Recherche multi-critères pour le chatbot ─────────────────────────────────
 
 export type ClaapMeetingMatch = {
