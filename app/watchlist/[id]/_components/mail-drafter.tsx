@@ -69,10 +69,18 @@ export function MailDrafter({
   const [copied, setCopied] = React.useState(false);
   const [result, setResult] = React.useState<{ ok: boolean; msg: string } | null>(null);
 
+  // Le bandeau de succès s'efface tout seul (l'erreur reste visible).
+  React.useEffect(() => {
+    if (!result?.ok) return;
+    const t = setTimeout(() => setResult(null), 4000);
+    return () => clearTimeout(t);
+  }, [result]);
+
   // Prefill depuis l'analyse AE : le contact passe en To (remplace l'adresse du
   // user auto-préremplie, sinon s'ajoute), objet et corps seulement si vides.
   React.useEffect(() => {
     if (!prefill?.to) return;
+    setResult(null);
     setTo((prev) => {
       const existing = prev.split(",").map((s) => s.trim()).filter(Boolean);
       if (existing.some((e) => e.toLowerCase() === prefill.to.toLowerCase())) return prev;
