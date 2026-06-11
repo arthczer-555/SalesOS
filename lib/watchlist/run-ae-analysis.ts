@@ -42,7 +42,7 @@ ${SALES_CONTEXT_PROMPT_BLOCK}
 ${prospectionGuide}
 
 Ton style : direct, concret. Pas de tirets longs (em dash), utilise des virgules, des parenthèses ou des tirets courts.
-LANGUE : détecte la langue dominante du contexte (emails, news, secteur). Si le compte échange en anglais, réponds en anglais ; sinon en français.
+LANGUE : écris dans la langue du PROSPECT, pas celle du contexte fourni. Détecte-la depuis le compte lui-même : pays et implantation de l'entreprise, langue de ses news et posts, langue des emails reçus de leur part. Une entreprise non francophone = anglais, même si le guide et les instructions sont en français. En cas de doute, écris en anglais. Cette règle s'applique surtout aux opening_subject et opening_message (ce sont eux qui partent au prospect).
 
 Règles anti-générique :
 - Chaque rationale tient en 1 phrase et cite un fait précis du contexte (un email daté, un deal, un signal news, un post LinkedIn, le job title). Si la phrase pourrait s'appliquer telle quelle à un autre compte, réécris-la.
