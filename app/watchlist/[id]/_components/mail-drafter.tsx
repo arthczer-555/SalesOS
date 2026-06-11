@@ -134,6 +134,11 @@ export function MailDrafter({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to send");
       setResult({ ok: true, msg: "Sent via Gmail" });
+      // Reset pour enchaîner sur le mail suivant : objet/corps vidés, To remis à
+      // l'adresse du user (le prefill du prochain Prospect ne remplit que des champs vides).
+      setSubject("");
+      setBody("");
+      setTo(userEmail);
       onSent?.();
     } catch (e) {
       setResult({ ok: false, msg: e instanceof Error ? e.message : "Error" });
