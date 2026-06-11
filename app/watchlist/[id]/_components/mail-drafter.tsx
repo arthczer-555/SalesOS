@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useUser } from "@clerk/nextjs";
 import { Mail, Sparkles, Send, Copy, Check, Loader2, X, Plus } from "lucide-react";
 import { COLORS, SHADOWS } from "@/lib/design/tokens";
 
@@ -33,8 +34,16 @@ export function MailDrafter({
   onRecipientsChange: (next: DraftRecipient[]) => void;
   onSent?: () => void;
 }) {
+  const { user } = useUser();
+  const userEmail = user?.primaryEmailAddress?.emailAddress ?? user?.emailAddresses[0]?.emailAddress ?? "";
+
   const [to, setTo] = React.useState("");
   const [cc, setCc] = React.useState("");
+
+  // Pré-remplit "To" avec l'adresse du user connecté (sans écraser une saisie manuelle).
+  React.useEffect(() => {
+    if (userEmail) setTo((prev) => prev || userEmail);
+  }, [userEmail]);
   const [subject, setSubject] = React.useState("");
   const [body, setBody] = React.useState("");
   const [instructions, setInstructions] = React.useState("");
