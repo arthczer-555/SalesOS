@@ -308,6 +308,22 @@ export function MailDrafter({
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {r.name?.trim() || r.email}
                 </span>
+                {personalized && (
+                  <span
+                    style={{
+                      flexShrink: 0,
+                      padding: "1px 6px",
+                      borderRadius: 999,
+                      background: "#fff",
+                      border: `1px solid ${COLORS.brand}`,
+                      fontSize: 10,
+                      fontWeight: 700,
+                    }}
+                    title={`[prénom] will be replaced by "${firstNameOf(r)}" for this prospect`}
+                  >
+                    {firstNameOf(r) || "?"}
+                  </span>
+                )}
                 <button
                   type="button"
                   onClick={() => removeRecipient(r.email)}
