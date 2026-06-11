@@ -4,7 +4,7 @@ import { use, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ExternalLink, AlertTriangle, Loader2, Sparkles, Clock, Trash2, RefreshCw, Search, CheckCircle2, MailPlus, ListChecks, Video } from "lucide-react";
+import { ArrowLeft, ExternalLink, AlertTriangle, Loader2, Sparkles, Clock, Trash2, RefreshCw, Search, CheckCircle2, MailPlus, ListChecks, Video, UserCheck } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { getMissingHubspotFields, mergeOnboardingItems, type ClientRow } from "@/lib/clients/types";
 import { useUserMe } from "@/lib/hooks/use-user-me";
@@ -49,6 +49,32 @@ function fmtAmount(n: number | null): string {
 // Destinataire de l'email "infos manquantes" : signataire en priorite, sinon
 // contact RH principal / operationnel. Meme logique que la route draft (cf.
 // draft-missing-info-email/route.ts pickContact). Nom prefere, sinon email.
+// Affiché en haut de la fiche une fois le compte transmis : qui sont l'AM et le
+// CS qui ont récupéré le client.
+function HandoverChip({ role, name, email }: { role: string; name: string | null; email: string }) {
+  return (
+    <span
+      title={email}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        fontSize: 11,
+        fontWeight: 500,
+        padding: "3px 9px",
+        borderRadius: 999,
+        border: `1px solid ${COLORS.line}`,
+        background: COLORS.bgSoft,
+        color: COLORS.ink1,
+      }}
+    >
+      <UserCheck size={11} style={{ color: COLORS.brand }} />
+      <strong style={{ fontWeight: 700, color: COLORS.ink2 }}>{role}</strong>
+      {name || email}
+    </span>
+  );
+}
+
 function StatusBanner({ client, onConfirmMeetings }: { client: ClientRow; onConfirmMeetings: () => void }) {
   if (client.enrichment_status === "awaiting_meetings") {
     return (
@@ -330,6 +356,16 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             {client.owner_name || client.owner_email || "No owner"} · Signed on {fmtDate(client.closedwon_at)} ·{" "}
             {fmtAmount(client.deal_amount)}
           </div>
+          {client.am_cs_notified_at && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+              {client.am_email && (
+                <HandoverChip role="AM" name={client.am_name} email={client.am_email} />
+              )}
+              {client.cs_email && (
+                <HandoverChip role="CS" name={client.cs_name} email={client.cs_email} />
+              )}
+            </div>
+          )}
         </div>
 
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
