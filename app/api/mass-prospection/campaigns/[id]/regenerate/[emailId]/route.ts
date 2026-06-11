@@ -61,7 +61,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     "LANGUE : détecte la langue du PROSPECT à partir, dans l'ordre, de la FICHE LINKEDIN ENTREPRISE / CONTEXTE ENTREPRISE (pays, langue des contenus), puis du poste du prospect, puis de l'EMAIL ACTUEL. Les instructions de réécriture et l'objectif de campagne ne définissent pas la langue, sauf demande explicite de l'utilisateur (ex : 'en français'). En cas de doute, repli sur l'anglais. Rédige TOUT (subject, body, signature) dans cette langue.",
     "Mobilise ta connaissance générale de l'entreprise du prospect pour ancrer l'accroche. Si des blocs CONTEXTE ENTREPRISE ou FICHE LINKEDIN ENTREPRISE sont fournis, priorise ces informations. Reste factuel : n'invente jamais un fait, un chiffre ou un nom.",
     `L'email doit être signé par : ${senderName}.`,
-    "Réponds UNIQUEMENT en JSON valide avec exactement ces deux clés : { \"subject\": \"...\", \"body\": \"...\" }",
+    "Réponds UNIQUEMENT en JSON valide avec exactement ces trois clés, dans cet ordre : { \"language\": \"...\", \"subject\": \"...\", \"body\": \"...\" }. \"language\" est le code de la langue détectée (ex : \"en\", \"fr\") ; déclare-la AVANT d'écrire le reste. Le subject et le body doivent être STRICTEMENT dans cette même langue, sans aucun mélange.",
     "Le body doit être en texte brut (pas de HTML, pas de markdown).",
     guide ? `\n---\nGUIDE DE PROSPECTION :\n${guide}` : "",
   ].filter(Boolean).join("\n");

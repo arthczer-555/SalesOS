@@ -12,6 +12,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
+import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import {
   createCompanyContextCache,
   createCompanyLinkedInCache,
@@ -72,7 +73,8 @@ export async function runCampaignGeneration(
     "Mobilise ta connaissance générale de l'entreprise du prospect (secteur, taille, actualités, enjeux RH connus) pour ancrer l'accroche. Si des blocs CONTEXTE ENTREPRISE ou FICHE LINKEDIN ENTREPRISE sont fournis, priorise ces informations. Reste factuel : n'invente jamais un fait, un chiffre ou un nom.",
     "Varie les accroches d'un prospect à l'autre : si deux prospects se ressemblent, change l'angle (secteur, actualité, douleur).",
     `L'email doit être signé par : ${senderName}. Termine toujours l'email par une signature avec ce nom.`,
-    "Réponds UNIQUEMENT en JSON valide avec exactement ces deux clés : { \"subject\": \"...\", \"body\": \"...\" }",
+    NO_EM_DASH_RULE,
+    "Réponds UNIQUEMENT en JSON valide avec exactement ces trois clés, dans cet ordre : { \"language\": \"...\", \"subject\": \"...\", \"body\": \"...\" }. \"language\" est le code de la langue détectée (ex : \"en\", \"fr\") ; déclare-la AVANT d'écrire le reste. Le subject et le body doivent être STRICTEMENT dans cette même langue, sans aucun mélange.",
     "Le body doit être en texte brut (pas de HTML, pas de markdown).",
     guide ? `\n---\nGUIDE DE PROSPECTION (exemples et instructions) :\n${guide}` : "",
   ].filter(Boolean).join("\n");
@@ -114,9 +116,9 @@ export async function runCampaignGeneration(
         const prospectBlock = [
           `Nom : ${email.first_name} ${email.last_name}`,
           `Email : ${email.email}`,
-          `Poste : ${email.job_title || "—"}`,
-          `Entreprise : ${email.company || "—"}`,
-          `Secteur : ${email.industry || "—"}`,
+          `Poste : ${email.job_title || "-"}`,
+          `Entreprise : ${email.company || "-"}`,
+          `Secteur : ${email.industry || "-"}`,
           extra.lifecyclestage ? `Statut CRM : ${extra.lifecyclestage}` : null,
           extra.crmSummary ? `Historique CRM :\n${extra.crmSummary}` : null,
           campaign.qcm_type ? `Type de message : ${campaign.qcm_type === "intro" ? "Premier contact (intro)" : "Follow-up / relance"}` : null,

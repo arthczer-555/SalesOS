@@ -4,6 +4,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
+import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import {
   fetchCompanyLinkedInContext,
   fetchCompanyWebContext,
@@ -104,14 +105,15 @@ export async function POST(req: NextRequest) {
       ? "Un profil LinkedIn enrichi est disponible : utilise-le pour personnaliser (mentionne 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente, pas de namedropping forcé)."
       : "",
     `L'email doit être signé par : ${senderName}. Termine toujours l'email par une signature avec ce nom.`,
-    "Réponds UNIQUEMENT en JSON valide avec exactement ces deux clés : { \"subject\": \"...\", \"body\": \"...\" }",
+    NO_EM_DASH_RULE,
+    "Réponds UNIQUEMENT en JSON valide avec exactement ces trois clés, dans cet ordre : { \"language\": \"...\", \"subject\": \"...\", \"body\": \"...\" }. \"language\" est le code de la langue détectée (ex : \"en\", \"fr\") ; déclare-la AVANT d'écrire le reste. Le subject et le body doivent être STRICTEMENT dans cette même langue, sans aucun mélange.",
     "Le body doit être en texte brut (pas de HTML, pas de markdown).",
     guide ? `\n---\nGUIDE DE PROSPECTION (exemples et instructions) :\n${guide}` : "",
   ].filter(Boolean).join("\n");
 
   const userPrompt = [
     `Voici les informations sur le prospect :\n\n${prospectBlock}`,
-    linkedin.text ? `\nPROFIL LINKEDIN ENRICHI (utilise-le pour personnaliser : 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente — pas de namedropping forcé) :\n${linkedin.text}` : "",
+    linkedin.text ? `\nPROFIL LINKEDIN ENRICHI (utilise-le pour personnaliser : 1 élément précis du parcours, d'une compétence ou d'une expérience pertinente, pas de namedropping forcé) :\n${linkedin.text}` : "",
     companyLinkedIn ? `\nFICHE LINKEDIN ENTREPRISE :\n${companyLinkedIn}` : "",
     companyWeb.text ? `\nCONTEXTE ENTREPRISE (sources web récentes, à utiliser en priorité si pertinent) :\n${companyWeb.text}` : "",
     "\nRédige un email de prospection personnalisé pour cette personne.",
@@ -140,6 +142,8 @@ export async function POST(req: NextRequest) {
   } catch {
     body = raw;
   }
+  subject = stripEmDashes(subject);
+  body = stripEmDashes(body);
 
   const provenance: DraftProvenance = {
     linkedinProfile: linkedinEnriched,
