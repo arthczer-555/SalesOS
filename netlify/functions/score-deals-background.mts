@@ -88,6 +88,20 @@ export default async () => {
     } catch (e) {
       console.error("[score-deals-bg] ae-digest failed:", e);
     }
+
+    // Puis le recap canal du scoring (#11-everything-prospects + thread Q&A).
+    // Bloc séparé : un échec du digest n'empêche pas le recap, et inversement.
+    try {
+      const rc = await fetch(`${siteUrl}/api/deals/scoring-recap`, {
+        method: "POST",
+        headers: { "X-Cron-Secret": cronSecret, "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const rcData = await rc.json().catch(() => null);
+      console.log(`[score-deals-bg] scoring-recap:`, rc.status, rcData);
+    } catch (e) {
+      console.error("[score-deals-bg] scoring-recap failed:", e);
+    }
   } catch (e) {
     console.error("[score-deals-bg] fatal:", e);
   }

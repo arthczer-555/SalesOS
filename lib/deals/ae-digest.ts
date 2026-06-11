@@ -33,7 +33,8 @@
 //   - "test" (défaut) : tous les DM (des owners sales) partent chez Arthur
 //     (CLAAP_NOTE_SLACK_TEST_USER), préfixés d'un header montrant l'AE cible ;
 //   - "prod" : DM au vrai AE (users.slack_user_id -> lookup par son email).
-//     Aucun fallback par nom ni vers Arthur en prod.
+//     Aucun fallback par nom ni vers Arthur en prod. Phase BETA : le digest est
+//     marqué BETA et Arthur reçoit une copie de chaque envoi (jamais bloquant).
 //
 // Idempotence : on stamp (owner_id, run_date) dans deal_ae_digest_log et on ne
 // re-DM jamais un AE déjà notifié le même jour (un retour du cron ne double pas).
@@ -56,9 +57,9 @@ const CAP_AT_RISK = 6;
 const CAP_COLD = 4;
 const MIN_TARGET = 8; // si moins, on complète avec les leftovers (≤ max 15)
 
-type Bucket = "hot" | "at_risk" | "cold";
+export type Bucket = "hot" | "at_risk" | "cold";
 
-type DigestDeal = {
+export type DigestDeal = {
   id: string;
   name: string;
   amount: number | null;
@@ -72,7 +73,7 @@ type DigestDeal = {
   bucket: Bucket;
 };
 
-type Owner = { id: string; email: string | null; firstName: string | null; lastName: string | null };
+export type Owner = { id: string; email: string | null; firstName: string | null; lastName: string | null };
 
 // ─── HubSpot ──────────────────────────────────────────────────────────────────
 async function hubspot(path: string, method = "GET", body?: unknown) {
@@ -266,7 +267,7 @@ async function modelPreference(): Promise<string> {
   }
 }
 
-const BUCKET_LABEL: Record<Bucket, string> = { hot: "HOT", at_risk: "AT RISK", cold: "COLD" };
+export const BUCKET_LABEL: Record<Bucket, string> = { hot: "HOT", at_risk: "AT RISK", cold: "COLD" };
 
 async function polishWithAi(
   firstName: string,
@@ -415,6 +416,56 @@ async function resolveRecipient(
   return memberId ? { memberId, label, firstName } : null;
 }
 
+// ─── Données scorées partagées ────────────────────────────────────────────────
+// Fetch HubSpot (deals ouverts du pipeline sales + owners + labels de stages),
+// JOIN avec deal_scores, et catégorisation en buckets. Partagé entre le digest
+// par AE (ci-dessous) et le recap canal (lib/deals/scoring-recap.ts).
+// Renvoie null si le pipeline sales n'est pas résolu (garde-fou anti-leak CS).
+export async function fetchScoredDealData(): Promise<
+  { deals: DigestDeal[]; owners: Map<string, Owner> } | null
+> {
+  const salesPipelineId = await fetchSalesPipelineId();
+  // Garde-fou : sans pipeline sales résolu, on n'envoie rien. Sinon
+  // fetchOpenDeals ramasserait TOUS les pipelines (dont Customer Success) et
+  // des clients déjà gagnés (suivi / renouvellement) repasseraient en "Hot".
+  if (!salesPipelineId) return null;
+
+  const now = new Date();
+  const [hsDeals, owners, stageLabels] = await Promise.all([
+    fetchOpenDeals(salesPipelineId),
+    fetchOwners(),
+    fetchStageLabels(),
+  ]);
+  const scores = await fetchScores(hsDeals.map((d) => d.id));
+
+  // JOIN deals HubSpot × scores -> deals actionnables.
+  const deals: DigestDeal[] = [];
+  for (const hd of hsDeals) {
+    const ownerId = hd.properties.hubspot_owner_id;
+    if (!ownerId) continue;
+    const sc = scores.get(hd.id);
+    if (!sc?.score) continue; // pas encore scoré -> on ignore
+    const lastMs = toMs(hd.properties.notes_last_contacted) ?? toMs(hd.properties.hs_lastmodifieddate);
+    const daysSilent = lastMs !== null ? Math.floor((now.getTime() - lastMs) / 864e5) : null;
+    const amount = hd.properties.amount ? Number(hd.properties.amount) : null;
+    const score = sc.score.total;
+    deals.push({
+      id: hd.id,
+      name: hd.properties.dealname || "Untitled deal",
+      amount: Number.isFinite(amount as number) ? amount : null,
+      stageLabel: hd.properties.dealstage ? stageLabels.get(hd.properties.dealstage) ?? null : null,
+      ownerId,
+      daysSilent,
+      score,
+      nextAction: sc.next_action,
+      reasoning: sc.reasoning,
+      missing: missingFields(sc.qualification),
+      bucket: categorize(score, daysSilent),
+    });
+  }
+  return { deals, owners };
+}
+
 // ─── Entrée principale ────────────────────────────────────────────────────────
 export type AeDigestResult = {
   ok: boolean;
@@ -437,48 +488,31 @@ export async function buildAndSendAeDigests(): Promise<AeDigestResult> {
   const runDate = now.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
   const dateLabel = now.toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
 
-  const salesPipelineId = await fetchSalesPipelineId();
-  // Garde-fou : sans pipeline sales résolu, on n'envoie rien. Sinon
-  // fetchOpenDeals ramasserait TOUS les pipelines (dont Customer Success) et
-  // des clients déjà gagnés (suivi / renouvellement) repasseraient en "Hot".
-  if (!salesPipelineId) {
+  const data = await fetchScoredDealData();
+  if (!data) {
     console.warn("[ae-digest] sales pipeline non résolu, digest annulé (pas de filtre = leak CS)");
     return { ok: true, owners: 0, sent: 0, skipped: 0, errors: 0, reason: "sales_pipeline_unresolved" };
   }
-  const [hsDeals, owners, stageLabels] = await Promise.all([
-    fetchOpenDeals(salesPipelineId),
-    fetchOwners(),
-    fetchStageLabels(),
-  ]);
-  const scores = await fetchScores(hsDeals.map((d) => d.id));
+  const { deals: allDeals, owners } = data;
 
-  // JOIN deals HubSpot × scores -> deals actionnables, groupés par owner.
+  // Groupement par owner.
   const byOwner = new Map<string, DigestDeal[]>();
-  for (const hd of hsDeals) {
-    const ownerId = hd.properties.hubspot_owner_id;
-    if (!ownerId) continue;
-    const sc = scores.get(hd.id);
-    if (!sc?.score) continue; // pas encore scoré -> on ignore
-    const lastMs = toMs(hd.properties.notes_last_contacted) ?? toMs(hd.properties.hs_lastmodifieddate);
-    const daysSilent = lastMs !== null ? Math.floor((now.getTime() - lastMs) / 864e5) : null;
-    const amount = hd.properties.amount ? Number(hd.properties.amount) : null;
-    const score = sc.score.total;
-    const deal: DigestDeal = {
-      id: hd.id,
-      name: hd.properties.dealname || "Untitled deal",
-      amount: Number.isFinite(amount as number) ? amount : null,
-      stageLabel: hd.properties.dealstage ? stageLabels.get(hd.properties.dealstage) ?? null : null,
-      ownerId,
-      daysSilent,
-      score,
-      nextAction: sc.next_action,
-      reasoning: sc.reasoning,
-      missing: missingFields(sc.qualification),
-      bucket: categorize(score, daysSilent),
-    };
-    const arr = byOwner.get(ownerId) ?? [];
+  for (const deal of allDeals) {
+    const arr = byOwner.get(deal.ownerId) ?? [];
     arr.push(deal);
-    byOwner.set(ownerId, arr);
+    byOwner.set(deal.ownerId, arr);
+  }
+
+  // BETA prod : Arthur reçoit une copie de chaque digest envoyé aux AE (suivi
+  // pendant la phase de rodage). Résolu une fois avant la boucle ; si la
+  // résolution échoue on continue sans copie (jamais bloquant).
+  let arthurCopy: { memberId: string } | null = null;
+  if (mode === "prod") {
+    try {
+      arthurCopy = await findArthurFallbackRecipient();
+    } catch (e) {
+      console.warn("[ae-digest] résolution Arthur (copie BETA) échouée:", e instanceof Error ? e.message : e);
+    }
   }
 
   let sent = 0;
@@ -518,6 +552,9 @@ export async function buildAndSendAeDigests(): Promise<AeDigestResult> {
       let text = renderMessage({ dateLabel, intro, deals: selected, actions, appUrl });
       if (mode === "test") {
         text = `:test_tube: *Test* - in prod this digest would go to ${recipient.label}\n\n${text}`;
+      } else {
+        // Phase de rodage : le digest est marqué BETA pour les AE.
+        text = `:construction: *BETA* - this digest is new, tell Arthur if something looks off\n\n${text}`;
       }
 
       const posted = await dmRecipient(recipient.memberId, text);
@@ -530,6 +567,19 @@ export async function buildAndSendAeDigests(): Promise<AeDigestResult> {
         slack_channel: posted.channelId,
       });
       sent++;
+
+      // Copie BETA pour Arthur en prod (jamais bloquant, pas compté en erreur).
+      // Pas de stamp dédié : l'idempotence est héritée du log de l'owner.
+      if (arthurCopy && arthurCopy.memberId !== recipient.memberId) {
+        try {
+          await dmRecipient(
+            arthurCopy.memberId,
+            `:eyes: *Copy* - BETA digest sent to ${recipient.label}\n\n${text}`,
+          );
+        } catch (e) {
+          console.warn(`[ae-digest] copie BETA Arthur échouée (owner ${ownerId}):`, e instanceof Error ? e.message : e);
+        }
+      }
     } catch (e) {
       errors++;
       console.error(`[ae-digest] owner ${ownerId} failed:`, e instanceof Error ? e.message : e);
