@@ -6,6 +6,7 @@ import { logUsage } from "@/lib/log-usage";
 import { loadCompanyHubspotContext } from "@/lib/watchlist/fetch-company-recap";
 import { loadClientsRoster, formatClientsRoster } from "@/lib/watchlist/clients-roster";
 import { getBriefs, type AeAnalysisContent, type HubspotRecapContent, type NewsContent } from "@/lib/watchlist/briefs";
+import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -59,6 +60,7 @@ Règles de rédaction :
 - Ne jamais inventer un fait, un chiffre, un nom de client ou un engagement. Appuie-toi uniquement sur le contexte fourni.
 - Si une "histoire à raconter" (social proof) est fournie, intègre-la naturellement (ex : "on accompagne déjà X dans votre secteur"). Ne cite que des clients réellement listés.
 - Si des news récentes / signaux sont fournis (levée, nomination, expansion...), ancre l'accroche sur le trigger le plus pertinent et récent. N'utilise que des faits réellement présents dans le contexte.
+- Si un guide de prospection est fourni, respecte son ton, sa structure et ses exemples.
 - Suis les instructions de l'utilisateur en priorité si elles sont fournies.
 - Termine par une signature simple avec le prénom de l'expéditeur et un call-to-action léger (ex : proposer un créneau de 20 min).
 - Pas de markdown dans le corps.
@@ -89,14 +91,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Account not found" }, { status: 404 });
   }
 
-  const { data: userRow } = await db.from("users").select("name").eq("id", user.id).single();
-  const senderName = userRow?.name?.trim() || user.email || "L'équipe Coachello";
-
-  const [hubspot, briefs, clientsRoster] = await Promise.all([
+  const [{ data: userRow }, { data: globalGuideEntry }, hubspot, briefs, clientsRoster] = await Promise.all([
+    db.from("users").select("name, prospection_guide").eq("id", user.id).single(),
+    db.from("guide_defaults").select("content").eq("key", "prospection").single(),
     loadCompanyHubspotContext(id).catch(() => null),
     getBriefs(id).catch(() => null),
     loadClientsRoster().catch(() => []),
   ]);
+  const senderName = userRow?.name?.trim() || user.email || "L'équipe Coachello";
+  const guide = userRow?.prospection_guide ?? globalGuideEntry?.content ?? DEFAULT_PROSPECTION_GUIDE;
 
   const ae = briefs?.ae_analysis?.content ?? null;
   const news = briefs?.news?.content ?? null;
@@ -110,6 +113,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ae,
     news,
     rosterText: formatClientsRoster(clientsRoster),
+    guide,
   });
 
   try {
@@ -149,8 +153,9 @@ function buildPrompt(input: {
   ae: AeAnalysisContent | null;
   news: NewsContent | null;
   rosterText: string;
+  guide: string;
 }): string {
-  const { company, senderName, instructions, recipients, hubspot, ae, news, rosterText } = input;
+  const { company, senderName, instructions, recipients, hubspot, ae, news, rosterText, guide } = input;
   const lines: string[] = [];
 
   lines.push(`Expéditeur : ${senderName} (Coachello).`);
@@ -177,6 +182,13 @@ function buildPrompt(input: {
     lines.push("");
     lines.push("## Instructions de l'utilisateur (à suivre en priorité)");
     lines.push(instructions);
+  }
+
+  // Guide de prospection (style, structure, exemples)
+  if (guide) {
+    lines.push("");
+    lines.push("## Guide de prospection (ton, structure, exemples à respecter)");
+    lines.push(guide);
   }
 
   // Analyse AE
