@@ -2,10 +2,11 @@
 
 import * as React from "react";
 import useSWR from "swr";
-import { Users, History, ExternalLink, Loader2, Mail, MailPlus } from "lucide-react";
+import { Users, History, ExternalLink, Loader2, Mail, MailPlus, Check } from "lucide-react";
 import { COLORS, SHADOWS } from "@/lib/design/tokens";
 import { ContactHistoryModal } from "./contact-history-modal";
 import { useOutreachCounts } from "@/lib/hooks/use-outreach-counts";
+import { useOutreachReplies } from "@/lib/hooks/use-outreach-replies";
 import type { DraftRecipient } from "./mail-drafter";
 import type { CompanyContactsResponse } from "@/app/api/watchlist/companies/[id]/contacts/route";
 
@@ -30,6 +31,7 @@ export function ContactsCard({
     [data],
   );
   const { countByEmail } = useOutreachCounts(contactEmails);
+  const { repliedByEmail } = useOutreachReplies(contactEmails);
 
   function nameOf(c: (typeof contacts)[number]) {
     return `${c.firstname ?? ""} ${c.lastname ?? ""}`.trim() || c.email || "Contact";
@@ -199,6 +201,25 @@ export function ContactsCard({
                     >
                       <Mail size={10} />
                       {countByEmail(c.email)}
+                    </span>
+                  )}
+                  {c.email && countByEmail(c.email) > 0 && repliedByEmail(c.email) && (
+                    <span
+                      title="Reply received from this contact"
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        padding: "2px 5px",
+                        borderRadius: 99,
+                        lineHeight: 1,
+                        flexShrink: 0,
+                        color: "#059669",
+                        background: "#ecfdf5",
+                        border: "1px solid #a7f3d0",
+                      }}
+                    >
+                      <Check size={10} strokeWidth={3} />
                     </span>
                   )}
                   {c.email && onProspect && (

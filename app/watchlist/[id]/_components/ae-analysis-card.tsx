@@ -1,12 +1,14 @@
 "use client";
 
 import * as React from "react";
+import useSWR from "swr";
 import { useUser } from "@clerk/nextjs";
-import { Target, MailPlus, BookOpen, Copy, Check, Send, Loader2 } from "lucide-react";
+import { Target, MailPlus, BookOpen, Copy, Check, Send, Loader2, ChevronDown, ChevronUp } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { BriefSection } from "./brief-section";
 import { NotesEditor } from "./notes-editor";
 import type { DraftRecipient } from "./mail-drafter";
+import type { CompanyEmailsResponse } from "@/app/api/watchlist/companies/[id]/emails/route";
 import type {
   BriefRow,
   AeAnalysisContent,
@@ -51,6 +53,37 @@ export function AeAnalysisCard({
   const status = isRefreshing && baseStatus !== "running" ? "running" : baseStatus;
   const content = brief?.content ?? null;
   const staleBadge = computeStaleBadge(brief, dependencies);
+
+  // Un contact déjà contacté disparaît de "Contacts to prospect" (pas de resend).
+  // Persistant : on croise avec l'historique d'envois de la company (outreach_log),
+  // limité aux envois postérieurs à la génération de l'analyse pour qu'une
+  // ré-génération réaffiche les contacts qu'elle recommande à nouveau.
+  const { data: emailsData } = useSWR<CompanyEmailsResponse>(
+    `/api/watchlist/companies/${companyId}/emails`,
+    { revalidateOnFocus: false, dedupingInterval: 15_000 },
+  );
+  const [justSent, setJustSent] = React.useState<Set<string>>(() => new Set());
+  const handleSent = React.useCallback(
+    (email: string) => {
+      setJustSent((prev) => new Set(prev).add(email.toLowerCase()));
+      onSent?.();
+    },
+    [onSent],
+  );
+  const briefCompletedMs = brief?.completed_at ? new Date(brief.completed_at).getTime() : 0;
+  const contactedSinceBrief = React.useMemo(() => {
+    const set = new Set<string>();
+    for (const e of emailsData?.emails ?? []) {
+      if (new Date(e.sent_at).getTime() < briefCompletedMs) continue;
+      for (const r of e.recipients) set.add(r.email.toLowerCase());
+    }
+    return set;
+  }, [emailsData, briefCompletedMs]);
+  const visibleContacts = (content?.priority_contacts ?? []).filter((c) => {
+    const email = c.email?.toLowerCase();
+    if (!email) return true;
+    return !contactedSinceBrief.has(email) && !justSent.has(email);
+  });
 
   return (
     <BriefSection
@@ -137,14 +170,32 @@ export function AeAnalysisCard({
           {content.priority_contacts.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <SectionLabel>🎯 Contacts to prospect</SectionLabel>
+              {visibleContacts.length === 0 ? (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "8px 10px",
+                    borderRadius: 8,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "#059669",
+                    background: "#ecfdf5",
+                    border: "1px solid #a7f3d0",
+                  }}
+                >
+                  <Check size={12} /> All suggested contacts have been contacted.
+                </div>
+              ) : (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {content.priority_contacts.map((c, i) => (
+                {visibleContacts.map((c, i) => (
                   <ContactRow
-                    key={i}
+                    key={c.email ?? c.name ?? i}
                     index={i}
                     contact={c}
                     companyId={companyId}
-                    onSent={onSent}
+                    onSent={handleSent}
                     onProspect={
                       c.email && onProspect
                         ? () =>
@@ -157,6 +208,7 @@ export function AeAnalysisCard({
                   />
                 ))}
               </div>
+              )}
             </div>
           )}
 
@@ -197,7 +249,7 @@ function ContactRow({
   contact: AeContact;
   companyId: string;
   onProspect?: () => void;
-  onSent?: () => void;
+  onSent?: (email: string) => void;
 }) {
   return (
     <div
@@ -277,7 +329,7 @@ function OpeningMessage({
 }: {
   contact: AeContact;
   companyId: string;
-  onSent?: () => void;
+  onSent?: (email: string) => void;
 }) {
   const { user } = useUser();
   const senderFirstName = user?.firstName ?? "";
@@ -287,6 +339,10 @@ function OpeningMessage({
   const [copied, setCopied] = React.useState(false);
   const [sending, setSending] = React.useState(false);
   const [result, setResult] = React.useState<{ ok: boolean; msg: string } | null>(null);
+  // Zone repliable, fermée par défaut. Après envoi, la zone disparaît (remplacée
+  // par une confirmation "Sent to …").
+  const [open, setOpen] = React.useState(false);
+  const [sentTo, setSentTo] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!senderFirstName) return;
@@ -318,8 +374,8 @@ function OpeningMessage({
       const res = await fetch("/api/gmail/send", { method: "POST", body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to send");
-      setResult({ ok: true, msg: `Sent to ${contact.email}` });
-      onSent?.();
+      setSentTo(contact.email);
+      onSent?.(contact.email);
     } catch (e) {
       setResult({ ok: false, msg: e instanceof Error ? e.message : "Error" });
     } finally {
@@ -329,117 +385,160 @@ function OpeningMessage({
 
   const canSend = !!contact.email && !!subject.trim() && !!body.trim() && !sending;
 
+  // Message envoyé : la zone disparaît, remplacée par une confirmation compacte.
+  if (sentTo) {
+    return (
+      <div
+        style={{
+          marginTop: 8,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "8px 10px",
+          borderRadius: 6,
+          fontSize: 11,
+          fontWeight: 600,
+          color: "#059669",
+          background: "#ecfdf5",
+          border: "1px solid #a7f3d0",
+        }}
+      >
+        <Check size={12} /> Sent to {sentTo}
+      </div>
+    );
+  }
+
   return (
     <div
       style={{
         marginTop: 8,
-        padding: "8px 10px",
         borderRadius: 6,
         background: COLORS.bgCard,
-        border: `1px solid ${COLORS.line}`,
+        border: `1px solid ${open ? COLORS.brandTint : COLORS.line}`,
+        overflow: "hidden",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", marginBottom: 4 }}>
-        <span
-          style={{
-            fontSize: 10,
-            fontWeight: 700,
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
-            color: COLORS.ink3,
-          }}
-        >
-          Opening message
+      {/* En-tête bien visible, cliquable pour ouvrir/fermer la zone */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 7,
+          padding: "9px 10px",
+          border: "none",
+          background: COLORS.brandTintSoft,
+          color: COLORS.brandDark,
+          fontSize: 11,
+          fontWeight: 700,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+      >
+        <MailPlus size={13} /> Opening message
+        <span style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5 }}>
+          <span style={{ fontSize: 10, fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>
+            {open ? "Hide" : "Show"}
+          </span>
+          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
         </span>
-        <button
-          type="button"
-          onClick={copy}
-          title="Copy message"
-          style={{
-            marginLeft: "auto",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            padding: "2px 6px",
-            fontSize: 10,
-            fontWeight: 500,
-            borderRadius: 5,
-            border: `1px solid ${COLORS.line}`,
-            background: COLORS.bgSoft,
-            color: copied ? COLORS.brandDark : COLORS.ink2,
-            cursor: "pointer",
-          }}
-        >
-          {copied ? <Check size={10} /> : <Copy size={10} />} {copied ? "Copied" : "Copy"}
-        </button>
-      </div>
-      <input
-        type="text"
-        value={subject}
-        onChange={(e) => setSubject(e.target.value)}
-        placeholder="Subject"
-        style={{
-          width: "100%",
-          boxSizing: "border-box",
-          margin: "0 0 6px",
-          padding: "5px 8px",
-          fontSize: 11,
-          fontWeight: 600,
-          color: COLORS.ink0,
-          borderRadius: 5,
-          border: `1px solid ${COLORS.line}`,
-          background: COLORS.bgSoft,
-          outline: "none",
-        }}
-      />
-      <textarea
-        value={body}
-        onChange={(e) => setBody(e.target.value)}
-        rows={Math.min(16, Math.max(6, body.split("\n").length + 1))}
-        style={{
-          width: "100%",
-          boxSizing: "border-box",
-          padding: "6px 8px",
-          fontSize: 11,
-          color: COLORS.ink1,
-          lineHeight: 1.55,
-          borderRadius: 5,
-          border: `1px solid ${COLORS.line}`,
-          background: COLORS.bgSoft,
-          outline: "none",
-          resize: "vertical",
-          fontFamily: "inherit",
-        }}
-      />
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
-        {result && (
-          <span style={{ fontSize: 10.5, color: result.ok ? "#059669" : "#dc2626" }}>{result.msg}</span>
-        )}
-        <button
-          type="button"
-          onClick={send}
-          disabled={!canSend}
-          title={contact.email ? `Send to ${contact.email}` : "No email known for this contact"}
-          style={{
-            marginLeft: "auto",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
-            padding: "4px 11px",
-            fontSize: 11,
-            fontWeight: 600,
-            borderRadius: 6,
-            border: "none",
-            background: COLORS.brand,
-            color: "#fff",
-            cursor: canSend ? "pointer" : "default",
-            opacity: canSend ? 1 : 0.5,
-          }}
-        >
-          {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-          {sending ? "Sending…" : "Send"}
-        </button>
-      </div>
+      </button>
+
+      {open && (
+        <div style={{ padding: "8px 10px" }}>
+          <input
+            type="text"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="Subject"
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              margin: "0 0 6px",
+              padding: "5px 8px",
+              fontSize: 11,
+              fontWeight: 600,
+              color: COLORS.ink0,
+              borderRadius: 5,
+              border: `1px solid ${COLORS.line}`,
+              background: COLORS.bgSoft,
+              outline: "none",
+            }}
+          />
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={Math.min(16, Math.max(6, body.split("\n").length + 1))}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              padding: "6px 8px",
+              fontSize: 11,
+              color: COLORS.ink1,
+              lineHeight: 1.55,
+              borderRadius: 5,
+              border: `1px solid ${COLORS.line}`,
+              background: COLORS.bgSoft,
+              outline: "none",
+              resize: "vertical",
+              fontFamily: "inherit",
+            }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+            <button
+              type="button"
+              onClick={copy}
+              title="Copy message"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 4,
+                padding: "3px 8px",
+                fontSize: 10,
+                fontWeight: 500,
+                borderRadius: 5,
+                border: `1px solid ${COLORS.line}`,
+                background: COLORS.bgSoft,
+                color: copied ? COLORS.brandDark : COLORS.ink2,
+                cursor: "pointer",
+              }}
+            >
+              {copied ? <Check size={10} /> : <Copy size={10} />} {copied ? "Copied" : "Copy"}
+            </button>
+            {result && !result.ok && (
+              <span style={{ fontSize: 10.5, color: "#dc2626" }}>{result.msg}</span>
+            )}
+            <button
+              type="button"
+              onClick={send}
+              disabled={!canSend}
+              title={contact.email ? `Send to ${contact.email}` : "No email known for this contact"}
+              style={{
+                marginLeft: "auto",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "4px 11px",
+                fontSize: 11,
+                fontWeight: 600,
+                borderRadius: 6,
+                border: "none",
+                background: COLORS.brand,
+                color: "#fff",
+                cursor: canSend ? "pointer" : "default",
+                opacity: canSend ? 1 : 0.5,
+              }}
+            >
+              {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+              {sending ? "Sending…" : "Send"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
