@@ -178,6 +178,7 @@ export function WatchCompanyPage({ id }: { id: string }) {
               isRefreshing={isRefreshing.ae_analysis}
               clientError={errorByKind.ae_analysis ?? null}
               onProspect={prospectFromAnalysis}
+              onSent={() => mutate(`/api/watchlist/companies/${company.id}/emails`)}
             />
             <ContactsCard companyId={company.id} onProspect={addRecipients} />
             <EmailHistoryCard companyId={company.id} />

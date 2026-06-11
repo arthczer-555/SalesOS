@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { Target, MailPlus, BookOpen, Copy, Check } from "lucide-react";
+import { useUser } from "@clerk/nextjs";
+import { Target, MailPlus, BookOpen, Copy, Check, Send, Loader2 } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { BriefSection } from "./brief-section";
 import { NotesEditor } from "./notes-editor";
@@ -31,6 +32,7 @@ export function AeAnalysisCard({
   isRefreshing = false,
   clientError = null,
   onProspect,
+  onSent,
 }: {
   companyId: string;
   notes: string | null;
@@ -43,6 +45,7 @@ export function AeAnalysisCard({
     recipients: DraftRecipient[],
     seed?: { subject: string | null; body: string | null },
   ) => void;
+  onSent?: () => void;
 }) {
   const baseStatus = brief?.status ?? "idle";
   const status = isRefreshing && baseStatus !== "running" ? "running" : baseStatus;
@@ -129,6 +132,8 @@ export function AeAnalysisCard({
             </div>
           )}
 
+          {content.watch_outs.length > 0 && <Block title="⚠ Watch-outs" items={content.watch_outs} />}
+
           {content.priority_contacts.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <SectionLabel>🎯 Contacts to prospect</SectionLabel>
@@ -138,6 +143,8 @@ export function AeAnalysisCard({
                     key={i}
                     index={i}
                     contact={c}
+                    companyId={companyId}
+                    onSent={onSent}
                     onProspect={
                       c.email && onProspect
                         ? () =>
@@ -155,7 +162,6 @@ export function AeAnalysisCard({
 
           {/* Legacy v1 : la v2 ne génère plus de next_actions (redondant avec les contacts). */}
           {content.next_actions.length > 0 && <Block title="➡ Next actions" items={content.next_actions} />}
-          {content.watch_outs.length > 0 && <Block title="⚠ Watch-outs" items={content.watch_outs} />}
         </div>
       ) : (
         <div
@@ -183,11 +189,15 @@ export function AeAnalysisCard({
 function ContactRow({
   index,
   contact,
+  companyId,
   onProspect,
+  onSent,
 }: {
   index: number;
   contact: AeContact;
+  companyId: string;
   onProspect?: () => void;
+  onSent?: () => void;
 }) {
   return (
     <div
@@ -245,7 +255,7 @@ function ContactRow({
         <p style={{ margin: "6px 0 0", fontSize: 11, color: COLORS.ink2, lineHeight: 1.5 }}>{contact.rationale}</p>
       )}
       {contact.opening_message ? (
-        <OpeningMessage subject={contact.opening_subject ?? null} text={contact.opening_message} />
+        <OpeningMessage contact={contact} companyId={companyId} onSent={onSent} />
       ) : (
         contact.angle && (
           <p style={{ margin: "4px 0 0", fontSize: 11, color: COLORS.ink1, lineHeight: 1.5 }}>
@@ -257,18 +267,67 @@ function ContactRow({
   );
 }
 
-function OpeningMessage({ subject, text }: { subject: string | null; text: string }) {
+// Signature "[Prénom expéditeur]" générée par l'analyse, remplacée par le prénom du user connecté.
+const SENDER_TOKEN = /\[pr[ée]nom exp[ée]diteur\]/gi;
+
+function OpeningMessage({
+  contact,
+  companyId,
+  onSent,
+}: {
+  contact: AeContact;
+  companyId: string;
+  onSent?: () => void;
+}) {
+  const { user } = useUser();
+  const senderFirstName = user?.firstName ?? "";
+
+  const [subject, setSubject] = React.useState(contact.opening_subject ?? "");
+  const [body, setBody] = React.useState(contact.opening_message ?? "");
   const [copied, setCopied] = React.useState(false);
+  const [sending, setSending] = React.useState(false);
+  const [result, setResult] = React.useState<{ ok: boolean; msg: string } | null>(null);
+
+  React.useEffect(() => {
+    if (!senderFirstName) return;
+    setBody((prev) => prev.replace(SENDER_TOKEN, senderFirstName));
+  }, [senderFirstName]);
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(subject ? `Subject: ${subject}\n\n${text}` : text);
+      await navigator.clipboard.writeText(subject ? `Subject: ${subject}\n\n${body}` : body);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
       // clipboard indisponible (http, permissions) : on ignore
     }
   }
+
+  async function send() {
+    if (!contact.email) return;
+    setSending(true);
+    setResult(null);
+    try {
+      const fd = new FormData();
+      fd.set("to", contact.email);
+      fd.set("subject", subject);
+      fd.set("body", body);
+      fd.set("source", "watchlist_ae_card");
+      fd.set("scope_company_id", companyId);
+      if (contact.hubspot_id) fd.set("hubspot_id", contact.hubspot_id);
+      const res = await fetch("/api/gmail/send", { method: "POST", body: fd });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to send");
+      setResult({ ok: true, msg: `Sent to ${contact.email}` });
+      onSent?.();
+    } catch (e) {
+      setResult({ ok: false, msg: e instanceof Error ? e.message : "Error" });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const canSend = !!contact.email && !!subject.trim() && !!body.trim() && !sending;
 
   return (
     <div
@@ -314,10 +373,73 @@ function OpeningMessage({ subject, text }: { subject: string | null; text: strin
           {copied ? <Check size={10} /> : <Copy size={10} />} {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      {subject && (
-        <p style={{ margin: "0 0 4px", fontSize: 11, fontWeight: 600, color: COLORS.ink0 }}>{subject}</p>
-      )}
-      <p style={{ margin: 0, fontSize: 11, color: COLORS.ink1, lineHeight: 1.55, whiteSpace: "pre-wrap" }}>{text}</p>
+      <input
+        type="text"
+        value={subject}
+        onChange={(e) => setSubject(e.target.value)}
+        placeholder="Subject"
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          margin: "0 0 6px",
+          padding: "5px 8px",
+          fontSize: 11,
+          fontWeight: 600,
+          color: COLORS.ink0,
+          borderRadius: 5,
+          border: `1px solid ${COLORS.line}`,
+          background: COLORS.bgSoft,
+          outline: "none",
+        }}
+      />
+      <textarea
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        rows={Math.min(16, Math.max(6, body.split("\n").length + 1))}
+        style={{
+          width: "100%",
+          boxSizing: "border-box",
+          padding: "6px 8px",
+          fontSize: 11,
+          color: COLORS.ink1,
+          lineHeight: 1.55,
+          borderRadius: 5,
+          border: `1px solid ${COLORS.line}`,
+          background: COLORS.bgSoft,
+          outline: "none",
+          resize: "vertical",
+          fontFamily: "inherit",
+        }}
+      />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+        {result && (
+          <span style={{ fontSize: 10.5, color: result.ok ? "#059669" : "#dc2626" }}>{result.msg}</span>
+        )}
+        <button
+          type="button"
+          onClick={send}
+          disabled={!canSend}
+          title={contact.email ? `Send to ${contact.email}` : "No email known for this contact"}
+          style={{
+            marginLeft: "auto",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 5,
+            padding: "4px 11px",
+            fontSize: 11,
+            fontWeight: 600,
+            borderRadius: 6,
+            border: "none",
+            background: COLORS.brand,
+            color: "#fff",
+            cursor: canSend ? "pointer" : "default",
+            opacity: canSend ? 1 : 0.5,
+          }}
+        >
+          {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+          {sending ? "Sending…" : "Send"}
+        </button>
+      </div>
     </div>
   );
 }

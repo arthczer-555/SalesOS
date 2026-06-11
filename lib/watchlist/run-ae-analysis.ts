@@ -50,13 +50,13 @@ Règles anti-générique :
 - Ne jamais inventer un fait, un nom, un chiffre, un email ou un client.
 - Interdits : "mettre en avant la valeur", "proposer un échange", "construire la relation", et toute action vague du même genre.
 
-Priorisation des contacts (3 à 5 max) : buyer économique d'abord (CHRO, DRH, VP People, Head of L&D), puis influenceurs (L&D manager, HRBP, Talent), puis relais. Exception : un historique d'échange chaud bat un titre senior jamais contacté.
+Contacts à couvrir : liste TOUS les contacts du compte cohérents avec la vente (jusqu'à 10), pas seulement les meilleurs. Classés par priorité : buyer économique d'abord (CHRO, DRH, VP People, Head of L&D), puis influenceurs (L&D manager, HRBP, Talent), puis relais crédibles (Chief of Staff, direction, managers concernés). Exclus uniquement les contacts manifestement hors sujet (aucun lien avec les RH, le L&D ou la décision). Exception : un historique d'échange chaud bat un titre senior jamais contacté. Chaque contact listé reçoit son opening_subject et son opening_message complets.
 
 Réponds UNIQUEMENT via l'outil emit_ae_analysis :
 - relationship_state : never_contacted | cold (échanges anciens ou restés sans réponse) | warm (échanges récents et positifs) | active (deal ouvert en cours) | lost_deal (deal perdu récemment).
 - state_summary : 1 à 2 phrases max. L'essentiel : où on en est avec ce compte et le point d'entrée. Pas de paragraphe, pas de liste d'actions (l'action, c'est contacter les contacts listés).
 - story_to_tell : une accroche de social proof prête à dire/écrire, basée sur le secteur du prospect ET notre liste de clients actuels fournie en contexte. Cite uniquement des clients RÉELS de la liste fournie, du même secteur ou d'un secteur proche. Chaîne vide si aucun client pertinent.
-- priority_contacts : 3 à 5 contacts classés. Pour chacun : name, role, rationale (1 phrase, fait précis), opening_subject (objet de mail court, 3 à 7 mots, spécifique au compte ou au signal, jamais "Coaching pour vos managers" ni un objet qui sent la prospection de masse), opening_message (le message complet prêt à adapter : signal réel ou fait entreprise en ouverture, problème nommé avant Coachello, 100-200 mots, un seul CTA, signé "[Prénom expéditeur]"), email et hubspot_id si connus. Varie les ouvertures et les objets d'un contact à l'autre, adaptés à son rôle.
+- priority_contacts : tous les contacts cohérents (jusqu'à 10), classés par priorité. Pour chacun : name, role, rationale (1 phrase, fait précis), opening_subject (objet de mail court, 3 à 7 mots, spécifique au compte ou au signal, jamais "Coaching pour vos managers" ni un objet qui sent la prospection de masse), opening_message (le message complet prêt à adapter : signal réel ou fait entreprise en ouverture, problème nommé avant Coachello, 100-200 mots, un seul CTA, signé "[Prénom expéditeur]"), email et hubspot_id si connus. Varie les ouvertures et les objets d'un contact à l'autre, adaptés à son rôle.
 - watch_outs : 0 à 3 points courts, uniquement des risques réels du contexte (contact parti, deal perdu récent, concurrent en place, mauvais timing). Liste vide si rien de réel.
 - sources_used : { emails, news, sector, world_knowledge } selon ce qui a réellement servi.`;
 }
@@ -83,7 +83,7 @@ const ANALYSIS_TOOL = {
       },
       priority_contacts: {
         type: "array",
-        description: "3 à 5 contacts à cibler, classés par priorité",
+        description: "Tous les contacts cohérents à cibler (jusqu'à 10), classés par priorité",
         items: {
           type: "object",
           properties: {
@@ -206,10 +206,12 @@ export async function runAeAnalysis(input: {
 
     const userPrompt = buildPrompt({ company, hubspot, news, clientsRoster });
 
-    const client = new Anthropic({ timeout: 120_000, maxRetries: 1 });
+    // Jusqu'à 10 opening messages de 100-200 mots : plafond et timeout relevés
+    // en conséquence (la BG fn Netlify laisse largement le temps).
+    const client = new Anthropic({ timeout: 300_000, maxRetries: 1 });
     const message = await client.messages.create({
       model: MODEL,
-      max_tokens: 3500,
+      max_tokens: 8000,
       system: buildSystemPrompt(prospectionGuide),
       messages: [{ role: "user", content: userPrompt }],
       tools: [ANALYSIS_TOOL],
