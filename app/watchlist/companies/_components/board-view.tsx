@@ -4,7 +4,6 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Search, Download, Loader2, Trash2, X, CheckSquare, Check, ChevronRight } from "lucide-react";
 import { COLORS, RADIUS, SHADOWS, repAccent } from "@/lib/design/tokens";
-import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { useWatchSalesReps, useWatchAccounts } from "@/lib/hooks/use-watchlist";
 import { SalesRail, type RailRep } from "./sales-rail";
 import { BoardStats } from "./board-stats";
@@ -466,7 +465,6 @@ function CompanyRow({
       </td>
       <td style={tdStyle}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-          <CompanyAvatar name={company.name} size={28} rounded="md" />
           <span
             style={{
               fontSize: 13.5,

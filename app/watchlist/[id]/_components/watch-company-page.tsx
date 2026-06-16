@@ -159,16 +159,21 @@ export function WatchCompanyPage({ id }: { id: string }) {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 408px",
+            gridTemplateColumns: "1fr 3fr 1fr",
             gap: 16,
-            maxWidth: 1500,
-            margin: "0 auto",
             alignItems: "start",
           }}
           className="watch-detail-grid"
         >
-          <main style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
+          {/* Colonne gauche : actions + contacts HubSpot + historique mails. */}
+          <aside style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
             <CrossPageActions company={company} onEnrichApollo={() => setApolloOpen(true)} />
+            <ContactsCard companyId={company.id} onProspect={addRecipients} />
+            <EmailHistoryCard companyId={company.id} />
+          </aside>
+
+          {/* Colonne centrale (60%) : analyse AE + news. */}
+          <main style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
             <AeAnalysisCard
               companyId={company.id}
               notes={company.notes}
@@ -180,8 +185,6 @@ export function WatchCompanyPage({ id }: { id: string }) {
               onProspect={prospectFromAnalysis}
               onSent={() => mutate(`/api/watchlist/companies/${company.id}/emails`)}
             />
-            <ContactsCard companyId={company.id} onProspect={addRecipients} />
-            <EmailHistoryCard companyId={company.id} />
             <NewsCard
               brief={briefs.news}
               onRefresh={() => refresh("news")}
@@ -190,8 +193,8 @@ export function WatchCompanyPage({ id }: { id: string }) {
             />
           </main>
 
-          {/* Pas de sticky : la colonne droite défile avec la page, en même temps
-              que la colonne gauche. */}
+          {/* Colonne droite : le drafteur de mail. Pas de sticky : elle défile
+              avec la page, en même temps que les autres colonnes. */}
           <aside
             style={{
               display: "flex",
@@ -214,7 +217,12 @@ export function WatchCompanyPage({ id }: { id: string }) {
       </div>
 
       <style>{`
-        @media (max-width: 1100px) {
+        @media (max-width: 1400px) {
+          .watch-detail-grid {
+            grid-template-columns: 1fr 1fr !important;
+          }
+        }
+        @media (max-width: 1000px) {
           .watch-detail-grid {
             grid-template-columns: 1fr !important;
           }

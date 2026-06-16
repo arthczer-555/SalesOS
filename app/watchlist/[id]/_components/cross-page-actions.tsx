@@ -69,7 +69,7 @@ export function CrossPageActions({
           <ExternalLink size={16} />
         </span>
         <span style={{ fontSize: 13.5, fontWeight: 600, letterSpacing: "-0.01em", color: COLORS.ink0 }}>
-          Open in
+          Actions
         </span>
       </div>
       <div style={{ padding: "0 12px 12px" }}>

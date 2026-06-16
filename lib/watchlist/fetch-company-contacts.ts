@@ -7,6 +7,8 @@ export interface CompanyContact {
   lastname: string | null;
   email: string | null;
   jobtitle: string | null;
+  /** Numéro révélé / connu (mobilephone en priorité, sinon phone). */
+  phone: string | null;
   last_activity: string | null;
 }
 
@@ -34,7 +36,7 @@ export async function fetchCompanyContacts(
       "/crm/v3/objects/contacts/batch/read",
       "POST",
       {
-        properties: ["firstname", "lastname", "email", "jobtitle", "lastmodifieddate"],
+        properties: ["firstname", "lastname", "email", "jobtitle", "phone", "mobilephone", "lastmodifieddate"],
         inputs: ids.map((id) => ({ id })),
       },
     );
@@ -46,6 +48,7 @@ export async function fetchCompanyContacts(
         lastname: p.lastname || null,
         email: p.email || null,
         jobtitle: p.jobtitle || null,
+        phone: p.mobilephone || p.phone || null,
         last_activity: p.lastmodifieddate || null,
       };
     });

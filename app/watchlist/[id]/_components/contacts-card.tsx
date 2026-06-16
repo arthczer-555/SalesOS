@@ -2,11 +2,10 @@
 
 import * as React from "react";
 import useSWR from "swr";
-import { Users, History, ExternalLink, Loader2, Mail, MailPlus, Check } from "lucide-react";
+import { Users, History, ExternalLink, Loader2, Mail, MailPlus, Check, Phone, PhoneCall, Copy } from "lucide-react";
 import { COLORS, SHADOWS } from "@/lib/design/tokens";
 import { ContactHistoryModal } from "./contact-history-modal";
 import { useOutreachCounts } from "@/lib/hooks/use-outreach-counts";
-import { useOutreachReplies } from "@/lib/hooks/use-outreach-replies";
 import type { DraftRecipient } from "./mail-drafter";
 import type { CompanyContactsResponse } from "@/app/api/watchlist/companies/[id]/contacts/route";
 
@@ -17,12 +16,69 @@ export function ContactsCard({
   companyId: string;
   onProspect?: (recipients: DraftRecipient[]) => void;
 }) {
-  const { data, isLoading } = useSWR<CompanyContactsResponse>(
+  const { data, isLoading, mutate } = useSWR<CompanyContactsResponse>(
     `/api/watchlist/companies/${companyId}/contacts`,
     { revalidateOnFocus: false, dedupingInterval: 30_000 },
   );
   const [historyTarget, setHistoryTarget] = React.useState<{ name: string; email: string; contactId: string } | null>(null);
   const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  // État du reveal de numéro par contact ("revealing" pendant l'attente async,
+  // "error" si l'appel a échoué ou le webhook n'a rien renvoyé à temps).
+  const [phoneState, setPhoneState] = React.useState<Record<string, "revealing" | "error">>({});
+  // Contact dont le popover "Call" est ouvert (un seul à la fois), + feedback copie.
+  const [callOpen, setCallOpen] = React.useState<string | null>(null);
+  const [copied, setCopied] = React.useState(false);
+
+  // Reveal Apollo (crédit) -> écrit le numéro sur HubSpot. Fast-path si Apollo
+  // renvoie le numéro tout de suite ; sinon on poll le GET (le webhook Apollo
+  // remplit le numéro côté HubSpot de façon asynchrone).
+  const revealNumber = React.useCallback(
+    async (contactId: string) => {
+      setPhoneState((s) => ({ ...s, [contactId]: "revealing" }));
+      const clearState = () =>
+        setPhoneState((s) => {
+          const next = { ...s };
+          delete next[contactId];
+          return next;
+        });
+      try {
+        const res = await fetch(`/api/watchlist/companies/${companyId}/contacts/${contactId}/phone`, {
+          method: "POST",
+        });
+        const json = (await res.json().catch(() => ({}))) as { status?: string; phone?: string; error?: string };
+        if (!res.ok) throw new Error(json?.error || "reveal failed");
+        if (json.status === "done" && json.phone) {
+          await mutate();
+          clearState();
+          return;
+        }
+        // "pending" : Apollo enverra le numéro au webhook. On poll jusqu'à 60s.
+        const startedAt = Date.now();
+        const tick = async () => {
+          try {
+            const r = await fetch(`/api/watchlist/companies/${companyId}/contacts/${contactId}/phone`);
+            const j = (await r.json().catch(() => ({}))) as { phone?: string | null };
+            if (j?.phone) {
+              await mutate();
+              clearState();
+              return;
+            }
+          } catch {
+            /* ignore et on continue à poller */
+          }
+          if (Date.now() - startedAt > 60_000) {
+            setPhoneState((s) => ({ ...s, [contactId]: "error" }));
+            return;
+          }
+          window.setTimeout(tick, 4000);
+        };
+        window.setTimeout(tick, 4000);
+      } catch {
+        setPhoneState((s) => ({ ...s, [contactId]: "error" }));
+      }
+    },
+    [companyId, mutate],
+  );
 
   const contacts = data?.contacts ?? [];
   const withEmail = contacts.filter((c) => c.email);
@@ -31,7 +87,6 @@ export function ContactsCard({
     [data],
   );
   const { countByEmail } = useOutreachCounts(contactEmails);
-  const { repliedByEmail } = useOutreachReplies(contactEmails);
 
   function nameOf(c: (typeof contacts)[number]) {
     return `${c.firstname ?? ""} ${c.lastname ?? ""}`.trim() || c.email || "Contact";
@@ -174,53 +229,161 @@ export function ContactsCard({
                           {name}
                         </span>
                       )}
+                      {c.email && (
+                        <span
+                          title={`${countByEmail(c.email)} email${countByEmail(c.email) > 1 ? "s" : ""} sent from SalesOS to this contact`}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 3,
+                            padding: "2px 7px",
+                            borderRadius: 99,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            lineHeight: 1,
+                            whiteSpace: "nowrap",
+                            flexShrink: 0,
+                            background: countByEmail(c.email) > 0 ? "#fff8fb" : COLORS.bgSoft,
+                            color: countByEmail(c.email) > 0 ? "#f01563" : COLORS.ink3,
+                            border: `1px solid ${countByEmail(c.email) > 0 ? "#fbd5e3" : COLORS.line}`,
+                          }}
+                        >
+                          <Mail size={10} />
+                          {countByEmail(c.email)}
+                        </span>
+                      )}
                     </div>
                     <div style={{ fontSize: 11, color: COLORS.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {c.jobtitle ? c.jobtitle : "—"}
                       {c.email ? ` · ${c.email}` : ""}
                     </div>
                   </div>
-                  {c.email && (
-                    <span
-                      title={`${countByEmail(c.email)} email${countByEmail(c.email) > 1 ? "s" : ""} sent from SalesOS to this contact`}
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 3,
-                        padding: "2px 7px",
-                        borderRadius: 99,
-                        fontSize: 10,
-                        fontWeight: 700,
-                        lineHeight: 1,
-                        whiteSpace: "nowrap",
-                        flexShrink: 0,
-                        background: countByEmail(c.email) > 0 ? "#fff8fb" : COLORS.bgSoft,
-                        color: countByEmail(c.email) > 0 ? "#f01563" : COLORS.ink3,
-                        border: `1px solid ${countByEmail(c.email) > 0 ? "#fbd5e3" : COLORS.line}`,
-                      }}
-                    >
-                      <Mail size={10} />
-                      {countByEmail(c.email)}
-                    </span>
-                  )}
-                  {c.email && countByEmail(c.email) > 0 && repliedByEmail(c.email) && (
-                    <span
-                      title="Reply received from this contact"
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        padding: "2px 5px",
-                        borderRadius: 99,
-                        lineHeight: 1,
-                        flexShrink: 0,
-                        color: "#059669",
-                        background: "#ecfdf5",
-                        border: "1px solid #a7f3d0",
-                      }}
-                    >
-                      <Check size={10} strokeWidth={3} />
-                    </span>
+                  {!c.phone &&
+                    (phoneState[c.id] === "revealing" ? (
+                      <span
+                        title="Revealing number…"
+                        style={{ ...iconBtn(), width: "auto", padding: "0 9px", gap: 5, cursor: "default" }}
+                      >
+                        <Loader2 size={12} className="animate-spin" style={{ color: COLORS.brand }} />
+                        <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.ink2 }}>Revealing…</span>
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => revealNumber(c.id)}
+                        title={
+                          phoneState[c.id] === "error"
+                            ? "Reveal failed — click to retry"
+                            : "Reveal phone number (Apollo)"
+                        }
+                        style={{
+                          ...iconBtn(),
+                          width: "auto",
+                          padding: "0 9px",
+                          gap: 5,
+                          color: phoneState[c.id] === "error" ? "#dc2626" : COLORS.brand,
+                          borderColor: phoneState[c.id] === "error" ? "#fecaca" : COLORS.line,
+                        }}
+                      >
+                        <Phone size={12} />
+                        <span style={{ fontSize: 11, fontWeight: 600 }}>
+                          {phoneState[c.id] === "error" ? "Retry" : "Reveal"}
+                        </span>
+                      </button>
+                    ))}
+                  {c.phone && (
+                    <div style={{ position: "relative" }}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCallOpen((cur) => (cur === c.id ? null : c.id));
+                          setCopied(false);
+                        }}
+                        title="Call"
+                        style={iconBtn()}
+                      >
+                        <Phone size={13} />
+                      </button>
+                      {callOpen === c.id && (
+                        <>
+                          {/* Backdrop invisible : ferme le popover au clic en dehors. */}
+                          <div onClick={() => setCallOpen(null)} style={{ position: "fixed", inset: 0, zIndex: 50 }} />
+                          <div
+                            style={{
+                              position: "absolute",
+                              top: "calc(100% + 6px)",
+                              right: 0,
+                              zIndex: 51,
+                              width: 212,
+                              background: COLORS.bgCard,
+                              border: `1px solid ${COLORS.line}`,
+                              borderRadius: 10,
+                              boxShadow: SHADOWS.card,
+                              padding: 12,
+                              display: "flex",
+                              flexDirection: "column",
+                              gap: 9,
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: 10,
+                                fontWeight: 700,
+                                letterSpacing: "0.04em",
+                                textTransform: "uppercase",
+                                color: COLORS.ink3,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {name}
+                            </div>
+                            <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.ink0, wordBreak: "break-all" }}>
+                              {c.phone}
+                            </div>
+                            <div style={{ display: "flex", gap: 6 }}>
+                              <a href={`tel:${c.phone}`} style={{ ...popBtn(COLORS.brand, "#fff", false), textDecoration: "none" }}>
+                                <PhoneCall size={12} /> Call
+                              </a>
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  try {
+                                    await navigator.clipboard.writeText(c.phone as string);
+                                    setCopied(true);
+                                  } catch {
+                                    /* clipboard indisponible */
+                                  }
+                                }}
+                                style={popBtn(COLORS.bgSoft, COLORS.ink1, true)}
+                              >
+                                {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? "Copied" : "Copy"}
+                              </button>
+                            </div>
+                            {c.email && (
+                              <a
+                                href={`mailto:${c.email}`}
+                                title={c.email}
+                                style={{
+                                  fontSize: 11,
+                                  color: COLORS.ink3,
+                                  textDecoration: "none",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                  display: "inline-flex",
+                                  alignItems: "center",
+                                  gap: 5,
+                                }}
+                              >
+                                <Mail size={11} /> {c.email}
+                              </a>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
                   )}
                   {c.email && onProspect && (
                     <button
@@ -283,5 +446,24 @@ function iconBtn(): React.CSSProperties {
     background: COLORS.bgCard,
     cursor: "pointer",
     flexShrink: 0,
+  };
+}
+
+// Bouton d'action dans le popover "Call" (Call / Copy).
+function popBtn(bg: string, color: string, border: boolean): React.CSSProperties {
+  return {
+    flex: 1,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    height: 30,
+    borderRadius: 7,
+    border: border ? `1px solid ${COLORS.line}` : "none",
+    background: bg,
+    color,
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: "pointer",
   };
 }

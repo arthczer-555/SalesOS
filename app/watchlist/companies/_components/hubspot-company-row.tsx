@@ -3,7 +3,6 @@
 import * as React from "react";
 import { Check, Globe } from "lucide-react";
 import { COLORS, repAccent } from "@/lib/design/tokens";
-import { CompanyAvatar } from "@/components/ui/company-avatar";
 import type { HubspotPreviewCompany } from "./types";
 
 export function HubspotCompanyRow({
@@ -64,8 +63,6 @@ export function HubspotCompanyRow({
       >
         {selected && <Check size={11} />}
       </span>
-
-      <CompanyAvatar name={company.name} size={28} rounded="md" />
 
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
