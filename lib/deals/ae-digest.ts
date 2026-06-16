@@ -48,6 +48,7 @@ import {
   findArthurFallbackRecipient,
   lookupSlackIdByEmail,
 } from "../slack/lookup";
+import { isNurtureLabel } from "./stages";
 
 // ─── Seuils de tri (ajustables) ───────────────────────────────────────────────
 const HOT_SCORE = 70; // score ≥ => Hot
@@ -438,11 +439,18 @@ export async function fetchScoredDealData(): Promise<
   ]);
   const scores = await fetchScores(hsDeals.map((d) => d.id));
 
+  // Stages "nurture" à exclure (mêmes que ceux masqués sur /deals) : on ne les
+  // veut ni dans le digest AE ni dans le recap canal.
+  const nurtureStageIds = new Set(
+    [...stageLabels.entries()].filter(([, label]) => isNurtureLabel(label)).map(([id]) => id),
+  );
+
   // JOIN deals HubSpot × scores -> deals actionnables.
   const deals: DigestDeal[] = [];
   for (const hd of hsDeals) {
     const ownerId = hd.properties.hubspot_owner_id;
     if (!ownerId) continue;
+    if (hd.properties.dealstage && nurtureStageIds.has(hd.properties.dealstage)) continue; // to nurture exclu
     const sc = scores.get(hd.id);
     if (!sc?.score) continue; // pas encore scoré -> on ignore
     const lastMs = toMs(hd.properties.notes_last_contacted) ?? toMs(hd.properties.hs_lastmodifieddate);

@@ -1,10 +1,18 @@
 import type { Config } from "@netlify/functions";
+import { fetchNurtureStageIds } from "../../lib/deals/stages";
 
 const CHUNK_SIZE = 5;
 
-async function hubspotDealIds(): Promise<string[]> {
+async function hubspotDealIds(excludeStageIds: string[]): Promise<string[]> {
   const ids: string[] = [];
   let after: string | undefined = undefined;
+  const filters: { propertyName: string; operator: string; value?: string; values?: string[] }[] = [
+    { propertyName: "hs_is_closed", operator: "EQ", value: "false" },
+  ];
+  // Exclut les stages "to nurture" (cf /deals + digest) : pas de scoring dessus.
+  if (excludeStageIds.length) {
+    filters.push({ propertyName: "dealstage", operator: "NOT_IN", values: excludeStageIds });
+  }
 
   while (true) {
     const res = await fetch("https://api.hubapi.com/crm/v3/objects/deals/search", {
@@ -17,7 +25,7 @@ async function hubspotDealIds(): Promise<string[]> {
         limit: 200,
         after,
         properties: ["dealname", "hs_is_closed"],
-        filterGroups: [{ filters: [{ propertyName: "hs_is_closed", operator: "EQ", value: "false" }] }],
+        filterGroups: [{ filters }],
         sorts: [{ propertyName: "amount", direction: "DESCENDING" }],
       }),
     });
@@ -43,8 +51,12 @@ export default async () => {
   }
 
   try {
-    const dealIds = await hubspotDealIds();
-    console.log(`[score-deals-bg] fetched ${dealIds.length} deals from HubSpot`);
+    const nurtureStageIds = await fetchNurtureStageIds();
+    if (nurtureStageIds.length) {
+      console.log(`[score-deals-bg] excluding ${nurtureStageIds.length} nurture stage(s) from scoring`);
+    }
+    const dealIds = await hubspotDealIds(nurtureStageIds);
+    console.log(`[score-deals-bg] fetched ${dealIds.length} deals from HubSpot (nurture excluded)`);
 
     let totalScored = 0;
     let totalErrors = 0;

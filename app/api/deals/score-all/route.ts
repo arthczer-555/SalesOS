@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { scoreOneDeal } from "@/lib/deal-scoring";
+import { fetchNurtureStageIds } from "@/lib/deals/stages";
 
 export const dynamic = "force-dynamic";
 // Batch scoring can take a while — increase timeout to 5 minutes
@@ -56,10 +57,18 @@ export async function POST(req: NextRequest) {
     if (explicitDealIds && explicitDealIds.length > 0) {
       dealIds = explicitDealIds;
     } else {
+      // Exclut les stages "to nurture" (cf /deals + digest) : pas de scoring dessus.
+      const nurtureStageIds = await fetchNurtureStageIds();
+      const filters: { propertyName: string; operator: string; value?: string; values?: string[] }[] = [
+        { propertyName: "hs_is_closed", operator: "EQ", value: "false" },
+      ];
+      if (nurtureStageIds.length) {
+        filters.push({ propertyName: "dealstage", operator: "NOT_IN", values: nurtureStageIds });
+      }
       const data = await hubspot("/crm/v3/objects/deals/search", "POST", {
         limit: 200,
         properties: ["dealname", "dealstage", "hs_is_closed"],
-        filterGroups: [{ filters: [{ propertyName: "hs_is_closed", operator: "EQ", value: "false" }] }],
+        filterGroups: [{ filters }],
         sorts: [{ propertyName: "amount", direction: "DESCENDING" }],
       });
       dealIds = (data.results ?? []).map((d: { id: string }) => d.id);
