@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { hubspotFetch, hubspotAssociate } from "@/lib/hubspot";
+import { hubspotFetch, hubspotAssociate, hubspotUpdate } from "@/lib/hubspot";
 import { findContactByEmail } from "@/lib/intel/hubspot-company-resolve";
 import { maybeCreateSalesRep } from "@/lib/scope-companies";
 import { revealPerson } from "@/lib/apollo/client";
@@ -78,6 +78,11 @@ export async function runApolloEnrichment(input: { jobId: string }): Promise<{ o
 
     const people: EnrichPersonInput[] = Array.isArray(job.input_people) ? job.input_people : [];
     const ownerId = job.hubspot_owner_id ?? null;
+    // Contexte Org Chart (nullable) : si présent, on réécrit l'email + le contact
+    // HubSpot révélés sur la ligne orgchart_people. Cible au niveau job (single)
+    // ou par personne via p.orgchartPersonId (enrich multi-personnes d'un compte).
+    const jobOrgchartPersonId =
+      (job as unknown as { orgchart_person_id?: string | null }).orgchart_person_id ?? null;
 
     const summary = emptySummary(people.length);
     const results: PersonResult[] = [];
@@ -113,6 +118,7 @@ export async function runApolloEnrichment(input: { jobId: string }): Promise<{ o
       // 1. Email : réutilise celui du search s'il est déjà débloqué, sinon reveal.
       let email = isLockedEmail(p.email) ? null : (p.email as string);
       let emailStatus: string | null = null;
+      let revealedTitle: string | null = null; // poste actuel renvoyé par Apollo
       if (!email) {
         try {
           const rev = await revealPerson({
@@ -125,6 +131,7 @@ export async function runApolloEnrichment(input: { jobId: string }): Promise<{ o
           summary.credits_used++;
           const revEmail = rev.person?.email ?? null;
           emailStatus = rev.person?.email_status ?? null;
+          revealedTitle = rev.person?.title ?? null;
           if (!isLockedEmail(revEmail)) {
             email = revEmail as string;
             summary.revealed++;
@@ -173,6 +180,28 @@ export async function runApolloEnrichment(input: { jobId: string }): Promise<{ o
         base.outcome = "error";
         base.reason = e instanceof Error ? e.message.slice(0, 200) : "hubspot error";
         summary.errors++;
+      }
+
+      // Org Chart : réécrit l'email + le contact HubSpot + le POSTE révélé sur la
+      // personne (cible par profil si fournie, sinon cible unique du job).
+      const targetOrgPersonId = p.orgchartPersonId ?? jobOrgchartPersonId;
+      if (targetOrgPersonId && base.email) {
+        const patch: Record<string, unknown> = {
+          email: base.email,
+          hubspot_contact_id: base.hubspot_contact_id,
+          in_hubspot: !!base.hubspot_contact_id,
+          apollo_id: p.apolloId || null,
+          updated_at: new Date().toISOString(),
+        };
+        if (revealedTitle && revealedTitle.trim()) {
+          patch.title = revealedTitle.trim();
+          patch.title_hubspot = revealedTitle.trim();
+          // Pousse aussi le poste sur le contact HubSpot.
+          if (base.hubspot_contact_id) {
+            await hubspotUpdate("contacts", base.hubspot_contact_id, { jobtitle: revealedTitle.trim() }).catch(() => {});
+          }
+        }
+        await db.from("orgchart_people").update(patch).eq("id", targetOrgPersonId).then(undefined, () => {});
       }
 
       results.push(base);

@@ -46,6 +46,9 @@ export interface EnrichPersonInput {
   hubspotCompanyId?: string | null;
   companyName?: string | null;
   domain?: string | null;
+  // Org Chart : ligne orgchart_people à mettre à jour (email + hubspot id) une
+  // fois l'enrichissement fait. Permet l'enrich multi-personnes d'un compte.
+  orgchartPersonId?: string | null;
 }
 
 // ── Bulk discovery (apollo_bulk_jobs) ───────────────────────────────────────

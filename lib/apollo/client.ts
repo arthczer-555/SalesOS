@@ -39,6 +39,24 @@ export interface ApolloPerson {
   email: string | null;
   email_status: string | null;
   organization_name: string | null;
+  /** Numéro de tél. présent dans la réponse synchrone (rare : le reveal Apollo
+   *  est en général async via webhook). null si absent. */
+  phone: string | null;
+}
+
+// Extrait un numéro depuis un objet personne Apollo (réponse synchrone).
+// Privilégie un mobile, puis n'importe quel numéro avec sanitized/raw.
+function extractPhone(p: Record<string, unknown>): string | null {
+  const arr = Array.isArray(p.phone_numbers) ? (p.phone_numbers as Array<Record<string, unknown>>) : [];
+  const pick =
+    arr.find(
+      (n) =>
+        typeof n.type === "string" &&
+        (n.type as string).toLowerCase().includes("mobile") &&
+        (n.sanitized_number || n.raw_number),
+    ) ?? arr.find((n) => n.sanitized_number || n.raw_number);
+  const fromArr = pick ? ((pick.sanitized_number as string) || (pick.raw_number as string) || null) : null;
+  return (p.sanitized_phone as string) || fromArr || null;
 }
 
 // Headers de quota qu'Apollo renvoie (on capte tout ce qui commence par x-).
@@ -98,6 +116,7 @@ function mapPerson(p: Record<string, unknown>): ApolloPerson {
     email: (p.email as string) ?? null,
     email_status: (p.email_status as string) ?? null,
     organization_name: (org?.name as string) ?? ((p.organization_name as string) ?? null),
+    phone: extractPhone(p),
   };
 }
 
@@ -160,6 +179,8 @@ export async function searchPeople(params: SearchPeopleParams): Promise<SearchPe
 export interface RevealPersonParams {
   /** id Apollo issu du search (recommandé). */
   apolloId?: string;
+  /** Email connu du contact : matching Apollo le plus fiable (HubSpot contacts). */
+  email?: string;
   firstName?: string;
   lastName?: string;
   domain?: string;
@@ -188,6 +209,65 @@ export async function revealPerson(params: RevealPersonParams): Promise<RevealPe
     person: data?.person ? mapPerson(data.person) : null,
     raw: res,
   };
+}
+
+export interface RevealPhoneData {
+  person: ApolloPerson | null;
+  /** Numéro déjà présent dans la réponse synchrone (fast-path), sinon null. */
+  phone: string | null;
+  raw: ApolloResult;
+}
+
+/**
+ * Révèle le NUMÉRO de téléphone d'une personne (People Match,
+ * reveal_phone_number). CONSOMME UN CRÉDIT téléphone Apollo.
+ *
+ * Important : Apollo vérifie le numéro de façon ASYNCHRONE et l'envoie au
+ * `webhookUrl` fourni (il n'est en général PAS dans la réponse synchrone). On
+ * lit quand même la réponse sync au cas où Apollo renvoie un numéro déjà vérifié
+ * dans sa base (fast-path). reveal_personal_emails=false : on ne dépense pas de
+ * crédit email, uniquement le crédit téléphone.
+ */
+export async function revealPhone(
+  params: RevealPersonParams,
+  webhookUrl?: string,
+): Promise<RevealPhoneData> {
+  const body: Record<string, unknown> = {
+    reveal_personal_emails: false,
+    reveal_phone_number: true,
+  };
+  if (webhookUrl) body.webhook_url = webhookUrl;
+  if (params.apolloId) body.id = params.apolloId;
+  if (params.email) body.email = params.email;
+  if (params.firstName) body.first_name = params.firstName;
+  if (params.lastName) body.last_name = params.lastName;
+  if (params.domain) body.domain = params.domain;
+  if (params.organizationName) body.organization_name = params.organizationName;
+
+  const res = await apolloFetch<{ person?: Record<string, unknown> }>("/people/match", body);
+  const data = res.data as { person?: Record<string, unknown> } | null;
+  const person = data?.person ? mapPerson(data.person) : null;
+  return { person, phone: person?.phone ?? null, raw: res };
+}
+
+// Enrichit une personne SANS révéler l'email (pas de crédit email). Sert à
+// VALIDER le poste actuel + la société actuelle (People Match renvoie title +
+// organization même sans reveal). À utiliser pour les contacts déjà sur HubSpot
+// (on ne révèle jamais leur email — cf. règle produit).
+export async function matchPerson(params: RevealPersonParams): Promise<RevealPersonData> {
+  const body: Record<string, unknown> = {
+    reveal_personal_emails: false,
+    reveal_phone_number: false,
+  };
+  if (params.apolloId) body.id = params.apolloId;
+  if (params.firstName) body.first_name = params.firstName;
+  if (params.lastName) body.last_name = params.lastName;
+  if (params.domain) body.domain = params.domain;
+  if (params.organizationName) body.organization_name = params.organizationName;
+
+  const res = await apolloFetch<{ person?: Record<string, unknown> }>("/people/match", body);
+  const data = res.data as { person?: Record<string, unknown> } | null;
+  return { person: data?.person ? mapPerson(data.person) : null, raw: res };
 }
 
 export function isApolloConfigured(): boolean {
