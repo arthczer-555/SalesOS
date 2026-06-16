@@ -24,9 +24,13 @@ function splitName(full: string | null | undefined): { firstname: string; lastna
 }
 
 // Crée un contact HubSpot (calqué sur push-list-to-hubspot.createContact).
+// NB : on ne pose PAS la propriété texte `company` sur le contact. On associe
+// toujours ensuite le contact à la company HubSpot CHOISIE (hubspotAssociate),
+// donc `company` serait redondant ; pire, combiné au réglage HubSpot
+// "Créer et associer automatiquement les companies", il déclenche la création
+// d'un DOUBLON de company (ex : 2e "Winamax" sans owner). Cf. bug watchlist.
 async function createHubspotContact(
   p: EnrichPersonInput,
-  companyName: string | null,
   email: string,
   ownerId: string | null,
 ): Promise<string> {
@@ -37,7 +41,6 @@ async function createHubspotContact(
   if (firstname) properties.firstname = firstname;
   if (lastname) properties.lastname = lastname;
   if (p.title) properties.jobtitle = p.title;
-  if (companyName) properties.company = companyName;
   if (ownerId) properties.hubspot_owner_id = ownerId;
   const res = await hubspotFetch<{ id: string }>("/crm/v3/objects/contacts", "POST", { properties });
   return res.id;
@@ -157,7 +160,7 @@ export async function runApolloEnrichment(input: { jobId: string }): Promise<{ o
           base.outcome = "existing";
           summary.existing++;
         } else {
-          contactId = await createHubspotContact(p, companyName, email, ownerId);
+          contactId = await createHubspotContact(p, email, ownerId);
           base.outcome = "created";
           summary.created++;
         }
