@@ -4,7 +4,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { generateVideo, type HeygenAvatarType } from "@/lib/heygen/client";
 import { detectScriptLang } from "@/lib/video/lang";
-import type { VideoJob } from "@/lib/video/types";
+import type { BackgroundChoice, VideoJob } from "@/lib/video/types";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -18,9 +18,9 @@ export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const avatarId = process.env.HEYGEN_AVATAR_ID;
+  const envAvatarId = process.env.HEYGEN_AVATAR_ID;
   const voiceEn = process.env.HEYGEN_VOICE_ID;
-  if (!process.env.HEYGEN_API_KEY || !avatarId || !voiceEn) {
+  if (!process.env.HEYGEN_API_KEY || !envAvatarId || !voiceEn) {
     return NextResponse.json(
       { error: "HeyGen not configured (HEYGEN_API_KEY / HEYGEN_AVATAR_ID / HEYGEN_VOICE_ID)" },
       { status: 500 },
@@ -33,6 +33,12 @@ export async function POST(req: NextRequest) {
     clientId?: string;
     clientName?: string;
     speed?: number;
+    // Choix UI (optionnels) ; chacun retombe sur la config env si absent.
+    avatarId?: string;
+    avatarType?: HeygenAvatarType;
+    voiceId?: string;
+    lang?: "auto" | "fr" | "en";
+    background?: BackgroundChoice;
   };
   const prompt = (body.prompt ?? "").trim();
   const script = (body.script ?? "").trim();
@@ -42,10 +48,20 @@ export async function POST(req: NextRequest) {
   // (l'avatar lit moins vite, meilleur rendu).
   const speed = Math.min(1.5, Math.max(0.5, Number(body.speed) || 0.85));
 
-  // La langue suit le script : FR -> voix française (fallback EN si non configurée),
-  // sinon voix anglaise (Teresa).
+  // Avatar : choix UI sinon config env (Teresa).
+  const avatarId = body.avatarId || envAvatarId;
+  const avatarType: HeygenAvatarType =
+    body.avatarType || (process.env.HEYGEN_AVATAR_TYPE as HeygenAvatarType) || "avatar";
+
+  // Voix : voix choisie explicitement > langue forcée (FR/EN) > détection du script.
+  // FR -> voix française (fallback EN si non configurée), sinon voix anglaise.
+  const lang = body.lang === "fr" || body.lang === "en" ? body.lang : detectScriptLang(script);
   const voiceId =
-    detectScriptLang(script) === "fr" ? process.env.HEYGEN_VOICE_ID_FR || voiceEn : voiceEn;
+    body.voiceId || (lang === "fr" ? process.env.HEYGEN_VOICE_ID_FR || voiceEn : voiceEn);
+
+  // Fond : choix UI mappé sur les params HeyGen. Sans choix explicite, on garde
+  // le fond par défaut configuré en env (rétro-compat avec l'ancien comportement).
+  const bg = resolveBackground(body.background);
 
   let videoId: string;
   try {
@@ -54,9 +70,10 @@ export async function POST(req: NextRequest) {
       avatarId,
       voiceId,
       speed,
-      avatarType: (process.env.HEYGEN_AVATAR_TYPE as HeygenAvatarType) || "avatar",
-      backgroundImageId: process.env.HEYGEN_BACKGROUND_IMAGE_ID || undefined,
-      backgroundUrl: process.env.HEYGEN_BACKGROUND_URL || undefined,
+      avatarType,
+      backgroundColor: bg.backgroundColor,
+      backgroundImageId: bg.backgroundImageId,
+      backgroundUrl: bg.backgroundUrl,
     }));
   } catch (e) {
     return NextResponse.json(
@@ -83,4 +100,31 @@ export async function POST(req: NextRequest) {
   if (insErr) return NextResponse.json({ error: insErr.message }, { status: 500 });
 
   return NextResponse.json({ job });
+}
+
+// Mappe le choix de fond de l'UI vers les params HeyGen. Sans choix explicite,
+// on retombe sur le fond par défaut configuré en env (Modern Office). Le mode
+// "original" envoie un fond vide pour garder le décor d'origine du look.
+function resolveBackground(choice: BackgroundChoice | undefined): {
+  backgroundColor?: string;
+  backgroundImageId?: string;
+  backgroundUrl?: string;
+} {
+  if (!choice) {
+    return {
+      backgroundImageId: process.env.HEYGEN_BACKGROUND_IMAGE_ID || undefined,
+      backgroundUrl: process.env.HEYGEN_BACKGROUND_URL || undefined,
+    };
+  }
+  switch (choice.kind) {
+    case "color":
+      return { backgroundColor: choice.value };
+    case "imageAsset":
+      return { backgroundImageId: choice.assetId };
+    case "imageUrl":
+      return { backgroundUrl: choice.url };
+    case "original":
+    default:
+      return {};
+  }
 }

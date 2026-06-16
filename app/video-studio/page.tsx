@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
 import { EmptyState } from "@/components/ui/empty-state";
+import { StudioControls, type StudioSelection } from "./studio-controls";
 import type { VideoJob } from "@/lib/video/types";
 
 // Le fetcher SWR doit throw sur non-2xx (sinon le body d'erreur devient `data`).
@@ -97,6 +98,9 @@ function VideoStudio() {
   const [prompt, setPrompt] = useState("");
   const [script, setScript] = useState("");
   const [speed, setSpeed] = useState(0.85);
+  // Choix avatar / langue-voix / fond (StudioControls). Tant que l'utilisateur ne
+  // touche à rien, ces valeurs reproduisent la config env (rendu identique).
+  const [studio, setStudio] = useState<StudioSelection>({ lang: "auto" });
   const [detected, setDetected] = useState<MatchedClient | null>(null);
   const [jobs, setJobs] = useState<VideoJob[]>([]);
   const [scripting, setScripting] = useState(false);
@@ -183,6 +187,11 @@ function VideoStudio() {
           speed,
           clientId: activeClient?.id ?? undefined,
           clientName: activeClient?.name ?? undefined,
+          avatarId: studio.avatarId,
+          avatarType: studio.avatarType,
+          voiceId: studio.voiceId,
+          lang: studio.lang,
+          background: studio.background,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { job?: VideoJob; error?: string };
@@ -361,7 +370,12 @@ function VideoStudio() {
             </Card>
 
             <Card padding={16} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <StepTitle index={2} label="Script" />
+              <StepTitle index={2} label="Studio - avatar, voice & background" />
+              <StudioControls onChange={setStudio} />
+            </Card>
+
+            <Card padding={16} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <StepTitle index={3} label="Script" />
 
               <Field label="Transcript (the avatar reads this, review and edit)">
                 <textarea

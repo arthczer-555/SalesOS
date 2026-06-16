@@ -39,6 +39,8 @@ export interface GenerateVideoInput {
   avatarType?: HeygenAvatarType;
   /** Vitesse de parole (HeyGen accepte ~0.5 à 1.5 ; 1 = normal). */
   speed?: number;
+  /** Couleur de fond hex (ex. "#FFFFFF"). Prioritaire sur l'image. */
+  backgroundColor?: string;
   /** Asset ID d'image de fond HeyGen (ex. "image_8pnsl6" = Modern Office View). Prioritaire sur l'URL. */
   backgroundImageId?: string;
   /** URL d'image de fond optionnelle (alternative à l'asset ID). */
@@ -55,6 +57,7 @@ export async function generateVideo({
   voiceId,
   avatarType = "avatar",
   speed,
+  backgroundColor,
   backgroundImageId,
   backgroundUrl,
 }: GenerateVideoInput): Promise<{ videoId: string }> {
@@ -76,7 +79,9 @@ export async function generateVideo({
       ...(speed != null ? { speed } : {}),
     },
   };
-  if (backgroundImageId) {
+  if (backgroundColor) {
+    videoInput.background = { type: "color", value: backgroundColor };
+  } else if (backgroundImageId) {
     videoInput.background = { type: "image", image_asset_id: backgroundImageId };
   } else if (backgroundUrl) {
     videoInput.background = { type: "image", url: backgroundUrl };
@@ -167,6 +172,8 @@ export interface HeygenVoice {
   name: string;
   language?: string;
   gender?: string;
+  /** URL d'un extrait audio de la voix (pour la preview dans l'UI). */
+  preview_audio?: string;
 }
 
 /**
@@ -193,4 +200,54 @@ export async function listVoices(): Promise<HeygenVoice[]> {
   const json = (await res.json().catch(() => ({}))) as { data?: { voices?: HeygenVoice[] } };
   if (!res.ok) throw new Error(`HeyGen voices failed (${res.status})`);
   return json.data?.voices ?? [];
+}
+
+// ── Avatar groups (personas) ────────────────────────────────────────────
+// Les avatars individuels (/v2/avatars) n'ont pas de catégorie exploitable
+// (tags/type/premium vides). En revanche les "avatar groups" portent un
+// `group_type` : PUBLIC = avatars studio officiels (réalistes / pro),
+// PUBLIC_PHOTO / COMMUNITY_PHOTO = photo avatars communautaires. On s'appuie
+// dessus pour ne proposer que des personas pro, groupés (264 vs 6755 looks).
+
+export interface HeygenAvatarGroup {
+  id: string;
+  name: string;
+  num_looks?: number;
+  preview_image?: string;
+  /** PUBLIC | PUBLIC_PHOTO | COMMUNITY_PHOTO | … */
+  group_type?: string;
+}
+
+export interface HeygenGroupLook {
+  id: string;
+  name?: string;
+  image_url?: string;
+  default_voice_id?: string;
+}
+
+/**
+ * Liste les personas (avatar groups), publics inclus. `include_public=true`
+ * sinon on ne récupère que les groupes créés par le compte (souvent vide).
+ */
+export async function listAvatarGroups(): Promise<HeygenAvatarGroup[]> {
+  assertConfigured();
+  const res = await fetch(`${BASE}/v2/avatar_group.list?include_public=true`, {
+    headers: authHeaders(),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    data?: { avatar_group_list?: HeygenAvatarGroup[] };
+  };
+  if (!res.ok) throw new Error(`HeyGen avatar groups failed (${res.status})`);
+  return json.data?.avatar_group_list ?? [];
+}
+
+/** Looks d'un persona (chaque look.id est l'`avatar_id` à passer au generate). */
+export async function listAvatarGroupLooks(groupId: string): Promise<HeygenGroupLook[]> {
+  assertConfigured();
+  const res = await fetch(`${BASE}/v2/avatar_group/${encodeURIComponent(groupId)}/avatars`, {
+    headers: authHeaders(),
+  });
+  const json = (await res.json().catch(() => ({}))) as { data?: { avatar_list?: HeygenGroupLook[] } };
+  if (!res.ok) throw new Error(`HeyGen group looks failed (${res.status})`);
+  return json.data?.avatar_list ?? [];
 }
