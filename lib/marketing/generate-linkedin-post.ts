@@ -79,11 +79,11 @@ export async function runLinkedInPostGeneration(
   const rec = await getRec(recommendationId);
   if (!rec) return { ok: false, status: 404, error: "Recommendation not found" };
 
-  // Longueur cible (curseur côté UI). Défaut 1100 (milieu de 1000-1200),
-  // borné pour rester crédible sur LinkedIn.
-  const targetChars = Math.min(2600, Math.max(400, Math.round(opts.targetChars ?? 1100)));
-  const minChars = Math.max(300, targetChars - 150);
-  const maxChars = targetChars + 150;
+  // Longueur cible (curseur côté UI). Défaut 600, fourchette volontairement
+  // courte (posts punchy), bornée pour rester crédible sur LinkedIn.
+  const targetChars = Math.min(1200, Math.max(250, Math.round(opts.targetChars ?? 600)));
+  const minChars = Math.max(200, targetChars - 100);
+  const maxChars = targetChars + 100;
 
   await updateRecStatus(rec.id, "writing");
 

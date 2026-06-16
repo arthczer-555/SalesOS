@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { Sparkles, AlertCircle, Check, Loader2, Trash2, RefreshCw, Linkedin, Copy, ExternalLink, ChevronRight, User } from "lucide-react";
 import { useLinkedInContent } from "@/lib/hooks/use-marketing";
 import type { LinkedInContentAnalysis, LinkedInPostRecommendation, LinkedInPostDraft } from "@/lib/marketing-types";
@@ -12,6 +12,40 @@ const PRIORITY_STYLES = {
 };
 
 const API = "/api/marketing/linkedin-content";
+
+// Length-target slider bounds (kept short — punchy LinkedIn posts read better).
+const LEN_MIN = 300;
+const LEN_MAX = 1000;
+const LEN_DEFAULT = 600;
+
+// Builds a placeholder block of ~targetChars characters so the user can SEE
+// roughly how long the generated post will be. Deterministic (no Math.random)
+// to avoid hydration mismatches; words cycle through a coaching-themed pool.
+const PREVIEW_WORDS = "leadership coaching teams growth manager feedback trust culture performance clarity habits mindset results energy focus impact change momentum people skills retention burnout balance".split(" ");
+function buildLengthPreview(targetChars: number): string {
+  const lines: string[] = [];
+  let sentence: string[] = [];
+  let len = 0;
+  // Rotate the starting word with the length so dragging the slider visibly
+  // changes the filler text, not just its (clipped) tail.
+  let wi = Math.floor(targetChars / 50);
+  while (len < targetChars) {
+    const w = PREVIEW_WORDS[wi % PREVIEW_WORDS.length];
+    sentence.push(w);
+    len += w.length + 1;
+    wi++;
+    if (sentence.length >= 7 + (wi % 5)) {
+      const s = sentence.join(" ");
+      lines.push(s.charAt(0).toUpperCase() + s.slice(1) + ".");
+      sentence = [];
+    }
+  }
+  if (sentence.length) {
+    const s = sentence.join(" ");
+    lines.push(s.charAt(0).toUpperCase() + s.slice(1) + ".");
+  }
+  return lines.join("\n");
+}
 
 export default function LinkedInTab() {
   const { analysis: initialAnalysis, recommendations: initialRecs, drafts: initialDrafts, isLoading, reload } = useLinkedInContent();
@@ -25,12 +59,15 @@ export default function LinkedInTab() {
   const [generationStartedAt, setGenerationStartedAt] = useState<Map<string, number>>(new Map());
   const [generateErrors, setGenerateErrors] = useState<Map<string, string>>(new Map());
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  // Target length for the generated posts (LinkedIn sweet spot 1000-1200).
-  const [targetChars, setTargetChars] = useState(1100);
+  // Synchronous guard against rapid repeat clicks on "Write": the disabled
+  // attribute only kicks in after a re-render, so a 5x burst would otherwise
+  // fire 5 generations before React catches up. This blocks the burst.
+  const inFlightRef = useRef<Set<string>>(new Set());
+  // Target length for the generated posts (kept short — see LEN_* bounds).
+  const [targetChars, setTargetChars] = useState(LEN_DEFAULT);
   // Custom theme to research instead of the default coaching trends.
   const [themeInput, setThemeInput] = useState("");
   const [suggestingTheme, setSuggestingTheme] = useState(false);
-  const [themeSummary, setThemeSummary] = useState<string | null>(null);
   const [themeError, setThemeError] = useState<string | null>(null);
 
   // Hydrate from server on mount.
@@ -150,7 +187,6 @@ export default function LinkedInTab() {
     if (!theme) return;
     setSuggestingTheme(true);
     setThemeError(null);
-    setThemeSummary(null);
     try {
       const res = await fetch(API, {
         method: "POST",
@@ -162,7 +198,6 @@ export default function LinkedInTab() {
       else {
         if (data.analysis) setAnalysis(data.analysis);
         if (data.recommendations) setLocalRecs(data.recommendations);
-        if (data.summary) setThemeSummary(data.summary);
         setThemeInput("");
       }
     } catch (e) {
@@ -173,6 +208,8 @@ export default function LinkedInTab() {
   }, [themeInput]);
 
   const handleGenerate = useCallback(async (id: string) => {
+    if (inFlightRef.current.has(id)) return; // ignore rapid repeat clicks
+    inFlightRef.current.add(id);
     setGeneratingIds((prev) => new Set(prev).add(id));
     setGenerateErrors((prev) => { const m = new Map(prev); m.delete(id); return m; });
     setLocalRecs((prev) => prev.map((r) => (r.id === id ? { ...r, status: "writing" as const } : r)));
@@ -205,6 +242,8 @@ export default function LinkedInTab() {
       setGenerateErrors((prev) => new Map(prev).set(id, e instanceof Error ? e.message : "Network error"));
       setLocalRecs((prev) => prev.map((r) => (r.id === id ? { ...r, status: "approved" as const } : r)));
       setGeneratingIds((prev) => { const n = new Set(prev); n.delete(id); return n; });
+    } finally {
+      inFlightRef.current.delete(id);
     }
   }, [targetChars]);
 
@@ -231,6 +270,13 @@ export default function LinkedInTab() {
       await fetch(API, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "delete_draft", recommendationId: id }) });
     } catch { /* reconciled on next mount */ }
   }, []);
+
+  // Suggested opening hooks, keyed by topic (theme-mode brief → shown on cards).
+  const hookByTopic = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of analysis?.postIdeas ?? []) if (p.hook) m.set(p.topic, p.hook);
+    return m;
+  }, [analysis]);
 
   if (isLoading) return <div className="text-sm" style={{ color: "#888" }}>Loading...</div>;
 
@@ -409,7 +455,7 @@ export default function LinkedInTab() {
               <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#888" }}>Propose your own theme</p>
             </div>
             <p className="text-xs mb-3" style={{ color: "#888" }}>
-              Enter a theme and Claude researches what&apos;s currently being posted on LinkedIn (and the web) around it, then proposes post recommendations grounded in that real analysis.
+              Enter ANY theme (it does not have to be coaching). Claude finds similar posts already working on LinkedIn, extracts the hooks and angles that perform, and proposes ready-to-write post ideas grounded in that research.
             </p>
             <div className="flex gap-2">
               <input
@@ -433,10 +479,52 @@ export default function LinkedInTab() {
               </button>
             </div>
             {themeError && <p className="text-xs mt-2" style={{ color: "#dc2626" }}>{themeError}</p>}
-            {themeSummary && (
-              <div className="mt-3 rounded-lg flex items-start gap-2" style={{ background: "#eff6ff", border: "1px solid #bfdbfe", padding: "10px 14px" }}>
-                <Sparkles size={12} className="shrink-0 mt-0.5" style={{ color: "#0a66c2" }} />
-                <p className="text-xs" style={{ color: "#1e3a8a", lineHeight: 1.5 }}>{themeSummary}</p>
+
+            {analysis?.theme && (
+              <div className="mt-3 space-y-3">
+                {/* Summary of the conversation on this theme */}
+                {analysis.summary && (
+                  <div className="rounded-lg flex items-start gap-2" style={{ background: "#eff6ff", border: "1px solid #bfdbfe", padding: "10px 14px" }}>
+                    <Sparkles size={12} className="shrink-0 mt-0.5" style={{ color: "#0a66c2" }} />
+                    <p className="text-xs" style={{ color: "#1e3a8a", lineHeight: 1.5 }}>{analysis.summary}</p>
+                  </div>
+                )}
+
+                {/* What's working on this theme */}
+                {analysis.whatsWorking && analysis.whatsWorking.length > 0 && (
+                  <div className="rounded-lg" style={{ background: "#f9fafb", border: "1px solid #eeeeee", padding: "12px 14px" }}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: "#888" }}>What&apos;s working on &ldquo;{analysis.theme}&rdquo;</p>
+                    <ul className="space-y-1.5">
+                      {analysis.whatsWorking.map((w, i) => (
+                        <li key={i} className="flex items-start gap-2 text-xs" style={{ color: "#555", lineHeight: 1.5 }}>
+                          <Check size={12} className="shrink-0 mt-0.5" style={{ color: "#16a34a" }} />
+                          <span>{w}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Similar posts found (the live LinkedIn inspiration) */}
+                {analysis.linkedinTrends.length > 0 && (
+                  <div className="rounded-lg" style={{ background: "#fff", border: "1px solid #eeeeee", padding: "12px 14px" }}>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider mb-2 flex items-center gap-1.5" style={{ color: "#888" }}>
+                      <Linkedin size={11} style={{ color: "#0a66c2" }} /> Similar posts found ({analysis.linkedinTrends.length})
+                    </p>
+                    <div className="space-y-2">
+                      {analysis.linkedinTrends.slice(0, 8).map((t, i) => (
+                        <div key={`${t.url}-${i}`} className="text-xs leading-snug">
+                          <a href={t.url} target="_blank" rel="noreferrer" className="font-medium hover:underline" style={{ color: "#111" }}>{t.title}</a>
+                          {t.authorUrl && (
+                            <a href={t.authorUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 ml-2 text-[10px] hover:underline" style={{ color: "#555" }}>
+                              <User size={10} /> {t.authorName || "Author"}
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -458,7 +546,12 @@ export default function LinkedInTab() {
                     <h4 className="font-semibold text-sm mt-6 mb-2" style={{ color: "#111" }}>{rec.topic}</h4>
                     {rec.angle && <span className="inline-block text-[10px] px-2 py-0.5 rounded-full mb-2" style={{ background: "#eff6ff", color: "#0a66c2" }}>{rec.angle}</span>}
                     {rec.targetAudience && <p className="text-[11px] mb-2" style={{ color: "#888" }}>👥 {rec.targetAudience}</p>}
-                    <p className="text-xs leading-relaxed mb-4" style={{ color: "#666" }}>{rec.justification}</p>
+                    <p className="text-xs leading-relaxed mb-3" style={{ color: "#666" }}>{rec.justification}</p>
+                    {hookByTopic.get(rec.topic) && (
+                      <p className="text-[11px] italic leading-snug mb-4 rounded px-2.5 py-2" style={{ background: "#f9fafb", color: "#555", borderLeft: "2px solid #0a66c2" }}>
+                        💬 {hookByTopic.get(rec.topic)}
+                      </p>
+                    )}
                     <div className="flex gap-2">
                       <button onClick={() => { setSelectedId(rec.id); setStep(3); }} className="flex-1 flex items-center justify-center gap-1.5 text-xs font-medium py-2 rounded-lg" style={{ background: "#0a66c2", color: "#fff" }}>
                         <Sparkles size={12} /> Write
@@ -560,6 +653,7 @@ function PostDetail({
   onDeleteDraft: () => void;
 }) {
   const hasDraft = !!draft && draft.posts.length > 0;
+  const lengthPreview = useMemo(() => buildLengthPreview(targetChars), [targetChars]);
   return (
     <div className="rounded-xl" style={{ background: "#fff", border: "1px solid #eeeeee", padding: "24px" }}>
       <div className="flex items-start justify-between mb-2 gap-3">
@@ -596,9 +690,9 @@ function PostDetail({
         </div>
         <input
           type="range"
-          min={500}
-          max={2200}
-          step={50}
+          min={LEN_MIN}
+          max={LEN_MAX}
+          step={25}
           value={targetChars}
           onChange={(e) => setTargetChars(Number(e.target.value))}
           disabled={isGenerating}
@@ -606,9 +700,22 @@ function PostDetail({
           style={{ accentColor: "#0a66c2" }}
         />
         <div className="flex items-center justify-between mt-0.5 text-[10px]" style={{ color: "#aaa" }}>
-          <span>Short (500)</span>
-          <span>Sweet spot 1000–1200</span>
-          <span>Long (2200)</span>
+          <span>Short ({LEN_MIN})</span>
+          <span>Sweet spot 500–700</span>
+          <span>Long ({LEN_MAX})</span>
+        </div>
+
+        {/* Length preview — random filler words at the chosen length, so you
+            can gauge how long the post will be before generating. */}
+        <div className="mt-3">
+          <span className="text-[10px] uppercase tracking-wider font-semibold" style={{ color: "#aaa" }}>Length preview (~{targetChars} chars)</span>
+          <p
+            className="text-xs mt-1 whitespace-pre-wrap leading-relaxed select-none"
+            style={{ color: "#c4c4c4", fontStyle: "italic", background: "#fff", border: "1px solid #f0f0f0", borderRadius: 8, padding: "10px 12px" }}
+            aria-hidden
+          >
+            {lengthPreview}
+          </p>
         </div>
       </div>
 

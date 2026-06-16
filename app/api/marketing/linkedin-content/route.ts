@@ -279,12 +279,21 @@ export async function POST(req: NextRequest) {
 // ─── Analysis ────────────────────────────────────────────────────────────────
 
 async function runAnalysis(userId: string, theme?: string) {
-  // Seed les requêtes de veille avec le thème saisi (s'il y en a un) + coaching.
-  const seeds = theme ? [theme, `${theme} coaching`, ...COACHING_SEEDS] : COACHING_SEEDS;
+  const isThemed = !!theme;
+
+  // Seeds. Avec un thème saisi par l'utilisateur, on recherche CE thème
+  // directement (et non le coaching) pour remonter de vrais posts similaires.
+  // Sans thème, on retombe sur la veille coaching habituelle.
+  const liSeeds = isThemed
+    ? [theme!, `${theme} lessons`, `${theme} mistakes`, `${theme} framework`, `${theme} how I`]
+    : COACHING_SEEDS;
+  const webSeeds = isThemed
+    ? [theme!, `${theme} trends`, `${theme} news`]
+    : ["coaching trends", "leadership development"];
 
   const [liResult, webResult] = await Promise.allSettled([
-    fetchLinkedInTrends(seeds, { num: 15 }),
-    fetchWebCoachingTrends(theme ? [theme, "coaching trends"] : ["coaching trends", "leadership development"], { num: 10 }),
+    fetchLinkedInTrends(liSeeds, { num: isThemed ? 18 : 15 }),
+    fetchWebCoachingTrends(webSeeds, { num: 10 }),
   ]);
 
   const linkedinTrends = liResult.status === "fulfilled" ? liResult.value : [];
@@ -298,13 +307,48 @@ async function runAnalysis(userId: string, theme?: string) {
   }
 
   const liText = linkedinTrends.length > 0
-    ? linkedinTrends.map((t, i) => `${i + 1}. "${t.title}"${t.snippet ? ` - ${t.snippet.slice(0, 160)}` : ""}`).join("\n")
+    ? linkedinTrends.map((t, i) => `${i + 1}. "${t.title}"${t.authorName ? ` (by ${t.authorName})` : ""}${t.snippet ? `\n   ${t.snippet.slice(0, 200)}` : ""}`).join("\n")
     : "(none)";
   const webText = webTrends.length > 0
     ? webTrends.map((t, i) => `${i + 1}. "${t.title}" (${t.source})`).join("\n")
     : "(none)";
 
-  const analysisTool: Anthropic.Tool = {
+  // Tool + prompt : variante "thème libre" (riche, non orientée coaching) vs
+  // variante "veille coaching" par défaut.
+  const themedTool: Anthropic.Tool = {
+    name: "propose_linkedin_posts",
+    description: "Return a complete LinkedIn content brief for the user's theme: a summary of the current conversation, the patterns that are working, and several ready-to-write post ideas. Grounded in the real posts provided.",
+    input_schema: {
+      type: "object",
+      properties: {
+        summary: { type: "string", description: "3-4 sentences on the state of the conversation around the theme on LinkedIn right now: what people say, what is contrarian, where the attention is." },
+        whatsWorking: {
+          type: "array",
+          description: "4-6 concrete, reusable patterns SEEN in the real posts above (hook styles, formats, angles that earn engagement on THIS theme). Each a short phrase, grounded in those posts.",
+          items: { type: "string" },
+        },
+        postIdeas: {
+          type: "array",
+          description: "Exactly 5 distinct, ready-to-write post ideas, each a genuinely different angle.",
+          items: {
+            type: "object",
+            properties: {
+              topic: { type: "string", description: "Specific, scroll-worthy post subject (not a vague theme)" },
+              angle: { type: "string", description: "The distinctive angle / POV (short label)" },
+              targetAudience: { type: "string", description: "Who this post speaks to" },
+              hook: { type: "string", description: "A concrete opening line the writer could literally use" },
+              rationale: { type: "string", description: "Why now - tie it to a real post/trend above" },
+              priority: { type: "string", enum: ["high", "medium", "low"] },
+            },
+            required: ["topic", "angle", "targetAudience", "hook", "rationale", "priority"],
+          },
+        },
+      },
+      required: ["summary", "whatsWorking", "postIdeas"],
+    },
+  };
+
+  const defaultTool: Anthropic.Tool = {
     name: "propose_linkedin_posts",
     description: "Propose 3 LinkedIn post ideas for Coachello, grounded in the real LinkedIn + web trends provided.",
     input_schema: {
@@ -330,10 +374,36 @@ async function runAnalysis(userId: string, theme?: string) {
     },
   };
 
-  const prompt = `You are Coachello's senior social strategist. Propose the 3 best next LinkedIn posts.
+  const themedPrompt = `You are an elite LinkedIn ghostwriter and content strategist. The user wants to write LinkedIn posts about a specific theme. Study what is ALREADY working on LinkedIn for this exact theme and return a complete creative brief.
+
+## The theme the user wants to write about
+"${theme}"
+
+This is the subject. Stay on it. Do NOT bend it back toward coaching or any other topic. "${theme}" is what they want to write about, period.
+
+## The author's brand (voice and credibility only - NOT a topic constraint)
+The posts will be published by this company, so the voice can stay consistent with it. But the topic is "${theme}", not this company. Connect to the brand only if it is genuinely natural; otherwise ignore it entirely.
+${BUSINESS_CONTEXT_PROMPT_BLOCK}
+
+## Real, CURRENT LinkedIn posts on this theme (just pulled live - this is your "what's working" evidence)
+${liText}
+
+## What's in the news on this theme
+${webText}
+
+## Your job - be comprehensive and concrete
+1. summary: the state of the conversation around "${theme}" on LinkedIn right now (what people say, what is contrarian, where the attention is).
+2. whatsWorking: 4-6 reusable patterns you actually SEE in the real posts above (hook styles, formats, angles that earn engagement). Ground each in those posts.
+3. postIdeas: exactly 5 distinct, ready-to-write ideas on "${theme}", each a genuinely different angle (contrarian take, how-to, personal story, data-driven, myth-busting...). Each needs a concrete, usable opening hook.
+- Use ONLY real, verifiable numbers - never invent statistics.
+- ${NO_EM_DASH_RULE_EN}
+
+Call \`propose_linkedin_posts\`.`;
+
+  const defaultPrompt = `You are Coachello's senior social strategist. Propose the 3 best next LinkedIn posts.
 
 ${BUSINESS_CONTEXT_PROMPT_BLOCK}
-${theme ? `\nThe user specifically wants ideas around this theme: "${theme}". Stay close to it.\n` : ""}
+
 ## What's trending on LinkedIn right now (real posts/articles on coaching)
 ${liText}
 
@@ -350,11 +420,14 @@ Propose 3 distinct LinkedIn post ideas that:
 
 Call \`propose_linkedin_posts\`.`;
 
+  const analysisTool = isThemed ? themedTool : defaultTool;
+  const prompt = isThemed ? themedPrompt : defaultPrompt;
+
   const model = await getModelPreference("marketing", ANALYSIS_MODEL);
   const client = new Anthropic();
   const message = await client.messages.create({
     model,
-    max_tokens: 2000,
+    max_tokens: isThemed ? 3500 : 2000,
     tools: [analysisTool],
     tool_choice: { type: "tool", name: "propose_linkedin_posts" },
     messages: [{ role: "user", content: prompt }],
@@ -369,14 +442,17 @@ Call \`propose_linkedin_posts\`.`;
 
   const parsed = toolUse.input as {
     summary: string;
-    postIdeas: Array<{ topic: string; angle: string; targetAudience: string; rationale: string; priority: string }>;
+    whatsWorking?: string[];
+    postIdeas: Array<{ topic: string; angle: string; targetAudience: string; rationale: string; priority: string; hook?: string }>;
   };
 
   const analysis: LinkedInContentAnalysis = {
     linkedinTrends: linkedinTrends.map((t) => ({ title: t.title, url: t.url, snippet: t.snippet, source: t.source, authorName: t.authorName, authorUrl: t.authorUrl })),
     webTrends: webTrends.map((t) => ({ title: t.title, url: t.url, source: t.source })),
-    postIdeas: parsed.postIdeas.map((p) => ({ topic: p.topic, angle: p.angle, rationale: p.rationale })),
+    postIdeas: parsed.postIdeas.map((p) => ({ topic: p.topic, angle: p.angle, rationale: p.rationale, hook: p.hook })),
     summary: parsed.summary,
+    theme: isThemed ? theme : undefined,
+    whatsWorking: isThemed ? (parsed.whatsWorking ?? []) : undefined,
     dataSources: {
       linkedin: { ok: linkedinTrends.length > 0, count: linkedinTrends.length },
       web: { ok: webTrends.length > 0, count: webTrends.length },

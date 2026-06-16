@@ -214,9 +214,13 @@ export interface LinkedInContentAnalysis {
   linkedinTrends: LinkedInTrendRef[];
   /** Tendances web (actus coaching). */
   webTrends: { title: string; url: string; source: string }[];
-  /** Idées d'angles proposées par Claude. */
-  postIdeas: { topic: string; angle: string; rationale: string }[];
+  /** Idées d'angles proposées par Claude (hook fourni en mode thème libre). */
+  postIdeas: { topic: string; angle: string; rationale: string; hook?: string }[];
   summary: string;
+  /** Thème libre saisi par l'utilisateur (mode "Propose your own theme"). */
+  theme?: string;
+  /** Patterns qui marchent sur ce thème (hooks/formats/angles), mode thème. */
+  whatsWorking?: string[];
   dataSources?: {
     linkedin: { ok: boolean; count: number };
     web: { ok: boolean; count: number };
