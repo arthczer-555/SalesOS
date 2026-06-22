@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { Sparkles, AlertCircle, Check, Loader2, Trash2, RefreshCw, Linkedin, Copy, ExternalLink, ChevronRight, User } from "lucide-react";
+import { Sparkles, AlertCircle, Check, Loader2, Trash2, RefreshCw, Linkedin, Copy, ExternalLink, ChevronRight, User, Pencil } from "lucide-react";
 import { useLinkedInContent } from "@/lib/hooks/use-marketing";
 import type { LinkedInContentAnalysis, LinkedInPostRecommendation, LinkedInPostDraft } from "@/lib/marketing-types";
 
@@ -730,7 +730,9 @@ function PostDetail({
         <div className="mt-4 space-y-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {draft.posts.map((p, i) => (
-              <PostCard key={i} post={p} index={i} />
+              // Key includes a content signature so a Regenerate (fresh text)
+              // remounts the card and discards any in-progress manual edits.
+              <PostCard key={`${i}-${p.body.length}-${p.body.slice(0, 24)}`} post={p} index={i} />
             ))}
           </div>
 
@@ -762,7 +764,15 @@ function PostDetail({
 
 function PostCard({ post, index }: { post: LinkedInPostDraft["posts"][number]; index: number }) {
   const [copied, setCopied] = useState(false);
-  const fullText = `${post.body}\n\n${post.hashtags.map((h) => `#${h.replace(/^#/, "")}`).join(" ")}`;
+  const [editing, setEditing] = useState(false);
+  // Manual edits live here, seeded from the generated post. The card is keyed
+  // by content upstream, so a Regenerate remounts it and reseeds these.
+  const [body, setBody] = useState(post.body);
+  const [tagsStr, setTagsStr] = useState(post.hashtags.map((h) => `#${h.replace(/^#/, "")}`).join(" "));
+
+  const tagsArr = tagsStr.split(/[\s,]+/).map((t) => t.replace(/^#/, "")).filter(Boolean);
+  const hashtagLine = tagsArr.map((t) => `#${t}`).join(" ");
+  const fullText = hashtagLine ? `${body}\n\n${hashtagLine}` : body;
 
   const copy = async () => {
     try {
@@ -778,13 +788,45 @@ function PostCard({ post, index }: { post: LinkedInPostDraft["posts"][number]; i
         <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={{ background: "#eff6ff", color: "#0a66c2" }}>
           Post {index + 1}{post.angle ? ` · ${post.angle}` : ""}
         </span>
+        <button
+          onClick={() => setEditing((v) => !v)}
+          className="flex items-center gap-1 text-[10px] font-medium rounded px-2 py-1"
+          style={{ background: editing ? "#0a66c2" : "#fff", color: editing ? "#fff" : "#555", border: "1px solid #ddd" }}
+          title={editing ? "Done editing" : "Edit this post by hand"}
+        >
+          {editing ? <Check size={11} /> : <Pencil size={11} />} {editing ? "Done" : "Edit"}
+        </button>
       </div>
-      <p className="text-sm flex-1 whitespace-pre-wrap leading-relaxed" style={{ color: "#222" }}>{post.body}</p>
-      {post.hashtags.length > 0 && (
-        <p className="text-xs mt-3" style={{ color: "#0a66c2" }}>{post.hashtags.map((h) => `#${h.replace(/^#/, "")}`).join(" ")}</p>
+
+      {editing ? (
+        <>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={Math.min(18, Math.max(6, body.split("\n").length + 1))}
+            className="text-sm flex-1 whitespace-pre-wrap leading-relaxed rounded-lg w-full resize-y"
+            style={{ color: "#222", background: "#fff", border: "1px solid #d8d8d8", padding: "10px 12px", outline: "none" }}
+            placeholder="Write your post..."
+          />
+          <input
+            value={tagsStr}
+            onChange={(e) => setTagsStr(e.target.value)}
+            className="text-xs mt-2 rounded-lg w-full"
+            style={{ color: "#0a66c2", background: "#fff", border: "1px solid #d8d8d8", padding: "6px 10px", outline: "none" }}
+            placeholder="#hashtag1 #hashtag2"
+          />
+        </>
+      ) : (
+        <>
+          <p className="text-sm flex-1 whitespace-pre-wrap leading-relaxed" style={{ color: "#222" }}>{body}</p>
+          {tagsArr.length > 0 && (
+            <p className="text-xs mt-3" style={{ color: "#0a66c2" }}>{hashtagLine}</p>
+          )}
+        </>
       )}
+
       <div className="flex items-center justify-between mt-3 pt-3" style={{ borderTop: "1px solid #eee" }}>
-        <span className="text-[10px]" style={{ color: "#aaa" }}>{post.body.length} chars</span>
+        <span className="text-[10px]" style={{ color: "#aaa" }}>{body.length} chars</span>
         <button onClick={copy} className="flex items-center gap-1.5 text-xs font-medium rounded-lg px-3 py-1.5" style={{ background: copied ? "#16a34a" : "#0a66c2", color: "#fff" }}>
           {copied ? <Check size={12} /> : <Copy size={12} />} {copied ? "Copied!" : "Copy post"}
         </button>

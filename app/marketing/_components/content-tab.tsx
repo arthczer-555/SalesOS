@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect, Component, type ReactNode } from "react";
-import { Sparkles, TrendingUp, AlertCircle, Search, Check, Download, Link2, Loader2, Trash2, RefreshCw, FileText, ChevronRight, BookOpen, Linkedin } from "lucide-react";
+import { useState, useCallback, useEffect, useRef, Component, type ReactNode } from "react";
+import { Sparkles, TrendingUp, AlertCircle, Search, Check, Download, Link2, Loader2, Trash2, RefreshCw, FileText, ChevronRight, BookOpen, Linkedin, Pencil } from "lucide-react";
 import { useMarketingContent } from "@/lib/hooks/use-marketing";
 import type { ArticleRecommendation, ArticleDraft, ContentAnalysis } from "@/lib/marketing-types";
 import LinkedInTab from "./linkedin-tab";
@@ -987,6 +987,50 @@ function ArticleDetail({
 }) {
   const hasDraft = !!draft;
   const dateStr = rec.createdAt ? formatRelative(rec.createdAt) : "";
+
+  // --- Manual editing ---------------------------------------------------
+  // The article body is editable in place (contentEditable). Edits are held in
+  // state per language but only committed at "flush" points (language switch,
+  // Done, download), never per keystroke, so the caret never jumps while
+  // typing. They're read back into a draft clone on download.
+  const [editing, setEditing] = useState(false);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const [editedHtml, setEditedHtml] = useState<{ fr: string; en: string }>(() => ({
+    fr: draft?.content?.fr || "",
+    en: draft?.content?.en || "",
+  }));
+
+  // Reseed and leave edit mode whenever a fresh draft arrives (first load or
+  // Regenerate). Keyed by a signature so it only fires on real content changes.
+  const draftSig = `${draft?.recommendationId ?? ""}|${(draft?.content?.fr ?? "").length}|${(draft?.content?.en ?? "").length}`;
+  useEffect(() => {
+    setEditedHtml({ fr: draft?.content?.fr || "", en: draft?.content?.en || "" });
+    setEditing(false);
+    // draft fields are captured via draftSig; eslint-disable to avoid over-listing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftSig]);
+
+  // Snapshot the live DOM edits of the shown language back into state.
+  const flush = useCallback(() => {
+    const html = editorRef.current?.innerHTML;
+    if (html != null) setEditedHtml((prev) => ({ ...prev, [previewLang]: html }));
+  }, [previewLang]);
+
+  const switchLang = useCallback((l: "fr" | "en") => {
+    if (l === previewLang) return;
+    flush();
+    setPreviewLang(l);
+  }, [previewLang, flush, setPreviewLang]);
+
+  const startDownload = useCallback((lang: "fr" | "en") => {
+    if (!draft) return;
+    // Read the live DOM directly (state updates are async) so the very latest
+    // edits make it into the file.
+    const live = editorRef.current?.innerHTML ?? editedHtml[previewLang];
+    const content = { ...editedHtml, [previewLang]: live };
+    onDownload({ ...draft, content: { fr: content.fr, en: content.en } }, lang);
+  }, [draft, editedHtml, previewLang, onDownload]);
+
   return (
     <div
       className="rounded-xl"
@@ -1051,29 +1095,47 @@ function ArticleDetail({
 
       {hasDraft && draft && draft.content && draft.wordpressFormat && (
         <div className="mt-4">
-          <div className="flex items-center justify-end gap-1 mb-4">
-            {(["fr", "en"] as const).map((lang) => (
-              <button
-                key={lang}
-                onClick={() => setPreviewLang(lang)}
-                className="text-xs font-medium rounded-full px-3 py-1"
-                style={{
-                  background: previewLang === lang ? "#f01563" : "#f5f5f5",
-                  color: previewLang === lang ? "#fff" : "#888",
-                }}
-              >
-                {lang === "fr" ? "French" : "English"}
-              </button>
-            ))}
+          <div className="flex items-center justify-between gap-2 mb-4">
+            <button
+              onClick={() => { if (editing) flush(); setEditing((v) => !v); }}
+              className="flex items-center gap-1.5 text-xs font-medium rounded-lg px-3 py-1.5"
+              style={{ background: editing ? "#f01563" : "#fff", color: editing ? "#fff" : "#555", border: "1px solid #ddd" }}
+              title={editing ? "Done editing" : "Edit the article text by hand before downloading"}
+            >
+              {editing ? <Check size={12} /> : <Pencil size={12} />} {editing ? "Done editing" : "Edit"}
+            </button>
+            <div className="flex items-center gap-1">
+              {(["fr", "en"] as const).map((lang) => (
+                <button
+                  key={lang}
+                  onClick={() => switchLang(lang)}
+                  className="text-xs font-medium rounded-full px-3 py-1"
+                  style={{
+                    background: previewLang === lang ? "#f01563" : "#f5f5f5",
+                    color: previewLang === lang ? "#fff" : "#888",
+                  }}
+                >
+                  {lang === "fr" ? "French" : "English"}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="flex gap-4">
-            <div className="flex-1 rounded-xl" style={{ background: "#fafafa", border: "1px solid #eeeeee", padding: "24px" }}>
+            <div className="flex-1 rounded-xl" style={{ background: "#fafafa", border: editing ? "1px solid #f0156366" : "1px solid #eeeeee", padding: "24px" }}>
               <div
+                key={`${previewLang}-${draftSig}`}
+                ref={editorRef}
+                contentEditable={editing}
+                suppressContentEditableWarning
+                onBlur={flush}
                 className="prose prose-sm max-w-none"
-                style={{ color: "#333" }}
-                dangerouslySetInnerHTML={{ __html: draft.content[previewLang] || "" }}
+                style={{ color: "#333", outline: "none", minHeight: editing ? 220 : undefined, cursor: editing ? "text" : "default" }}
+                dangerouslySetInnerHTML={{ __html: editedHtml[previewLang] || "" }}
               />
+              {editing && (
+                <p className="text-[11px] mt-3" style={{ color: "#f01563" }}>Editing: click anywhere in the text to change it. Your edits are included in the download.</p>
+              )}
             </div>
 
             <div className="w-60 shrink-0 space-y-4">
@@ -1139,7 +1201,7 @@ function ArticleDetail({
 
           <div className="flex items-center gap-3 mt-4">
             <button
-              onClick={() => onDownload(draft, "fr")}
+              onClick={() => startDownload("fr")}
               className="flex items-center gap-1.5 text-sm font-medium rounded-lg px-4 py-2"
               style={{ background: "#f01563", color: "#fff" }}
             >
@@ -1147,7 +1209,7 @@ function ArticleDetail({
               Download FR (.html)
             </button>
             <button
-              onClick={() => onDownload(draft, "en")}
+              onClick={() => startDownload("en")}
               className="flex items-center gap-1.5 text-sm font-medium rounded-lg px-4 py-2"
               style={{ background: "#3b82f6", color: "#fff" }}
             >
