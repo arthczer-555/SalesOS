@@ -33,7 +33,10 @@ const RELATIONSHIP_STATES: AeRelationshipState[] = [
   "lost_deal",
 ];
 
-function buildSystemPrompt(prospectionGuide: string): string {
+function buildSystemPrompt(prospectionGuide: string, withMessages: boolean): string {
+  if (!withMessages) {
+    return buildAnalysisOnlySystemPrompt();
+  }
   return `Tu es un Account Executive sénior chez Coachello. Tu prépares la prospection d'un compte cible (Watch List) :
 QUI contacter en priorité dans ce compte, et avec QUEL message d'ouverture. Sortie courte et actionnable, pas un rapport.
 
@@ -63,7 +66,38 @@ Réponds UNIQUEMENT via l'outil emit_ae_analysis :
 - sources_used : { emails, news, sector, world_knowledge } selon ce qui a réellement servi.`;
 }
 
-const ANALYSIS_TOOL = {
+/**
+ * Variante "analyse seule" : on identifie QUI contacter et POURQUOI, sans rédiger
+ * les messages d'ouverture. Plus rapide / moins cher, et utile quand l'AE ne veut
+ * pas qu'on génère un message pour chaque contact.
+ */
+function buildAnalysisOnlySystemPrompt(): string {
+  return `Tu es un Account Executive sénior chez Coachello. Tu prépares la prospection d'un compte cible (Watch List) :
+QUI contacter en priorité dans ce compte et POURQUOI. Tu NE rédiges AUCUN message d'ouverture. Sortie courte et actionnable, pas un rapport.
+
+${SALES_CONTEXT_PROMPT_BLOCK}
+
+Ton style : direct, concret.
+${NO_EM_DASH_RULE}
+LANGUE : rédige state_summary, story_to_tell et chaque rationale dans la langue du PROSPECT, pas celle du contexte fourni. Détecte-la depuis le compte lui-même (pays et implantation de l'entreprise, langue de ses news et posts, langue des emails reçus). Une entreprise non francophone = anglais. En cas de doute, écris en anglais.
+
+Règles anti-générique :
+- Chaque rationale tient en 1 phrase et cite un fait précis du contexte (un email daté, un deal, un signal news, un post LinkedIn, le job title). Si la phrase pourrait s'appliquer telle quelle à un autre compte, réécris-la.
+- Ne jamais inventer un fait, un nom, un chiffre, un email ou un client.
+
+Contacts à couvrir : liste TOUS les contacts du compte cohérents avec la vente (jusqu'à 10), pas seulement les meilleurs. Classés par priorité : buyer économique d'abord (CHRO, DRH, VP People, Head of L&D), puis influenceurs (L&D manager, HRBP, Talent), puis relais crédibles (Chief of Staff, direction, managers concernés). Exclus uniquement les contacts manifestement hors sujet (aucun lien avec les RH, le L&D ou la décision). Exception : un historique d'échange chaud bat un titre senior jamais contacté.
+
+Réponds UNIQUEMENT via l'outil emit_ae_analysis :
+- relationship_state : never_contacted | cold (échanges anciens ou restés sans réponse) | warm (échanges récents et positifs) | active (deal ouvert en cours) | lost_deal (deal perdu récemment).
+- state_summary : 1 à 2 phrases max. L'essentiel : où on en est avec ce compte et le point d'entrée.
+- story_to_tell : une accroche de social proof prête à dire, basée sur le secteur du prospect ET notre liste de clients actuels fournie en contexte. Cite uniquement des clients RÉELS de la liste fournie, du même secteur ou d'un secteur proche. Chaîne vide si aucun client pertinent.
+- priority_contacts : tous les contacts cohérents (jusqu'à 10), classés par priorité. Pour chacun : name, role, rationale (1 phrase, fait précis), email et hubspot_id si connus. NE génère PAS d'opening_subject ni d'opening_message (ce mode ne rédige aucun message).
+- watch_outs : 0 à 3 points courts, uniquement des risques réels du contexte (contact parti, deal perdu récent, concurrent en place, mauvais timing). Liste vide si rien de réel.
+- sources_used : { emails, news, sector, world_knowledge } selon ce qui a réellement servi.`;
+}
+
+function buildAnalysisTool(withMessages: boolean) {
+  return {
   name: "emit_ae_analysis",
   description: "Émet l'analyse AE structurée (reco de prospection) pour la page détail Watch List.",
   input_schema: {
@@ -107,7 +141,9 @@ const ANALYSIS_TOOL = {
             email: { type: ["string", "null"] },
             hubspot_id: { type: ["string", "null"] },
           },
-          required: ["name", "rationale", "opening_subject", "opening_message"],
+          required: withMessages
+            ? ["name", "rationale", "opening_subject", "opening_message"]
+            : ["name", "rationale"],
         },
       },
       watch_outs: {
@@ -135,7 +171,8 @@ const ANALYSIS_TOOL = {
       "sources_used",
     ],
   },
-};
+  };
+}
 
 /**
  * Résout le guide de prospection avec la même cascade que le drafter :
@@ -166,8 +203,11 @@ interface ScopeCompanyRow {
 export async function runAeAnalysis(input: {
   scopeCompanyId: string;
   userId: string;
+  /** false = analyse seule (qui contacter + pourquoi), sans rédiger de message. Défaut true. */
+  withMessages?: boolean;
 }): Promise<{ ok: boolean; error?: string }> {
   const { scopeCompanyId, userId } = input;
+  const withMessages = input.withMessages ?? true;
   try {
     const { data: company, error } = await db
       .from("scope_companies")
@@ -209,14 +249,15 @@ export async function runAeAnalysis(input: {
     const userPrompt = buildPrompt({ company, hubspot, news, clientsRoster });
 
     // Jusqu'à 10 opening messages de 100-200 mots : plafond et timeout relevés
-    // en conséquence (la BG fn Netlify laisse largement le temps).
+    // en conséquence (la BG fn Netlify laisse largement le temps). En mode
+    // "analyse seule" (sans messages), la sortie est bien plus courte.
     const client = new Anthropic({ timeout: 300_000, maxRetries: 1 });
     const message = await client.messages.create({
       model: MODEL,
-      max_tokens: 8000,
-      system: buildSystemPrompt(prospectionGuide),
+      max_tokens: withMessages ? 8000 : 2500,
+      system: buildSystemPrompt(prospectionGuide, withMessages),
       messages: [{ role: "user", content: userPrompt }],
-      tools: [ANALYSIS_TOOL],
+      tools: [buildAnalysisTool(withMessages)],
       tool_choice: { type: "tool", name: "emit_ae_analysis" },
     });
 

@@ -9,6 +9,15 @@ import { useOutreachCounts } from "@/lib/hooks/use-outreach-counts";
 import type { DraftRecipient } from "./mail-drafter";
 import type { CompanyContactsResponse } from "@/app/api/watchlist/companies/[id]/contacts/route";
 
+// Date d'ajout du contact dans HubSpot, formatée en anglais (UI EN). Renvoie
+// null si la date est absente ou invalide pour ne rien afficher dans ce cas.
+function formatAddedDate(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
 export function ContactsCard({
   companyId,
   onProspect,
@@ -186,12 +195,14 @@ export function ContactsCard({
                   key={c.id}
                   style={{
                     display: "flex",
-                    alignItems: "center",
-                    gap: 10,
+                    flexDirection: "column",
+                    gap: 4,
                     padding: "8px 8px",
                     borderRadius: 8,
                   }}
                 >
+                  {/* Ligne du nom : nom + badge à gauche, actions à droite (ne mordent pas sur le titre). */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                   {onProspect && c.email && (
                     <input
                       type="checkbox"
@@ -201,8 +212,7 @@ export function ContactsCard({
                       style={{ accentColor: COLORS.brand, width: 15, height: 15, cursor: "pointer", flexShrink: 0 }}
                     />
                   )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
                       {c.email ? (
                         <button
                           type="button"
@@ -253,11 +263,6 @@ export function ContactsCard({
                         </span>
                       )}
                     </div>
-                    <div style={{ fontSize: 11, color: COLORS.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {c.jobtitle ? c.jobtitle : "—"}
-                      {c.email ? ` · ${c.email}` : ""}
-                    </div>
-                  </div>
                   {!c.phone &&
                     (phoneState[c.id] === "revealing" ? (
                       <span
@@ -414,6 +419,23 @@ export function ContactsCard({
                   >
                     <ExternalLink size={13} />
                   </a>
+                  </div>
+                  {/* Titre / email / date sur toute la largeur, alignés sous le nom. */}
+                  <div style={{ paddingLeft: onProspect && c.email ? 25 : 0 }}>
+                    <div style={{ fontSize: 11, color: COLORS.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.jobtitle ? c.jobtitle : "—"}
+                    </div>
+                    {c.email && (
+                      <div style={{ fontSize: 11, color: COLORS.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {c.email}
+                      </div>
+                    )}
+                    {formatAddedDate(c.created_at) && (
+                      <div style={{ fontSize: 10, color: COLORS.ink3, whiteSpace: "nowrap" }}>
+                        Added to HubSpot · {formatAddedDate(c.created_at)}
+                      </div>
+                    )}
+                  </div>
                 </li>
               );
             })}

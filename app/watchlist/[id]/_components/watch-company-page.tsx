@@ -179,7 +179,7 @@ export function WatchCompanyPage({ id }: { id: string }) {
               notes={company.notes}
               brief={briefs.ae_analysis}
               dependencies={{ news: briefs.news }}
-              onRefresh={() => refresh("ae_analysis")}
+              onGenerate={(withMessages) => refresh("ae_analysis", { withMessages })}
               isRefreshing={isRefreshing.ae_analysis}
               clientError={errorByKind.ae_analysis ?? null}
               onProspect={prospectFromAnalysis}

@@ -24,6 +24,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params;
 
+  // withMessages=false : analyse seule (qui contacter + pourquoi), sans rédiger
+  // de message d'ouverture. Défaut true (régénération complète).
+  const body = await req.json().catch(() => ({}));
+  const withMessages = (body as { withMessages?: boolean })?.withMessages !== false;
+
   const { data: company, error: companyErr } = await db
     .from("scope_companies")
     .select("id")
@@ -50,7 +55,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     fetch(`${siteUrl}/.netlify/functions/${BG_FN}`, {
       method: "POST",
       headers: { authorization: `Bearer ${cronSecret}`, "content-type": "application/json" },
-      body: JSON.stringify({ scopeCompanyId: id, userId: user.id, briefId, startedAt }),
+      body: JSON.stringify({ scopeCompanyId: id, userId: user.id, briefId, startedAt, withMessages }),
     }).catch((e) => {
       console.error(`[briefs/ae-analysis] background invoke failed:`, e);
     });
@@ -58,7 +63,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   after(async () => {
-    const res = await runAeAnalysis({ scopeCompanyId: id, userId: user.id });
+    const res = await runAeAnalysis({ scopeCompanyId: id, userId: user.id, withMessages });
     if (!res.ok) {
       console.error("[briefs/ae-analysis] dev run failed:", res.error);
     }

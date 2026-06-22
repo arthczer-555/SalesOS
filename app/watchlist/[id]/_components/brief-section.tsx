@@ -12,6 +12,7 @@ export function BriefSection({
   completedAt,
   error,
   onRefresh,
+  actions,
   disabled = false,
   staleBadge,
   children,
@@ -22,6 +23,8 @@ export function BriefSection({
   completedAt: string | null;
   error: string | null;
   onRefresh?: () => void;
+  /** Remplace le bouton Generate/Regenerate par défaut (ex. plusieurs actions). */
+  actions?: React.ReactNode;
   disabled?: boolean;
   staleBadge?: string | null;
   children: React.ReactNode;
@@ -66,13 +69,23 @@ export function BriefSection({
           </span>
         )}
 
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+        <div
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            justifyContent: "flex-end",
+          }}
+        >
           {completedAt && (
             <span style={{ fontSize: 10, color: COLORS.ink3 }}>
               {formatRelative(completedAt)}
             </span>
           )}
-          {onRefresh && (
+          {actions}
+          {!actions && onRefresh && (
             <button
               type="button"
               onClick={onRefresh}

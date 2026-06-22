@@ -10,6 +10,8 @@ export interface CompanyContact {
   /** Numéro révélé / connu (mobilephone en priorité, sinon phone). */
   phone: string | null;
   last_activity: string | null;
+  /** Date de création du contact dans HubSpot (ISO). */
+  created_at: string | null;
 }
 
 const CONTACT_CAP = 50;
@@ -36,7 +38,7 @@ export async function fetchCompanyContacts(
       "/crm/v3/objects/contacts/batch/read",
       "POST",
       {
-        properties: ["firstname", "lastname", "email", "jobtitle", "phone", "mobilephone", "lastmodifieddate"],
+        properties: ["firstname", "lastname", "email", "jobtitle", "phone", "mobilephone", "lastmodifieddate", "createdate"],
         inputs: ids.map((id) => ({ id })),
       },
     );
@@ -50,6 +52,7 @@ export async function fetchCompanyContacts(
         jobtitle: p.jobtitle || null,
         phone: p.mobilephone || p.phone || null,
         last_activity: p.lastmodifieddate || null,
+        created_at: p.createdate || null,
       };
     });
   } catch (e) {

@@ -70,7 +70,7 @@ export function useBriefRefresh(id: string | null, onComplete?: () => void) {
   const [errorByKind, setErrorByKind] = React.useState<Partial<Record<BriefKind, string>>>({});
 
   const refresh = React.useCallback(
-    async (kind: BriefKind) => {
+    async (kind: BriefKind, options?: { withMessages?: boolean }) => {
       if (!id) return;
       setIsRefreshing((prev) => ({ ...prev, [kind]: true }));
       setErrorByKind((prev) => ({ ...prev, [kind]: undefined }));
@@ -78,7 +78,7 @@ export function useBriefRefresh(id: string | null, onComplete?: () => void) {
         const res = await fetch(`/api/watchlist/companies/${id}/briefs/${kindToPath(kind)}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
+          body: JSON.stringify(options ?? {}),
         });
         const json = await res.json().catch(() => ({}));
         if (!res.ok && !json?.alreadyRunning) {

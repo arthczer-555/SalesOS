@@ -3,7 +3,7 @@
 import * as React from "react";
 import useSWR from "swr";
 import { useUser } from "@clerk/nextjs";
-import { Target, MailPlus, BookOpen, Copy, Check, Send, Loader2, ChevronDown, ChevronUp } from "lucide-react";
+import { Target, MailPlus, BookOpen, Copy, Check, Send, Loader2, ChevronDown, ChevronUp, RefreshCw } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { BriefSection } from "./brief-section";
 import { NotesEditor } from "./notes-editor";
@@ -30,7 +30,7 @@ export function AeAnalysisCard({
   notes,
   brief,
   dependencies,
-  onRefresh,
+  onGenerate,
   isRefreshing = false,
   clientError = null,
   onProspect,
@@ -40,7 +40,8 @@ export function AeAnalysisCard({
   notes: string | null;
   brief: BriefRow<AeAnalysisContent> | null;
   dependencies?: { news: BriefRow<NewsContent> | null };
-  onRefresh?: () => void;
+  /** withMessages=false : analyse seule (qui + pourquoi) ; true : analyse + messages d'ouverture. */
+  onGenerate?: (withMessages: boolean) => void;
   isRefreshing?: boolean;
   clientError?: string | null;
   onProspect?: (
@@ -51,6 +52,42 @@ export function AeAnalysisCard({
 }) {
   const baseStatus = brief?.status ?? "idle";
   const status = isRefreshing && baseStatus !== "running" ? "running" : baseStatus;
+
+  // Quel bouton a déclenché la génération en cours (pour cibler le spinner).
+  // Réinitialisé dès que la génération se termine.
+  const [pendingMode, setPendingMode] = React.useState<"analysis" | "messages" | null>(null);
+  React.useEffect(() => {
+    if (status !== "running") setPendingMode(null);
+  }, [status]);
+
+  const running = status === "running";
+  const actions = onGenerate ? (
+    <>
+      <HeaderButton
+        label="Analysis only"
+        icon={<RefreshCw size={11} />}
+        loading={running && pendingMode === "analysis"}
+        disabled={isRefreshing || running}
+        onClick={() => {
+          setPendingMode("analysis");
+          onGenerate(false);
+        }}
+        title="Generate the AE analysis only (who to contact and why, no messages)"
+      />
+      <HeaderButton
+        label="Analysis + messages"
+        icon={<MailPlus size={11} />}
+        primary
+        loading={running && pendingMode !== "analysis"}
+        disabled={isRefreshing || running}
+        onClick={() => {
+          setPendingMode("messages");
+          onGenerate(true);
+        }}
+        title="Generate the AE analysis and a tailored opening message for each contact"
+      />
+    </>
+  ) : undefined;
   const content = brief?.content ?? null;
   const staleBadge = computeStaleBadge(brief, dependencies);
 
@@ -92,7 +129,7 @@ export function AeAnalysisCard({
       status={clientError && status !== "running" ? "error" : status}
       completedAt={brief?.completed_at ?? null}
       error={clientError ?? brief?.error ?? null}
-      onRefresh={onRefresh}
+      actions={actions}
       disabled={isRefreshing}
       staleBadge={staleBadge}
     >
@@ -235,6 +272,51 @@ export function AeAnalysisCard({
 
       <NotesEditor companyId={companyId} initialNotes={notes} />
     </BriefSection>
+  );
+}
+
+function HeaderButton({
+  label,
+  icon,
+  primary = false,
+  loading = false,
+  disabled = false,
+  onClick,
+  title,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  primary?: boolean;
+  loading?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "5px 10px",
+        fontSize: 11,
+        fontWeight: 500,
+        borderRadius: 8,
+        border: `1px solid ${primary ? COLORS.brand : COLORS.line}`,
+        background: primary ? COLORS.brand : COLORS.bgCard,
+        color: primary ? "white" : COLORS.ink1,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.5 : 1,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {loading ? <Loader2 size={11} className="animate-spin" /> : icon}
+      {label}
+    </button>
   );
 }
 

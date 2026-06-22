@@ -6,7 +6,7 @@ import { runAeAnalysis } from "../../lib/watchlist/run-ae-analysis";
 // analyse AE (reco de prospection). Peut prendre 30 à 90s (fetch emails inclus).
 //
 // Auth : Bearer CRON_SECRET (posé par /api/watchlist/companies/[id]/briefs/ae-analysis).
-// Body : { scopeCompanyId: string, userId: string, briefId: string, startedAt: string }
+// Body : { scopeCompanyId: string, userId: string, briefId: string, startedAt: string, withMessages?: boolean }
 export default async (req: Request, _ctx: Context) => {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");
@@ -14,7 +14,7 @@ export default async (req: Request, _ctx: Context) => {
     return new Response("unauthorized", { status: 401 });
   }
 
-  let body: { scopeCompanyId?: string; userId?: string } = {};
+  let body: { scopeCompanyId?: string; userId?: string; withMessages?: boolean } = {};
   try {
     body = await req.json();
   } catch {
@@ -26,7 +26,11 @@ export default async (req: Request, _ctx: Context) => {
   }
 
   try {
-    const res = await runAeAnalysis({ scopeCompanyId: body.scopeCompanyId, userId: body.userId });
+    const res = await runAeAnalysis({
+      scopeCompanyId: body.scopeCompanyId,
+      userId: body.userId,
+      withMessages: body.withMessages,
+    });
     if (!res.ok) {
       console.error("[watchlist-ae-analysis-background] failed:", res.error);
     }
