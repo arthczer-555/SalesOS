@@ -12,7 +12,6 @@ import {
   findArthurFallbackRecipient,
   formatForwardChannelHeader,
   formatTestModeHeader,
-  resolveDealOwnerRecipient,
   resolveMeetingParticipantRecipients,
   type MeetingRecipient,
 } from "./slack-recipients";
@@ -473,14 +472,10 @@ export async function sendMeetingRecapSlack(
 
   const mode = process.env.SLACK_MODE === "prod" ? "prod" : "test";
 
-  // Cibles prod = participants internes du meeting + owner HubSpot du deal
-  // (dédupliqués), pour que l'AE responsable reçoive le recap même absent du
-  // call.
-  const ownerRecipient = await resolveDealOwnerRecipient(snapshot);
-  const prodRecipients = dedupeRecipients([
-    ...meetingParticipants,
-    ...(ownerRecipient ? [ownerRecipient] : []),
-  ]);
+  // Cibles prod = participants Coachello internes du meeting uniquement.
+  // L'owner HubSpot du deal n'est plus ajouté : si la personne n'était pas
+  // dans le call, elle ne reçoit pas le recap.
+  const prodRecipients = dedupeRecipients([...meetingParticipants]);
 
   let recipients: MeetingRecipient[];
   let isFallback = false;
@@ -560,6 +555,7 @@ export async function sendMeetingRecapSlack(
       meeting_recap_slack_ts: firstTs,
       meeting_recap_slack_channel: firstChannelId,
       meeting_recap_slack_permalink: firstPermalink,
+      meeting_recap_slack_recipients: recipients.map((r) => r.email),
     })
     .eq("id", analysisId);
 

@@ -88,6 +88,9 @@ function RecapDetail({ recap }: { recap: SalesCoachRecapItem }) {
   const slackText = recap.meeting_recap_slack_text;
   const fallback = recap.meeting_recap;
 
+  const recipients = recap.meeting_recap_slack_recipients;
+  const recipientNames = recipients?.map((email) => email.split("@")[0]).join(", ");
+
   return (
     <div style={{ padding: "20px 28px", maxWidth: 820 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
@@ -96,7 +99,7 @@ function RecapDetail({ recap }: { recap: SalesCoachRecapItem }) {
         </h2>
         <AudienceTag audience={recap.audience} />
       </div>
-      <div style={{ fontSize: 12, color: COLORS.ink2, marginBottom: 18 }}>
+      <div style={{ fontSize: 12, color: COLORS.ink2, marginBottom: recipients?.length ? 8 : 18 }}>
         {recap.meeting_title ?? ""} · {formatDate(recap.meeting_started_at)}
         {recap.meeting_recap_slack_permalink && (
           <>
@@ -112,6 +115,16 @@ function RecapDetail({ recap }: { recap: SalesCoachRecapItem }) {
           </>
         )}
       </div>
+      {recipients && recipients.length > 0 && (
+        <div style={{ fontSize: 11, color: COLORS.ink3, marginBottom: 18 }}>
+          Sent to: <span style={{ color: COLORS.ink1, fontWeight: 500 }}>{recipientNames}</span>
+        </div>
+      )}
+      {recap.meeting_recap_slack_sent_at && (!recipients || recipients.length === 0) && (
+        <div style={{ fontSize: 11, color: COLORS.ink3, marginBottom: 18 }}>
+          Sent (recipients not tracked)
+        </div>
+      )}
 
       {slackText ? (
         <pre

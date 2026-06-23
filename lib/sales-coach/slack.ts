@@ -18,7 +18,6 @@ import {
   dmRecipient,
   findArthurFallbackRecipient,
   formatTestModeHeader,
-  resolveDealOwnerRecipient,
   resolveMeetingParticipantRecipients,
   type MeetingRecipient,
 } from "./slack-recipients";
@@ -190,14 +189,10 @@ export async function sendSalesCoachSlack(
       })
     : [];
 
-  // Cibles prod = participants internes du meeting + owner HubSpot du deal
-  // (dédupliqués). L'owner est ajouté pour que l'AE responsable reçoive son
-  // debrief même s'il n'a pas enregistré ni participé au call.
-  const ownerRecipient = await resolveDealOwnerRecipient(row.deal_snapshot as DealSnapshot | null);
-  const prodRecipients = dedupeRecipients([
-    ...meetingParticipants,
-    ...(ownerRecipient ? [ownerRecipient] : []),
-  ]);
+  // Cibles prod = participants Coachello internes du meeting uniquement.
+  // L'owner HubSpot du deal n'est plus ajouté : si la personne n'était pas
+  // dans le call, elle ne reçoit pas le debrief.
+  const prodRecipients = dedupeRecipients([...meetingParticipants]);
 
   let recipients: MeetingRecipient[];
   let isFallback = false;
@@ -271,7 +266,10 @@ export async function sendSalesCoachSlack(
 
   await db
     .from("sales_coach_analyses")
-    .update({ slack_sent_at: new Date().toISOString() })
+    .update({
+      slack_sent_at: new Date().toISOString(),
+      slack_sent_recipients: recipients.map((r) => r.email),
+    })
     .eq("id", analysisId);
 
   return { ok: true };

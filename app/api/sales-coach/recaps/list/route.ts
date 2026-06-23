@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
   let query = db
     .from("sales_coach_analyses")
     .select(
-      "id, user_id, hubspot_deal_id, meeting_title, meeting_started_at, audience, meeting_recap, meeting_recap_slack_text, meeting_recap_slack_permalink, meeting_recap_slack_sent_at, deal_snapshot, participants, created_at",
+      "id, user_id, hubspot_deal_id, meeting_title, meeting_started_at, audience, meeting_recap, meeting_recap_slack_text, meeting_recap_slack_permalink, meeting_recap_slack_sent_at, meeting_recap_slack_recipients, deal_snapshot, participants, created_at",
     )
     .not("meeting_recap", "is", null)
     .neq("meeting_type", "internal")

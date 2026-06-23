@@ -193,6 +193,7 @@ export interface SalesCoachRecapItem {
   meeting_recap_slack_text: string | null;
   meeting_recap_slack_permalink: string | null;
   meeting_recap_slack_sent_at: string | null;
+  meeting_recap_slack_recipients: string[] | null;
   created_at: string;
   company: string | null;
   primary_contact: { name: string; email: string } | null;
