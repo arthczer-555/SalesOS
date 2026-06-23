@@ -179,10 +179,15 @@ export function formatTestModeHeader(args: {
  * Ne JAMAIS inverser. Si audience est null (no deal), on retourne null et on
  * skip le header (le commercial verra le titre RECAP MEETING seul).
  */
-export function formatForwardChannelHeader(audience: Audience | null): string | null {
+export function formatForwardChannelHeader(
+  audience: Audience | null,
+  lang: "fr" | "en" = "en",
+): string | null {
   const channel = forwardChannelForAudience(audience);
   if (!channel) return null;
-  return `:clipboard: *Tweak this message if needed and post it in ${channel}*`;
+  return lang === "fr"
+    ? `:clipboard: *Adapte ce message si besoin et poste-le dans ${channel}*`
+    : `:clipboard: *Tweak this message if needed and post it in ${channel}*`;
 }
 
 function forwardChannelForAudience(audience: Audience | null): string | null {

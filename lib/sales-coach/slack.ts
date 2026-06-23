@@ -11,6 +11,7 @@ import {
   repairAnalysis,
 } from "@/lib/guides/sales-coach";
 import type { DealSnapshot } from "@/lib/hubspot";
+import { detectScriptLang } from "@/lib/video/lang";
 import type { Audience } from "./meeting-recap";
 import {
   dedupeRecipients,
@@ -57,6 +58,39 @@ function formatAnalysisDebrief(args: {
   } = args;
   const isClient = audience === "client";
 
+  // Langue du debrief = langue du contenu généré (lui-même calé sur la langue
+  // du transcript via le system prompt). On localise donc les labels Slack pour
+  // qu'ils matchent le contenu : meeting FR -> labels FR, meeting EN -> labels EN.
+  const strengthsRaw = extractStringArray(analysis.strengths);
+  const weaknessesRaw = extractStringArray(analysis.weaknesses);
+  const prioritiesRaw = extractStringArray(analysis.coaching_priorities);
+  const lang = detectScriptLang(
+    [analysis.summary ?? "", ...strengthsRaw, ...weaknessesRaw, ...prioritiesRaw].join(" "),
+  );
+  const t = lang === "fr"
+    ? {
+        debrief: "DEBRIEF COACHING",
+        csDebrief: "DEBRIEF COACHING CS",
+        score: "Score global",
+        summary: "Résumé",
+        strengths: "Points forts",
+        weaknesses: "À travailler",
+        prioritiesClient: "Top 3 actions pour le prochain point",
+        prioritiesProspect: "Top 3 actions pour le prochain call",
+        viewFull: "Voir l'analyse complète",
+      }
+    : {
+        debrief: "COACHING DEBRIEF",
+        csDebrief: "CS COACHING DEBRIEF",
+        score: "Overall score",
+        summary: "Summary",
+        strengths: "Strengths",
+        weaknesses: "Areas to improve",
+        prioritiesClient: "Top 3 actions for the next touchpoint",
+        prioritiesProspect: "Top 3 actions for the next call",
+        viewFull: "View full analysis",
+      };
+
   const date = meetingStartedAt
     ? new Date(meetingStartedAt).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })
     : "";
@@ -67,10 +101,8 @@ function formatAnalysisDebrief(args: {
     : null;
 
   const headerEmoji = isClient ? ":handshake:" : ":dart:";
-  const headerTitle = isClient ? "CS COACHING DEBRIEF" : "COACHING DEBRIEF";
-  const prioritiesLabel = isClient
-    ? "Top 3 actions for the next touchpoint"
-    : "Top 3 actions for the next call";
+  const headerTitle = isClient ? t.csDebrief : t.debrief;
+  const prioritiesLabel = isClient ? t.prioritiesClient : t.prioritiesProspect;
 
   const dealLabel = dealName.trim();
   const headerLine = `${headerEmoji} *${headerTitle}${dealLabel ? ` : ${dealLabel}` : ""}*${dealStage ? ` · _${dealStage}_` : ""}`;
@@ -83,36 +115,36 @@ function formatAnalysisDebrief(args: {
 
   const lines: string[] = [headerLine];
   if (subtitleParts.length > 0) lines.push(subtitleParts.join(" · "));
-  lines.push(``, `*Overall score:* ${scoreGlobal}/10`);
+  lines.push(``, `*${t.score}:* ${scoreGlobal}/10`);
 
   if (analysis.summary?.trim()) {
-    lines.push(``, `*Summary*`, analysis.summary.trim());
+    lines.push(``, `*${t.summary}*`, analysis.summary.trim());
   }
 
-  // extractStringArray, parce que Haiku char-by-char stringifie parfois ces
-  // champs en objet numeric-keyed (`{"0":"T","1":"o",...}`). Le validator
-  // ne couvre pas ces 3 champs, donc l'analyse peut être saved en `done` avec
-  // un shape cassé. Cohérent avec le rendu UI (analysis-detail, synthesis-tab).
-  const strengths = extractStringArray(analysis.strengths).map((s) => s.trim()).filter(Boolean);
+  // extractStringArray (fait plus haut), parce que Haiku char-by-char
+  // stringifie parfois ces champs en objet numeric-keyed (`{"0":"T",...}`). Le
+  // validator ne couvre pas ces 3 champs, donc l'analyse peut être saved en
+  // `done` avec un shape cassé. Cohérent avec le rendu UI (analysis-detail).
+  const strengths = strengthsRaw.map((s) => s.trim()).filter(Boolean);
   if (strengths.length > 0) {
-    lines.push(``, `*Strengths*`);
+    lines.push(``, `*${t.strengths}*`);
     for (const s of strengths) lines.push(`• ${s}`);
   }
 
-  const weaknesses = extractStringArray(analysis.weaknesses).map((w) => w.trim()).filter(Boolean);
+  const weaknesses = weaknessesRaw.map((w) => w.trim()).filter(Boolean);
   if (weaknesses.length > 0) {
-    lines.push(``, `*Areas to improve*`);
+    lines.push(``, `*${t.weaknesses}*`);
     for (const w of weaknesses) lines.push(`• ${w}`);
   }
 
-  const priorities = extractStringArray(analysis.coaching_priorities).map((p) => p.trim()).filter(Boolean);
+  const priorities = prioritiesRaw.map((p) => p.trim()).filter(Boolean);
   if (priorities.length > 0) {
     lines.push(``, `:rocket: *${prioritiesLabel}*`);
     priorities.forEach((p, i) => lines.push(`${i + 1}. ${p}`));
   }
 
   if (appUrl) {
-    lines.push(``, `<${appUrl}/sales-coach?id=${analysisId}|View full analysis>`);
+    lines.push(``, `<${appUrl}/sales-coach?id=${analysisId}|${t.viewFull}>`);
   }
 
   return lines.join("\n");

@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logUsage } from "../log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
+import { detectScriptLang } from "@/lib/video/lang";
 import type { DealSnapshot } from "../hubspot";
 import { renderDealContextForPrompt } from "../hubspot";
 import { extractTitleSearchHint } from "../claap";
@@ -277,6 +278,7 @@ export async function generateMeetingRecap(args: {
 
 function formatRecapMessage(args: {
   audience: Audience;
+  lang: "fr" | "en";
   companyName: string;
   stageDisplay: string | null;
   ownerName: string | null;
@@ -287,7 +289,36 @@ function formatRecapMessage(args: {
   dealId: string | null;
   appUrl: string;
 }): string {
-  const { audience, companyName, stageDisplay, ownerName, meetingTitle, meetingStartedAt, participantsLabel, recap, dealId, appUrl } = args;
+  const { audience, lang, companyName, stageDisplay, ownerName, meetingTitle, meetingStartedAt, participantsLabel, recap, dealId, appUrl } = args;
+  const isClient = audience === "client";
+
+  // Labels localisés sur la langue du recap (lui-même calé sur la langue du
+  // transcript). Meeting FR -> message FR, meeting EN -> message EN.
+  const t = lang === "fr"
+    ? {
+        meetingOn: "Meeting du",
+        rundownWith: (who: string) => `Voici un résumé rapide de mon meeting avec ${who} (${companyName}).`,
+        rundownTeam: `Voici un résumé rapide de mon meeting avec l'équipe de ${companyName}.`,
+        context: "Contexte",
+        need: isClient ? "Besoin client" : "Besoin prospect",
+        risks: isClient ? "Risques" : "Risques / Concurrence",
+        opportunities: "Opportunités",
+        nextSteps: "Prochaines étapes (pour moi)",
+        openDeal: "Ouvrir le deal dans SalesOS →",
+      }
+    : {
+        meetingOn: "Meeting on",
+        rundownWith: (who: string) => `Here's a quick rundown of my meeting with ${who} from ${companyName}.`,
+        rundownTeam: `Here's a quick rundown of my meeting with the team at ${companyName}.`,
+        context: "Context",
+        need: isClient ? "Client Need" : "Prospect Need",
+        // Clients don't have "competition" — they're already customers. Only
+        // risks (churn signals, internal blockers).
+        risks: isClient ? "Risks" : "Risks / Competition",
+        opportunities: "Opportunities",
+        nextSteps: "Next Steps (for me)",
+        openDeal: "Open deal in SalesOS →",
+      };
 
   const headerParts: string[] = [`:office: *${companyName}*`];
   if (stageDisplay) headerParts.push(`_${stageDisplay}_`);
@@ -297,7 +328,7 @@ function formatRecapMessage(args: {
     ? new Date(meetingStartedAt).toLocaleDateString("en-GB", { day: "2-digit", month: "2-digit", year: "numeric" })
     : null;
   const subtitleParts: string[] = [];
-  if (dateStr) subtitleParts.push(`Meeting on ${dateStr}`);
+  if (dateStr) subtitleParts.push(`${t.meetingOn} ${dateStr}`);
   if (meetingTitle) subtitleParts.push(`"${meetingTitle}"`);
 
   const lines: string[] = [
@@ -305,23 +336,14 @@ function formatRecapMessage(args: {
   ];
   if (subtitleParts.length > 0) lines.push(subtitleParts.join(" · "));
 
-  if (participantsLabel) {
-    lines.push(``, `Here's a quick rundown of my meeting with ${participantsLabel} from ${companyName}.`);
-  } else {
-    lines.push(``, `Here's a quick rundown of my meeting with the team at ${companyName}.`);
-  }
-
-  // Clients don't have "competition" — they're already customers. Only risks
-  // (churn signals, internal blockers).
-  const risksLabel = audience === "client" ? "Risks" : "Risks / Competition";
-  const needLabel = audience === "client" ? "Client Need" : "Prospect Need";
+  lines.push(``, participantsLabel ? t.rundownWith(participantsLabel) : t.rundownTeam);
 
   const bullets: Array<{ label: string; value: string }> = [
-    { label: "Context", value: recap.context },
-    { label: needLabel, value: recap.need },
-    { label: risksLabel, value: recap.risks_competition },
-    { label: "Opportunities", value: recap.opportunities },
-    { label: "Next Steps (for me)", value: recap.next_steps },
+    { label: t.context, value: recap.context },
+    { label: t.need, value: recap.need },
+    { label: t.risks, value: recap.risks_competition },
+    { label: t.opportunities, value: recap.opportunities },
+    { label: t.nextSteps, value: recap.next_steps },
   ];
 
   for (const b of bullets) {
@@ -330,7 +352,7 @@ function formatRecapMessage(args: {
   }
 
   if (audience === "prospect" && dealId && appUrl) {
-    lines.push(``, `<${appUrl}/deals?dealId=${encodeURIComponent(dealId)}|Open deal in SalesOS →>`);
+    lines.push(``, `<${appUrl}/deals?dealId=${encodeURIComponent(dealId)}|${t.openDeal}>`);
   }
 
   return lines.join("\n");
@@ -404,15 +426,25 @@ export async function sendMeetingRecapSlack(
 
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.URL || "").replace(/\/$/, "");
 
+  // Langue du recap = langue du contenu généré (calé sur le transcript via le
+  // system prompt). On localise titre + header forward + labels en conséquence.
+  const recap = row.meeting_recap as MeetingRecap;
+  const lang = detectScriptLang(
+    [recap.context, recap.need, recap.risks_competition, recap.opportunities, recap.next_steps]
+      .filter(Boolean)
+      .join(" "),
+  );
+
   const body = formatRecapMessage({
     audience,
+    lang,
     companyName,
     stageDisplay,
     ownerName,
     meetingTitle: row.meeting_title ?? "Meeting",
     meetingStartedAt: row.meeting_started_at,
     participantsLabel,
-    recap: row.meeting_recap as MeetingRecap,
+    recap,
     dealId: row.hubspot_deal_id,
     appUrl,
   });
@@ -421,10 +453,11 @@ export async function sendMeetingRecapSlack(
   // recap (mode test + mode prod), audience-conditional. Le commercial copie
   // le message, le retouche, et le forward dans le channel cible lui-même.
   // Pas de post automatique dans les channels.
-  const forwardHeader = formatForwardChannelHeader(audience);
+  const recapTitle = lang === "fr" ? "RÉCAP MEETING" : "RECAP MEETING";
+  const forwardHeader = formatForwardChannelHeader(audience, lang);
   const titledBody = forwardHeader
-    ? `:clipboard: *RECAP MEETING*\n${forwardHeader}\n\n${body}`
-    : `:clipboard: *RECAP MEETING*\n\n${body}`;
+    ? `:clipboard: *${recapTitle}*\n${forwardHeader}\n\n${body}`
+    : `:clipboard: *${recapTitle}*\n\n${body}`;
 
   // Résout les participants Coachello du meeting Claap (= cibles en mode
   // prod, et liste affichée dans le header test en mode test).
