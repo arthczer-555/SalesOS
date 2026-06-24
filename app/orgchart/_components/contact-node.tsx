@@ -29,7 +29,15 @@ const HIDDEN_HANDLE: React.CSSProperties = {
   pointerEvents: "none",
 };
 
-export type ContactNodeData = { person: OrgPerson; dimmed?: boolean };
+export type ContactNodeData = {
+  person: OrgPerson;
+  dimmed?: boolean;
+  // Surlignage pendant le drag d'une AUTRE carte au-dessus de celle-ci :
+  // linkActive = un lien va se créer (cette carte devient le manager) ;
+  // linkBlocked = lien impossible (cycle ou département différent).
+  linkActive?: boolean;
+  linkBlocked?: boolean;
+};
 export type ContactNodeType = Node<ContactNodeData, "contact">;
 
 function Badge({ fg, bg, children }: { fg: string; bg: string; children: React.ReactNode }) {
@@ -60,21 +68,49 @@ function ContactNodeImpl({ data, selected }: NodeProps<ContactNodeType>) {
   const role = decisionRoleBadge(p.decision_role);
   const contacted = contactedBadge(p);
 
+  // Cible de drop : vert = un lien va se créer, rouge = lien impossible.
+  const dropColor = data.linkActive ? COLORS.ok : data.linkBlocked ? COLORS.err : null;
+  const dropRing = data.linkActive ? COLORS.okBg : data.linkBlocked ? COLORS.errBg : null;
+
   return (
     <div
       style={{
+        position: "relative",
         width: 250,
         minHeight: 88,
         background: COLORS.bgCard,
-        border: `1.5px solid ${selected ? COLORS.brand : COLORS.lineStrong}`,
+        border: `${dropColor ? 2 : 1.5}px ${data.linkBlocked ? "dashed" : "solid"} ${
+          dropColor ?? (selected ? COLORS.brand : COLORS.lineStrong)
+        }`,
         borderRadius: 12,
-        boxShadow: selected ? SHADOWS.pop : SHADOWS.card,
+        boxShadow: dropRing ? `0 0 0 4px ${dropRing}` : selected ? SHADOWS.pop : SHADOWS.card,
         padding: 11,
         opacity: data.dimmed ? 0.45 : 1,
         transition: "box-shadow .15s, border-color .15s, opacity .15s",
         cursor: "grab",
       }}
     >
+      {dropColor && (
+        <span
+          style={{
+            position: "absolute",
+            top: -10,
+            left: "50%",
+            transform: "translateX(-50%)",
+            fontSize: 9.5,
+            fontWeight: 700,
+            letterSpacing: 0.2,
+            color: "#fff",
+            background: dropColor,
+            padding: "1px 8px",
+            borderRadius: 999,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+          }}
+        >
+          {data.linkActive ? "Reports here" : "Can't link here"}
+        </span>
+      )}
       <Handle type="target" position={Position.Top} style={HIDDEN_HANDLE} isConnectable={false} />
       <div style={{ display: "flex", gap: 9, alignItems: "flex-start" }}>
         <div

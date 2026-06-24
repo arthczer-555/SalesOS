@@ -35,14 +35,33 @@ export interface OrgFlowHandle {
   autoArrange: () => Promise<void>;
 }
 
+// Champs réaffectés quand on dépose une carte dans une boîte département.
+export interface ZoneAssign {
+  department: string | null;
+  entity: string | null;
+  pos_x: number;
+  pos_y: number;
+}
+
 interface OrgFlowProps {
   people: OrgPerson[];
   edges: OrgEdge[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
-  onReparent: (personId: string, managerId: string | null) => void;
+  // extra : adoption du département/entité du manager quand on relie une carte
+  // neutre (sans département) sous un manager classé.
+  onReparent: (personId: string, managerId: string | null, extra?: { department?: string | null; entity?: string | null }) => void;
+  onAssign: (personId: string, fields: ZoneAssign) => void;
   onPositionsChange: (positions: { id: string; x: number; y: number }[]) => void;
 }
+
+// Ce que produira un drop, calculé en continu pendant le drag pour le surlignage.
+// zone.department = null -> on retire la carte de son département (zone neutre).
+type DropIntent =
+  | { kind: "link"; targetId: string; adopt?: { department: string | null; entity: string | null } }
+  | { kind: "blocked"; targetId: string } // cible carte mais lien interdit (cycle / autre département)
+  | { kind: "zone"; boxId: string; department: string | null; entity: string | null }
+  | null;
 
 // Doivent rester alignés sur layout.ts (ENTITY_HEADER=52, DEPT_HEADER=38) pour
 // que la carte entreprise enveloppe proprement les sous-zones département.
@@ -184,7 +203,7 @@ function buildEdgeElements(edges: OrgEdge[]): Edge[] {
 }
 
 function FlowInner(
-  { people, edges, selectedId, onSelect, onReparent, onPositionsChange }: OrgFlowProps,
+  { people, edges, selectedId, onSelect, onReparent, onAssign, onPositionsChange }: OrgFlowProps,
   ref: React.Ref<OrgFlowHandle>,
 ) {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -198,6 +217,112 @@ function FlowInner(
   // Position d'origine d'une carte en cours de drag : si le drop crée un lien,
   // la carte y retourne (le lien suffit, pas de déplacement).
   const contactDragOrigin = useRef<{ id: string; x: number; y: number } | null>(null);
+  // Signature du dernier surlignage appliqué (évite de re-render à chaque pixel).
+  const dropHintRef = useRef<string>("");
+
+  // Calcule ce que produira le drop de `node` (carte) : lien vers une autre carte,
+  // lien interdit, ou réaffectation à une boîte département. Sert AU surlignage
+  // pendant le drag ET à l'action au drop -> un seul comportement, cohérent.
+  const computeDropIntent = useCallback(
+    (node: Node): DropIntent => {
+      const w = node.measured?.width ?? NODE_W;
+      const h = node.measured?.height ?? NODE_H;
+      const center = { x: node.position.x + w / 2, y: node.position.y + h / 2 };
+      const inter = getIntersectingNodes(node);
+      const dragged = people.find((p) => p.id === node.id);
+
+      // 1. Centre sur une autre carte -> lien (ou lien interdit).
+      const tNode = inter
+        .filter((n) => n.type === "contact" && n.id !== node.id)
+        .find((t) => {
+          const tw = t.measured?.width ?? NODE_W;
+          const th = t.measured?.height ?? NODE_H;
+          return (
+            center.x >= t.position.x &&
+            center.x <= t.position.x + tw &&
+            center.y >= t.position.y &&
+            center.y <= t.position.y + th
+          );
+        });
+      if (tNode) {
+        const tgt = people.find((p) => p.id === tNode.id);
+        const adjacency = people.map((p) => ({ id: p.id, manager_id: p.manager_id }));
+        if (wouldCreateCycle(adjacency, node.id, tNode.id)) return { kind: "blocked", targetId: tNode.id };
+        const dDept = canonicalDepartment(dragged?.department);
+        const tDept = canonicalDepartment(tgt?.department);
+        if (dDept === tDept) return { kind: "link", targetId: tNode.id };
+        // Carte neutre reliée sous un manager classé -> elle adopte son département.
+        if (!dDept && tDept) return { kind: "link", targetId: tNode.id, adopt: { department: tDept, entity: tgt?.entity ?? null } };
+        return { kind: "blocked", targetId: tNode.id }; // deux départements différents
+      }
+
+      const inside = (b: Node) => {
+        const d = b.data as ClusterNodeData;
+        return (
+          center.x >= b.position.x &&
+          center.x <= b.position.x + d.width &&
+          center.y >= b.position.y &&
+          center.y <= b.position.y + d.height
+        );
+      };
+      const dDept = canonicalDepartment(dragged?.department);
+
+      // 2. Centre dans une boîte DÉPARTEMENT -> réaffectation à ce département.
+      const deptBox = inter
+        .filter((n) => n.type === "cluster" && (n.data as ClusterNodeData).kind === "department")
+        .find(inside);
+      if (deptBox) {
+        const rest = deptBox.id.slice("dept:".length);
+        const si = rest.lastIndexOf(SEP);
+        const entKey = rest.slice(0, si);
+        const deptKey = rest.slice(si + SEP.length);
+        if (deptKey !== dDept) {
+          return { kind: "zone", boxId: deptBox.id, department: deptKey, entity: entKey === "—" ? null : entKey };
+        }
+        return null; // même département -> simple repositionnement, pas de réaffectation
+      }
+
+      // 3. Hors de toute boîte département mais dans l'entité, et la carte A un
+      //    département -> on l'EN RETIRE (retour en zone neutre de l'entité).
+      if (dDept) {
+        const entBox = inter
+          .filter((n) => n.type === "cluster" && (n.data as ClusterNodeData).kind === "entity")
+          .find(inside);
+        if (entBox) return { kind: "zone", boxId: entBox.id, department: null, entity: dragged?.entity ?? null };
+      }
+      return null;
+    },
+    [getIntersectingNodes, people],
+  );
+
+  // Applique le surlignage des cibles (carte cible illuminée, boîte département
+  // active). No-op si l'intention n'a pas changé.
+  const applyDropHint = useCallback(
+    (intent: DropIntent) => {
+      const sig = intent ? `${intent.kind}:${"targetId" in intent ? intent.targetId : intent.boxId}` : "";
+      if (sig === dropHintRef.current) return;
+      dropHintRef.current = sig;
+      setNodes((cur) =>
+        cur.map((n) => {
+          if (n.type === "contact") {
+            const d = n.data as ContactNodeData;
+            const linkActive = intent?.kind === "link" && intent.targetId === n.id;
+            const linkBlocked = intent?.kind === "blocked" && intent.targetId === n.id;
+            if (!!d.linkActive === linkActive && !!d.linkBlocked === linkBlocked) return n;
+            return { ...n, data: { ...d, linkActive, linkBlocked } };
+          }
+          if (n.type === "cluster") {
+            const d = n.data as ClusterNodeData;
+            const dropActive = intent?.kind === "zone" && intent.boxId === n.id;
+            if (!!d.dropActive === dropActive) return n;
+            return { ...n, data: { ...d, dropActive } };
+          }
+          return n;
+        }),
+      );
+    },
+    [setNodes],
+  );
 
   // person id -> entity key (pour le drag d'entité).
   const entityOf = useMemo(() => {
@@ -266,9 +391,14 @@ function FlowInner(
     }
   }, []);
 
+  // Drag d'une carte -> surligne en continu ce que produira le drop.
   // Drag d'une entité -> déplace toutes ses personnes + ses sous-zones du même delta.
   const onNodeDrag = useCallback(
     (_e: MouseEvent | TouchEvent, node: Node) => {
+      if (node.type === "contact") {
+        applyDropHint(computeDropIntent(node));
+        return;
+      }
       const drag = entityDrag.current;
       if (!drag || node.id !== `entity:${drag.ek}`) return;
       const dx = node.position.x - drag.last.x;
@@ -287,7 +417,7 @@ function FlowInner(
         }),
       );
     },
-    [entityOf, setNodes],
+    [entityOf, setNodes, applyDropHint, computeDropIntent],
   );
 
   const persistPosition = useCallback(
@@ -315,53 +445,48 @@ function FlowInner(
       }
       if (node.type !== "contact") return;
 
-      // Re-parentage si le centre de la carte tombe sur une autre carte.
-      const w = node.measured?.width ?? NODE_W;
-      const h = node.measured?.height ?? NODE_H;
-      const center = { x: node.position.x + w / 2, y: node.position.y + h / 2 };
-      const target = getIntersectingNodes(node)
-        .filter((n) => n.type === "contact" && n.id !== node.id)
-        .find((t) => {
-          const tw = t.measured?.width ?? NODE_W;
-          const th = t.measured?.height ?? NODE_H;
-          return (
-            center.x >= t.position.x &&
-            center.x <= t.position.x + tw &&
-            center.y >= t.position.y &&
-            center.y <= t.position.y + th
-          );
-        });
+      const intent = computeDropIntent(node);
+      applyDropHint(null); // éteint le surlignage
 
-      if (target) {
-        // Interdit les liens entre départements différents.
-        const dragged = people.find((p) => p.id === node.id);
-        const tgt = people.find((p) => p.id === target.id);
-        const sameDept =
-          dragged && tgt && canonicalDepartment(dragged.department) === canonicalDepartment(tgt.department);
-        const adjacency = people.map((p) => ({ id: p.id, manager_id: p.manager_id }));
-        if (sameDept && !wouldCreateCycle(adjacency, node.id, target.id)) {
-          // Le lien suffit : la carte retourne à sa position d'origine.
-          const origin = contactDragOrigin.current;
-          contactDragOrigin.current = null;
-          setNodes((cur) => {
-            const restored = cur.map((n) =>
-              origin && n.id === origin.id ? { ...n, position: { x: origin.x, y: origin.y } } : n,
-            );
-            const posMap = new Map<string, { x: number; y: number }>();
-            for (const n of restored) if (n.type === "contact") posMap.set(n.id, n.position);
-            const contactNodes = restored.filter((n) => n.type === "contact");
-            return [...computeClusterNodes(people, posMap), ...contactNodes];
-          });
-          onReparent(node.id, target.id);
-          return;
-        }
+      // Drop sur une carte (même département, ou carte neutre qui adopte) -> lien.
+      // La carte retourne à sa position d'origine : le lien suffit.
+      if (intent?.kind === "link") {
+        const origin = contactDragOrigin.current;
+        contactDragOrigin.current = null;
+        setNodes((cur) => {
+          const restored = cur.map((n) =>
+            origin && n.id === origin.id ? { ...n, position: { x: origin.x, y: origin.y } } : n,
+          );
+          const posMap = new Map<string, { x: number; y: number }>();
+          for (const n of restored) if (n.type === "contact") posMap.set(n.id, n.position);
+          const contactNodes = restored.filter((n) => n.type === "contact");
+          return [...computeClusterNodes(people, posMap), ...contactNodes];
+        });
+        onReparent(node.id, intent.targetId, intent.adopt);
+        return;
       }
 
+      // Drop dans une boîte département -> la carte adopte ce département ; drop
+      // dans la zone neutre de l'entité (department=null) -> on l'en retire. Dans
+      // les deux cas la carte reste là où on l'a lâchée.
+      if (intent?.kind === "zone") {
+        contactDragOrigin.current = null;
+        onAssign(node.id, {
+          department: intent.department,
+          entity: intent.entity,
+          pos_x: node.position.x,
+          pos_y: node.position.y,
+        });
+        return;
+      }
+
+      // Lien interdit (cycle / autre département) ou simple déplacement : on
+      // persiste juste la position.
       contactDragOrigin.current = null;
       persistPosition(node.id, node.position.x, node.position.y);
       refreshClusters();
     },
-    [getIntersectingNodes, people, onReparent, persistPosition, refreshClusters, setNodes, onPositionsChange, entityOf],
+    [computeDropIntent, applyDropHint, people, onReparent, onAssign, persistPosition, refreshClusters, setNodes, onPositionsChange, entityOf],
   );
 
   const onNodeClick = useCallback(

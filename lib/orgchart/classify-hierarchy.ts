@@ -149,6 +149,11 @@ export async function classifyHierarchy(
   // Première passe : normalise champs + reportsToIndex basique.
   const out: ClassifyOutput[] = slice.map((c) => {
     const r = byIndex.get(c.index);
+    // Pas de poste connu -> aucun département inféré. Sinon le classifieur range
+    // par défaut les contacts vides dans le département dominant de l'entité (ex :
+    // HR), ce qui les colle à tort dans une sous-zone. Sans titre, ils restent
+    // dans la zone "non classés" de l'entité (hors boîte colorée).
+    const hasTitle = !!(c.title && c.title.trim());
     const level = validLevel(r?.level);
     let reportsToIndex = r?.reportsToIndex ?? null;
     const confidence = typeof r?.confidence === "number" ? r.confidence : 0;
@@ -164,7 +169,7 @@ export async function classifyHierarchy(
     return {
       index: c.index,
       entity: (r?.entity ?? c.locationHint ?? null) || null,
-      department: canonicalDepartment(r?.department ?? c.department ?? null),
+      department: hasTitle ? canonicalDepartment(r?.department ?? c.department ?? null) : null,
       level,
       decision_role: validRole(r?.decision_role),
       reportsToIndex,

@@ -97,6 +97,34 @@ export async function hubspotAssociate(
   );
 }
 
+// Passe une company en association PRIMARY d'un contact (associationTypeId 1 =
+// contact -> company primary, HUBSPOT_DEFINED). Crée l'association si absente.
+export async function hubspotSetPrimaryCompany(contactId: string, companyId: string): Promise<unknown> {
+  return hubspotFetch(
+    `/crm/v4/objects/contacts/${contactId}/associations/companies/${companyId}`,
+    "PUT",
+    [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: 1 }],
+  );
+}
+
+// Retire TOUTE association entre deux objets (DELETE v4 -> 204 sans corps, donc
+// fetch brut : hubspotFetch ferait planter le res.json()).
+export async function hubspotRemoveAssociation(
+  fromType: HubspotObjectType,
+  fromId: string,
+  toType: HubspotObjectType,
+  toId: string,
+): Promise<void> {
+  const res = await fetch(
+    `https://api.hubapi.com/crm/v4/objects/${fromType}/${fromId}/associations/${toType}/${toId}`,
+    { method: "DELETE", headers: { Authorization: `Bearer ${process.env.HUBSPOT_ACCESS_TOKEN}` } },
+  );
+  if (!res.ok && res.status !== 204) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`HubSpot remove assoc ${res.status}: ${text.slice(0, 200)}`);
+  }
+}
+
 // Crée une company dans HubSpot (name + domain optionnel). Renvoie son id.
 // Utilisé par l'enrich (option "créer les companies manquantes"). Ne pas passer
 // un domaine grand public (gmail, etc.) : laisser domain vide dans ce cas.
