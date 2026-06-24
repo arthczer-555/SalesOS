@@ -6,7 +6,7 @@
 // l'utilisateur avant push. Background ; statut dans orgchart_import_jobs.
 import { db } from "@/lib/db";
 import { matchPerson, isApolloConfigured } from "@/lib/apollo/client";
-import { normalizeCompany } from "@/lib/fuzzy-match";
+import { sameCompanyGroup } from "./company-match";
 import { getAccount, listAccountCompanies, listPeople, createPerson, addSeenContacts, setJobProgress } from "./db";
 import { fetchContactsForCompany } from "./fetch-hubspot-contacts";
 import { reclassifyAccount } from "./run-reorganize";
@@ -38,20 +38,6 @@ export async function runAccountRefresh(input: { jobId: string }): Promise<{ ok:
     const result: ImportResult = { total: 0, created: 0, classified: 0, managers_linked: 0, errors: 0, proposals: [], companyProposals: [] };
     const proposals: HubspotTitleProposal[] = [];
     const companyProposals: HubspotCompanyProposal[] = [];
-
-    // Même groupe ? (ex : "Allianz Partners" pour le compte "Allianz"). On
-    // compare au token le plus discriminant du nom du compte. Si l'org Apollo le
-    // contient -> même groupe -> ce n'est PAS un départ.
-    const accountToken =
-      normalizeCompany(account.name)
-        .split(" ")
-        .filter(Boolean)
-        .sort((a, b) => b.length - a.length)[0] ?? "";
-    const sameGroup = (org: string | null): boolean => {
-      if (!org) return true;
-      const o = normalizeCompany(org);
-      return !accountToken || o.includes(accountToken) || accountToken.includes(o.split(" ")[0] ?? "");
-    };
 
     // 1. Re-tire les contacts de toutes les company (dédup par contact).
     const fetched = new Map<string, { name: string; title: string | null; email: string | null; linkedin: string | null; lastContacted: string | null; companyId: string; companyName: string | null; domain: string | null }>();
@@ -105,7 +91,10 @@ export async function runAccountRefresh(input: { jobId: string }): Promise<{ ok:
 
           // On n'applique le poste Apollo QUE si même groupe (ex : "Allianz
           // Partners" pour "Allianz" = OK ; "Axa" = autre boîte -> proposition de départ).
-          if (aOrg && !sameGroup(aOrg)) {
+          // NB : l'email peut être au domaine de l'ancienne boîte (donnée HubSpot
+          // périmée) tout en ayant réellement changé d'entreprise -> on se fie à
+          // Apollo (org courante), pas au domaine de l'email.
+          if (aOrg && !sameCompanyGroup(account.name, aOrg)) {
             companyProposals.push({ contactId, personId: ex?.id ?? null, name, currentCompany: info.companyName, newCompany: aOrg });
           } else if (aTitle && aTitle.trim()) {
             apolloTitle = aTitle.trim();

@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { isApolloConfigured, matchPerson } from "@/lib/apollo/client";
@@ -6,7 +6,8 @@ import { runApolloEnrichment } from "@/lib/apollo/run-enrichment";
 import { getPerson, getAccount } from "@/lib/orgchart/db";
 import { findCompanyByName } from "@/lib/intel/hubspot-company-resolve";
 import { createCompany, hubspotAssociate } from "@/lib/hubspot";
-import { normalizeCompany } from "@/lib/fuzzy-match";
+import { sameCompanyGroup } from "@/lib/orgchart/company-match";
+import { triggerBackgroundJob } from "@/lib/orgchart/dispatch-job";
 import { findExistingHubspotContact } from "@/lib/orgchart/hubspot-link";
 import type { EnrichPersonInput } from "@/lib/apollo/enrichment-types";
 
@@ -67,11 +68,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // N'applique le poste que si même entreprise/groupe (ex : Allianz Partners
     // pour Allianz = OK ; autre boîte = on ignore).
     const aOrg = m?.person?.organization_name ?? null;
-    const accountToken =
-      normalizeCompany(account.name).split(" ").filter(Boolean).sort((a, b) => b.length - a.length)[0] ?? "";
-    const sameGroup =
-      !aOrg || !accountToken || normalizeCompany(aOrg).includes(accountToken);
-    const title = sameGroup ? (m?.person?.title ?? "").trim() || null : null;
+    const title = sameCompanyGroup(account.name, aOrg) ? (m?.person?.title ?? "").trim() || null : null;
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (contactId) {
@@ -129,20 +126,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     .single();
   if (error || !job) return NextResponse.json({ error: error?.message ?? "Failed to create job" }, { status: 500 });
 
-  const cronSecret = process.env.CRON_SECRET;
-  const siteUrl = process.env.URL ?? process.env.SITE_URL ?? req.nextUrl.origin;
-  if (process.env.NETLIFY === "true" && cronSecret) {
-    fetch(`${siteUrl}/.netlify/functions/${BG_FN}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${cronSecret}`, "content-type": "application/json" },
-      body: JSON.stringify({ jobId: job.id }),
-    }).catch((e) => console.error("[orgchart/enrich] background invoke failed:", e));
-    return NextResponse.json({ ok: true, jobId: job.id }, { status: 202 });
-  }
-
-  after(async () => {
-    const res = await runApolloEnrichment({ jobId: job.id });
-    if (!res.ok) console.error("[orgchart/enrich] dev run failed:", res.error);
+  await triggerBackgroundJob({
+    jobId: job.id,
+    fnName: BG_FN,
+    table: "apollo_enrichment_jobs",
+    origin: req.nextUrl.origin,
+    run: () => runApolloEnrichment({ jobId: job.id }),
   });
   return NextResponse.json({ ok: true, jobId: job.id }, { status: 202 });
 }

@@ -20,7 +20,7 @@ function usableEmail(email: string | null): string | null {
   return email && email.includes("@") && !/email_not_unlocked@/i.test(email) ? email : null;
 }
 
-async function createContact(p: OrgPerson, email: string | null, companyName: string | null, ownerId: string | null): Promise<string> {
+async function createContact(p: OrgPerson, email: string | null, ownerId: string | null): Promise<string> {
   const { firstname, lastname } = splitName(p.name);
   const props: Record<string, string> = { lifecyclestage: "lead" };
   if (email) props.email = email.toLowerCase();
@@ -28,7 +28,9 @@ async function createContact(p: OrgPerson, email: string | null, companyName: st
   if (lastname) props.lastname = lastname;
   const title = p.title || p.title_hubspot;
   if (title) props.jobtitle = title;
-  if (companyName) props.company = companyName;
+  // NE PAS poser props.company : si HubSpot "créer+associer auto" est actif, ça
+  // crée un doublon de company sans owner. L'association explicite via
+  // hubspotAssociate (appelée juste après) suffit. cf. B8.
   if (ownerId) props.hubspot_owner_id = ownerId;
   const res = await hubspotFetch<{ id: string }>("/crm/v3/objects/contacts", "POST", { properties: props });
   return res.id;
@@ -98,7 +100,7 @@ export async function linkPersonToHubspot(personId: string, accountId: string, o
     let contactId: string | null = null;
     if (email) contactId = await findContactByEmail(email).catch(() => null);
     if (!contactId) contactId = await matchByNameInCompany(companyId, person.name);
-    if (!contactId) contactId = await createContact(person, email, account.name, ownerId);
+    if (!contactId) contactId = await createContact(person, email, ownerId);
 
     await hubspotAssociate("contacts", contactId, "companies", companyId).catch(() => {});
     await db

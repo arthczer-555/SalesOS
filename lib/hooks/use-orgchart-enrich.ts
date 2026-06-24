@@ -11,10 +11,12 @@ interface EnrichJob {
 interface Opts {
   onDone?: (job: EnrichJob) => void;
   onError?: (job: EnrichJob) => void;
+  onTimeout?: (job: EnrichJob) => void;
 }
 
 const POLL_MS = 1500;
-const MAX_RUNNING_MS = 8 * 60_000;
+const SOFT_TIMEOUT_MS = 10 * 60_000;
+const HARD_TIMEOUT_MS = 20 * 60_000;
 
 // Fetcher qui THROW sur non-2xx (le fetcher global avale les 500).
 async function fetcher(url: string): Promise<{ job: EnrichJob }> {
@@ -26,11 +28,12 @@ async function fetcher(url: string): Promise<{ job: EnrichJob }> {
 
 // Poll d'un job d'enrichissement Apollo (réutilise la route apollo existante).
 export function useApolloEnrichJob(jobId: string | null, opts?: Opts) {
-  const tracker = useRef<{ jobId: string | null; status: string | null; startedAt: number; fired: boolean }>({
+  const tracker = useRef<{ jobId: string | null; status: string | null; startedAt: number; fired: boolean; timedOut: boolean }>({
     jobId: null,
     status: null,
     startedAt: 0,
     fired: false,
+    timedOut: false,
   });
 
   const fire = (job: EnrichJob) => {
@@ -46,19 +49,25 @@ export function useApolloEnrichJob(jobId: string | null, opts?: Opts) {
     revalidateOnFocus: false,
     onSuccess: (d) => {
       if (tracker.current.jobId !== jobId) {
-        tracker.current = { jobId, status: null, startedAt: Date.now(), fired: false };
+        tracker.current = { jobId, status: null, startedAt: Date.now(), fired: false, timedOut: false };
       }
       const job = d?.job;
       if (!job) return;
-      if (job.status === "running" && Date.now() - tracker.current.startedAt > MAX_RUNNING_MS) {
-        fire({ ...job, status: "error", error: "Timed out — still running in the background, refresh later." });
+      if (job.status === "running") {
+        const elapsed = Date.now() - tracker.current.startedAt;
+        if (elapsed > HARD_TIMEOUT_MS) {
+          fire({ ...job, status: "error", error: "Still running in the background. Refresh later to see the result." });
+        } else if (elapsed > SOFT_TIMEOUT_MS && !tracker.current.timedOut) {
+          tracker.current.timedOut = true;
+          opts?.onTimeout?.(job);
+        }
         return;
       }
-      if (job.status !== "running" && job.status !== tracker.current.status) fire(job);
+      if (job.status !== tracker.current.status) fire(job);
     },
     onError: (err: Error) => {
       if (tracker.current.jobId !== jobId) {
-        tracker.current = { jobId, status: null, startedAt: Date.now(), fired: false };
+        tracker.current = { jobId, status: null, startedAt: Date.now(), fired: false, timedOut: false };
       }
       fire({ id: jobId ?? "", status: "error", summary: null, error: err?.message ?? "Polling failed" });
     },

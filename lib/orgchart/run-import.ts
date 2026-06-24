@@ -25,7 +25,7 @@ import { classifyHierarchy, type ClassifyInput, type ClassifyOutput } from "./cl
 import { rowToDraft, type OrgCsvField } from "./csv-import";
 import { fetchContactsForCompany } from "./fetch-hubspot-contacts";
 import { matchPerson, isApolloConfigured } from "@/lib/apollo/client";
-import { normalizeCompany } from "@/lib/fuzzy-match";
+import { sameCompanyGroup } from "./company-match";
 import type { HubspotTitleProposal, HubspotCompanyProposal, ImportResult, OrgPersonInput } from "./types";
 
 interface CsvParams {
@@ -122,13 +122,6 @@ export async function runOrgImport(input: { jobId: string }): Promise<{ ok: bool
       // 2. Validation Apollo des postes -> organigramme + propositions (jamais HubSpot ici).
       if (validate) {
         const companyNameById = new Map(companies.map((c) => [c.id, c.name ?? accountName]));
-        const accountToken =
-          normalizeCompany(accountName).split(" ").filter(Boolean).sort((a, b) => b.length - a.length)[0] ?? "";
-        const sameGroup = (org: string | null) => {
-          if (!org) return true;
-          const o = normalizeCompany(org);
-          return !accountToken || o.includes(accountToken) || accountToken.includes(o.split(" ")[0] ?? "");
-        };
         for (let i = 0; i < drafts.length; i++) {
           const p = drafts[i].person;
           if (i % 3 === 0) await setJobProgress(jobId, { phase: "validate", done: i, total: drafts.length, label: "Validating job titles via Apollo" });
@@ -148,7 +141,7 @@ export async function runOrgImport(input: { jobId: string }): Promise<{ ok: bool
             if ((p.name ?? "").includes("@") && apolloName) p.name = apolloName;
 
             const company = companyNameById.get(p.hubspot_company_id ?? "") ?? accountName;
-            if (apolloOrg && !sameGroup(apolloOrg)) {
+            if (apolloOrg && !sameCompanyGroup(accountName, apolloOrg)) {
               // Contact dans une AUTRE boîte -> proposition (MAJ company + Left), pas de titre appliqué.
               companyProposals.push({
                 contactId: p.hubspot_contact_id ?? "",

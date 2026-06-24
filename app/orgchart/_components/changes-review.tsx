@@ -56,7 +56,7 @@ export function ChangesReview({
             <Building2 size={13} /> Left the company ({companyProposals.length})
           </div>
           <div style={{ fontSize: 11.5, color: COLORS.ink3, marginBottom: 6 }}>
-            Apollo places them at a different company. Confirm → update the HubSpot company + mark “Left” in the chart.
+            Apollo places them at a different company. Confirm → set the new company as primary on HubSpot (old one removed) and remove them from the chart.
           </div>
           <div style={listStyle(200)}>
             {companyProposals.map((p) => {
@@ -67,7 +67,7 @@ export function ChangesReview({
                   <span style={{ flex: 1, minWidth: 0 }}>
                     <span style={nameStyle}>{p.name}</span>
                     <span style={diffStyle}>
-                      <span style={{ color: COLORS.ink3 }}>{p.currentCompany || "—"}</span>
+                      <span style={{ color: COLORS.ink3 }}>{p.currentCompany || "(none)"}</span>
                       <ArrowRight size={12} style={{ color: COLORS.ink3, flexShrink: 0 }} />
                       <span style={{ fontWeight: 600, color: COLORS.err }}>{p.newCompany}</span>
                     </span>
@@ -99,11 +99,14 @@ export function buildApplyPayload(
   };
 }
 
-// POST les changements confirmés et renvoie le décompte appliqué.
+// POST les changements confirmés et renvoie le décompte appliqué. `ok` distingue
+// un échec réseau/serveur (500, timeout) d'un "rien à appliquer" : sans ça,
+// l'UI affichait "No HubSpot update applied" alors que l'écriture avait échoué.
+// cf. B19/B7.
 export async function applyHubspotChanges(
   accountId: string,
   payload: ReturnType<typeof buildApplyPayload>,
-): Promise<{ titles: number; companies: number }> {
+): Promise<{ ok: boolean; titles: number; companies: number; failures: number }> {
   try {
     const res = await fetch(`/api/orgchart/accounts/${accountId}/apply-hubspot`, {
       method: "POST",
@@ -111,9 +114,15 @@ export async function applyHubspotChanges(
       body: JSON.stringify(payload),
     });
     const data = await res.json().catch(() => ({}));
-    return { titles: data.titlesUpdated ?? 0, companies: data.companiesUpdated ?? 0 };
+    if (!res.ok) return { ok: false, titles: 0, companies: 0, failures: 0 };
+    return {
+      ok: true,
+      titles: data.titlesUpdated ?? 0,
+      companies: data.companiesUpdated ?? 0,
+      failures: data.failures ?? 0,
+    };
   } catch {
-    return { titles: 0, companies: 0 };
+    return { ok: false, titles: 0, companies: 0, failures: 0 };
   }
 }
 

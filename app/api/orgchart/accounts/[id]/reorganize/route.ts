@@ -1,7 +1,8 @@
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { runReorganize } from "@/lib/orgchart/run-reorganize";
+import { triggerBackgroundJob } from "@/lib/orgchart/dispatch-job";
 
 export const dynamic = "force-dynamic";
 
@@ -23,20 +24,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: error?.message ?? "Failed to create job" }, { status: 500 });
   }
 
-  const cronSecret = process.env.CRON_SECRET;
-  const siteUrl = process.env.URL ?? process.env.SITE_URL ?? req.nextUrl.origin;
-  if (process.env.NETLIFY === "true" && cronSecret) {
-    fetch(`${siteUrl}/.netlify/functions/${BG_FN}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${cronSecret}`, "content-type": "application/json" },
-      body: JSON.stringify({ jobId: job.id }),
-    }).catch((e) => console.error("[orgchart/reorganize] background invoke failed:", e));
-    return NextResponse.json({ ok: true, jobId: job.id }, { status: 202 });
-  }
-
-  after(async () => {
-    const res = await runReorganize({ jobId: job.id });
-    if (!res.ok) console.error("[orgchart/reorganize] dev run failed:", res.error);
+  await triggerBackgroundJob({
+    jobId: job.id,
+    fnName: BG_FN,
+    table: "orgchart_import_jobs",
+    origin: req.nextUrl.origin,
+    run: () => runReorganize({ jobId: job.id }),
   });
   return NextResponse.json({ ok: true, jobId: job.id }, { status: 202 });
 }

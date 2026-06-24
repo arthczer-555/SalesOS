@@ -402,6 +402,30 @@ export async function updatePerson(
 }
 
 export async function deletePerson(personId: string, accountId: string): Promise<void> {
+  // Récupère manager + contact HubSpot avant suppression.
+  const { data: row } = await db
+    .from("orgchart_people")
+    .select("manager_id, hubspot_contact_id")
+    .eq("id", personId)
+    .eq("account_id", accountId)
+    .maybeSingle();
+
+  // B27 : réaffecte les subordonnés au manager du supprimé plutôt que de les
+  // laisser remonter à la racine (ON DELETE SET NULL décapitait le sous-arbre
+  // jusqu'à la prochaine reclassification).
+  const newManager = (row?.manager_id as string | null) ?? null;
+  await db
+    .from("orgchart_people")
+    .update({ manager_id: newManager, updated_at: new Date().toISOString() })
+    .eq("account_id", accountId)
+    .eq("manager_id", personId)
+    .then(undefined, () => {});
+
+  // B13 : marque le contact HubSpot comme "vu" pour qu'un futur Refresh ne le
+  // réinjecte pas (il reste associé à la company côté HubSpot).
+  const contactId = (row?.hubspot_contact_id as string | null) ?? null;
+  if (contactId) await addSeenContacts(accountId, [contactId]);
+
   const { error } = await db
     .from("orgchart_people")
     .delete()

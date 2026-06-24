@@ -1,11 +1,15 @@
 // Synchro best-effort d'une édition de personne vers HubSpot. La base Supabase
 // reste la source de vérité ; on ne pousse que si on connaît déjà le contact
-// HubSpot. Ne throw jamais (ne doit pas casser une sauvegarde).
+// HubSpot. Ne throw jamais (ne doit pas casser une sauvegarde), mais renvoie
+// son issue pour que l'UI ne prétende pas "synced" quand l'écriture a échoué
+// (token expiré, 429, contact archivé). cf. integrations.
 import { hubspotUpdate } from "@/lib/hubspot";
 import type { OrgPerson, OrgPersonInput } from "./types";
 
-export async function syncPersonToHubspot(person: OrgPerson, changed: OrgPersonInput): Promise<void> {
-  if (!person.hubspot_contact_id) return;
+export type HubspotSyncResult = "synced" | "skipped" | "failed";
+
+export async function syncPersonToHubspot(person: OrgPerson, changed: OrgPersonInput): Promise<HubspotSyncResult> {
+  if (!person.hubspot_contact_id) return "skipped";
 
   const props: Record<string, string> = {};
   if (changed.title !== undefined && changed.title) props.jobtitle = changed.title;
@@ -24,10 +28,12 @@ export async function syncPersonToHubspot(person: OrgPerson, changed: OrgPersonI
     props.email = changed.email.toLowerCase();
   }
 
-  if (Object.keys(props).length === 0) return;
+  if (Object.keys(props).length === 0) return "skipped";
   try {
     await hubspotUpdate("contacts", person.hubspot_contact_id, props);
+    return "synced";
   } catch (e) {
     console.warn("[orgchart] hubspot sync failed:", e instanceof Error ? e.message : e);
+    return "failed";
   }
 }

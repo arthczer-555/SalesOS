@@ -29,13 +29,19 @@ export default function OrgChartPage() {
   const [accountId, setAccountId] = useState<string | null>(null);
   // Compte actif = sélection explicite, sinon le premier compte (pas d'effet).
   const activeAccountId = accountId ?? accounts[0]?.id ?? null;
-  const { account, companies, people, edges, isLoading, reload } = useOrgchart(activeAccountId);
+  const { account, companies, people, edges, isLoading, error: chartError, reload } = useOrgchart(activeAccountId);
 
   const [view, setView] = useState<OrgView>("whiteboard");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   // Id du contact en cours d'enregistrement/enrichissement depuis le panneau de
   // détail -> alimente l'état `busy` (spinner + boutons désactivés).
   const [savingId, setSavingId] = useState<string | null>(null);
+  // Création de personne en cours -> désactive le bouton "Add" (anti double-submit
+  // qui créait des doublons CRM + des reveals Apollo en double). cf. B15.
+  const [creating, setCreating] = useState(false);
+  // Suppression d'une personne : confirmation avant action destructive (cohérent
+  // avec la double-confirmation des comptes/companies). cf. UI/UX.
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   const flowRef = useRef<OrgFlowHandle>(null);
 
   // Modals
@@ -53,23 +59,28 @@ export default function OrgChartPage() {
   // Jobs : side-effects déclenchés à la complétion via les callbacks du hook.
   const [reorgJobId, setReorgJobId] = useState<string | null>(null);
   useOrgImportJob(reorgJobId, {
-    onDone: (job) => {
+    onDone: async (job) => {
       setReorgJobId(null);
-      reload();
-      setTimeout(() => flowRef.current?.autoArrange(), 400); // re-range après restructuration
+      // ATTENDRE le refetch avant de ranger : sinon l'auto-arrange tourne sur les
+      // anciens edges (liens vides) et il fallait recharger la page à la main.
+      await reload();
+      flowRef.current?.autoArrange();
       toast(`Org chart organized (${job.result?.managers_linked ?? 0} reporting links)`, "success");
     },
     onError: (job) => {
       setReorgJobId(null);
       toast(job.error ?? "Auto-organize failed", "error");
     },
+    onTimeout: () => toast("Still organizing in the background, this can take a moment.", "info"),
   });
   const [refreshJobId, setRefreshJobId] = useState<string | null>(null);
   const { job: refreshJob } = useOrgImportJob(refreshJobId, {
-    onDone: (job) => {
+    onDone: async (job) => {
       setRefreshJobId(null);
-      reload();
-      setTimeout(() => flowRef.current?.autoArrange(), 400); // re-range (nouveaux contacts + structure)
+      // Attendre le refetch (nouveaux contacts + liens) avant l'auto-arrange,
+      // pour que les liens apparaissent sans rechargement manuel.
+      await reload();
+      flowRef.current?.autoArrange();
       const props = job.result?.proposals ?? [];
       const coProps = job.result?.companyProposals ?? [];
       if (props.length) setTitleProps(props); // -> pop-up de confirmation HubSpot
@@ -84,6 +95,10 @@ export default function OrgChartPage() {
     onError: (job) => {
       setRefreshJobId(null);
       toast(job.error ?? "Refresh failed", "error");
+    },
+    onTimeout: () => {
+      setRefreshHidden(true); // on retire la fenêtre de progression mais on garde le polling
+      toast("Refresh still running in the background, you can keep working.", "info");
     },
   });
   const [enrichJobId, setEnrichJobId] = useState<string | null>(null);
@@ -100,6 +115,7 @@ export default function OrgChartPage() {
       setEnrichJobId(null);
       toast(job.error ?? "Enrichment failed", "error");
     },
+    onTimeout: () => toast("Still enriching in the background, this can take a moment.", "info"),
   });
 
   const selectedPerson = people.find((p) => p.id === selectedId) ?? null;
@@ -131,9 +147,12 @@ export default function OrgChartPage() {
   const savePerson = async (id: string, fields: OrgPersonInput, syncHubspot: boolean) => {
     setSavingId(id);
     try {
-      await api(`/api/orgchart/people/${id}`, "PATCH", { ...fields, syncHubspot });
+      const res = await api(`/api/orgchart/people/${id}`, "PATCH", { ...fields, syncHubspot });
       reload();
-      toast(syncHubspot ? "Contact saved & synced to HubSpot" : "Contact saved", "success");
+      // On ne prétend "synced" que si HubSpot a vraiment accepté l'écriture.
+      if (syncHubspot && res?.hubspotSync === "synced") toast("Contact saved & synced to HubSpot", "success");
+      else if (syncHubspot && res?.hubspotSync === "failed") toast("Contact saved (HubSpot sync failed)", "info");
+      else toast("Contact saved", "success");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Save failed", "error");
     } finally {
@@ -142,17 +161,26 @@ export default function OrgChartPage() {
   };
 
   const createPerson = async (fields: OrgPersonInput) => {
-    if (!activeAccountId) return;
+    if (!activeAccountId || creating) return;
+    setCreating(true);
     try {
       const { person } = await api("/api/orgchart/people", "POST", { accountId: activeAccountId, ...fields });
       setShowAdd(false);
       reload();
-      toast("Person added — revealing email & title via Apollo…", "info");
+      toast("Person added, revealing email & title via Apollo…", "info");
       // Reveal email + poste via Apollo et push HubSpot (sauf si déjà sur HubSpot -> lien sans crédit).
       void startEnrich(person.id);
     } catch (e) {
       toast(e instanceof Error ? e.message : "Failed", "error");
+    } finally {
+      setCreating(false);
     }
+  };
+
+  // Demande de suppression -> ouvre la confirmation (pas de suppression directe).
+  const requestDelete = (id: string) => {
+    const name = people.find((p) => p.id === id)?.name ?? "this person";
+    setPendingDelete({ id, name });
   };
 
   const deletePerson = async (id: string) => {
@@ -179,14 +207,52 @@ export default function OrgChartPage() {
     }
   };
 
-  const reparent = async (personId: string, managerId: string | null) => {
+  const reparent = async (
+    personId: string,
+    managerId: string | null,
+    extra?: { department?: string | null; entity?: string | null },
+  ) => {
     try {
-      await api(`/api/orgchart/people/${personId}`, "PATCH", { manager_id: managerId });
+      await api(`/api/orgchart/people/${personId}`, "PATCH", { manager_id: managerId, ...(extra ?? {}) });
       reload();
     } catch (e) {
       toast(e instanceof Error ? e.message : "Could not set manager", "error");
       reload();
     }
+  };
+
+  // Dépôt d'une carte dans une boîte département : réaffecte département (+ entité)
+  // et fige la position lâchée. MAJ optimiste (comme les positions) pour éviter
+  // tout saut visuel, puis PATCH serveur.
+  const assignZone = (
+    personId: string,
+    fields: { department: string | null; entity: string | null; pos_x: number; pos_y: number },
+  ) => {
+    const patch: Record<string, unknown> = {
+      department: fields.department,
+      pos_x: fields.pos_x,
+      pos_y: fields.pos_y,
+    };
+    if (fields.entity) patch.entity = fields.entity;
+    reload(
+      (cur) =>
+        cur ? { ...cur, people: cur.people.map((p) => (p.id === personId ? { ...p, ...patch } : p)) } : cur,
+      { revalidate: false },
+    );
+    fetch(`/api/orgchart/people/${personId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error();
+      })
+      .catch(() => {
+        // Échec serveur : on resync (revalidation réelle) et on prévient,
+        // sinon la carte affiche un état non persisté qui "saute" au reload.
+        reload();
+        toast("Could not reassign department", "error");
+      });
   };
 
   const savePositions = (positions: { id: string; x: number; y: number }[]) => {
@@ -209,7 +275,14 @@ export default function OrgChartPage() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ accountId: activeAccountId, positions }),
-    }).catch(() => {});
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error();
+      })
+      .catch(() => {
+        reload();
+        toast("Move not saved", "error");
+      });
   };
 
   const renameAccount = async (id: string, name: string) => {
@@ -247,7 +320,7 @@ export default function OrgChartPage() {
       }
       // Contact déjà sur HubSpot : match Apollo synchrone (poste, 0 crédit).
       reload();
-      toast(res.title ? `Title fetched from Apollo: ${res.title}` : "Linked — Apollo found no current title", res.title ? "success" : "info");
+      toast(res.title ? `Title fetched from Apollo: ${res.title}` : "Linked, Apollo found no current title", res.title ? "success" : "info");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Enrich failed", "error");
     }
@@ -352,7 +425,9 @@ export default function OrgChartPage() {
 
             <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
               <div style={{ flex: 1, minWidth: 0, position: "relative" }}>
-                {isLoading && people.length === 0 ? (
+                {chartError ? (
+                  <ChartError message={chartError instanceof Error ? chartError.message : "Failed to load"} onRetry={() => reload()} />
+                ) : isLoading && people.length === 0 ? (
                   <div style={{ padding: 40, color: COLORS.ink3, fontSize: 13 }}>Loading…</div>
                 ) : view === "whiteboard" ? (
                   <OrgFlow
@@ -362,13 +437,14 @@ export default function OrgChartPage() {
                     selectedId={selectedId}
                     onSelect={setSelectedId}
                     onReparent={reparent}
+                    onAssign={assignZone}
                     onPositionsChange={savePositions}
                   />
                 ) : account ? (
                   <DataTable
                     people={people}
                     onUpdate={patchPerson}
-                    onDelete={deletePerson}
+                    onDelete={requestDelete}
                     onBulkDelete={bulkDelete}
                     onAddPerson={() => setShowAdd(true)}
                   />
@@ -384,7 +460,7 @@ export default function OrgChartPage() {
                     busy={savingId === selectedPerson.id || !!enrichJobId}
                     onSave={savePerson}
                     onDelete={(id) => {
-                      deletePerson(id);
+                      requestDelete(id);
                     }}
                     onEnrich={async (id) => {
                       setSavingId(id);
@@ -404,7 +480,7 @@ export default function OrgChartPage() {
       </div>
 
       {/* Modals */}
-      {showAdd && <AddPersonModal onClose={() => setShowAdd(false)} onCreate={createPerson} />}
+      {showAdd && <AddPersonModal onClose={() => setShowAdd(false)} onCreate={createPerson} busy={creating} />}
       {showNewAccount && <OnboardingWizard onClose={() => setShowNewAccount(false)} onComplete={onWizardComplete} />}
       {showAddCompany && account && (
         <OnboardingWizard
@@ -434,7 +510,7 @@ export default function OrgChartPage() {
           onClose={() => setShowApollo(false)}
           onDone={() => {
             reload();
-            toast("Apollo enrichment done — new contacts added", "success");
+            toast("Apollo enrichment done, new contacts added", "success");
           }}
         />
       )}
@@ -467,15 +543,97 @@ export default function OrgChartPage() {
             setTitleProps([]);
             setCompanyProps([]);
           }}
-          onApplied={({ titles, companies }) => {
+          onApplied={({ ok, titles, companies, failures }) => {
             setTitleProps([]);
             setCompanyProps([]);
             reload();
+            if (!ok) {
+              toast("HubSpot update failed, nothing was applied", "error");
+              return;
+            }
             const n = titles + companies;
-            toast(n > 0 ? `${n} contact(s) updated on HubSpot` : "No HubSpot update applied", n > 0 ? "success" : "info");
+            const suffix = failures ? ` (${failures} failed)` : "";
+            toast(
+              n > 0 ? `${n} contact(s) updated on HubSpot${suffix}` : "No HubSpot update applied",
+              n > 0 && !failures ? "success" : "info",
+            );
           }}
         />
       )}
+
+      {pendingDelete && (
+        <Modal
+          title="Remove person?"
+          width={420}
+          onClose={() => setPendingDelete(null)}
+          footer={
+            <>
+              <GhostBtn onClick={() => setPendingDelete(null)}>Cancel</GhostBtn>
+              <button
+                onClick={() => {
+                  const { id } = pendingDelete;
+                  setPendingDelete(null);
+                  deletePerson(id);
+                }}
+                style={{
+                  padding: "8px 16px",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: "#fff",
+                  background: COLORS.err,
+                  borderRadius: 8,
+                }}
+              >
+                Remove
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, color: COLORS.ink2, margin: 0 }}>
+            Remove <strong style={{ color: COLORS.ink0 }}>{pendingDelete.name}</strong> from this org chart? This does not
+            delete the contact in HubSpot.
+          </p>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+// État d'erreur du chart : un échec serveur (session expirée, panne Supabase,
+// cache PostgREST périmé) ne doit PAS ressembler à un compte vide. cf. B3.
+function ChartError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 12,
+        padding: 40,
+        height: "100%",
+        color: COLORS.ink3,
+      }}
+    >
+      <div style={{ fontSize: 15, fontWeight: 600, color: COLORS.err }}>Could not load this account</div>
+      <div style={{ fontSize: 13, maxWidth: 360, textAlign: "center" }}>{message}</div>
+      <button
+        onClick={onRetry}
+        style={{
+          marginTop: 4,
+          padding: "7px 16px",
+          borderRadius: 8,
+          border: `1px solid ${COLORS.line}`,
+          background: COLORS.bgCard,
+          color: COLORS.ink1,
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        Retry
+      </button>
     </div>
   );
 }

@@ -128,7 +128,9 @@ export function OnboardingWizard({ onClose, onComplete, appendAccountId, appendA
       setTitleProposals(props);
       setCompanyProposals(coProps);
       setSelTitles(new Set(props.map((p) => p.contactId)));
-      setSelCompanies(new Set(coProps.map((p) => p.contactId)));
+      // Départs OPT-IN : suppression du chart + réécriture HubSpot = destructif,
+      // on ne les pré-coche pas (cf. B1).
+      setSelCompanies(new Set());
       if (props.length || coProps.length) setStep("confirm");
       else setStep("apollo");
     },
@@ -273,8 +275,19 @@ export function OnboardingWizard({ onClose, onComplete, appendAccountId, appendA
   const applyConfirm = async () => {
     if (!accountId) return setStep("apollo");
     setApplying(true);
-    await applyHubspotChanges(accountId, buildApplyPayload(titleProposals, companyProposals, selTitles, selCompanies));
+    setErr(null);
+    const r = await applyHubspotChanges(
+      accountId,
+      buildApplyPayload(titleProposals, companyProposals, selTitles, selCompanies),
+    );
     setApplying(false);
+    // Si l'écriture HubSpot a échoué, on NE prétend PAS que c'est appliqué : on
+    // reste sur l'étape pour laisser réessayer (ou Skip). cf. B7.
+    if (!r.ok) {
+      setErr("Could not push changes to HubSpot. Retry, or Skip to continue.");
+      return;
+    }
+    if (r.failures) setErr(`${r.failures} change(s) could not be applied on HubSpot.`);
     setStep("apollo");
   };
 

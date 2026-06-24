@@ -13,6 +13,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .from("orgchart_import_jobs")
     .select("id, source, status, account_id, result, progress, error, created_at, updated_at")
     .eq("id", id)
+    .eq("user_id", user.id) // ne pas exposer les jobs d'un autre utilisateur (PII Apollo). S2
     .maybeSingle();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   if (!data) return NextResponse.json({ error: "Job not found" }, { status: 404 });

@@ -19,8 +19,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     const person = await updatePerson(id, existing.account_id, fields);
-    if (syncHubspot) await syncPersonToHubspot(person, fields);
-    return NextResponse.json({ person });
+    const hubspotSync = syncHubspot ? await syncPersonToHubspot(person, fields) : undefined;
+    return NextResponse.json({ person, hubspotSync });
   } catch (e) {
     if (e instanceof CycleError) return NextResponse.json({ error: e.message }, { status: 409 });
     return NextResponse.json({ error: e instanceof Error ? e.message : "error" }, { status: 500 });

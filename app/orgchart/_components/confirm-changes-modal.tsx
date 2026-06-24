@@ -11,15 +11,18 @@ interface Props {
   titleProposals: HubspotTitleProposal[];
   companyProposals: HubspotCompanyProposal[];
   onClose: () => void;
-  onApplied: (r: { titles: number; companies: number }) => void;
+  onApplied: (r: { ok: boolean; titles: number; companies: number; failures: number }) => void;
 }
 
 // Confirme l'écriture sur HubSpot des changements détectés par Apollo (postes +
 // sorties d'entreprise). Rien n'est poussé sans cette validation. Utilisé après
 // un Refresh.
 export function ConfirmChangesModal({ accountId, titleProposals, companyProposals, onClose, onApplied }: Props) {
+  // Les titres (non destructifs) sont pré-cochés ; les départs (suppression
+  // définitive du chart + réécriture des associations HubSpot) sont OPT-IN :
+  // l'utilisateur doit les cocher explicitement. cf. B1.
   const [titles, setTitles] = useState<Set<string>>(new Set(titleProposals.map((p) => p.contactId)));
-  const [companies, setCompanies] = useState<Set<string>>(new Set(companyProposals.map((p) => p.contactId)));
+  const [companies, setCompanies] = useState<Set<string>>(new Set());
   const [applying, setApplying] = useState(false);
 
   const tog = (set: Set<string>, setter: (s: Set<string>) => void, id: string) => {
@@ -30,6 +33,15 @@ export function ConfirmChangesModal({ accountId, titleProposals, companyProposal
   };
 
   const total = titles.size + companies.size;
+  // Label explicite : on ne fusionne plus titres et suppressions sous un "Update N".
+  const btnLabel = applying
+    ? "Updating…"
+    : [
+        titles.size ? `Update ${titles.size} title${titles.size > 1 ? "s" : ""}` : "",
+        companies.size ? `Remove ${companies.size} from chart` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ") || "Apply";
 
   const apply = async () => {
     setApplying(true);
@@ -47,7 +59,7 @@ export function ConfirmChangesModal({ accountId, titleProposals, companyProposal
         <>
           <GhostBtn onClick={onClose}>Skip</GhostBtn>
           <PrimaryBtn onClick={apply} disabled={applying || total === 0}>
-            {applying ? "Updating…" : `Update ${total} on HubSpot`}
+            {btnLabel}
           </PrimaryBtn>
         </>
       }

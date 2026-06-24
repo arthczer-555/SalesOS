@@ -15,6 +15,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .from("apollo_enrichment_jobs")
     .select("id, status, people, summary, error, credits_used, hubspot_company_name, created_at, updated_at")
     .eq("id", id)
+    .eq("user_id", user.id) // ne pas exposer les jobs (emails révélés = PII) d'un autre utilisateur. S2
     .maybeSingle();
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

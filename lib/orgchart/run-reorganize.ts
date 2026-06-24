@@ -52,10 +52,17 @@ export async function reclassifyAccount(
       if (!c) return Promise.resolve();
       const patch: Record<string, unknown> = { updated_at: new Date().toISOString(), manager_id: managerId };
       if (c.entity) patch.entity = c.entity;
-      if (c.department) patch.department = c.department;
+      // Sans poste connu -> on EFFACE le département (sort la carte des sous-zones
+      // colorées). Avec poste -> on n'écrit que si le classifieur a tranché, pour
+      // ne pas écraser un département posé à la main.
+      const hasTitle = !!(p.title ?? p.title_hubspot);
+      if (!hasTitle) patch.department = null;
+      else if (c.department) patch.department = c.department;
       if (c.level !== "unknown") patch.level = c.level;
       if (c.decision_role !== "unknown") patch.decision_role = c.decision_role;
-      patch.manager_confidence = c.confidence;
+      // Confiance du lien reporte-à : nulle si on n'a finalement pas retenu de
+      // manager (anti-cycle, index hors borne...). cf. B26.
+      patch.manager_confidence = managerId ? c.confidence : null;
       return db.from("orgchart_people").update(patch).eq("id", p.id).then(undefined, () => {});
     }),
   );
