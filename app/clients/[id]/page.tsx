@@ -34,6 +34,10 @@ async function fetcher<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 type Resp = { client: ClientRow; meetings: ClientMeeting[] };
 
 function fmtDate(iso: string | null): string {
@@ -195,6 +199,9 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   // Distingue une fermeture "confirmée" (on reste sur la fiche, l'enrichissement
   // démarre) d'une fermeture "abandon" (on renvoie vers la liste, cf. gate).
   const confirmedMeetings = useRef(false);
+  // Coupe le polling du refresh si on quitte la fiche en cours de route.
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
 
   // Refresh agressif tant que l'enrichissement n'est pas terminé pour que le
   // CS voie les fields apparaître dès la fin du pipeline IA. Une fois "done"
@@ -236,6 +243,13 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   }
 
   async function triggerRefresh() {
+    // Le refresh tourne dans une background function Netlify (fields + news +
+    // health + insights, plusieurs appels IA) : 20-60s en général, bien plus que
+    // les 8s d'avant. On capture le timestamp du dernier report, puis on poll la
+    // fiche jusqu'à ce qu'un NOUVEAU report apparaisse (ou timeout). La fiche se
+    // met alors à jour toute seule à la fin du job, sans cmd+R, et le bouton
+    // reste sur "Refreshing…" tant que ce n'est pas réellement terminé.
+    const baseline = data?.client.last_refresh_report?.refreshed_at ?? null;
     setRefreshing(true);
     setTriggerError(null);
     try {
@@ -244,16 +258,25 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `HTTP ${res.status}`);
       }
-      // Le refresh ne change pas enrichment_status, donc le polling SWR ne
-      // s'enclenche pas : on refetch tout de suite puis une fois en différé
-      // pour laisser la background function écrire le report.
-      await mutate();
-      setTimeout(() => void mutate(), 8_000);
     } catch (e) {
       setTriggerError(e instanceof Error ? e.message : "Error");
-    } finally {
       setRefreshing(false);
+      return;
     }
+
+    // Poll toutes les 4s jusqu'à ce que la background function ait écrit un
+    // nouveau report. Garde-fou : 4 min max (la fonction a échoué silencieusement
+    // ou est anormalement lente). Le report d'erreur a aussi un refreshed_at neuf,
+    // donc un échec est détecté et affiché (cf. RefreshReportPanel).
+    const deadline = Date.now() + 4 * 60_000;
+    while (aliveRef.current && Date.now() < deadline) {
+      await sleep(4_000);
+      if (!aliveRef.current) return;
+      const fresh = await mutate();
+      const stamp = fresh?.client.last_refresh_report?.refreshed_at ?? null;
+      if (stamp && stamp !== baseline) break;
+    }
+    if (aliveRef.current) setRefreshing(false);
   }
 
   async function restoreOnboarding() {
