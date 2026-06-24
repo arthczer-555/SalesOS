@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo, memo } from "react";
+import { useState, useRef, useEffect, useCallback, memo } from "react";
 import { useRouter } from "next/navigation";
 import { History, Plus, Globe, Mail, MessageSquare, Database, FolderOpen, Linkedin, Check } from "lucide-react";
 import Image from "next/image";
@@ -72,30 +72,18 @@ export default function IntelligencePage() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
-  const TOOL_LABELS = useMemo<Record<string, string>>(() => ({
-    search_contacts:           "Searching contacts…",
-    search_deals:              "Searching deals…",
-    get_deals:                 "Loading pipeline…",
-    get_companies:             "Loading companies…",
-    get_contact_details:       "Contact details…",
-    get_contact_activity:      "Exchange history…",
-    get_deal_activity:         "Deal history…",
-    get_deal_contacts:         "Contacts associated with the deal…",
-    search_slack:              "Searching Slack…",
-    get_slack_channel_history: "Reading Slack channel…",
-    send_slack_message:        "Sending Slack message…",
-    web_search:                "Searching the web…",
-    search_drive:              "Searching Google Drive…",
-    read_drive_file:           "Reading document…",
-    list_drive_folder:         "Browsing Drive…",
-    search_gmail:              "Searching your emails…",
-    read_gmail_message:        "Reading email…",
-    search_claap_meetings:     "Searching Claap meetings…",
-    get_claap_meeting_transcript: "Reading Claap transcript…",
-  }), []);
-
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Jeton du polling en cours : permet d'annuler une boucle de poll quand on
+  // change de conversation ou démonte la page (évite les fuites / mélanges).
+  const pollRef = useRef<{ cancelled: boolean } | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) pollRef.current.cancelled = true;
+    pollRef.current = null;
+  }, []);
+
+  useEffect(() => () => stopPolling(), [stopPolling]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -125,6 +113,8 @@ export default function IntelligencePage() {
   }, [loadConversations]);
 
   const startNewConversation = () => {
+    stopPolling();
+    setLoading(false);
     setMessages([]);
     setApiHistory([]);
     setStreamingText("");
@@ -137,6 +127,8 @@ export default function IntelligencePage() {
 
   const loadConversation = async (id: string) => {
     try {
+      stopPolling();
+      setLoading(false);
       const r = await fetch(`/api/conversations/${id}`);
       if (!r.ok) return;
       const { messages: msgs, apiHistory: history } = await r.json();
@@ -188,6 +180,11 @@ export default function IntelligencePage() {
       } catch {}
     }
 
+    // Annule un éventuel poll en cours et ouvre un nouveau jeton pour ce send.
+    stopPolling();
+    const token = { cancelled: false };
+    pollRef.current = token;
+
     try {
       const apiMessages: ApiMessage[] = apiHistory.length > 0
         ? [...apiHistory, { role: "user", content: text }]
@@ -198,77 +195,72 @@ export default function IntelligencePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ messages: apiMessages, betterThinking }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      const { jobId } = await res.json();
+      if (!jobId) throw new Error("No job id");
 
-      const reader = res.body!.getReader();
-      const decoder = new TextDecoder();
-      let fullText = "";
-      let latestHistory: ApiMessage[] | null = null;
-      let streamDone = false;
+      // L'agentic loop tourne dans une Background Function ; on lit la
+      // progression écrite dans chat_jobs par polling toutes les ~1s.
+      while (!token.cancelled) {
+        await new Promise((r) => setTimeout(r, 1000));
+        if (token.cancelled) return;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        const pr = await fetch(`/api/chat/${jobId}`);
+        if (!pr.ok) throw new Error(`HTTP ${pr.status}`);
+        const { job } = await pr.json();
+        if (token.cancelled) return;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n");
+        if (typeof job.streaming_text === "string") setStreamingText(job.streaming_text);
+        if (Array.isArray(job.tool_steps)) setToolSteps(job.tool_steps);
+        if (job.cost != null) setCostWarning(Number(job.cost));
 
-        for (const line of lines) {
-          if (!line.startsWith("data: ")) continue;
-          try {
-            const event = JSON.parse(line.slice(6));
-            if (event.type === "text") {
-              fullText += event.text;
-              setStreamingText(fullText);
-            } else if (event.type === "tool") {
-              setToolSteps((prev) => [...prev, TOOL_LABELS[event.name] ?? event.name]);
-            } else if (event.type === "tool_progress") {
-              setToolSteps((prev) => prev.length > 0 ? [...prev.slice(0, -1), event.message] : [event.message]);
-            } else if (event.type === "cost_warning") {
-              setCostWarning(event.cost);
-            } else if (event.type === "history") {
-              latestHistory = event.messages;
-            } else if (event.type === "done") {
-              streamDone = true;
-              setMessages((prev) => [...prev, { role: "assistant", content: fullText }]);
-              if (latestHistory) setApiHistory(latestHistory);
-              setStreamingText("");
-              setToolSteps([]);
-              setLoading(false);
+        if (job.status === "done") {
+          const fullText = job.final_text || job.streaming_text || "";
+          const latestHistory: ApiMessage[] | null = Array.isArray(job.history) ? job.history : null;
+          pollRef.current = null;
+          setMessages((prev) => [...prev, { role: "assistant", content: fullText }]);
+          if (latestHistory) setApiHistory(latestHistory);
+          setStreamingText("");
+          setToolSteps([]);
+          setLoading(false);
 
-              if (convId) {
-                const isFirst = messages.length === 0;
-                fetch(`/api/conversations/${convId}/messages`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({
-                    userContent: text,
-                    assistantContent: fullText,
-                    apiHistory: latestHistory,
-                    isFirst,
-                  }),
-                }).then((r) => r.json()).then((data) => {
-                  if (data.title) {
-                    setConversations((prev) =>
-                      prev.map((c) => c.id === convId ? { ...c, title: data.title } : c)
-                    );
-                  }
-                }).catch(() => {});
+          if (convId) {
+            const isFirst = messages.length === 0;
+            fetch(`/api/conversations/${convId}/messages`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                userContent: text,
+                assistantContent: fullText,
+                apiHistory: latestHistory,
+                isFirst,
+              }),
+            }).then((r) => r.json()).then((data) => {
+              if (data.title) {
+                setConversations((prev) =>
+                  prev.map((c) => c.id === convId ? { ...c, title: data.title } : c)
+                );
               }
-            } else if (event.type === "error") {
-              setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${event.message}` }]);
-              setStreamingText("");
-              setLoading(false);
-            }
-          } catch {}
+            }).catch(() => {});
+          }
+          return;
+        }
+
+        if (job.status === "error") {
+          pollRef.current = null;
+          setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${job.error || "Unknown error"}` }]);
+          setStreamingText("");
+          setToolSteps([]);
+          setLoading(false);
+          return;
         }
       }
-      // Stream closed — fallback only if "done" event was never received (e.g. server timeout)
-      if (!streamDone && fullText) setMessages((prev) => [...prev, { role: "assistant", content: fullText }]);
-      if (latestHistory) setApiHistory(latestHistory);
-      setStreamingText("");
-      setToolSteps([]);
-      setLoading(false);
     } catch (err) {
+      if (token.cancelled) return;
+      pollRef.current = null;
       const detail = err instanceof Error ? err.message : "Unknown error";
       console.error("[Chat] client error:", detail);
       setMessages((prev) => [...prev, { role: "assistant", content: `Connection error: ${detail}` }]);
