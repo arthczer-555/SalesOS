@@ -21,6 +21,7 @@ import type {
   ArticleTimelinePoint,
   MarketingEvent,
   MarketingEventType,
+  MarketingLinkedInPost,
   LeadsCounts,
   LeadValidationStatus,
   LeadWithAnalysis,
@@ -116,6 +117,61 @@ export function useMarketingEvents() {
     error: error ? "Loading error" : "",
     addEvent,
     deleteEvent,
+  };
+}
+
+// ─── Own LinkedIn posts (scraped) + impressions ─────────────────────────────
+
+interface PostsResponse {
+  posts: MarketingLinkedInPost[];
+  error?: string;
+}
+
+export function useMarketingPosts() {
+  const { data, error, isLoading, mutate } = useSWR<PostsResponse>(
+    `/api/marketing/posts`,
+    SWR_OPTS,
+  );
+
+  async function updateImpressions(id: string, impressions: number) {
+    const res = await fetch("/api/marketing/posts", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, impressions }),
+    });
+    if (!res.ok) {
+      const { error: err } = await res.json().catch(() => ({ error: "Unknown error" }));
+      throw new Error(err || "Failed to update impressions");
+    }
+    await mutate();
+  }
+
+  async function refreshNow() {
+    const res = await fetch("/api/marketing/posts/refresh", { method: "POST" });
+    if (!res.ok) {
+      const { error: err } = await res.json().catch(() => ({ error: "Unknown error" }));
+      throw new Error(err || "Failed to refresh posts");
+    }
+    await mutate();
+  }
+
+  // Déclenche le rappel Slack des impressions (test répétable, vers Arthur en mode test).
+  async function sendTestDigest(): Promise<{ posts: number; sent: 0 | 1; reason?: string }> {
+    const res = await fetch("/api/marketing/posts/send-digest", { method: "POST" });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || "Failed to send Slack reminder");
+    return json as { posts: number; sent: 0 | 1; reason?: string };
+  }
+
+  return {
+    posts: data?.posts ?? [],
+    postsError: data?.error ?? null,
+    isLoading,
+    error: error ? "Loading error" : "",
+    updateImpressions,
+    refreshNow,
+    sendTestDigest,
+    reload: () => mutate(),
   };
 }
 

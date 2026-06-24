@@ -1,19 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BarChart3, Search, Sparkles, BookOpen, Inbox } from "lucide-react";
+import { BarChart3, Search, Sparkles, BookOpen, Inbox, Linkedin } from "lucide-react";
 import OverviewTab from "./_components/overview-tab";
 import SeoTab from "./_components/seo-tab";
 import ContentTab from "./_components/content-tab";
 import BlogTab from "./_components/blog-tab";
 import LeadsTab from "./_components/leads-tab";
+import PostsTab from "./_components/posts-tab";
 import { useLeads } from "@/lib/hooks/use-marketing";
 import { COLORS } from "@/lib/design/tokens";
 import { TabBar } from "@/components/ui/tab-bar";
 
-type TabId = "overview" | "articles" | "seo" | "content" | "leads";
+type TabId = "overview" | "articles" | "seo" | "content" | "posts" | "leads";
 
-const VALID_TABS: TabId[] = ["overview", "articles", "seo", "content", "leads"];
+const VALID_TABS: TabId[] = ["overview", "articles", "seo", "content", "posts", "leads"];
 
 function isValidTab(value: string | null): value is TabId {
   return value !== null && (VALID_TABS as string[]).includes(value);
@@ -78,6 +79,7 @@ export default function MarketingPage() {
             { key: "articles", label: "Articles", icon: BookOpen },
             { key: "seo", label: "SEO", icon: Search },
             { key: "content", label: "Content Factory", icon: Sparkles },
+            { key: "posts", label: "LinkedIn Posts", icon: Linkedin },
             { key: "leads", label: "Leads", icon: Inbox, badge: leadsBadge },
           ]}
         />
@@ -89,6 +91,7 @@ export default function MarketingPage() {
         {tab === "articles" && <BlogTab />}
         {tab === "seo" && <SeoTab />}
         {tab === "content" && <ContentTab />}
+        {tab === "posts" && <PostsTab />}
         {tab === "leads" && <LeadsTab />}
       </div>
     </div>
