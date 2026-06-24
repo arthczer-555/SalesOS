@@ -142,6 +142,18 @@ async function patchCompanyOwner(companyId: string, ownerId: string): Promise<vo
   });
 }
 
+// Re-point the HubSpot owner of any object (used by the reassign path when a
+// deal already exists and the admin re-validates with a different sales rep).
+async function patchObjectOwner(
+  objectType: "deals" | "contacts" | "companies",
+  id: string,
+  ownerId: string,
+): Promise<void> {
+  await hubspotFetch(`/crm/v3/objects/${objectType}/${id}`, "PATCH", {
+    properties: { hubspot_owner_id: ownerId },
+  });
+}
+
 async function createContact(
   email: string,
   contactName: string,
@@ -424,69 +436,76 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     hubspot_deal_id: string | null;
   } | null;
 
-  if (analysisRow?.hubspot_deal_id) {
-    return NextResponse.json(
-      {
-        ok: true,
-        skipped: true,
-        dealId: analysisRow.hubspot_deal_id,
-        message: "A HubSpot deal is already linked to this lead.",
-      },
-    );
-  }
+  // A deal already linked does NOT mean "do nothing": the admin may be
+  // re-validating to fix a wrong assignment. In that case we reassign the
+  // existing deal (+ its contact/company) to the selected owner, re-validate
+  // the lead, and re-notify in Slack - instead of the old silent skip that
+  // left the lead stuck un-validated.
+  const existingDealId = analysisRow?.hubspot_deal_id ?? null;
 
   // From here on we hit HubSpot / Slack / DB. Any throw (HubSpot error, network
   // hiccup, or a Netlify sync-function timeout ~26s) must still surface as JSON,
   // otherwise the client's res.json() crashes with "Unexpected end of JSON input"
   // and hides the real cause.
   try {
-    // 1. Resolve default deal stage
-    const { pipelineId, stageId } = await resolveDefaultDealStage();
-
-    // 2. Reuse or create Contact. The modal is the canonical "validate the
-    // lead" step, so when reusing an existing contact we still patch its name
-    // with the value the admin confirmed.
-    let contactId = analysisRow?.hubspot_contact_id ?? null;
-    if (!contactId) {
-      contactId = await findContactByEmail(contactEmail);
-    }
-    if (!contactId) {
-      contactId = await createContact(contactEmail, contactName, ownerId);
-    } else if (contactName) {
-      await patchContactName(contactId, contactName).catch(() => null);
-    }
-
-    // 3. Reuse or create Company (by domain). HubSpot auto-creates a nameless
-    // company when the contact is saved (domain-matching feature), so a found
-    // match may have no `name` and no `hubspot_owner_id`. We always force the
-    // company owner to match the deal owner picked in the validation modal.
-    const domain = domainFromEmail(contactEmail);
+    let dealId: string;
+    let contactId: string | null = analysisRow?.hubspot_contact_id ?? null;
     let companyId: string | null = null;
-    if (domain) {
-      const found = await findCompanyByDomain(domain);
-      if (found) {
-        companyId = found.id;
-        if (!found.name) {
-          await patchCompanyName(found.id, companyName).catch(() => null);
-        }
-        if (found.ownerId !== ownerId) {
-          await patchCompanyOwner(found.id, ownerId).catch(() => null);
+    let pipelineId: string | null = null;
+    let stageId: string | null = null;
+    const domain = domainFromEmail(contactEmail);
+
+    if (existingDealId) {
+      // ── Reassign path ──────────────────────────────────────────────────
+      // The deal already exists: don't create a duplicate. Re-point the owner
+      // on the deal and its contact/company to the (possibly new) selected rep.
+      dealId = existingDealId;
+      if (!contactId) contactId = await findContactByEmail(contactEmail);
+      if (contactId && contactName) await patchContactName(contactId, contactName).catch(() => null);
+      if (domain) companyId = (await findCompanyByDomain(domain))?.id ?? null;
+      await Promise.allSettled([
+        patchObjectOwner("deals", dealId, ownerId),
+        contactId ? patchObjectOwner("contacts", contactId, ownerId) : Promise.resolve(),
+        companyId ? patchObjectOwner("companies", companyId, ownerId) : Promise.resolve(),
+      ]);
+    } else {
+      // ── Create path ────────────────────────────────────────────────────
+      // 1. Resolve default deal stage
+      const stage = await resolveDefaultDealStage();
+      pipelineId = stage.pipelineId;
+      stageId = stage.stageId;
+
+      // 2. Reuse or create Contact. The modal is the canonical "validate the
+      // lead" step, so when reusing an existing contact we still patch its name
+      // with the value the admin confirmed.
+      if (!contactId) contactId = await findContactByEmail(contactEmail);
+      if (!contactId) contactId = await createContact(contactEmail, contactName, ownerId);
+      else if (contactName) await patchContactName(contactId, contactName).catch(() => null);
+
+      // 3. Reuse or create Company (by domain). HubSpot auto-creates a nameless
+      // company when the contact is saved (domain-matching feature), so a found
+      // match may have no `name` and no `hubspot_owner_id`. We always force the
+      // company owner to match the deal owner picked in the validation modal.
+      if (domain) {
+        const found = await findCompanyByDomain(domain);
+        if (found) {
+          companyId = found.id;
+          if (!found.name) await patchCompanyName(found.id, companyName).catch(() => null);
+          if (found.ownerId !== ownerId) await patchCompanyOwner(found.id, ownerId).catch(() => null);
         }
       }
-    }
-    if (!companyId) {
-      companyId = await createCompany(companyName, domain, ownerId);
-    }
+      if (!companyId) companyId = await createCompany(companyName, domain, ownerId);
 
-    // 4. Create Deal
-    const dealId = await createDeal(dealName, ownerId, pipelineId, stageId, source);
+      // 4. Create Deal
+      dealId = await createDeal(dealName, ownerId, pipelineId, stageId, source);
 
-    // 5. Associate (best-effort, parallel)
-    await Promise.allSettled([
-      hubspotAssociate("deals", dealId, "contacts", contactId),
-      hubspotAssociate("deals", dealId, "companies", companyId),
-      hubspotAssociate("contacts", contactId, "companies", companyId),
-    ]);
+      // 5. Associate (best-effort, parallel)
+      await Promise.allSettled([
+        hubspotAssociate("deals", dealId, "contacts", contactId!),
+        hubspotAssociate("deals", dealId, "companies", companyId!),
+        hubspotAssociate("contacts", contactId!, "companies", companyId!),
+      ]);
+    }
 
     // 6. Snapshot the freshly created deal
     const snapshot = await fetchDealContext(dealId).catch(() => null);
@@ -534,9 +553,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ? `<@${slackOwnerUserId}>`
       : `@${ownerFallbackName}`;
 
+    const leadLine = existingDealId
+      ? "this lead has been reassigned to you. HubSpot deal:"
+      : "this lead is yours! HubSpot deal created:";
     const slackText = dealUrl
-      ? `${ownerTag} this lead is yours! HubSpot deal created: <${dealUrl}|${dealName}>`
-      : `${ownerTag} this lead is yours! HubSpot deal created: ${dealName}`;
+      ? `${ownerTag} ${leadLine} <${dealUrl}|${dealName}>`
+      : `${ownerTag} ${leadLine} ${dealName}`;
 
     const slackWarnings: string[] = [];
     if (leadRow.slack_channel_id && leadRow.slack_ts) {
@@ -597,6 +619,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       companyId,
       pipelineId,
       stageId,
+      reassigned: !!existingDealId,
       testNotifSent,
       slackWarnings: slackWarnings.length > 0 ? slackWarnings : undefined,
     });
