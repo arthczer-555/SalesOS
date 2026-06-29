@@ -32,7 +32,7 @@ const SENIORITY_OPTIONS = [
   { value: "manager", label: "Manager" },
   { value: "senior", label: "Senior" },
 ];
-const ICP_PRESET = "RH, Ressources Humaines, Human Resources, HR, L&D, Learning, People, Talent, Formation";
+const ICP_PRESET = "RH, Ressources Humaines, Human Resources, HR, L&D, Learning, People, Talent, Formation, Chief of Staff to CHRO, Chief of Staff to CPO, HR Chief of Staff, People Chief of Staff, Chief of Staff People";
 
 export interface ApolloEnrichPrefill {
   hubspotCompanyId?: string | null;
