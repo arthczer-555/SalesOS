@@ -304,7 +304,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { action, recommendationId } = body;
 
-  if ((action === "analyze" || action === "suggest_theme" || action === "generate") && !process.env.ANTHROPIC_API_KEY) {
+  if ((action === "analyze" || action === "write_article" || action === "suggest_theme" || action === "generate") && !process.env.ANTHROPIC_API_KEY) {
     return NextResponse.json(
       { error: "Anthropic API key not configured. Set ANTHROPIC_API_KEY in your environment to use the Content Factory." },
       { status: 503 },
@@ -316,6 +316,18 @@ export async function POST(req: NextRequest) {
       return await runAnalysis(user.id);
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : "Analysis failed" }, { status: 500 });
+    }
+  }
+
+  if (action === "write_article") {
+    const subject = (body.subject || "").toString().trim();
+    if (!subject) return NextResponse.json({ error: "Article subject is required" }, { status: 400 });
+    try {
+      const rec = await createArticleFromSubject(user.id, subject);
+      const recs = await loadRecommendations();
+      return NextResponse.json({ success: true, recommendation: rec, recommendations: recs });
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "Failed to create article" }, { status: 500 });
     }
   }
 
@@ -610,6 +622,111 @@ Call \`propose_content_gaps\`.`;
   const allRecs = await loadRecommendations();
 
   return NextResponse.json({ analysis, recommendations: allRecs });
+}
+
+// ─── Propose your own article ────────────────────────────────────────────────
+
+/**
+ * Turns a user's free-text article idea (e.g. "how AI role-play can help sales
+ * teams") into a single approved recommendation ready for generation. A short
+ * Claude call normalizes the subject into a clean title, a sensible target
+ * keyword and a one-line angle; if it fails we fall back to the raw subject so
+ * the article still gets written.
+ */
+async function createArticleFromSubject(userId: string, subject: string): Promise<Recommendation> {
+  let topic = subject;
+  let targetKeyword = subject;
+  let justification = `Article requested directly by the team: "${subject}".`;
+
+  try {
+    const prepTool: Anthropic.Tool = {
+      name: "prepare_article",
+      description: "Turns a free-text article idea into a clean title, target keyword and editorial angle",
+      input_schema: {
+        type: "object",
+        properties: {
+          title: { type: "string", description: "Polished, specific article title (not a vague topic)" },
+          targetKeyword: { type: "string", description: "A natural SEO keyword/phrase the article should target" },
+          justification: { type: "string", description: "One sentence on the editorial angle and why it matters for Coachello's B2B leadership-coaching ICP" },
+        },
+        required: ["title", "targetKeyword", "justification"],
+      },
+    };
+
+    const prompt = `You are a senior content strategist for Coachello (B2B leadership coaching platform, human coaches + AI).
+
+${BUSINESS_CONTEXT_PROMPT_BLOCK}
+
+The team wants you to write an article on this subject: "${subject}"
+
+Do NOT propose alternatives or several ideas. Stick to this exact subject and just prepare it for writing:
+- Turn it into one clean, specific article TITLE (keep the user's intent, do not drift to another topic).
+- Pick one natural target keyword/phrase for it.
+- Write a one-sentence angle framed for Coachello's B2B leadership-coaching ICP.
+
+## Rules
+- ${NO_EM_DASH_RULE_EN}
+- Stay faithful to the requested subject. Do not swap it for a "more relevant" one.
+
+Call the \`prepare_article\` tool with your output.`;
+
+    const model = await getModelPreference("marketing", ANALYSIS_MODEL);
+    const client = new Anthropic();
+    const message = await client.messages.create({
+      model,
+      max_tokens: 600,
+      tools: [prepTool],
+      tool_choice: { type: "tool", name: "prepare_article" },
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    logUsage(userId, model, message.usage.input_tokens, message.usage.output_tokens, "marketing_content_write_article");
+
+    const toolUse = message.content.find((c) => c.type === "tool_use");
+    if (toolUse && toolUse.type === "tool_use") {
+      const p = toolUse.input as { title?: string; targetKeyword?: string; justification?: string };
+      if (p.title?.trim()) topic = p.title.trim();
+      if (p.targetKeyword?.trim()) targetKeyword = p.targetKeyword.trim();
+      if (p.justification?.trim()) justification = p.justification.trim();
+    }
+  } catch (e) {
+    // Normalization is best-effort: fall back to the raw subject so the article
+    // still gets written.
+    console.error("[marketing/content/write_article] prep call failed, using raw subject:", e instanceof Error ? e.message : e);
+  }
+
+  return await insertApprovedRec(userId, { topic, targetKeyword, justification });
+}
+
+/**
+ * Inserts a single "approved" recommendation without touching the others (unlike
+ * saveRecommendations which wipes pending "recommended" rows).
+ */
+async function insertApprovedRec(
+  userId: string,
+  rec: { topic: string; targetKeyword: string; justification: string },
+): Promise<Recommendation> {
+  const { data, error } = await db
+    .from("marketing_content_recommendations")
+    .insert({
+      user_id: userId,
+      topic: rec.topic,
+      target_keyword: rec.targetKeyword,
+      justification: rec.justification,
+      estimated_traffic: 0,
+      difficulty: "medium",
+      priority: "high",
+      status: "approved",
+      relevance_score: null,
+      relevance_reason: null,
+    })
+    .select(REC_SELECT)
+    .single();
+
+  if (error || !data) {
+    throw new Error(`Failed to create article recommendation: ${error?.message ?? "no row returned"}`);
+  }
+  return mapDbRec(data as DbRec);
 }
 
 // ─── Theme-based suggestion ──────────────────────────────────────────────────

@@ -202,6 +202,10 @@ function ContentTab() {
     }
   }, []);
 
+  const [articleInput, setArticleInput] = useState("");
+  const [creatingArticle, setCreatingArticle] = useState(false);
+  const [articleError, setArticleError] = useState<string | null>(null);
+
   const [themeInput, setThemeInput] = useState("");
   const [suggestingTheme, setSuggestingTheme] = useState(false);
   const [themeSummary, setThemeSummary] = useState<string | null>(null);
@@ -297,6 +301,39 @@ function ContentTab() {
     setGeneratedDrafts((prev) => { const m = new Map(prev); m.delete(id); return m; });
     await handleGenerate(id);
   }, [handleGenerate]);
+
+  // Propose your own article: the user describes the article they want and we
+  // write it directly (no intermediate recommendations). The backend turns the
+  // free-text subject into a single approved recommendation, then we trigger
+  // generation on it straight away so it shows up as "writing" in Step 3.
+  const handleWriteArticle = useCallback(async () => {
+    const subject = articleInput.trim();
+    if (!subject) return;
+    setCreatingArticle(true);
+    setArticleError(null);
+    try {
+      const res = await fetch("/api/marketing/content", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "write_article", subject }),
+      });
+      const data = await res.json();
+      if (data.error) {
+        setArticleError(data.error);
+      } else {
+        if (data.recommendations) setLocalRecs(data.recommendations);
+        setArticleInput("");
+        if (data.recommendation?.id) {
+          setStep(3);
+          handleGenerate(data.recommendation.id);
+        }
+      }
+    } catch (e) {
+      setArticleError(e instanceof Error ? e.message : "Network error");
+    } finally {
+      setCreatingArticle(false);
+    }
+  }, [articleInput, handleGenerate]);
 
   const handleOpenPrevious = useCallback((id: string) => {
     setSelectedArticleId(id);
@@ -634,14 +671,49 @@ ${draft.content[lang]}
             </div>
           )}
 
-          {/* Theme input */}
+          {/* Propose your own article */}
+          <div className="rounded-xl" style={{ background: "#fff", border: "1px solid #eeeeee", padding: "16px 20px" }}>
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles size={14} style={{ color: "#f01563" }} />
+              <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#888" }}>Propose your own article</p>
+            </div>
+            <p className="text-xs mb-3" style={{ color: "#888" }}>
+              Describe the article you want and Claude will write it directly, grounded in Coachello&apos;s tone and real published articles. No recommendations - it goes straight to writing.
+            </p>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={articleInput}
+                onChange={(e) => setArticleInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && !creatingArticle && handleWriteArticle()}
+                placeholder="e.g. How AI role-play can help sales teams"
+                disabled={creatingArticle}
+                className="flex-1 text-sm rounded-lg px-3 py-2 outline-none disabled:opacity-70"
+                style={{ border: "1px solid #ddd", color: "#555" }}
+              />
+              <button
+                onClick={handleWriteArticle}
+                disabled={!articleInput.trim() || creatingArticle}
+                className="flex items-center gap-1.5 text-sm font-medium rounded-lg px-4 py-2 disabled:opacity-50"
+                style={{ background: "#f01563", color: "#fff", cursor: creatingArticle ? "wait" : "pointer" }}
+              >
+                {creatingArticle ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+                {creatingArticle ? "Starting..." : "Write"}
+              </button>
+            </div>
+            {articleError && (
+              <p className="text-xs mt-2" style={{ color: "#dc2626" }}>{articleError}</p>
+            )}
+          </div>
+
+          {/* Suggest articles on a theme */}
           <div className="rounded-xl" style={{ background: "#fff", border: "1px solid #eeeeee", padding: "16px 20px" }}>
             <div className="flex items-center gap-2 mb-2">
               <Sparkles size={14} style={{ color: "#f01563" }} />
               <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: "#888" }}>Suggest articles on your own theme</p>
             </div>
             <p className="text-xs mb-3" style={{ color: "#888" }}>
-              Not happy with these recommendations? Enter a theme and Claude will generate new ideas tailored to it, using real Coachello data (WordPress articles + Search Console keywords).
+              Not sure what to write? Enter a theme and Claude will propose new ideas tailored to it, using real Coachello data (WordPress articles + Search Console keywords).
             </p>
             <div className="flex gap-2">
               <input
@@ -658,10 +730,10 @@ ${draft.content[lang]}
                 onClick={handleSuggestTheme}
                 disabled={!themeInput.trim() || suggestingTheme}
                 className="flex items-center gap-1.5 text-sm font-medium rounded-lg px-4 py-2 disabled:opacity-50"
-                style={{ background: "#f01563", color: "#fff", cursor: suggestingTheme ? "wait" : "pointer" }}
+                style={{ background: "#fff", color: "#f01563", border: "1px solid #f01563", cursor: suggestingTheme ? "wait" : "pointer" }}
               >
                 {suggestingTheme ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                {suggestingTheme ? "Thinking..." : "Suggest"}
+                {suggestingTheme ? "Thinking..." : "Suggest ideas"}
               </button>
             </div>
             {themeError && (
@@ -681,7 +753,7 @@ ${draft.content[lang]}
                 No new recommendations.
               </p>
               <p className="text-xs mt-1" style={{ color: "#aaa" }}>
-                Run an analysis or propose a theme above to get fresh ideas.
+                Run an analysis above, propose your own article, or suggest a theme to get fresh ideas.
               </p>
             </div>
           ) : (
