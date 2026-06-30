@@ -6,7 +6,7 @@ import {
 } from "./sources";
 import { classifyItems } from "./classify";
 import { linkExistingCompanies } from "./resolve-company";
-import { dedupeKey } from "./dedupe";
+import { dedupeKey, contentKey, titleOverlap } from "./dedupe";
 import type { ScoredSignal, SignalFeed } from "./types";
 
 // ── Réglages (faciles à ajuster) ─────────────────────────────────────────────
@@ -115,37 +115,84 @@ export async function runSignalsSweep(opts: SweepOptions = {}): Promise<SweepRes
 
 // ── Persistance (insert only new) ────────────────────────────────────────────
 
+interface Candidate {
+  s: ScoredSignal;
+  key: string;
+  /** Empreinte de contenu (null si pas de signature exploitable). */
+  ck: string | null;
+}
+
+function norm(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+// Seuil de recouvrement de mots au-delà duquel deux titres décrivent le même fait.
+// Sert de filet pour les lignes antérieures à la migration (sans content_key).
+const FUZZY_OVERLAP = 0.6;
+
 async function persistSignals(signals: ScoredSignal[], userId: string | null): Promise<number> {
   if (signals.length === 0) return 0;
 
-  // Dédup en mémoire sur dedupe_key (garde le meilleur score).
-  const byKey = new Map<string, { s: ScoredSignal; key: string }>();
+  // 1) Dédup en mémoire sur dedupe_key (URL) : garde le meilleur score.
+  const byKey = new Map<string, Candidate>();
   for (const s of signals) {
     const key = dedupeKey(s);
     const prev = byKey.get(key);
-    if (!prev || s.score > prev.s.score) byKey.set(key, { s, key });
+    if (!prev || s.score > prev.s.score) byKey.set(key, { s, key, ck: contentKey(s) });
   }
-  const candidates = [...byKey.values()];
 
-  // Écarte les signaux DÉJÀ en base (tous statuts : new/dismissed/expired/...). On
-  // ne veut compter que les NET-NOUVEAUX dans le cap quotidien, pour ne pas qu'un
-  // signal déjà vu mange une place ni ne réapparaisse.
-  const seen = new Set<string>();
-  const keys = candidates.map((c) => c.key);
-  for (let i = 0; i < keys.length; i += 200) {
-    const chunk = keys.slice(i, i + 200);
-    const { data } = await db.from("prospect_signals").select("dedupe_key").in("dedupe_key", chunk);
-    for (const r of (data ?? []) as { dedupe_key: string }[]) seen.add(r.dedupe_key);
+  // 2) Dédup en mémoire sur content_key (même info, URLs différentes dans le même
+  //    run). Les candidats sans empreinte exploitable passent tels quels.
+  const byContent = new Map<string, Candidate>();
+  const candidates: Candidate[] = [];
+  for (const c of byKey.values()) {
+    if (!c.ck) {
+      candidates.push(c);
+      continue;
+    }
+    const prev = byContent.get(c.ck);
+    if (!prev || c.s.score > prev.s.score) byContent.set(c.ck, c);
   }
+  candidates.push(...byContent.values());
+
+  // 3) Écarte les signaux DÉJÀ en base (tous statuts : new/dismissed/expired/...),
+  //    par URL OU par contenu. On ne compte que les NET-NOUVEAUX dans le cap
+  //    quotidien, pour ne pas qu'un signal déjà vu mange une place ni ne réapparaisse.
+  const seenUrl = new Set<string>();
+  const seenContent = new Set<string>();
+  const urlKeys = candidates.map((c) => c.key);
+  const contentKeys = candidates.map((c) => c.ck).filter((k): k is string => !!k);
+  for (let i = 0; i < urlKeys.length; i += 200) {
+    const chunk = urlKeys.slice(i, i + 200);
+    const { data } = await db.from("prospect_signals").select("dedupe_key").in("dedupe_key", chunk);
+    for (const r of (data ?? []) as { dedupe_key: string }[]) seenUrl.add(r.dedupe_key);
+  }
+  for (let i = 0; i < contentKeys.length; i += 200) {
+    const chunk = contentKeys.slice(i, i + 200);
+    const { data } = await db.from("prospect_signals").select("content_key").in("content_key", chunk);
+    for (const r of (data ?? []) as { content_key: string | null }[]) {
+      if (r.content_key) seenContent.add(r.content_key);
+    }
+  }
+
+  let pool = candidates.filter((c) => !seenUrl.has(c.key) && !(c.ck && seenContent.has(c.ck)));
+
+  // 4) Filet anti-doublon flou : pour les lignes existantes SANS content_key
+  //    (antérieures à la migration), on retombe sur un recouvrement de titres au
+  //    sein de la même société + même type. Couvre le cas "même nomination déjà
+  //    rejetée, ressortie via une autre URL" tant que l'historique n'a pas de
+  //    content_key.
+  pool = await dropFuzzyDuplicates(pool);
 
   // Cap quotidien : les DAILY_CAP meilleurs net-nouveaux au score, tous feeds confondus.
-  const fresh = candidates
-    .filter((c) => !seen.has(c.key))
-    .sort((a, b) => b.s.score - a.s.score)
-    .slice(0, DAILY_CAP);
+  const fresh = pool.sort((a, b) => b.s.score - a.s.score).slice(0, DAILY_CAP);
   if (fresh.length === 0) return 0;
 
-  const rows = fresh.map(({ s, key }) => ({
+  const rows = fresh.map(({ s, key, ck }) => ({
     scope_company_id: s.scope_company_id,
     feed: s.feed,
     company_name: s.company_name,
@@ -162,6 +209,7 @@ async function persistSignals(signals: ScoredSignal[], userId: string | null): P
     payload: s.author ? { author: s.author } : null,
     score: s.score,
     dedupe_key: key,
+    content_key: ck,
     signal_date: s.signal_date,
     created_by: userId,
   }));
@@ -177,6 +225,44 @@ async function persistSignals(signals: ScoredSignal[], userId: string | null): P
     return 0;
   }
   return data?.length ?? 0;
+}
+
+/**
+ * Écarte les candidats qui recoupent fortement (titre) un signal existant de la
+ * MÊME société et du MÊME type ne possédant PAS encore de content_key (lignes
+ * historiques). Évite qu'un fait déjà vu/rejeté avant la migration ne ressorte via
+ * une autre URL. On se limite aux lignes sans content_key pour ne jamais contredire
+ * une décision de Claude qui a, lui, jugé deux faits distincts.
+ */
+async function dropFuzzyDuplicates(pool: Candidate[]): Promise<Candidate[]> {
+  if (pool.length === 0) return pool;
+  const companies = [...new Set(pool.map((c) => c.s.company_name))];
+  const cutoff = new Date(Date.now() - FRESHNESS_DAYS * 86_400_000).toISOString();
+
+  // Index : société normalisée + type -> titres existants (sans content_key).
+  const existing = new Map<string, string[]>();
+  for (let i = 0; i < companies.length; i += 100) {
+    const chunk = companies.slice(i, i + 100);
+    const { data } = await db
+      .from("prospect_signals")
+      .select("company_name, signal_type, title, content_key")
+      .in("company_name", chunk)
+      .is("content_key", null)
+      .gte("created_at", cutoff);
+    for (const r of (data ?? []) as { company_name: string; signal_type: string; title: string }[]) {
+      const k = `${norm(r.company_name)}|${r.signal_type}`;
+      const arr = existing.get(k);
+      if (arr) arr.push(r.title);
+      else existing.set(k, [r.title]);
+    }
+  }
+  if (existing.size === 0) return pool;
+
+  return pool.filter((c) => {
+    const titles = existing.get(`${norm(c.s.company_name)}|${c.s.signal_type}`);
+    if (!titles) return true;
+    return !titles.some((t) => titleOverlap(c.s.title, t) >= FUZZY_OVERLAP);
+  });
 }
 
 // ── Rétention (anti-empilement) ──────────────────────────────────────────────

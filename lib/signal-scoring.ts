@@ -20,6 +20,11 @@ export const signalScoringTool: Anthropic.Tool = {
               description: "Type de signal détecté",
             },
             title: { type: "string", description: "Titre concis < 80 caractères, fait concret" },
+            dedupe_signature: {
+              type: "string",
+              description:
+                "Empreinte STABLE et DÉTERMINISTE du fait, pour dédupliquer la même info venue de plusieurs sources/URLs. Minuscules, sans ponctuation ni accents, uniquement les mots-clés essentiels qui IDENTIFIENT l'évènement : personne/entité concernée + action + société. Ordre fixe : personne, action, société. DOIT être identique pour le même évènement même si l'article est rédigé autrement. N'inclus NI date, NI chiffres variables, NI adjectifs, NI nom de média. Ex: 'agnes park nomination drh sodexo', 'sodexo levee de fonds serie b', 'doctolib recrutement massif managers'.",
+            },
             summary: { type: "string", description: "2-3 phrases avec détails clés (chiffres, noms, dates)" },
             signal_date: { type: "string", description: "Date YYYY-MM ou null" },
             source_url: { type: "string", description: "URL de la source" },
@@ -47,7 +52,7 @@ export const signalScoringTool: Anthropic.Tool = {
               description: "Type d'action recommandée",
             },
           },
-          required: ["company_name", "signal_type", "title", "summary", "score", "score_breakdown", "why_relevant", "suggested_action", "action_type"],
+          required: ["company_name", "signal_type", "title", "dedupe_signature", "summary", "score", "score_breakdown", "why_relevant", "suggested_action", "action_type"],
         },
       },
     },

@@ -41,6 +41,10 @@ CREATE TABLE IF NOT EXISTS prospect_signals (
   payload          JSONB,
   score            INTEGER NOT NULL DEFAULT 0,
   dedupe_key       TEXT NOT NULL UNIQUE,
+  -- Empreinte PAR CONTENU (entités du fait), indépendante de l'URL : déduplique
+  -- la même info venue de 2 URLs/sources. Nullable, non unique, blocage côté
+  -- applicatif (cf. migration prospect_signals_content_key.sql).
+  content_key      TEXT,
   status           TEXT NOT NULL DEFAULT 'new'
                      CHECK (status IN ('new', 'actioned', 'dismissed', 'snoozed', 'expired', 'deleted')),
   snooze_until     TIMESTAMPTZ,

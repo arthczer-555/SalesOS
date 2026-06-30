@@ -64,6 +64,12 @@ export interface ScoredSignal {
   signal_date: string | null;
   /** Auteur d'un post LinkedIn discovery (persisté en payload). */
   author?: SignalAuthor | null;
+  /**
+   * Empreinte stable du fait (entités : personne + action + société), émise par
+   * Claude, indépendante de l'URL et de la formulation. Base du `content_key`
+   * qui déduplique la même info venue de 2 sources/URLs différentes.
+   */
+  dedupe_signature?: string | null;
 }
 
 /** Destinataire candidat proposé dans le pop-up d'action (CRM, Apollo ou nominé). */
@@ -106,6 +112,7 @@ export interface SignalRow {
   payload: unknown;
   score: number;
   dedupe_key: string;
+  content_key: string | null;
   status: SignalStatus;
   snooze_until: string | null;
   actioned_at: string | null;

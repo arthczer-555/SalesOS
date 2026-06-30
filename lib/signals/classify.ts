@@ -26,6 +26,7 @@ interface ScoredItemRaw {
   company_name?: string;
   signal_type?: string;
   title?: string;
+  dedupe_signature?: string;
   summary?: string;
   signal_date?: string;
   source_url?: string;
@@ -103,6 +104,7 @@ export async function classifyItems(
         score: clampScore(s.score),
         signal_date: monthToIso(s.signal_date) ?? rawDateToIso(raw?.date ?? null),
         author: raw?.author ?? null,
+        dedupe_signature: typeof s.dedupe_signature === "string" ? s.dedupe_signature.trim() : null,
       });
     }
   }
