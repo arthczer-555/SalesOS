@@ -13,7 +13,8 @@ export const signalScoringTool: Anthropic.Tool = {
         items: {
           type: "object",
           properties: {
-            company_name: { type: "string", description: "Nom exact de l'entreprise mentionnée dans l'article" },
+            index: { type: "integer", description: "Recopie EXACTEMENT le numéro [N] de l'item analysé (le crochet en tête de chaque item). Sert à rattacher le signal à sa source. Obligatoire." },
+            company_name: { type: "string", description: "Nom exact de l'entreprise qui est le SUJET PRINCIPAL de l'article (celle concernée par l'évènement). Si une personne change d'entreprise, c'est la NOUVELLE entreprise. Pas une société citée en passant." },
             signal_type: {
               type: "string",
               enum: ["funding", "hiring", "nomination", "expansion", "restructuring", "content", "job_change", "linkedin_post"],
@@ -52,7 +53,7 @@ export const signalScoringTool: Anthropic.Tool = {
               description: "Type d'action recommandée",
             },
           },
-          required: ["company_name", "signal_type", "title", "dedupe_signature", "summary", "score", "score_breakdown", "why_relevant", "suggested_action", "action_type"],
+          required: ["index", "company_name", "signal_type", "title", "dedupe_signature", "summary", "score", "score_breakdown", "why_relevant", "suggested_action", "action_type"],
         },
       },
     },

@@ -4,11 +4,16 @@ import * as React from "react";
 import { useUser } from "@clerk/nextjs";
 import { Mail, Sparkles, Send, Copy, Check, Loader2, X, Plus } from "lucide-react";
 import { COLORS, SHADOWS } from "@/lib/design/tokens";
+import {
+  FIRST_NAME_TOKEN,
+  firstNameOf,
+  personalize,
+  ensureFirstNameToken,
+  stripFirstNameToken,
+  type EmailRecipient,
+} from "@/lib/email/personalize";
 
-export interface DraftRecipient {
-  name: string | null;
-  email: string;
-}
+export type DraftRecipient = EmailRecipient;
 
 /**
  * Préremplissage du drafter depuis l'analyse AE / les signaux : objet et corps
@@ -27,44 +32,6 @@ interface DraftEmailResult {
   subject?: string;
   body?: string;
   error?: string;
-}
-
-// Tokens remplacés par le prénom du prospect en mode envoi personnalisé.
-const FIRST_NAME_TOKEN = /\[(pr[ée]nom|first[ _]?name)\]/gi;
-
-function firstNameOf(r: DraftRecipient): string {
-  const fromName = r.name?.trim().split(/\s+/)[0];
-  if (fromName) return fromName;
-  const first = r.email.split("@")[0].split(/[._-]/)[0];
-  return first ? first.charAt(0).toUpperCase() + first.slice(1) : "";
-}
-
-function personalize(text: string, r: DraftRecipient): string {
-  return text.replace(FIRST_NAME_TOKEN, firstNameOf(r));
-}
-
-function hasFirstNameToken(text: string): boolean {
-  return /\[(pr[ée]nom|first[ _]?name)\]/i.test(text);
-}
-
-// Garantit la présence du token : remplace le prénom d'une salutation existante,
-// sinon préfixe une salutation. Filet de sécurité après "Draft with Claude".
-function ensureFirstNameToken(text: string): string {
-  if (!text.trim() || hasFirstNameToken(text)) return text;
-  const greeted = text.replace(/^(\s*(?:bonjour|hello|hi|salut|hey|dear)[ \t]+)[^,\n!]+/i, "$1[first name]");
-  if (hasFirstNameToken(greeted)) return greeted;
-  return `Hi [first name],\n\n${text.replace(/^\s+/, "")}`;
-}
-
-// Retire les tokens de prénom pour un envoi groupé (BCC), où aucune
-// personnalisation n'est possible : sans ça un littéral "[first name]" partirait
-// tel quel dans le mail. Enlève une salutation de tête entièrement faite du token,
-// sinon retire le token inline.
-function stripFirstNameToken(text: string): string {
-  return text
-    .replace(/^\s*(?:bonjour|hello|hi|salut|hey|dear)[ \t]+\[(?:pr[ée]nom|first[ _]?name)\][ \t]*,?\s*\n+/i, "")
-    .replace(FIRST_NAME_TOKEN, "")
-    .replace(/^\s+/, "");
 }
 
 /**

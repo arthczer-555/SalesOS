@@ -1,6 +1,6 @@
 import type { ScoredSignal } from "./types";
 
-function normCompany(s: string): string {
+export function normCompany(s: string): string {
   return s
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")

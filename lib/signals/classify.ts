@@ -4,7 +4,8 @@ import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { BUSINESS_CONTEXT_PROMPT_BLOCK } from "@/lib/business-context";
 import { signalScoringTool, SIGNAL_ANALYSIS_PROMPT } from "@/lib/signal-scoring";
-import type { RawItem, ScoredSignal, SignalType } from "./types";
+import { normCompany } from "./resolve-company";
+import type { RawItem, ScoredSignal, SignalType, SignalFeed } from "./types";
 import { rawDateToIso } from "./sources";
 
 // Haiku : tri/scoring de masse sur beaucoup d'items, rapide et économique.
@@ -23,6 +24,7 @@ const VALID_TYPES = new Set<SignalType>([
 ]);
 
 interface ScoredItemRaw {
+  index?: number;
   company_name?: string;
   signal_type?: string;
   title?: string;
@@ -74,18 +76,35 @@ export async function classifyItems(
 
     for (const s of scored) {
       const url = typeof s.source_url === "string" ? s.source_url : "";
-      const raw = url ? byUrl.get(url) : undefined;
-      // Le modèle doit citer une URL fournie ; sinon on rattache au mieux par feed.
-      const feed = raw?.feed ?? slice[0]?.feed ?? "discovery";
+      // Rattachement à l'item d'origine : par INDEX [N] recopié par le modèle (fiable
+      // en lot), avec repli sur l'URL si l'index manque ou est hors borne.
+      const raw =
+        typeof s.index === "number" && s.index >= 0 && s.index < slice.length
+          ? slice[s.index]
+          : url
+            ? byUrl.get(url)
+            : undefined;
       const source = raw?.source ?? "brightdata_serp";
       const type = normalizeType(s.signal_type, raw?.kindHint);
       const title = (s.title || raw?.title || "").trim();
       if (!title) continue;
 
-      const isWatchlist = feed === "watchlist" && !!raw?.knownCompanyId;
-      const companyName = isWatchlist
+      const extracted = (s.company_name || "").trim();
+      // Réconciliation du flux watchlist : un item issu d'une requête ciblée sur un
+      // compte connu n'EST PAS forcément un signal sur ce compte (le SERP renvoie
+      // parfois un article dont le vrai sujet est une AUTRE société). On ne garde le
+      // rattachement watchlist QUE si la société extraite par le modèle correspond au
+      // compte interrogé (ou si le modèle n'a rien extrait). Sinon on reclasse en
+      // discovery sur la société réelle : linkExistingCompanies pourra la rebrancher
+      // si elle est elle-même en watchlist.
+      const knownWatchlist = raw?.feed === "watchlist" && !!raw.knownCompanyId;
+      const keepWatchlist =
+        knownWatchlist && (!extracted || companyMatches(extracted, raw!.knownCompanyName ?? ""));
+
+      const feed: SignalFeed = keepWatchlist ? "watchlist" : "discovery";
+      const companyName = keepWatchlist
         ? raw!.knownCompanyName!.trim()
-        : (s.company_name || raw?.knownCompanyName || "").trim();
+        : extracted || raw?.knownCompanyName?.trim() || "";
       if (!companyName) continue;
 
       out.push({
@@ -94,7 +113,7 @@ export async function classifyItems(
         signal_type: type,
         company_name: companyName,
         company_domain: null, // résolu plus tard (resolve-company) pour le discovery
-        scope_company_id: isWatchlist ? raw!.knownCompanyId! : null,
+        scope_company_id: keepWatchlist ? raw!.knownCompanyId! : null,
         category: type,
         title,
         url: url || raw?.url || null,
@@ -121,7 +140,7 @@ async function scoreBatch(items: RawItem[], userId: string | null): Promise<Scor
     })
     .join("\n\n");
 
-  const system = `${SIGNAL_ANALYSIS_PROMPT}\n\n${BUSINESS_CONTEXT_PROMPT_BLOCK}\n\nIMPORTANT : pour chaque signal émis, recopie EXACTEMENT dans source_url l'URL fournie de l'item correspondant (champ "URL:"). N'invente aucune URL. ${NO_EM_DASH_RULE}`;
+  const system = `${SIGNAL_ANALYSIS_PROMPT}\n\nIMPORTANT : pour chaque signal émis, recopie EXACTEMENT dans "index" le numéro [N] de l'item analysé (le crochet en tête de ligne) et dans "source_url" l'URL fournie de cet item (champ "URL:"). N'invente aucune URL ni aucun index. ${NO_EM_DASH_RULE}\n\n${BUSINESS_CONTEXT_PROMPT_BLOCK}`;
 
   const client = new Anthropic({ timeout: 120_000 });
   const msg = await withAnthropicRetry(
@@ -147,6 +166,19 @@ async function scoreBatch(items: RawItem[], userId: string | null): Promise<Scor
   if (!block || !("input" in block)) return [];
   const parsed = block.input as { signals?: ScoredItemRaw[] };
   return Array.isArray(parsed.signals) ? parsed.signals : [];
+}
+
+/**
+ * Deux noms de société désignent-ils le même compte ? Comparaison sur les noms
+ * normalisés (sans accents/suffixes juridiques), tolérante aux variantes par
+ * inclusion ("Verint" ~ "Verint Systems"). Sert à valider le rattachement
+ * watchlist contre la société réellement extraite de l'article.
+ */
+function companyMatches(a: string, b: string): boolean {
+  const na = normCompany(a);
+  const nb = normCompany(b);
+  if (!na || !nb) return false;
+  return na === nb || na.includes(nb) || nb.includes(na);
 }
 
 function normalizeType(raw: string | undefined, hint: SignalType | undefined): SignalType {

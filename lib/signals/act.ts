@@ -58,16 +58,28 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
   const seenNames = new Set<string>();
   // Échantillons (prénom, nom, email) pour deviner le pattern d'emails société.
   const samples: { first: string; last: string; email: string }[] = [];
+  // Domaine officiel de la société (HubSpot) : ancre l'email deviné sur le BON
+  // domaine et écarte les contacts d'une autre entité (maison-mère/sœur) qui
+  // pollueraient le pattern (ex: Kerria AM vs atland.fr).
+  let companyDomain: string | null = null;
 
   // Contacts CRM (si le compte est déjà dans la watchlist). On inclut AUSSI les
   // contacts dont l'email n'est pas encore révélé (bouton "Reveal" sur la fiche) :
   // ils restent sélectionnables, l'email sera révélé (Apollo par nom) ou deviné
   // (pattern société) au moment du draft.
   if (sig.scope_company_id) {
-    const { contacts } = await fetchCompanyContacts(sig.scope_company_id).catch(() => ({ contacts: [] }));
+    const { hubspot_company_id, contacts } = await fetchCompanyContacts(sig.scope_company_id).catch(() => ({
+      hubspot_company_id: null,
+      contacts: [],
+    }));
+    companyDomain = await companyDomainFromHubspot(hubspot_company_id);
     // Pattern d'emails connus (contacts déjà révélés) -> sert à deviner les autres.
+    // On n'apprend QUE sur les contacts du domaine officiel quand il est connu,
+    // pour ne pas inférer un domaine étranger à la société.
     for (const c of contacts) {
-      if (c.email && c.firstname && c.lastname) samples.push({ first: c.firstname, last: c.lastname, email: c.email });
+      if (c.email && c.firstname && c.lastname && emailMatchesDomain(c.email, companyDomain)) {
+        samples.push({ first: c.firstname, last: c.lastname, email: c.email });
+      }
     }
     for (const c of contacts) {
       const name = `${c.firstname ?? ""} ${c.lastname ?? ""}`.trim() || c.email || "";
@@ -84,7 +96,7 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
         // Sans email : reveal Apollo par nom au draft, email deviné en secours.
         firstName: c.firstname ?? null,
         lastName: c.lastname ?? null,
-        guessEmail: c.email ? null : guessEmail(c.firstname ?? undefined, c.lastname ?? undefined, samples),
+        guessEmail: c.email ? null : guessEmail(c.firstname ?? undefined, c.lastname ?? undefined, samples, companyDomain),
       });
     }
   }
@@ -144,7 +156,7 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
         const learned = await learnEmailPattern(apolloPeople, out);
         if (learned) samples.push(learned);
       }
-      const guess = guessEmail(nominee.firstName, nominee.lastName, samples);
+      const guess = guessEmail(nominee.firstName, nominee.lastName, samples, companyDomain);
       // Évite un doublon si déjà présent (CRM/Apollo).
       const dupIdx = candidates.findIndex((c) => c.name.toLowerCase() === full.toLowerCase());
       if (dupIdx >= 0) candidates.splice(dupIdx, 1);
@@ -334,19 +346,59 @@ function nameNorm(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
+/** Normalise un domaine (retire protocole, www, chemin, casse). */
+function normDomain(raw: string | null | undefined): string | null {
+  const d = (raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .replace(/\/.*$/, "");
+  return d || null;
+}
+
+/** L'email est-il sur le domaine attendu ? true si aucun domaine de référence. */
+function emailMatchesDomain(email: string, domain: string | null): boolean {
+  if (!domain) return true;
+  const at = email.indexOf("@");
+  if (at < 1) return false;
+  return email.slice(at + 1).toLowerCase() === domain;
+}
+
+/**
+ * Domaine officiel de la société depuis HubSpot (propriété `domain`). null si
+ * indisponible. Best-effort : ne bloque jamais le flux candidats.
+ */
+async function companyDomainFromHubspot(hubspotCompanyId: string | null): Promise<string | null> {
+  if (!hubspotCompanyId) return null;
+  try {
+    const res = await hubspotFetch<{ properties?: { domain?: string } }>(
+      `/crm/v3/objects/companies/${hubspotCompanyId}?properties=domain`,
+    );
+    return normDomain(res.properties?.domain);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Devine l'email d'une personne d'après le pattern d'emails connus de la société
- * (échantillons prénom/nom/email du CRM). Détecte le format (first.last, flast,
- * first, ...) sur un échantillon puis l'applique au nominé. null si indéterminable.
+ * (échantillons prénom/nom/email). Détecte le format (first.last, flast, ...) sur
+ * un échantillon puis l'applique. `preferredDomain` (domaine officiel de la
+ * société) prime TOUJOURS sur le domaine des échantillons, pour ne pas deviner un
+ * email sur un domaine étranger (ex: maison-mère). null si indéterminable.
  */
 function guessEmail(
   firstNameRaw: string | undefined,
   lastNameRaw: string | undefined,
   samples: { first: string; last: string; email: string }[],
+  preferredDomain?: string | null,
 ): string | null {
   const first = nameNorm(firstNameRaw ?? "");
   const last = nameNorm(lastNameRaw ?? "");
-  if ((!first && !last) || samples.length === 0) return null;
+  if (!first && !last) return null;
+  const anchor = normDomain(preferredDomain);
+  if (samples.length === 0 && !anchor) return null;
 
   const templates: { id: string; fn: (f: string, l: string) => string }[] = [
     { id: "first.last", fn: (f, l) => `${f}.${l}` },
@@ -366,23 +418,36 @@ function guessEmail(
     const at = s.email.indexOf("@");
     if (at < 1 || !sf || !sl) continue;
     const local = s.email.slice(0, at).toLowerCase();
-    const domain = s.email.slice(at + 1).toLowerCase();
+    const sampleDomain = s.email.slice(at + 1).toLowerCase();
     const match = templates.find((t) => t.fn(sf, sl) === local);
-    if (match && domain && first && last) {
-      return `${match.fn(first, last)}@${domain}`;
+    if (match && first && last) {
+      const domain = anchor ?? sampleDomain;
+      if (domain) return `${match.fn(first, last)}@${domain}`;
     }
   }
-  // Pas de pattern reconnu : si toutes les samples partagent un domaine, tente first.last.
-  const domains = new Set(samples.map((s) => s.email.split("@")[1]?.toLowerCase()).filter(Boolean));
-  if (domains.size === 1 && first && last) {
-    return `${first}.${last}@${[...domains][0]}`;
+  // Pas de pattern reconnu : on retombe sur first.last si on a un domaine fiable
+  // (domaine officiel prioritaire, sinon un domaine unique partagé par les samples).
+  if (first && last) {
+    const sampleDomains = new Set(samples.map((s) => s.email.split("@")[1]?.toLowerCase()).filter(Boolean));
+    const domain = anchor ?? (sampleDomains.size === 1 ? [...sampleDomains][0] : null);
+    if (domain) return `${first}.${last}@${domain}`;
   }
   return null;
 }
 
+export interface SignalChoice {
+  email?: string | null;
+  name?: string | null;
+  apolloId?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  /** Email deviné, utilisé si le reveal Apollo échoue (focus nominé). */
+  fallbackEmail?: string | null;
+}
+
 export interface DraftForSignalResult {
   ok: boolean;
-  recipient: DraftRecipient | null;
+  recipients: DraftRecipient[];
   draft: { subject: string; body: string } | null;
   scopeCompanyId: string | null;
   apolloUsed: boolean;
@@ -390,26 +455,62 @@ export interface DraftForSignalResult {
 }
 
 /**
- * Génère le brouillon pour le destinataire CHOISI par l'utilisateur. Révèle
- * l'email via Apollo (1 crédit) seulement si le candidat n'en a pas déjà un.
- * Marque le signal 'actioned' et stocke le brouillon (visible sur la fiche).
+ * Résout l'email d'UN destinataire choisi : email connu, sinon reveal Apollo (1
+ * crédit, par id ou par nom), sinon email deviné en secours. Pousse le contact
+ * révélé vers HubSpot (best-effort). Renvoie null si rien n'est joignable.
+ */
+async function resolveChoiceRecipient(
+  c: SignalChoice,
+  sig: SignalRow,
+  scopeCompanyId: string,
+): Promise<{ recipient: DraftRecipient | null; apolloUsed: boolean }> {
+  if (c.email) return { recipient: { name: c.name ?? null, email: c.email }, apolloUsed: false };
+
+  if (isApolloConfigured() && (c.apolloId || (c.firstName && c.lastName))) {
+    const revealed = await revealPerson(
+      c.apolloId
+        ? { apolloId: c.apolloId }
+        : { firstName: c.firstName!, lastName: c.lastName!, organizationName: sig.company_name },
+    ).catch(() => null);
+    const email = revealed?.person?.email;
+    if (email && !email.includes("email_not_unlocked")) {
+      const name = (revealed?.person?.name || c.name || "").trim() || null;
+      const { hubspot_company_id } = await fetchCompanyContacts(scopeCompanyId).catch(() => ({ hubspot_company_id: null }));
+      void pushContactToHubspot({
+        hubspotCompanyId: hubspot_company_id,
+        email,
+        firstName: revealed?.person?.first_name ?? c.firstName ?? null,
+        lastName: revealed?.person?.last_name ?? c.lastName ?? null,
+        title: revealed?.person?.title ?? null,
+      });
+      return { recipient: { name, email }, apolloUsed: true };
+    }
+    // Secours : email deviné si Apollo n'a rien révélé.
+    if (c.fallbackEmail) return { recipient: { name: c.name ?? null, email: c.fallbackEmail }, apolloUsed: true };
+    return { recipient: null, apolloUsed: true };
+  }
+
+  if (c.fallbackEmail) return { recipient: { name: c.name ?? null, email: c.fallbackEmail }, apolloUsed: false };
+  return { recipient: null, apolloUsed: false };
+}
+
+/**
+ * Génère le brouillon pour le(s) destinataire(s) CHOISI(s) par l'utilisateur.
+ * Révèle l'email via Apollo (1 crédit) seulement si un candidat n'en a pas déjà
+ * un. En multi-destinataires, génère UN brouillon avec le token [first name]
+ * (envoi personnalisé, un mail par personne côté client). Marque le signal
+ * 'actioned' et stocke le brouillon (visible sur la fiche).
  */
 export async function draftForSignal(params: {
   signalId: string;
   userId: string;
   userEmail?: string | null;
-  choice: {
-    email?: string | null;
-    name?: string | null;
-    apolloId?: string | null;
-    firstName?: string | null;
-    lastName?: string | null;
-    /** Email deviné, utilisé si le reveal Apollo échoue (focus nominé). */
-    fallbackEmail?: string | null;
-  };
+  choices: SignalChoice[];
+  /** Force le mode personnalisé (token [first name]). Auto si plusieurs destinataires. */
+  personalized?: boolean;
 }): Promise<DraftForSignalResult> {
   const { data: sig } = await db.from("prospect_signals").select("*").eq("id", params.signalId).maybeSingle<SignalRow>();
-  if (!sig) return { ok: false, recipient: null, draft: null, scopeCompanyId: null, apolloUsed: false, error: "Signal not found" };
+  if (!sig) return { ok: false, recipients: [], draft: null, scopeCompanyId: null, apolloUsed: false, error: "Signal not found" };
 
   // Assurer un compte watchlist (discovery -> ajout) + société HubSpot. Pour un
   // post LinkedIn, résout d'abord la vraie société de l'auteur (sig.company_name
@@ -419,54 +520,38 @@ export async function draftForSignal(params: {
     scopeCompanyId = await ensureScopeCompanyForSignal(sig, params.userId);
   }
 
-  // Résoudre l'email du destinataire choisi.
-  let recipient: DraftRecipient | null = null;
-  let apolloUsed = false;
-  const c = params.choice;
+  const choices = params.choices.length ? params.choices : [{} as SignalChoice];
+  const multi = choices.length > 1;
+  const personalized = params.personalized ?? multi;
 
-  if (c.email) {
-    recipient = { name: c.name ?? null, email: c.email };
-  } else if (isApolloConfigured() && (c.apolloId || (c.firstName && c.lastName))) {
-    apolloUsed = true;
-    // Reveal par id (candidat Apollo) ou par nom (focus nominé).
-    const revealed = await revealPerson(
-      c.apolloId
-        ? { apolloId: c.apolloId }
-        : { firstName: c.firstName!, lastName: c.lastName!, organizationName: sig.company_name },
-    ).catch(() => null);
-    const email = revealed?.person?.email;
-    if (email && !email.includes("email_not_unlocked")) {
-      const name = (revealed?.person?.name || c.name || "").trim() || null;
-      recipient = { name, email };
-      const { hubspot_company_id } = await fetchCompanyContacts(scopeCompanyId).catch(() => ({ hubspot_company_id: null }));
-      void pushContactToHubspot({
-        hubspotCompanyId: hubspot_company_id,
-        email,
-        firstName: revealed?.person?.first_name ?? c.firstName ?? null,
-        lastName: revealed?.person?.last_name ?? c.lastName ?? null,
-        title: revealed?.person?.title ?? null,
-      });
+  // Résoudre l'email de chaque destinataire choisi (dédup sur l'email).
+  let apolloUsed = false;
+  const recipients: DraftRecipient[] = [];
+  const seenEmails = new Set<string>();
+  for (const c of choices) {
+    const { recipient, apolloUsed: used } = await resolveChoiceRecipient(c, sig, scopeCompanyId);
+    if (used) apolloUsed = true;
+    if (recipient && !seenEmails.has(recipient.email.toLowerCase())) {
+      seenEmails.add(recipient.email.toLowerCase());
+      recipients.push(recipient);
     }
   }
 
-  // Secours : email deviné (pattern société) si Apollo n'a rien révélé.
-  if (!recipient && c.fallbackEmail) {
-    recipient = { name: c.name ?? null, email: c.fallbackEmail };
-  }
-
   // Rédiger (ancré sur le signal). Même sans destinataire on génère un brouillon générique.
-  // Si le destinataire EST la personne nommée dans le signal (focus nominé), on
-  // s'adresse directement à elle (félicitations + accompagnement de sa prise de
-  // poste). Sinon, on écrit à un buyer RH à propos du changement dans la société.
-  const recipientIsNominee = !!(c.firstName && c.lastName);
+  // - Multi : un seul brouillon convenant à tous, salutation au token [first name].
+  // - Solo nominé : on s'adresse directement à la personne (félicitations + prise de poste).
+  // - Solo auteur de post : on rebondit sur le sujet de son post.
+  // - Sinon : buyer RH à propos du changement dans la société.
+  const single = choices[0];
+  const recipientIsNominee = !multi && !!(single.firstName && single.lastName);
   const signalBase = `Signal déclencheur (${sig.signal_type}) : ${sig.title}${sig.summary ? ` - ${sig.summary}` : ""}.`;
   let signalLine: string;
-  if (sig.signal_type === "linkedin_post" && recipientIsNominee) {
-    // L'auteur du post : on rebondit sur SON post (pas de félicitations de prise
-    // de poste). Accroche sur le sujet qu'il a partagé + angle coaching/leadership.
-    signalLine = `${signalBase} Le destinataire EST l'auteur de ce post LinkedIn (${recipient?.name ?? `${c.firstName} ${c.lastName}`}). Rebondis directement et sincèrement sur le sujet de son post, montre que tu l'as lu, puis fais le lien avec un accompagnement coaching/leadership pertinent. Pas de flagornerie, pas de félicitations hors sujet.`;
+  if (multi) {
+    signalLine = `${signalBase} Tu écris à plusieurs décideurs RH/People de la même société à propos de ce signal. Ancre l'accroche sur ce signal précis et l'angle coaching/leadership. Le mail doit convenir à chacun : ne mentionne ni le nom ni le rôle d'une personne en particulier.`;
+  } else if (sig.signal_type === "linkedin_post" && recipientIsNominee) {
+    signalLine = `${signalBase} Le destinataire EST l'auteur de ce post LinkedIn (${recipients[0]?.name ?? `${single.firstName} ${single.lastName}`}). Rebondis directement et sincèrement sur le sujet de son post, montre que tu l'as lu, puis fais le lien avec un accompagnement coaching/leadership pertinent. Pas de flagornerie, pas de félicitations hors sujet.`;
   } else if (recipientIsNominee) {
-    signalLine = `${signalBase} Le destinataire EST la personne concernée par ce signal (${recipient?.name ?? `${c.firstName} ${c.lastName}`}). Adresse-toi directement à elle : félicite-la brièvement pour sa prise de poste, puis propose un accompagnement coaching/leadership pour réussir ses premiers mois et embarquer ses équipes. Pas de flagornerie.`;
+    signalLine = `${signalBase} Le destinataire EST la personne concernée par ce signal (${recipients[0]?.name ?? `${single.firstName} ${single.lastName}`}). Adresse-toi directement à elle : félicite-la brièvement pour sa prise de poste, puis propose un accompagnement coaching/leadership pour réussir ses premiers mois et embarquer ses équipes. Pas de flagornerie.`;
   } else {
     signalLine = `${signalBase} Ancre l'accroche du mail sur ce signal précis et l'angle coaching/leadership pertinent pour le destinataire.`;
   }
@@ -475,7 +560,8 @@ export async function draftForSignal(params: {
     userId: params.userId,
     userEmail: params.userEmail,
     instructions: signalLine,
-    recipients: recipient ? [recipient] : [],
+    recipients,
+    personalized,
   });
 
   // Marquer actioned + stocker. Si la rédaction a ÉCHOUÉ, on NE marque PAS le
@@ -493,18 +579,19 @@ export async function draftForSignal(params: {
       actioned_at: draftFailed ? null : actionedAt,
       draft_subject: draftFailed ? null : draft.subject,
       draft_body: draftFailed ? null : draft.body,
-      draft_recipient: recipient,
+      // Aperçu sur la fiche : premier destinataire (le corps reste mutualisé).
+      draft_recipient: recipients[0] ?? null,
       updated_at: actionedAt,
     })
     .eq("id", sig.id);
   if (updateError) {
     console.error("[signals/act] draft persist error:", updateError.message);
-    return { ok: false, recipient, draft: null, scopeCompanyId, apolloUsed, error: updateError.message };
+    return { ok: false, recipients, draft: null, scopeCompanyId, apolloUsed, error: updateError.message };
   }
 
   return {
     ok: !draftFailed,
-    recipient,
+    recipients,
     draft: draftFailed ? null : { subject: draft.subject, body: draft.body },
     scopeCompanyId,
     apolloUsed,

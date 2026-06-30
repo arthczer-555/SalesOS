@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import { draftForSignal } from "@/lib/signals/act";
+import { draftForSignal, type SignalChoice } from "@/lib/signals/act";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 export interface SignalDraftResponse {
   ok: boolean;
-  recipient?: { name: string | null; email: string } | null;
+  recipients?: { name: string | null; email: string }[];
   draft?: { subject: string; body: string } | null;
   scopeCompanyId?: string | null;
   apolloUsed?: boolean;
@@ -20,27 +20,25 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params;
   const body = (await req.json().catch(() => ({}))) as {
-    choice?: {
-      email?: string | null;
-      name?: string | null;
-      apolloId?: string | null;
-      firstName?: string | null;
-      lastName?: string | null;
-      fallbackEmail?: string | null;
-    };
+    // Nouveau : plusieurs destinataires. `choice` (singulier) gardé en rétrocompat.
+    choices?: SignalChoice[];
+    choice?: SignalChoice;
+    personalized?: boolean;
   };
+  const choices = body.choices ?? (body.choice ? [body.choice] : []);
 
   const res = await draftForSignal({
     signalId: id,
     userId: user.id,
     userEmail: user.email,
-    choice: body.choice ?? {},
+    choices,
+    personalized: body.personalized,
   });
 
   if (!res.ok) return NextResponse.json({ ok: false, error: res.error ?? "Draft failed" }, { status: 500 });
   return NextResponse.json({
     ok: true,
-    recipient: res.recipient,
+    recipients: res.recipients,
     draft: res.draft,
     scopeCompanyId: res.scopeCompanyId,
     apolloUsed: res.apolloUsed,

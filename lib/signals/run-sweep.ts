@@ -88,14 +88,18 @@ export async function runSignalsSweep(opts: SweepOptions = {}): Promise<SweepRes
           ? s.score >= MIN_SCORE_POST_DISCOVERY
           : s.score >= MIN_SCORE_DISCOVERY,
       );
-      // Relie au watchlist si le compte y est déjà (bascule en feed watchlist).
-      const { data: companiesRaw } = await db.from("scope_companies").select("id, name");
-      const linked = linkExistingCompanies(kept, (companiesRaw ?? []) as { id: string; name: string }[]);
-      all.push(...linked);
+      all.push(...kept);
     }
 
-    const inserted = await persistSignals(all, userId);
-    const counts = all.reduce(
+    // Relie au watchlist tout signal non encore rattaché dont le compte y figure
+    // déjà (discovery, ou item watchlist reclassé en discovery par la réconciliation
+    // de classify quand son vrai sujet était une AUTRE société). Bascule en feed
+    // watchlist + scope_company_id, ce qui le fait remonter sur la fiche compte.
+    const { data: companiesRaw } = await db.from("scope_companies").select("id, name");
+    const linked = linkExistingCompanies(all, (companiesRaw ?? []) as { id: string; name: string }[]);
+
+    const inserted = await persistSignals(linked, userId);
+    const counts = linked.reduce(
       (acc, s) => {
         acc[s.feed]++;
         return acc;
