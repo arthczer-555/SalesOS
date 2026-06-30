@@ -13,6 +13,7 @@ import {
   finishBriefError,
   type AeAnalysisContent,
   type AeContact,
+  type AeTarget,
   type HubspotRecapContent,
   type NewsContent,
   type BriefRow,
@@ -33,10 +34,15 @@ const RELATIONSHIP_STATES: AeRelationshipState[] = [
   "lost_deal",
 ];
 
-function buildSystemPrompt(prospectionGuide: string, withMessages: boolean): string {
+function buildSystemPrompt(prospectionGuide: string, withMessages: boolean, hasTargets: boolean): string {
   if (!withMessages) {
     return buildAnalysisOnlySystemPrompt();
   }
+  // L'AE a explicitement sélectionné les contacts à cibler : on restreint la
+  // rédaction à ceux-là au lieu de laisser l'IA en choisir jusqu'à 10.
+  const contactsRule = hasTargets
+    ? `Contacts à couvrir : rédige un opening_subject + opening_message UNIQUEMENT pour les contacts listés dans "## Contacts sélectionnés à cibler" du prompt utilisateur, et pour AUCUN autre. priority_contacts doit contenir exactement ces contacts (mêmes name/email/hubspot_id), classés par priorité, chacun avec son rationale, son opening_subject et son opening_message complets. N'ajoute, ne retire ni ne remplace aucun contact.`
+    : `Contacts à couvrir : liste TOUS les contacts du compte cohérents avec la vente (jusqu'à 10), pas seulement les meilleurs. Classés par priorité : buyer économique d'abord (CHRO, DRH, VP People, Head of L&D), puis influenceurs (L&D manager, HRBP, Talent), puis relais crédibles (Chief of Staff, direction, managers concernés). Exclus uniquement les contacts manifestement hors sujet (aucun lien avec les RH, le L&D ou la décision). Exception : un historique d'échange chaud bat un titre senior jamais contacté. Chaque contact listé reçoit son opening_subject et son opening_message complets.`;
   return `Tu es un Account Executive sénior chez Coachello. Tu prépares la prospection d'un compte cible (Watch List) :
 QUI contacter en priorité dans ce compte, et avec QUEL message d'ouverture. Sortie courte et actionnable, pas un rapport.
 
@@ -55,7 +61,7 @@ Règles anti-générique :
 - Ne jamais inventer un fait, un nom, un chiffre, un email ou un client.
 - Interdits : "mettre en avant la valeur", "proposer un échange", "construire la relation", et toute action vague du même genre.
 
-Contacts à couvrir : liste TOUS les contacts du compte cohérents avec la vente (jusqu'à 10), pas seulement les meilleurs. Classés par priorité : buyer économique d'abord (CHRO, DRH, VP People, Head of L&D), puis influenceurs (L&D manager, HRBP, Talent), puis relais crédibles (Chief of Staff, direction, managers concernés). Exclus uniquement les contacts manifestement hors sujet (aucun lien avec les RH, le L&D ou la décision). Exception : un historique d'échange chaud bat un titre senior jamais contacté. Chaque contact listé reçoit son opening_subject et son opening_message complets.
+${contactsRule}
 
 Réponds UNIQUEMENT via l'outil emit_ae_analysis :
 - relationship_state : never_contacted | cold (échanges anciens ou restés sans réponse) | warm (échanges récents et positifs) | active (deal ouvert en cours) | lost_deal (deal perdu récemment).
@@ -205,9 +211,15 @@ export async function runAeAnalysis(input: {
   userId: string;
   /** false = analyse seule (qui contacter + pourquoi), sans rédiger de message. Défaut true. */
   withMessages?: boolean;
+  /**
+   * Contacts pré-sélectionnés par l'AE : restreint les opening messages à ces
+   * seuls prospects. Ignoré si withMessages=false ou liste vide.
+   */
+  targets?: AeTarget[];
 }): Promise<{ ok: boolean; error?: string }> {
   const { scopeCompanyId, userId } = input;
   const withMessages = input.withMessages ?? true;
+  const targets = withMessages ? (input.targets ?? []).filter((t) => t.name || t.email) : [];
   try {
     const { data: company, error } = await db
       .from("scope_companies")
@@ -246,7 +258,7 @@ export async function runAeAnalysis(input: {
       sector: !!company.sector,
     };
 
-    const userPrompt = buildPrompt({ company, hubspot, news, clientsRoster });
+    const userPrompt = buildPrompt({ company, hubspot, news, clientsRoster, targets });
 
     // Jusqu'à 10 opening messages de 100-200 mots : plafond et timeout relevés
     // en conséquence (la BG fn Netlify laisse largement le temps). En mode
@@ -255,7 +267,7 @@ export async function runAeAnalysis(input: {
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: withMessages ? 8000 : 2500,
-      system: buildSystemPrompt(prospectionGuide, withMessages),
+      system: buildSystemPrompt(prospectionGuide, withMessages, targets.length > 0),
       messages: [{ role: "user", content: userPrompt }],
       tools: [buildAnalysisTool(withMessages)],
       tool_choice: { type: "tool", name: "emit_ae_analysis" },
@@ -344,8 +356,9 @@ function buildPrompt(input: {
   hubspot: HubspotRecapContent;
   news: NewsContent | null;
   clientsRoster: ClientRosterEntry[];
+  targets: AeTarget[];
 }): string {
-  const { company, hubspot, news, clientsRoster } = input;
+  const { company, hubspot, news, clientsRoster, targets } = input;
   const lines: string[] = [];
 
   lines.push(`# Compte cible : ${company.name}`);
@@ -354,6 +367,21 @@ function buildPrompt(input: {
   if (company.current_coaching_platform) lines.push(`Plateforme coaching actuelle : ${company.current_coaching_platform}`);
   if (company.notes) lines.push(`Notes internes : ${company.notes}`);
   lines.push("");
+
+  // Contacts explicitement sélectionnés par l'AE : on impose de ne rédiger des
+  // opening messages QUE pour eux (cf. contactsRule dans le system prompt).
+  if (targets.length > 0) {
+    lines.push("## Contacts sélectionnés à cibler");
+    lines.push(
+      "Rédige un opening_subject + opening_message UNIQUEMENT pour ces contacts, et pour aucun autre. priority_contacts = exactement cette liste.",
+    );
+    for (const t of targets) {
+      const bits = [t.role ? `(${t.role})` : null, t.email ? `<${t.email}>` : null].filter(Boolean);
+      const idPart = t.hubspot_id ? ` [hubspot_id: ${t.hubspot_id}]` : "";
+      lines.push(`- ${t.name || t.email}${bits.length ? ` ${bits.join(" ")}` : ""}${idPart}`);
+    }
+    lines.push("");
+  }
 
   // Société HubSpot
   if (hubspot.company) {

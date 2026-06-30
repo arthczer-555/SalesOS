@@ -92,7 +92,7 @@ Suivi des comptes post-signature (Customer Success). À la signature d'un deal (
 Deux onglets :
 - **Accounts** : pilotage des comptes cibles par sales rep. Liste des comptes (table `scope_companies`) groupée par rep dans une strip latérale, table principale (secteur / plateforme de coaching / owner).
   - **Page détail (`/watchlist/[id]`)** : briefs générés à la demande, cachés dans `watchlist_company_briefs` (kind `ae_analysis` | `news`).
-    - **AE Analysis** : synthèse Claude croisant HubSpot recap + news LinkedIn.
+    - **AE Analysis** : synthèse Claude croisant HubSpot recap + news LinkedIn. Deux modes : *Analysis only* (qui contacter + pourquoi) et *Analysis + messages* (ouvre un popup pour cocher les contacts HubSpot du compte ciblés ; l'IA ne rédige un message d'ouverture que pour les prospects cochés, ou les choisit elle-même si on laisse "Let AI choose").
     - **News** : posts LinkedIn récents (Bright Data dataset) + veille marché (SERP Google News, signaux catégorisés et synthétisés par Claude).
   - Notes libres, modal Gmail pour voir les threads.
 - **Lists** (`/watchlist?tab=lists`) : builder de listes de prospects (recherche HubSpot par filtres, import CSV), sauvegarde en listes nommées (`enrichment_lists`), option « Push to HubSpot » (création de contacts, dédup par email). C'est ici que Mass Prospection envoie créer ses listes (`/lists` redirige vers cet onglet).

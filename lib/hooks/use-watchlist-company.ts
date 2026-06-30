@@ -2,7 +2,7 @@ import * as React from "react";
 import useSWR from "swr";
 import type { WatchCompanyDetailResponse } from "@/app/api/watchlist/companies/[id]/route";
 import type { BriefsResponse } from "@/app/api/watchlist/companies/[id]/briefs/route";
-import type { BriefKind } from "@/lib/watchlist/briefs";
+import type { BriefKind, AeTarget } from "@/lib/watchlist/briefs";
 
 const EMPTY_BRIEFS = { ae_analysis: null, news: null } as const;
 
@@ -90,7 +90,7 @@ export function useBriefRefresh(id: string | null, onComplete?: () => void) {
   const [errorByKind, setErrorByKind] = React.useState<Partial<Record<BriefKind, string>>>({});
 
   const refresh = React.useCallback(
-    async (kind: BriefKind, options?: { withMessages?: boolean }) => {
+    async (kind: BriefKind, options?: { withMessages?: boolean; targets?: AeTarget[] }) => {
       if (!id) return;
       setIsRefreshing((prev) => ({ ...prev, [kind]: true }));
       setErrorByKind((prev) => ({ ...prev, [kind]: undefined }));

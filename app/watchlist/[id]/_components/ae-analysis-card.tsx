@@ -7,6 +7,7 @@ import { Target, MailPlus, BookOpen, Copy, Check, Send, Loader2, ChevronDown, Ch
 import { COLORS } from "@/lib/design/tokens";
 import { BriefSection } from "./brief-section";
 import { NotesEditor } from "./notes-editor";
+import { SelectProspectsModal } from "./select-prospects-modal";
 import type { DraftRecipient } from "./mail-drafter";
 import type { CompanyEmailsResponse } from "@/app/api/watchlist/companies/[id]/emails/route";
 import type {
@@ -14,6 +15,7 @@ import type {
   AeAnalysisContent,
   AeContact,
   AeRelationshipState,
+  AeTarget,
   NewsContent,
 } from "@/lib/watchlist/briefs";
 
@@ -40,8 +42,12 @@ export function AeAnalysisCard({
   notes: string | null;
   brief: BriefRow<AeAnalysisContent> | null;
   dependencies?: { news: BriefRow<NewsContent> | null };
-  /** withMessages=false : analyse seule (qui + pourquoi) ; true : analyse + messages d'ouverture. */
-  onGenerate?: (withMessages: boolean) => void;
+  /**
+   * withMessages=false : analyse seule (qui + pourquoi) ; true : analyse + messages d'ouverture.
+   * targets : contacts pré-sélectionnés via le popup, l'IA ne rédige que pour eux
+   * (liste vide / absente = l'IA choisit jusqu'à 10 contacts, comportement historique).
+   */
+  onGenerate?: (withMessages: boolean, targets?: AeTarget[]) => void;
   isRefreshing?: boolean;
   clientError?: string | null;
   onProspect?: (
@@ -59,6 +65,9 @@ export function AeAnalysisCard({
   React.useEffect(() => {
     if (status !== "running") setPendingMode(null);
   }, [status]);
+
+  // Popup de sélection des prospects avant la génération "Analysis + messages".
+  const [selectOpen, setSelectOpen] = React.useState(false);
 
   const running = status === "running";
   const actions = onGenerate ? (
@@ -80,11 +89,8 @@ export function AeAnalysisCard({
         primary
         loading={running && pendingMode !== "analysis"}
         disabled={isRefreshing || running}
-        onClick={() => {
-          setPendingMode("messages");
-          onGenerate(true);
-        }}
-        title="Generate the AE analysis and a tailored opening message for each contact"
+        onClick={() => setSelectOpen(true)}
+        title="Pick which contacts to write a tailored opening message for, then generate"
       />
     </>
   ) : undefined;
@@ -274,6 +280,17 @@ export function AeAnalysisCard({
       )}
 
       <NotesEditor companyId={companyId} initialNotes={notes} />
+
+      {selectOpen && onGenerate && (
+        <SelectProspectsModal
+          companyId={companyId}
+          onClose={() => setSelectOpen(false)}
+          onConfirm={(targets) => {
+            setPendingMode("messages");
+            onGenerate(true, targets);
+          }}
+        />
+      )}
     </BriefSection>
   );
 }

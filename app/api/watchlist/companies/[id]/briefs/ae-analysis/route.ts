@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse, after } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { startBriefRun } from "@/lib/watchlist/briefs";
+import { startBriefRun, type AeTarget } from "@/lib/watchlist/briefs";
 import { runAeAnalysis } from "@/lib/watchlist/run-ae-analysis";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +28,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // de message d'ouverture. Défaut true (régénération complète).
   const body = await req.json().catch(() => ({}));
   const withMessages = (body as { withMessages?: boolean })?.withMessages !== false;
+  // Contacts pré-sélectionnés (popup "Analysis + messages") : restreint les
+  // opening messages à ces prospects. Normalisés/bornés pour ne pas faire
+  // exploser le prompt et ignorer un payload malformé.
+  const rawTargets = (body as { targets?: unknown })?.targets;
+  const targets: AeTarget[] = Array.isArray(rawTargets)
+    ? rawTargets
+        .filter((t): t is Record<string, unknown> => !!t && typeof t === "object")
+        .map((t) => ({
+          name: typeof t.name === "string" ? t.name : "",
+          role: typeof t.role === "string" ? t.role : null,
+          email: typeof t.email === "string" ? t.email : null,
+          hubspot_id: typeof t.hubspot_id === "string" ? t.hubspot_id : null,
+        }))
+        .filter((t) => t.name || t.email)
+        .slice(0, 25)
+    : [];
 
   const { data: company, error: companyErr } = await db
     .from("scope_companies")
@@ -55,7 +71,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     fetch(`${siteUrl}/.netlify/functions/${BG_FN}`, {
       method: "POST",
       headers: { authorization: `Bearer ${cronSecret}`, "content-type": "application/json" },
-      body: JSON.stringify({ scopeCompanyId: id, userId: user.id, briefId, startedAt, withMessages }),
+      body: JSON.stringify({ scopeCompanyId: id, userId: user.id, briefId, startedAt, withMessages, targets }),
     }).catch((e) => {
       console.error(`[briefs/ae-analysis] background invoke failed:`, e);
     });
@@ -63,7 +79,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   after(async () => {
-    const res = await runAeAnalysis({ scopeCompanyId: id, userId: user.id, withMessages });
+    const res = await runAeAnalysis({ scopeCompanyId: id, userId: user.id, withMessages, targets });
     if (!res.ok) {
       console.error("[briefs/ae-analysis] dev run failed:", res.error);
     }

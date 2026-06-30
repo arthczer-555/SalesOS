@@ -20,6 +20,7 @@ import { SignalsCard } from "./signals-card";
 import { EmailHistoryCard } from "./email-history-card";
 import { MailDrafter, type DraftRecipient, type DraftPrefill } from "./mail-drafter";
 import { ApolloEnrichModal } from "../../_components/apollo-enrich-modal";
+import type { AeTarget } from "@/lib/watchlist/briefs";
 
 export function WatchCompanyPage({ id }: { id: string }) {
   const {
@@ -42,7 +43,7 @@ export function WatchCompanyPage({ id }: { id: string }) {
   // polling (sinon un regénérer après un timeout ne relancerait pas le poll).
   const [runToken, setRunToken] = React.useState(0);
   const startRun = React.useCallback(
-    (kind: "ae_analysis" | "news", options?: { withMessages?: boolean }) => {
+    (kind: "ae_analysis" | "news", options?: { withMessages?: boolean; targets?: AeTarget[] }) => {
       setRunToken((t) => t + 1);
       refresh(kind, options);
     },
@@ -208,7 +209,7 @@ export function WatchCompanyPage({ id }: { id: string }) {
               notes={company.notes}
               brief={briefs.ae_analysis}
               dependencies={{ news: briefs.news }}
-              onGenerate={(withMessages) => startRun("ae_analysis", { withMessages })}
+              onGenerate={(withMessages, targets) => startRun("ae_analysis", { withMessages, targets })}
               isRefreshing={isRefreshing.ae_analysis}
               clientError={errorByKind.ae_analysis ?? null}
               onProspect={prospectFromAnalysis}

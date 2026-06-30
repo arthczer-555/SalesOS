@@ -50,6 +50,19 @@ export interface AeContact {
   hubspot_id: string | null;
 }
 
+/**
+ * Contact pré-sélectionné par l'AE avant la génération "Analysis + messages" :
+ * restreint la rédaction des opening messages à ces seuls prospects (au lieu de
+ * laisser l'IA choisir jusqu'à 10 contacts). Sous-ensemble des contacts HubSpot
+ * du compte. Liste vide / absente = comportement historique (l'IA choisit).
+ */
+export interface AeTarget {
+  name: string;
+  role: string | null;
+  email: string | null;
+  hubspot_id: string | null;
+}
+
 /** Analyse AE : reco de prospection sur un compte (remplace l'ancienne synthèse IA). */
 export interface AeAnalysisContent {
   /** v2 : état de la relation. Absent sur les anciennes analyses. */
