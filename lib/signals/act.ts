@@ -26,6 +26,13 @@ export interface CandidatesResult {
   apolloConfigured: boolean;
 }
 
+/** Personne clé citée dans un signal (nominé) ou auteur d'un post LinkedIn. */
+interface NomineePerson {
+  firstName: string;
+  lastName: string;
+  title: string | null;
+}
+
 /**
  * Prépare la liste des destinataires possibles pour un signal SANS rien dépenser
  * (pas de reveal, pas de draft) : contacts CRM du compte + candidats ICP Apollo
@@ -39,7 +46,7 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
   // Post LinkedIn discovery : l'auteur EST la cible. On résout d'abord sa vraie
   // société (la company_name stockée n'est qu'un fallback = nom de l'auteur) pour
   // que la recherche de collègues ICP + l'ajout watchlist portent sur le bon compte.
-  let authorFocus: { firstName: string; lastName: string; title: string | null } | null = null;
+  let authorFocus: NomineePerson | null = null;
   if (sig.signal_type === "linkedin_post") {
     const resolved = await resolvePostAuthor(sig).catch(() => null);
     if (resolved) {
@@ -136,48 +143,57 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
   };
   out.sort((a, b) => rank(b) - rank(a));
 
-  // FOCUS sur la personne clé : l'auteur du post (linkedin_post) ou la personne
-  // nommée (nomination / job_change). On la met en tête. Email résolu au draft
-  // (reveal Apollo par nom), avec un email DEVINÉ en secours via le pattern société.
+  // FOCUS sur la/les personne(s) clé(s) du signal, mise(s) en tête. Pour un post
+  // LinkedIn, c'est l'auteur (authorFocus). Sinon, on extrait la/les personne(s)
+  // nommée(s)/promue(s)/recrutée(s) citée(s), QUEL QUE SOIT le type de signal :
+  // une arrivée de dirigeant peut être qualifiée "nomination" mais AUSSI
+  // "restructuring"/"expansion"/"hiring" (ex : réorganisation de gouvernance qui
+  // nomme une nouvelle DRH). Haiku renvoie une liste vide si personne n'est nommé.
+  // Email résolu au draft (reveal Apollo par nom), email DEVINÉ en secours (pattern
+  // société). Si plusieurs personnes, l'ICP RH/People est priorisée et pré-cochée.
   let candidates = out;
-  const focus =
-    authorFocus ??
-    (sig.signal_type === "nomination" || sig.signal_type === "job_change"
-      ? await extractNominee(sig).catch(() => null)
-      : null);
-  {
-    const nominee = focus;
-    if (nominee && (nominee.firstName || nominee.lastName)) {
+  const nominees: NomineePerson[] = authorFocus
+    ? [authorFocus]
+    : sig.signal_type === "linkedin_post"
+      ? []
+      : await extractNominees(sig).catch(() => []);
+  const validNominees = nominees.filter((n) => n.firstName || n.lastName);
+  if (validNominees.length > 0) {
+    // Pas de contact CRM pour apprendre le pattern d'emails ? On révèle UN collègue
+    // ICP via Apollo (1 crédit) pour comprendre la structure des emails de la
+    // société, puis on devine l'email des nominés.
+    if (samples.length === 0 && apolloPeople.length > 0 && isApolloConfigured()) {
+      const learned = await learnEmailPattern(apolloPeople, out);
+      if (learned) samples.push(learned);
+    }
+    // ICP RH/People en tête : c'est notre buyer prioritaire (ex : la DRH nommée
+    // passe devant le COO nommé dans la même annonce).
+    const ranked = [...validNominees].sort((a, b) => Number(isIcp(b.title)) - Number(isIcp(a.title)));
+    const focusCandidates: SignalCandidate[] = [];
+    for (const [i, nominee] of ranked.entries()) {
       const full = `${nominee.firstName ?? ""} ${nominee.lastName ?? ""}`.trim();
-      // Pas de contact CRM pour apprendre le pattern d'emails ? On révèle UN
-      // collègue ICP via Apollo (1 crédit) pour comprendre la structure des emails
-      // de la société, puis on devine l'email du nominé.
-      if (samples.length === 0 && apolloPeople.length > 0 && isApolloConfigured()) {
-        const learned = await learnEmailPattern(apolloPeople, out);
-        if (learned) samples.push(learned);
-      }
+      if (!full || seenNames.has(full.toLowerCase())) continue;
+      seenNames.add(full.toLowerCase());
       const guess = guessEmail(nominee.firstName, nominee.lastName, samples, companyDomain);
-      // Évite un doublon si déjà présent (CRM/Apollo).
+      // Évite un doublon si déjà présent (CRM/Apollo) : on le remonte en focus.
       const dupIdx = candidates.findIndex((c) => c.name.toLowerCase() === full.toLowerCase());
       if (dupIdx >= 0) candidates.splice(dupIdx, 1);
-      candidates = [
-        {
-          key: "nominee",
-          source: "nominee",
-          name: full,
-          title: nominee.title ?? null,
-          email: guess,
-          apolloId: null,
-          icp: true,
-          focus: true,
-          guessed: !!guess,
-          firstName: nominee.firstName ?? null,
-          lastName: nominee.lastName ?? null,
-          guessEmail: guess,
-        },
-        ...candidates,
-      ];
+      focusCandidates.push({
+        key: `nominee:${i}`,
+        source: "nominee",
+        name: full,
+        title: nominee.title ?? null,
+        email: guess,
+        apolloId: null,
+        icp: true,
+        focus: true,
+        guessed: !!guess,
+        firstName: nominee.firstName ?? null,
+        lastName: nominee.lastName ?? null,
+        guessEmail: guess,
+      });
     }
+    candidates = [...focusCandidates, ...candidates];
   }
 
   return {
@@ -193,42 +209,63 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
 const NOMINEE_MODEL = "claude-haiku-4-5-20251001";
 
 const NOMINEE_TOOL: Anthropic.Tool = {
-  name: "emit_nominee",
-  description: "Renvoie la personne nommée/promue dans le signal, si une personne précise est citée.",
+  name: "emit_nominees",
+  description: "Renvoie la/les personne(s) citée(s) nommément dans le signal (nommée, promue, recrutée, ou dont la prise de poste est annoncée).",
   input_schema: {
     type: "object" as const,
     properties: {
-      found: { type: "boolean", description: "true si une personne précise est nommée/promue." },
-      first_name: { type: "string", description: "Prénom, ou vide." },
-      last_name: { type: "string", description: "Nom de famille, ou vide." },
-      title: { type: "string", description: "Nouveau poste/titre, ou vide." },
+      people: {
+        type: "array",
+        description: "Chaque personne explicitement nommée. Liste vide si aucune personne précise n'est citée.",
+        items: {
+          type: "object",
+          properties: {
+            first_name: { type: "string", description: "Prénom." },
+            last_name: { type: "string", description: "Nom de famille." },
+            title: { type: "string", description: "Nouveau poste/titre, ou vide." },
+          },
+          required: ["first_name", "last_name"],
+        },
+      },
     },
-    required: ["found"],
+    required: ["people"],
   },
 };
 
-async function extractNominee(
-  sig: SignalRow,
-): Promise<{ firstName: string; lastName: string; title: string | null } | null> {
-  if (!process.env.ANTHROPIC_API_KEY) return null;
+/**
+ * Extrait la/les personne(s) nommée(s), promue(s) ou recrutée(s) citée(s)
+ * nommément dans un signal (max 4). Une annonce peut en citer plusieurs (ex :
+ * réorganisation de gouvernance nommant un COO ET une DRH). Liste vide si aucune.
+ */
+async function extractNominees(sig: SignalRow): Promise<NomineePerson[]> {
+  if (!process.env.ANTHROPIC_API_KEY) return [];
   const client = new Anthropic({ timeout: 30_000, maxRetries: 1 });
   const msg = await client.messages.create({
     model: NOMINEE_MODEL,
-    max_tokens: 200,
-    system: "Tu extrais la personne nommée, promue ou recrutée mentionnée dans un signal de prospection. Si aucune personne précise n'est citée (juste l'entreprise), found=false. Réponds uniquement via emit_nominee.",
+    max_tokens: 400,
+    system:
+      "Tu extrais les personnes citées NOMMÉMENT qui sont nommées, promues, recrutées ou dont la prise de poste est annoncée dans un signal de prospection. Inclure chaque personne nommée (une réorganisation de gouvernance peut en citer plusieurs). N'invente aucun nom : uniquement des personnes explicitement citées par leur nom. Si aucune personne précise n'est citée (juste l'entreprise), renvoie une liste vide. Réponds uniquement via emit_nominees.",
     messages: [{ role: "user", content: `Titre: ${sig.title}\nRésumé: ${sig.summary ?? ""}` }],
     tools: [NOMINEE_TOOL],
-    tool_choice: { type: "tool" as const, name: "emit_nominee" },
+    tool_choice: { type: "tool" as const, name: "emit_nominees" },
   });
   logUsage(null, NOMINEE_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "signals_nominee");
   const block = msg.content.find((b) => b.type === "tool_use");
-  if (!block || !("input" in block)) return null;
-  const out = block.input as { found?: boolean; first_name?: string; last_name?: string; title?: string };
-  if (!out.found) return null;
-  const firstName = (out.first_name ?? "").trim();
-  const lastName = (out.last_name ?? "").trim();
-  if (!firstName && !lastName) return null;
-  return { firstName, lastName, title: (out.title ?? "").trim() || null };
+  if (!block || !("input" in block)) return [];
+  const out = block.input as { people?: { first_name?: string; last_name?: string; title?: string }[] };
+  const result: NomineePerson[] = [];
+  const seen = new Set<string>();
+  for (const p of out.people ?? []) {
+    const firstName = (p.first_name ?? "").trim();
+    const lastName = (p.last_name ?? "").trim();
+    if (!firstName && !lastName) continue;
+    const k = `${firstName} ${lastName}`.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    result.push({ firstName, lastName, title: (p.title ?? "").trim() || null });
+    if (result.length >= 4) break;
+  }
+  return result;
 }
 
 // ── Posts LinkedIn discovery : résolution de l'auteur -> société + contact ───

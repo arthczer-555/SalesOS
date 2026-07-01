@@ -92,8 +92,9 @@ Suivi des comptes post-signature (Customer Success). À la signature d'un deal (
 Deux onglets :
 - **Accounts** : pilotage des comptes cibles par sales rep. Liste des comptes (table `scope_companies`) groupée par rep dans une strip latérale, table principale (secteur / plateforme de coaching / owner).
   - **Page détail (`/watchlist/[id]`)** : briefs générés à la demande, cachés dans `watchlist_company_briefs` (kind `ae_analysis` | `news`).
-    - **AE Analysis** : synthèse Claude croisant HubSpot recap + news LinkedIn. Deux modes : *Analysis only* (qui contacter + pourquoi) et *Analysis + messages* (ouvre un popup pour cocher les contacts HubSpot du compte ciblés ; l'IA ne rédige un message d'ouverture que pour les prospects cochés, ou les choisit elle-même si on laisse "Let AI choose").
+    - **AE Analysis** : synthèse Claude croisant HubSpot recap + news LinkedIn. Deux modes : *Analysis only* (qui contacter + pourquoi) et *Analysis + messages* (ouvre un popup pour cocher les contacts HubSpot du compte ciblés ; l'IA ne rédige un message d'ouverture que pour les prospects cochés, ou les choisit elle-même si on laisse "Let AI choose"). En mode *+ messages*, on scrape aussi le LinkedIn des prospects ciblés (profil + posts perso, Bright Data, best-effort via [lib/watchlist/fetch-prospect-linkedin.ts](lib/watchlist/fetch-prospect-linkedin.ts)) : affiché dans une **card LinkedIn** (posts perso + posts entreprise) et injecté dans le prompt pour personnaliser chaque opening message sur un fait réel du prospect.
     - **News** : posts LinkedIn récents (Bright Data dataset) + veille marché (SERP Google News, signaux catégorisés et synthétisés par Claude).
+    - **Verify roles** : bouton sur la card "HubSpot contacts" qui vérifie via Apollo (match sans reveal, 0 crédit) le poste de chaque contact et détecte ceux qui ont changé d'entreprise. Ouvre une modale de revue : MAJ des postes (pré-cochés) et/ou remplacement complet de la company associée sur HubSpot (nouvelle company en primary, anciennes associations retirées) - opt-in. Rien n'est écrit sans confirmation. Inspiré de l'étape Refresh d'orgchart.
   - Notes libres, modal Gmail pour voir les threads.
 - **Lists** (`/watchlist?tab=lists`) : builder de listes de prospects (recherche HubSpot par filtres, import CSV), sauvegarde en listes nommées (`enrichment_lists`), option « Push to HubSpot » (création de contacts, dédup par email). C'est ici que Mass Prospection envoie créer ses listes (`/lists` redirige vers cet onglet).
 
@@ -564,6 +565,8 @@ Voir section 1 pour la description fonctionnelle de chaque module. Cette section
 | `/api/watchlist/companies/[id]` | GET / PATCH | Détail compte + édition (sector, plateforme, notes). |
 | `/api/watchlist/companies/[id]/notes` | POST | Sauvegarde des notes libres. |
 | `/api/watchlist/companies/[id]/contacts` | GET | Contacts HubSpot du compte. |
+| `/api/watchlist/companies/[id]/verify-roles` | POST | Vérifie via Apollo les postes/entreprises des contacts (sans reveal). Renvoie des propositions, n'écrit rien. |
+| `/api/watchlist/companies/[id]/apply-roles` | POST | Applique les changements confirmés : MAJ jobtitle et/ou remplacement de la company associée (primary + retrait des anciennes). |
 | `/api/watchlist/companies/[id]/briefs` | GET | État courant des briefs (cache `watchlist_company_briefs`). |
 | `/api/watchlist/companies/[id]/briefs/ae-analysis` | POST | Lance la génération du brief AE Analysis (BG fn). |
 | `/api/watchlist/companies/[id]/briefs/news` | POST | Rafraîchit la veille (sync : posts LinkedIn Bright Data + veille marché SERP + synthèse Claude). |

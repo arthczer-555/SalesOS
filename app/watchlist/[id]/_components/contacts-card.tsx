@@ -2,12 +2,14 @@
 
 import * as React from "react";
 import useSWR from "swr";
-import { Users, History, ExternalLink, Loader2, Mail, MailPlus, Check, Phone, PhoneCall, Copy } from "lucide-react";
+import { Users, History, ExternalLink, Loader2, Mail, MailPlus, Check, Phone, PhoneCall, Copy, BadgeCheck } from "lucide-react";
 import { COLORS, SHADOWS } from "@/lib/design/tokens";
 import { ContactHistoryModal } from "./contact-history-modal";
+import { VerifyRolesModal } from "./verify-roles-modal";
 import { useOutreachCounts } from "@/lib/hooks/use-outreach-counts";
 import type { DraftRecipient } from "./mail-drafter";
 import type { CompanyContactsResponse } from "@/app/api/watchlist/companies/[id]/contacts/route";
+import type { VerifyRolesResponse } from "@/app/api/watchlist/companies/[id]/verify-roles/route";
 
 // Date d'ajout du contact dans HubSpot, formatée en anglais (UI EN). Renvoie
 // null si la date est absente ou invalide pour ne rien afficher dans ce cas.
@@ -37,6 +39,32 @@ export function ContactsCard({
   // Contact dont le popover "Call" est ouvert (un seul à la fois), + feedback copie.
   const [callOpen, setCallOpen] = React.useState<string | null>(null);
   const [copied, setCopied] = React.useState(false);
+  // Vérification des postes/entreprises via Apollo : état du run + résultat
+  // (ouvre la modale de revue) + message d'erreur transitoire.
+  const [verifying, setVerifying] = React.useState(false);
+  const [verifyResult, setVerifyResult] = React.useState<VerifyRolesResponse | null>(null);
+  const [verifyError, setVerifyError] = React.useState<string | null>(null);
+  const [verifyFlash, setVerifyFlash] = React.useState<string | null>(null);
+
+  const runVerify = React.useCallback(async () => {
+    setVerifying(true);
+    setVerifyError(null);
+    setVerifyFlash(null);
+    try {
+      const res = await fetch(`/api/watchlist/companies/${companyId}/verify-roles`, { method: "POST" });
+      const json = (await res.json().catch(() => ({}))) as VerifyRolesResponse & { error?: string };
+      if (!res.ok) throw new Error(json?.error || "Verification failed");
+      if (!json.apolloConfigured) {
+        setVerifyError("Apollo is not configured.");
+        return;
+      }
+      setVerifyResult(json);
+    } catch (e) {
+      setVerifyError(e instanceof Error ? e.message : "Verification failed");
+    } finally {
+      setVerifying(false);
+    }
+  }, [companyId]);
 
   // Garde de montage : stoppe le polling téléphone récursif après démontage
   // (navigation) pour éviter les fetch et setState orphelins.
@@ -159,12 +187,37 @@ export function ContactsCard({
         {contacts.length > 0 && (
           <span style={{ fontSize: 11, color: COLORS.ink3 }}>{contacts.length}</span>
         )}
+        {contacts.length > 0 && (
+          <button
+            type="button"
+            onClick={runVerify}
+            disabled={verifying}
+            title="Check job titles & companies via Apollo"
+            style={{
+              marginLeft: "auto",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "5px 10px",
+              fontSize: 12,
+              fontWeight: 600,
+              borderRadius: 7,
+              border: `1px solid ${COLORS.line}`,
+              background: COLORS.bgCard,
+              color: verifying ? COLORS.ink3 : COLORS.ink1,
+              cursor: verifying ? "default" : "pointer",
+            }}
+          >
+            {verifying ? <Loader2 size={12} className="animate-spin" /> : <BadgeCheck size={12} />}
+            {verifying ? "Verifying…" : "Verify roles"}
+          </button>
+        )}
         {onProspect && selected.size > 0 && (
           <button
             type="button"
             onClick={addSelected}
             style={{
-              marginLeft: "auto",
+              marginLeft: contacts.length > 0 ? 0 : "auto",
               display: "inline-flex",
               alignItems: "center",
               gap: 6,
@@ -185,10 +238,25 @@ export function ContactsCard({
           <Loader2
             size={12}
             className="animate-spin"
-            style={{ color: COLORS.brand, marginLeft: selected.size > 0 ? 0 : "auto" }}
+            style={{ color: COLORS.brand, marginLeft: contacts.length > 0 || selected.size > 0 ? 0 : "auto" }}
           />
         )}
       </header>
+
+      {(verifyError || verifyFlash) && (
+        <div
+          style={{
+            margin: "0 16px 8px",
+            fontSize: 11.5,
+            color: verifyError ? COLORS.err : COLORS.ok,
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+          }}
+        >
+          {verifyError ?? verifyFlash}
+        </div>
+      )}
 
       <div style={{ padding: "0 8px 8px" }}>
         {isLoading && contacts.length === 0 ? (
@@ -479,6 +547,27 @@ export function ContactsCard({
           email={historyTarget.email}
           contactId={historyTarget.contactId}
           onClose={() => setHistoryTarget(null)}
+        />
+      )}
+
+      {verifyResult && (
+        <VerifyRolesModal
+          companyId={companyId}
+          result={verifyResult}
+          onClose={() => setVerifyResult(null)}
+          onApplied={({ titles, companies, failures }) => {
+            setVerifyResult(null);
+            void mutate();
+            if (failures > 0) {
+              setVerifyError(`${failures} update${failures > 1 ? "s" : ""} failed.`);
+            } else if (titles + companies > 0) {
+              const parts = [
+                titles ? `${titles} title${titles > 1 ? "s" : ""} updated` : "",
+                companies ? `${companies} company change${companies > 1 ? "s" : ""} applied` : "",
+              ].filter(Boolean);
+              setVerifyFlash(parts.join(" · "));
+            }
+          }}
         />
       )}
     </section>
