@@ -1,10 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { NextRequest } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
 import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const maxDuration = 120;
 
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
     } catch { /* keep default */ }
   }
 
-  const client = new Anthropic({ apiKey: claudeApiKey });
+  const client = anthropicClient({ apiKey: claudeApiKey });
 
   const systemPrompt = `Tu es un assistant commercial expert intégré à SalesOS. L'utilisateur te pose une question à propos d'un deal ou d'un meeting dont tu as toutes les données ci-dessous.
 

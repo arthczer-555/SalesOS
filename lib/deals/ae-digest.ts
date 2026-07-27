@@ -39,7 +39,6 @@
 // Idempotence : on stamp (owner_id, run_date) dans deal_ae_digest_log et on ne
 // re-DM jamais un AE déjà notifié le même jour (un retour du cron ne double pas).
 
-import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { DEFAULT_SCORE_MODEL } from "../deal-scoring";
@@ -49,6 +48,7 @@ import {
   lookupSlackIdByEmail,
 } from "../slack/lookup";
 import { isNurtureLabel } from "./stages";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // ─── Seuils de tri (ajustables) ───────────────────────────────────────────────
 const HOT_SCORE = 70; // score ≥ => Hot
@@ -304,7 +304,7 @@ Return ONLY raw JSON, no markdown:
 
   const user = `Rep first name: ${firstName}\n\nDeals (keep this order):\n${lines.join("\n")}`;
 
-  const client = new Anthropic();
+  const client = anthropicClient();
   const message = await client.messages.create({
     model,
     max_tokens: 1200,

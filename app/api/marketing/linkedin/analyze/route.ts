@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { getCompanyPosts } from "@/lib/brightdata/linkedin";
 import { BRIGHTDATA_API_KEY } from "@/lib/brightdata/serp";
 import { logUsage } from "@/lib/log-usage";
 import { getModelPreference } from "@/lib/models/get-model-preference";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
       .map((p, i) => `[${i + 1}] (${p.likes} likes, ${p.comments} commentaires) ${p.text?.slice(0, 500) ?? ""}`)
       .join("\n\n---\n\n");
 
-    const client = new Anthropic();
+    const client = anthropicClient();
     const model = await getModelPreference("marketing", "claude-haiku-4-5-20251001");
     const message = await client.messages.create({
       model,

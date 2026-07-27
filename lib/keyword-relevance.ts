@@ -4,6 +4,7 @@ import { logUsage } from "@/lib/log-usage";
 import { BUSINESS_CONTEXT, BUSINESS_CONTEXT_HASH } from "@/lib/business-context";
 import { stripEmDashes } from "@/lib/no-em-dash";
 import type { Keyword, KeywordRelevance } from "@/lib/marketing-types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const BATCH_SIZE = 40;
 const CLAUDE_MODEL = "claude-haiku-4-5-20251001";
@@ -187,7 +188,7 @@ export async function classifyKeywords(
   if (uncached.length === 0) return out;
 
   // 3. Batch and call Claude in parallel
-  const client = new Anthropic();
+  const client = anthropicClient();
   const batches = chunk(uncached, BATCH_SIZE);
   const newRows: Array<{
     user_id: string;

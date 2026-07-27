@@ -12,6 +12,13 @@
  *   HEYGEN_API_KEY, HEYGEN_AVATAR_ID, HEYGEN_VOICE_ID, HEYGEN_BACKGROUND_URL
  */
 
+import { reportInsufficientCredit } from "@/lib/credit-alert";
+import {
+  INSUFFICIENT_CREDIT_MESSAGE,
+  InsufficientCreditError,
+  isCreditText,
+} from "@/lib/credit-error";
+
 const HEYGEN_API_KEY = process.env.HEYGEN_API_KEY;
 const BASE = "https://api.heygen.com";
 
@@ -111,6 +118,15 @@ export async function generateVideo({
       typeof json.error === "string"
         ? json.error
         : json.message ?? JSON.stringify(json.error ?? json);
+    // Quota de crédits HeyGen épuisé : message unique côté UI + DM Slack.
+    if (res.status === 402 || isCreditText(detail)) {
+      await reportInsufficientCredit({
+        provider: "HeyGen",
+        detail,
+        context: "Video Studio (HeyGen generate)",
+      });
+      throw new InsufficientCreditError("HeyGen", detail);
+    }
     throw new Error(`HeyGen generate failed (${res.status}): ${detail}`);
   }
 
@@ -152,6 +168,17 @@ export async function getVideoStatus(
   const errObj = json.data?.error;
   const error =
     typeof errObj === "string" ? errObj : errObj?.message ?? undefined;
+
+  // Un rendu peut aussi échouer pour crédit épuisé côté HeyGen : même message,
+  // même alerte que sur la soumission.
+  if (status === "failed" && isCreditText(error)) {
+    await reportInsufficientCredit({
+      provider: "HeyGen",
+      detail: error ?? "",
+      context: "Video Studio (HeyGen render)",
+    });
+    return { status, videoUrl: json.data?.video_url, error: INSUFFICIENT_CREDIT_MESSAGE };
+  }
 
   return { status, videoUrl: json.data?.video_url, error };
 }

@@ -17,6 +17,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { guardCredit } from "@/lib/credit-alert";
 import { executeTool } from "./tools/registry";
 import type { ToolContext } from "./tools/types";
 import { loadGuideBundle } from "./rag/guide-loader";
@@ -138,7 +139,12 @@ export async function runLoop(args: {
 
     apiStream.on("text", (delta) => emit({ type: "text", text: delta }));
 
-    const message = await apiStream.finalMessage();
+    // guardCredit : un crédit Anthropic à sec devient "Insufficient credit.
+    // See with Gaspard." dans la bulle + DM Slack à Gaspard/Arthur.
+    const message = await guardCredit(() => apiStream.finalMessage(), {
+      provider: "Claude (Anthropic)",
+      context: "CoachelloGPT chat",
+    });
     totalInputTokens += message.usage.input_tokens;
     totalOutputTokens += message.usage.output_tokens;
     totalCacheWriteTokens += message.usage.cache_creation_input_tokens ?? 0;

@@ -1,3 +1,6 @@
+import { reportInsufficientCredit } from "@/lib/credit-alert";
+import { isCreditText } from "@/lib/credit-error";
+
 export type TavilyResult = {
   title: string;
   url: string;
@@ -24,7 +27,19 @@ export async function searchTavily(
         days: opts.days ?? 90,
       }),
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      // Recherche web best-effort ([] en cas d'échec) : sans alerte Slack, un
+      // quota Tavily épuisé dégrade silencieusement briefings et watchlist.
+      const text = await res.text().catch(() => "");
+      if (res.status === 402 || res.status === 432 || isCreditText(text)) {
+        await reportInsufficientCredit({
+          provider: "Tavily",
+          detail: text.slice(0, 300) || `HTTP ${res.status}`,
+          context: "Tavily web search",
+        });
+      }
+      return [];
+    }
     const data = await res.json();
     return (data.results ?? []) as TavilyResult[];
   } catch {

@@ -13,6 +13,7 @@ import type {
   LinkedInPostDraft,
   LinkedInPostRecommendation,
 } from "@/lib/marketing-types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -424,7 +425,7 @@ Call \`propose_linkedin_posts\`.`;
   const prompt = isThemed ? themedPrompt : defaultPrompt;
 
   const model = await getModelPreference("marketing", ANALYSIS_MODEL);
-  const client = new Anthropic();
+  const client = anthropicClient();
   const message = await client.messages.create({
     model,
     max_tokens: isThemed ? 3500 : 2000,

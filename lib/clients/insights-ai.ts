@@ -1,10 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { withAnthropicRetry } from "../anthropic-retry";
 import { logUsage } from "../log-usage";
 import { getModelPreference } from "../models/get-model-preference";
 import { NO_EM_DASH_RULE_EN } from "@/lib/no-em-dash";
 import type { ClientEnrichmentContext } from "./context";
 import type { ClientFields, Health, Insights } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Génération IA des "Prioritized actions" (la reco de la card Health). Le
 // scoring (health.ts) et computeInsights (fallback) restent par règles ; ici on
@@ -131,7 +131,7 @@ Call the client_insights tool. Give 2 to 5 prioritized, CONCRETE actions specifi
 
 ${NO_EM_DASH_RULE_EN}`;
 
-  const client = new Anthropic({ timeout: 120_000 });
+  const client = anthropicClient({ timeout: 120_000 });
   const msg = await withAnthropicRetry(
     () =>
       client.messages.create({

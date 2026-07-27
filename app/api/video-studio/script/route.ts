@@ -6,6 +6,7 @@ import { logUsage } from "@/lib/log-usage";
 import { VIDEO_SCRIPT_GUIDE } from "@/lib/guides/video-script";
 import { stripEmDashes } from "@/lib/no-em-dash";
 import { lookupClientByName, loadClientContextById } from "@/lib/clients/video-context";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
   if (!prompt) return NextResponse.json({ error: "Prompt is required" }, { status: 400 });
 
   const model = await defaultModel();
-  const anthropic = new Anthropic();
+  const anthropic = anthropicClient();
   let matched: Matched | null = null;
 
   // Cas 1 : client forcé via lien direct -> contexte injecté, pas d'outil.

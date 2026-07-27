@@ -1,3 +1,5 @@
+import { asCreditError } from "@/lib/credit-alert";
+
 const RETRYABLE_STATUSES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 
 interface RetryOpts {
@@ -24,7 +26,11 @@ export async function withAnthropicRetry<T>(
     } catch (e) {
       const status = (e as { status?: number } | null)?.status;
       const retryable = typeof status === "number" && RETRYABLE_STATUSES.has(status);
-      if (!retryable || attempt >= maxAttempts) throw e;
+      // Crédit Anthropic à sec : inutile de réessayer, ça ne se recharge pas
+      // tout seul. On alerte Slack et on remonte le message propre à l'UI.
+      if (!retryable || attempt >= maxAttempts) {
+        throw await asCreditError(e, { provider: "Claude (Anthropic)", context: label });
+      }
       const exp = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
       const jitter = Math.floor(Math.random() * (exp / 2));
       const delay = exp + jitter;

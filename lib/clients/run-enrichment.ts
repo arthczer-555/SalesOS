@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { withAnthropicRetry } from "../anthropic-retry";
@@ -22,6 +21,7 @@ import { generateInsightsAI } from "./insights-ai";
 import { notifyOwnerOfEnrichedClient } from "./notify-owner";
 import { generateHubspotSuggestions } from "./hubspot-suggestions";
 import type { ClientFields } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export type RunEnrichmentResult =
   | { ok: true; alreadyDone?: boolean }
@@ -102,7 +102,7 @@ export async function runClientEnrichment(
     }
 
     const clientsModel = await getModelPreference("clients", CLIENT_EXTRACTION_MODEL);
-    const client = new Anthropic({ timeout: 600_000 });
+    const client = anthropicClient({ timeout: 600_000 });
 
     // Lance fields + coach brief EN PARALLÈLE. Même contexte d'input, on
     // doublonne les tokens d'entrée mais on divise le temps total par 2.

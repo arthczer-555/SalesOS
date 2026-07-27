@@ -1,10 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { withAnthropicRetry } from "../anthropic-retry";
 import { logUsage } from "../log-usage";
 import { getModelPreference } from "../models/get-model-preference";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import type { ClientEnrichmentContext } from "./context";
 import type { Health } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Phrase d'explication du health score, ancrée surtout sur les derniers
 // échanges. Le scoring (health.ts) ne regarde que la récence/volume des
@@ -56,7 +56,7 @@ ${recentMeetings || "(aucun meeting récent analysé)"}
 
 ${NO_EM_DASH_RULE}`;
 
-  const client = new Anthropic({ timeout: 120_000 });
+  const client = anthropicClient({ timeout: 120_000 });
   const msg = await withAnthropicRetry(
     () =>
       client.messages.create({

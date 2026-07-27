@@ -22,6 +22,7 @@ import { TOOLS } from "./tools/registry";
 import { buildSystem } from "./prompt/build";
 import { runLoop } from "./loop";
 import { ChatAuthError, type ChatEvent, type ChatResult } from "./events";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Sonnet par défaut : l'agent porte lui-même la décision de charger les bons
 // guides (pattern manifest), ce qui demande mieux que Haiku. Surchargeable par
@@ -65,7 +66,7 @@ export async function runChat(args: {
     claudeApiKey = process.env.ANTHROPIC_API_KEY ?? "";
   }
 
-  const client = new Anthropic({ apiKey: claudeApiKey, timeout: 600_000 });
+  const client = anthropicClient({ apiKey: claudeApiKey, timeout: 600_000 });
 
   // 2) user_prompt + modèle + owner + identité
   let chatModel = DEFAULT_CHAT_MODEL;

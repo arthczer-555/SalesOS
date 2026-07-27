@@ -4,6 +4,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { logUsage } from "@/lib/log-usage";
 import { db } from "@/lib/db";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 
@@ -155,7 +156,7 @@ export async function POST(req: NextRequest) {
   const myOwnerId: string | null = userRow?.hubspot_owner_id ?? null;
   const extra: ExtraFilters = { country, leadstatus, contacted, companysize, source, createdyear, ownerFilter, myOwnerId };
 
-  const client = new Anthropic();
+  const client = anthropicClient();
 
   const systemPrompt = `Tu es un assistant de prospection B2B. L'utilisateur cherche des prospects dans sa base HubSpot.
 Analyse sa demande en langage naturel, utilise l'outil search_contacts pour trouver les contacts les plus pertinents.

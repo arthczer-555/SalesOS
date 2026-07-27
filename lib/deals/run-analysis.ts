@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const DEFAULT_ANALYZE_MODEL = "claude-sonnet-4-6";
 
@@ -413,7 +414,7 @@ export async function runDealAnalysis(dealId: string, userId: string | null): Pr
       claapSection || null,
     ].filter(Boolean).join("\n").slice(0, 14000);
 
-    const client = new Anthropic({ timeout: 600_000 });
+    const client = anthropicClient({ timeout: 600_000 });
     const message = await client.messages.create({
       model: analyzeModel,
       max_tokens: 4000,

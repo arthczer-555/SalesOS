@@ -13,6 +13,8 @@
  *    Functions (mass-prospection) où on peut attendre plusieurs minutes.
  */
 
+import { reportInsufficientCredit } from "@/lib/credit-alert";
+import { InsufficientCreditError, isCreditText } from "@/lib/credit-error";
 import { BRIGHTDATA_API_KEY, authHeaders } from "./serp";
 
 const BASE = "https://api.brightdata.com/datasets/v3";
@@ -50,7 +52,18 @@ export async function triggerDataset(
     body: JSON.stringify(rows),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`Bright Data trigger ${res.status}: ${text.slice(0, 200)}`);
+  if (!res.ok) {
+    if (res.status === 402 || isCreditText(text)) {
+      const detail = text.slice(0, 300) || `HTTP ${res.status}`;
+      await reportInsufficientCredit({
+        provider: "Bright Data",
+        detail,
+        context: "Bright Data dataset trigger (LinkedIn)",
+      });
+      throw new InsufficientCreditError("Bright Data", detail);
+    }
+    throw new Error(`Bright Data trigger ${res.status}: ${text.slice(0, 200)}`);
+  }
   let json: { snapshot_id?: string };
   try {
     json = JSON.parse(text);

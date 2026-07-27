@@ -7,6 +7,7 @@ import { fetchAllArticles, hydrateArticleBodies } from "@/lib/wordpress";
 import { getModelPreference } from "@/lib/models/get-model-preference";
 import { NO_EM_DASH_RULE_EN, stripEmDashes } from "@/lib/no-em-dash";
 import type { ArticleDraft, ArticleRecommendation, InternalLink } from "@/lib/marketing-types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const ARTICLE_MODEL_DEFAULT = "claude-sonnet-4-6";
 
@@ -344,7 +345,7 @@ STRICT RULES:
       },
     };
 
-    const client = new Anthropic();
+    const client = anthropicClient();
     const articleModel = await getModelPreference("marketing", ARTICLE_MODEL_DEFAULT);
 
     async function writeLanguage(lang: "fr" | "en"): Promise<{

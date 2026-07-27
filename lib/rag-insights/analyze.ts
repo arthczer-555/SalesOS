@@ -27,6 +27,7 @@ import {
   type RagTurn,
   type RagVerdict,
 } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const BATCH = 12;
 const FALLBACK_MODEL = "claude-haiku-4-5-20251001";
@@ -138,7 +139,7 @@ function clampScore(raw: number | undefined): number {
 }
 
 async function judgeBatch(turns: RagTurn[], model: string): Promise<Map<number, RagJudgement>> {
-  const client = new Anthropic({ timeout: 120_000 });
+  const client = anthropicClient({ timeout: 120_000 });
   const list = turns.map((t, i) => renderTurn(t, i)).join("\n\n---\n\n");
 
   const msg = await withAnthropicRetry(

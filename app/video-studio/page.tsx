@@ -11,6 +11,7 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { EmptyState } from "@/components/ui/empty-state";
 import { StudioControls, type StudioSelection } from "./studio-controls";
 import type { VideoJob } from "@/lib/video/types";
+import { friendlyErrorMessage } from "@/lib/credit-error";
 
 // Le fetcher SWR doit throw sur non-2xx (sinon le body d'erreur devient `data`).
 // Voir mémoire [[feedback_swr_fetcher_silent_500]].
@@ -129,7 +130,7 @@ function VideoStudio() {
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
       setJobs(data.jobs ?? []);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
+      setError(friendlyErrorMessage(e instanceof Error ? e.message : "Error"));
     }
   }, []);
 
@@ -168,7 +169,7 @@ function VideoStudio() {
       setScript(data.script);
       setDetected(data.client ?? null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
+      setError(friendlyErrorMessage(e instanceof Error ? e.message : "Error"));
     } finally {
       setScripting(false);
     }
@@ -198,7 +199,7 @@ function VideoStudio() {
       if (!res.ok || !data.job) throw new Error(data.error ?? `HTTP ${res.status}`);
       setJobs((prev) => [data.job as VideoJob, ...prev]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Error");
+      setError(friendlyErrorMessage(e instanceof Error ? e.message : "Error"));
     } finally {
       setRendering(false);
     }
@@ -935,7 +936,7 @@ function VideoCard({ job }: { job: VideoJob }) {
           </div>
         </div>
       )}
-      {job.status === "failed" && <div style={{ fontSize: 12, color: COLORS.err }}>{job.error ?? "Generation failed"}</div>}
+      {job.status === "failed" && <div style={{ fontSize: 12, color: COLORS.err }}>{friendlyErrorMessage(job.error ?? "Generation failed")}</div>}
       {job.status === "completed" && job.video_url && (
         <video controls src={job.video_url} style={{ width: "100%", borderRadius: RADIUS.md, background: "#000" }} />
       )}

@@ -19,6 +19,7 @@ import {
   type Message,
 } from "./chat-message";
 import { COLORS } from "@/lib/design/tokens";
+import { friendlyErrorMessage } from "@/lib/credit-error";
 
 type ApiMessage = { role: "user" | "assistant"; content: unknown };
 type ToolStep = { name: string | null; label: string };
@@ -332,7 +333,10 @@ export function ChatWorkspace({ initialConversationId }: { initialConversationId
 
         if (job.status === "error") {
           pollRef.current = null;
-          setMessages((prev) => [...prev, { role: "assistant", content: `Error: ${job.error || "Unknown error"}` }]);
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: `Error: ${friendlyErrorMessage(job.error)}` },
+          ]);
           setStreamingText("");
           setToolSteps([]);
           setLoading(false);

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
     const { data: modelPrefs } = await db.from("guide_defaults").select("content").eq("key", "model_preferences").single();
     const emailModel = (() => { try { return (JSON.parse(modelPrefs?.content ?? "{}") as Record<string, string>).deals_email ?? "claude-haiku-4-5-20251001"; } catch { return "claude-haiku-4-5-20251001"; } })();
 
-    const client = new Anthropic();
+    const client = anthropicClient();
     const message = await client.messages.create({
       model: emailModel,
       max_tokens: 1024,

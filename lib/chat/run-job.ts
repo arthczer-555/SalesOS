@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
+import { friendlyErrorMessage } from "@/lib/credit-error";
 import { runChat, ChatAuthError, type ChatEvent, type ChatSource } from "@/lib/chat/core";
 import { chatToolLabel } from "@/lib/chat/tool-labels";
 
@@ -197,12 +198,15 @@ export async function runChatJob(input: { jobId: string }): Promise<{ ok: boolea
   } catch (e) {
     stopHeartbeat();
     await flushPromise.catch(() => {});
-    const message =
+    // friendlyErrorMessage : filet pour un crédit à sec remonté par un chemin
+    // non instrumenté (le message brut du fournisseur ne dit rien à un sales).
+    const message = friendlyErrorMessage(
       e instanceof ChatAuthError
         ? e.message
         : e instanceof Error
           ? e.message
-          : String(e);
+          : String(e),
+    );
     await db
       .from("chat_jobs")
       .update({ status: "error", error: message, updated_at: new Date().toISOString() })

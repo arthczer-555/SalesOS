@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 
@@ -115,7 +115,7 @@ export async function GET(req: NextRequest) {
 
   if (contextBlock.trim()) {
     try {
-      const client = new Anthropic();
+      const client = anthropicClient();
       const message = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 700,

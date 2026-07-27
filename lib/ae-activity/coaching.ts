@@ -12,6 +12,7 @@ import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { getModelPreference } from "@/lib/models/get-model-preference";
 import type { Coaching } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 type AnalysisJson = {
   meeting_kind?: string;
@@ -85,7 +86,7 @@ async function synthesize(
     .join("\n\n");
 
   try {
-    const client = new Anthropic({ timeout: 40_000 });
+    const client = anthropicClient({ timeout: 40_000 });
     const msg = await client.messages.create({
       model,
       max_tokens: 700,

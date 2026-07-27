@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { logUsage } from "./log-usage";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export type HubspotObjectType = "contacts" | "deals" | "companies" | "leads";
 
@@ -1141,7 +1142,7 @@ async function resolveDealViaLLM(
   ].join("\n");
 
   try {
-    const client = new Anthropic({ timeout: 30_000 });
+    const client = anthropicClient({ timeout: 30_000 });
     const msg = await client.messages.create({
       model: DEAL_MATCH_MODEL,
       max_tokens: 300,

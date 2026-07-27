@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
-import Anthropic from "@anthropic-ai/sdk";
 import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
 
   const { name, jobTitle, company, industry, lifecyclestage } = await req.json();
 
-  const client = new Anthropic();
+  const client = anthropicClient();
   const response = await client.messages.create({
     model: "claude-haiku-4-5",
     max_tokens: 128,

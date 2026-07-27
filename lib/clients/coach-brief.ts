@@ -5,6 +5,7 @@ import { getModelPreference } from "../models/get-model-preference";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { renderClientContextForPrompt, type ClientEnrichmentContext } from "./context";
 import type { CoachBrief } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Brief client à destination des coachs Coachello. C'est ce qu'on envoie sur
 // le canal Slack des coachs au moment du staffing, suivant un template
@@ -134,7 +135,7 @@ export async function generateCoachBrief(
   const model = await getModelPreference("clients", COACH_BRIEF_MODEL);
   const prompt = renderClientContextForPrompt(ctx);
 
-  const client = new Anthropic({ timeout: 600_000 });
+  const client = anthropicClient({ timeout: 600_000 });
   const msg = await withAnthropicRetry(
     () =>
       client.messages.create({

@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { withAnthropicRetry } from "@/lib/anthropic-retry";
 import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
@@ -7,6 +6,7 @@ import { signalScoringTool, SIGNAL_ANALYSIS_PROMPT } from "@/lib/signal-scoring"
 import { normCompany } from "./resolve-company";
 import type { RawItem, ScoredSignal, SignalType, SignalFeed } from "./types";
 import { rawDateToIso } from "./sources";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Haiku : tri/scoring de masse sur beaucoup d'items, rapide et économique.
 const MODEL = "claude-haiku-4-5-20251001";
@@ -142,7 +142,7 @@ async function scoreBatch(items: RawItem[], userId: string | null): Promise<Scor
 
   const system = `${SIGNAL_ANALYSIS_PROMPT}\n\nIMPORTANT : pour chaque signal émis, recopie EXACTEMENT dans "index" le numéro [N] de l'item analysé (le crochet en tête de ligne) et dans "source_url" l'URL fournie de cet item (champ "URL:"). N'invente aucune URL ni aucun index. ${NO_EM_DASH_RULE}\n\n${BUSINESS_CONTEXT_PROMPT_BLOCK}`;
 
-  const client = new Anthropic({ timeout: 120_000 });
+  const client = anthropicClient({ timeout: 120_000 });
   const msg = await withAnthropicRetry(
     () =>
       client.messages.create({

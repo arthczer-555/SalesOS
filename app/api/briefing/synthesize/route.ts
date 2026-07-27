@@ -6,6 +6,7 @@ import { decrypt } from "@/lib/crypto";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -397,7 +398,7 @@ ${contextBlock || "Aucune donnée trouvée dans les sources connectées."}
 
 Génère le briefing pour cette réunion.`;
 
-    const client = new Anthropic({ apiKey: claudeApiKey });
+    const client = anthropicClient({ apiKey: claudeApiKey });
     const message = await client.messages.create({
       model: briefingModel,
       max_tokens: 5000,

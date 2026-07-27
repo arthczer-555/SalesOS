@@ -12,6 +12,9 @@
  * dans `ApolloResult` (la page de test lit data + rateLimit même en erreur).
  */
 
+import { reportInsufficientCredit } from "@/lib/credit-alert";
+import { INSUFFICIENT_CREDIT_MESSAGE, isCreditText } from "@/lib/credit-error";
+
 const APOLLO_API_KEY = process.env.APOLLO_API_KEY;
 const BASE = "https://api.apollo.io/v1";
 
@@ -99,7 +102,17 @@ async function apolloFetch<T>(endpoint: string, body: Record<string, unknown>): 
   } catch {
     data = { raw: text };
   }
-  const error = res.ok ? undefined : ((data as { error?: string })?.error ?? `HTTP ${res.status}`);
+  let error = res.ok ? undefined : ((data as { error?: string })?.error ?? `HTTP ${res.status}`);
+  // Crédits Apollo épuisés (402 ou message explicite) : message unique côté UI
+  // + DM Slack à Gaspard/Arthur. On garde le contrat "ne lève jamais".
+  if (!res.ok && (res.status === 402 || isCreditText(text) || isCreditText(error))) {
+    await reportInsufficientCredit({
+      provider: "Apollo",
+      detail: error ?? text,
+      context: `Apollo ${endpoint}`,
+    });
+    error = INSUFFICIENT_CREDIT_MESSAGE;
+  }
   return { ok: res.ok, status: res.status, ms, data, rateLimit, error };
 }
 

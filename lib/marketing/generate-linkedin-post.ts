@@ -6,6 +6,7 @@ import { BUSINESS_CONTEXT_PROMPT_BLOCK } from "@/lib/business-context";
 import { NO_EM_DASH_RULE_EN, stripEmDashes } from "@/lib/no-em-dash";
 import { fetchLinkedInTrends, type LinkedInTrendItem } from "@/lib/marketing/linkedin-trends";
 import type { GeneratedLinkedInPost, LinkedInPostDraft, LinkedInPostRecommendation } from "@/lib/marketing-types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const POST_MODEL_DEFAULT = "claude-sonnet-4-6";
 
@@ -162,7 +163,7 @@ Write the posts in ENGLISH only.`;
       },
     };
 
-    const client = new Anthropic();
+    const client = anthropicClient();
     const model = await getModelPreference("marketing", POST_MODEL_DEFAULT);
 
     const prompt = `You are Coachello's senior social editor. You write LinkedIn posts that HR/L&D leaders actually stop to read and comment on - opinionated, concrete, human.

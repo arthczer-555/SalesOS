@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { sendSalesCoachSlack } from "./slack";
@@ -32,6 +31,7 @@ import {
   type MeetingRecap,
 } from "./meeting-recap";
 import { scoreOneDeal } from "../deal-scoring";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const DEFAULT_ANALYZE_MODEL = "claude-haiku-4-5-20251001";
 const MAX_TRANSCRIPT_CHARS_FOR_CLAUDE = 150_000;
@@ -325,7 +325,7 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
 
       // Streaming keeps the TCP connection active during generation — see
       // earlier note. Same rationale for both calls below.
-      const client = new Anthropic({ timeout: 600_000 });
+      const client = anthropicClient({ timeout: 600_000 });
       // Haiku 4.5 occasionally returns axes/meddic/bosche as a JSON string
       // spread char-by-char into a numeric-keyed object — unrecoverable client-
       // side. Validate shape and retry once before giving up.
@@ -408,7 +408,7 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
         transcriptForClaude,
       ].filter(Boolean).join("\n");
 
-      const client = new Anthropic({ timeout: 600_000 });
+      const client = anthropicClient({ timeout: 600_000 });
       const coachingStreamP = (async () => {
         for (let attempt = 1; attempt <= 2; attempt++) {
           const msg = await client.messages.stream({

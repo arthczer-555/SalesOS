@@ -6,6 +6,7 @@ import { logUsage } from "@/lib/log-usage";
 import { repairAnalysis, type SalesCoachAnalysis } from "@/lib/guides/sales-coach";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import type { DealSnapshot } from "@/lib/hubspot";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -124,7 +125,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     "Utilise l'outil email_draft pour retourner le sujet + le corps.",
   ].filter(Boolean).join("\n");
 
-  const client = new Anthropic({ timeout: 60_000 });
+  const client = anthropicClient({ timeout: 60_000 });
   const message = await client.messages.create({
     model,
     max_tokens: 1500,

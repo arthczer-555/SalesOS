@@ -1,9 +1,9 @@
 // Deal scoring algorithm based on 3 Coachello models (Generic, Human Coaching, AI Coaching)
 
-import Anthropic from "@anthropic-ai/sdk";
 import { db } from "./db";
 import { logUsage } from "./log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const DEFAULT_SCORE_MODEL = "claude-haiku-4-5-20251001";
 
@@ -638,7 +638,7 @@ key_events : extrais les moments DATÉS qui retracent le parcours du deal (devis
 
 ${NO_EM_DASH_RULE}`;
 
-  const client = new Anthropic();
+  const client = anthropicClient();
   const message = await client.messages.create({
     model: claudeModel,
     max_tokens: 1500,

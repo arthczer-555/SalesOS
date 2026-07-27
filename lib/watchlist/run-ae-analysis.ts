@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { loadCompanyHubspotContext } from "@/lib/watchlist/fetch-company-recap";
@@ -25,6 +24,7 @@ import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import { SALES_CONTEXT_PROMPT_BLOCK } from "@/lib/business-context";
 import type { AeRelationshipState } from "@/lib/watchlist/briefs";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -290,7 +290,7 @@ export async function runAeAnalysis(input: {
     // Jusqu'à 10 opening messages de 100-200 mots : plafond et timeout relevés
     // en conséquence (la BG fn Netlify laisse largement le temps). En mode
     // "analyse seule" (sans messages), la sortie est bien plus courte.
-    const client = new Anthropic({ timeout: 300_000, maxRetries: 1 });
+    const client = anthropicClient({ timeout: 300_000, maxRetries: 1 });
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: withMessages ? 8000 : 2500,

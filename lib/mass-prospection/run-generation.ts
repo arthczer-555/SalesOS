@@ -8,7 +8,6 @@
  * campagne pendant ce temps.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
@@ -19,6 +18,7 @@ import {
   fetchLinkedInContext,
 } from "@/lib/prospect-enrichment";
 import type { DraftProvenance } from "@/lib/prospection/provenance";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const BATCH_SIZE = 5;
 
@@ -83,7 +83,7 @@ export async function runCampaignGeneration(
   // généreux pour maximiser le taux d'enrichissement LinkedIn.
   const getCompanyContext = createCompanyContextCache();
   const getCompanyLinkedIn = createCompanyLinkedInCache(60_000);
-  const client = new Anthropic();
+  const client = anthropicClient();
   let generated = 0;
   let errors = 0;
 

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import Anthropic from "@anthropic-ai/sdk";
 import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE_EN, stripEmDashes } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export async function POST(
   req: NextRequest,
@@ -36,7 +36,7 @@ export async function POST(
   let generatedTitle: string | null = null;
   if (isFirst) {
     try {
-      const client = new Anthropic();
+      const client = anthropicClient();
       const msg = await client.messages.create({
         model: "claude-haiku-4-5-20251001",
         max_tokens: 30,

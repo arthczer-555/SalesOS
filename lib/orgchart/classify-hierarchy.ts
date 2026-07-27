@@ -17,6 +17,7 @@ import {
   type DecisionRole,
 } from "./types";
 import { wouldCreateCycle } from "./graph";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const MODEL_DEFAULT = "claude-sonnet-4-6";
 const MAX_CONTACTS = 150;
@@ -121,7 +122,7 @@ export async function classifyHierarchy(
   let raw: { index: number; entity?: string | null; department?: string | null; level?: string; decision_role?: string; reportsToIndex?: number | null; confidence?: number }[] = [];
   try {
     const model = await getModelPreference("orgchart", MODEL_DEFAULT);
-    const client = new Anthropic({ timeout: 120_000, maxRetries: 1 });
+    const client = anthropicClient({ timeout: 120_000, maxRetries: 1 });
     const msg = await client.messages.create({
       model,
       max_tokens: 8000,

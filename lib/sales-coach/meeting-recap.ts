@@ -15,6 +15,7 @@ import {
   resolveMeetingParticipantRecipients,
   type MeetingRecipient,
 } from "./slack-recipients";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const DEFAULT_RECAP_MODEL = "claude-haiku-4-5-20251001";
 
@@ -248,7 +249,7 @@ export async function generateMeetingRecap(args: {
 
   sections.push("", `## Transcription du meeting`, args.transcript);
 
-  const client = new Anthropic({ timeout: 600_000 });
+  const client = anthropicClient({ timeout: 600_000 });
   const stream = client.messages.stream({
     model,
     max_tokens: 4000,

@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { withAnthropicRetry } from "@/lib/anthropic-retry";
 import { logUsage } from "@/lib/log-usage";
 import { getModelPreference } from "@/lib/models/get-model-preference";
@@ -10,6 +9,7 @@ import {
   type HubspotFieldSuggestion,
   type HubspotFieldSuggestions,
 } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Haiku : on genere jusqu'a ~30 suggestions de champs en un appel. Sonnet est
 // trop lent ici (~30s pour tout le batch) et depasse le timeout des fonctions
@@ -88,7 +88,7 @@ ${missingList}
 Appelle l'outil hubspot_field_suggestions. Pour chaque champ vide, propose une valeur concrète directement insérable dans HubSpot, ancrée dans les données ci-dessus. Pour un champ "enumeration", renvoie EXACTEMENT une des valeurs autorisées listées entre guillemets (copie la valeur telle quelle). Pour un nombre, renvoie un nombre. Pour une date, renvoie YYYY-MM-DD. Une justification TRÈS courte par champ (max ~12 mots). N'invente pas : si aucune base ne permet de proposer une valeur, omets le champ. Rédige le texte libre dans la langue source des données (ne traduis pas). N'utilise jamais de tiret long (-).`;
 
   const model = await getModelPreference("clients", MODEL);
-  const client = new Anthropic({ timeout: 120_000 });
+  const client = anthropicClient({ timeout: 120_000 });
   const msg = await withAnthropicRetry(
     () =>
       client.messages.create({

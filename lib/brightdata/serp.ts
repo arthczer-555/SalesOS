@@ -8,6 +8,9 @@
  * LinkedIn via `site:linkedin.com/in`.
  */
 
+import { reportInsufficientCredit } from "@/lib/credit-alert";
+import { isCreditText } from "@/lib/credit-error";
+
 export const BRIGHTDATA_API_KEY = process.env.BRIGHTDATA_API_KEY;
 export const SERP_ZONE = process.env.BRIGHTDATA_SERP_ZONE || "salesos_serp";
 const REQUEST_ENDPOINT = "https://api.brightdata.com/request";
@@ -66,6 +69,16 @@ export async function fetchSerp(googleUrl: string): Promise<SerpResult> {
       isJson = true;
     } catch {
       // garde le texte brut (HTML d'erreur, page non parsée, etc.)
+    }
+
+    // Best-effort côté appelant : une zone sans balance renvoie juste [] plus
+    // haut, personne ne voit rien. L'alerte Slack est ici le seul signal.
+    if (!res.ok && (res.status === 402 || isCreditText(text))) {
+      await reportInsufficientCredit({
+        provider: "Bright Data",
+        detail: text.slice(0, 300) || `HTTP ${res.status}`,
+        context: "Bright Data SERP (Signals / veille marché)",
+      });
     }
 
     return { status: res.status, ok: res.ok, ms, sentBody, data, isJson };

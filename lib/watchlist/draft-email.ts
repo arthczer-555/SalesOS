@@ -6,6 +6,7 @@ import { loadClientsRoster, formatClientsRoster } from "@/lib/watchlist/clients-
 import { getBriefs, type AeAnalysisContent, type HubspotRecapContent, type NewsContent } from "@/lib/watchlist/briefs";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const MODEL = "claude-sonnet-4-6";
 
@@ -116,7 +117,7 @@ export async function draftProspectionEmail(params: DraftEmailParams): Promise<D
   });
 
   try {
-    const client = new Anthropic({ timeout: 60_000, maxRetries: 1 });
+    const client = anthropicClient({ timeout: 60_000, maxRetries: 1 });
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 1500,

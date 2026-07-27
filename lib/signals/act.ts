@@ -8,6 +8,7 @@ import { searchPeople as searchLinkedinPeople } from "@/lib/brightdata/linkedin"
 import { hubspotFetch, hubspotAssociate, createCompany } from "@/lib/hubspot";
 import { resolveHubspotCompanyId } from "@/lib/watchlist/resolve-hubspot-company";
 import type { SignalRow, SignalCandidate, SignalAuthor } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Mots-clés ICP pour reconnaître un bon contact (buyer RH / People / L&D).
 const ICP_KEYWORDS = ["chro", "drh", "ressources humaines", "human resources", "people", "talent", "l&d", "learning", "hrbp", "rh", "formation"];
@@ -239,7 +240,7 @@ const NOMINEE_TOOL: Anthropic.Tool = {
  */
 async function extractNominees(sig: SignalRow): Promise<NomineePerson[]> {
   if (!process.env.ANTHROPIC_API_KEY) return [];
-  const client = new Anthropic({ timeout: 30_000, maxRetries: 1 });
+  const client = anthropicClient({ timeout: 30_000, maxRetries: 1 });
   const msg = await client.messages.create({
     model: NOMINEE_MODEL,
     max_tokens: 400,
@@ -303,7 +304,7 @@ async function extractAuthorCompany(
   postSummary: string,
 ): Promise<{ company: string | null; title: string | null } | null> {
   if (!process.env.ANTHROPIC_API_KEY || (!headline && !postSummary)) return null;
-  const client = new Anthropic({ timeout: 20_000, maxRetries: 1 });
+  const client = anthropicClient({ timeout: 20_000, maxRetries: 1 });
   const msg = await client.messages.create({
     model: NOMINEE_MODEL,
     max_tokens: 150,

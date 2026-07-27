@@ -4,6 +4,7 @@ import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { logUsage } from "@/lib/log-usage";
 import type { MarketArticle } from "@/lib/brightdata/serp";
 import type { NewsSignalSnapshot } from "@/lib/watchlist/briefs";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Haiku : tâche de tri/synthèse sur beaucoup d'articles, rapide et économique.
 const MODEL = "claude-haiku-4-5-20251001";
@@ -106,7 +107,7 @@ export async function analyzeMarketNews(
 
   let parsed: { summary?: string; items?: IntelItem[] };
   try {
-    const client = new Anthropic({ timeout: 120_000 });
+    const client = anthropicClient({ timeout: 120_000 });
     const msg = await withAnthropicRetry(
       () =>
         client.messages.create({

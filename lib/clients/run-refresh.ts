@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { withAnthropicRetry } from "../anthropic-retry";
@@ -27,6 +26,7 @@ import {
   type RefreshReport,
   type SectionKey,
 } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Refresh incrémental — version LÉGÈRE de l'enrichissement. Ne tourne que sur
 // un client déjà 'done'. Prend en compte les activités nouvelles depuis le
@@ -274,7 +274,7 @@ export async function runClientRefresh(
     // ── Fields : ré-extraction seulement s'il y a du nouveau ──────────────────
     if (newActivityCount > 0) {
       const contextPrompt = renderClientContextForPrompt(ctx);
-      const client = new Anthropic({ timeout: 600_000 });
+      const client = anthropicClient({ timeout: 600_000 });
       const msg = await withAnthropicRetry(
         () =>
           client.messages.create({

@@ -12,6 +12,7 @@ import { NO_EM_DASH_RULE_EN } from "@/lib/no-em-dash";
 import { runArticleGeneration } from "@/lib/marketing/generate-article";
 import { getModelPreference } from "@/lib/models/get-model-preference";
 import type { Keyword, KeywordRelevance } from "@/lib/marketing-types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const ANALYSIS_MODEL = "claude-haiku-4-5-20251001";
 
@@ -552,7 +553,7 @@ Rules:
 Call \`propose_content_gaps\`.`;
 
   const model = await getModelPreference("marketing", ANALYSIS_MODEL);
-  const client = new Anthropic();
+  const client = anthropicClient();
   const message = await client.messages.create({
     model,
     max_tokens: 2000,
@@ -671,7 +672,7 @@ Do NOT propose alternatives or several ideas. Stick to this exact subject and ju
 Call the \`prepare_article\` tool with your output.`;
 
     const model = await getModelPreference("marketing", ANALYSIS_MODEL);
-    const client = new Anthropic();
+    const client = anthropicClient();
     const message = await client.messages.create({
       model,
       max_tokens: 600,
@@ -827,7 +828,7 @@ ${keywordsText}
 Call the \`suggest_articles_on_theme\` tool with your output.`;
 
   const model = await getModelPreference("marketing", ANALYSIS_MODEL);
-  const client = new Anthropic();
+  const client = anthropicClient();
   const message = await client.messages.create({
     model,
     max_tokens: 3000,

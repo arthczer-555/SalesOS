@@ -3,6 +3,7 @@ import { withAnthropicRetry } from "../anthropic-retry";
 import { logUsage } from "../log-usage";
 import { getModelPreference } from "../models/get-model-preference";
 import type { News, NewsCategory } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Tri/filtrage des news par Claude Haiku. Tavily renvoie jusqu'à 8 résultats
 // bruts (souvent du bruit : tickers boursiers, homonymes, listicles). Ici on
@@ -88,7 +89,7 @@ ${list}`;
 
   let parsed: RankResult[] = [];
   try {
-    const client = new Anthropic({ timeout: 120_000 });
+    const client = anthropicClient({ timeout: 120_000 });
     const msg = await withAnthropicRetry(
       () =>
         client.messages.create({

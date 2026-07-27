@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import Anthropic from "@anthropic-ai/sdk";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
@@ -11,6 +10,7 @@ import {
   type MissingInfoEmailDraft,
 } from "@/lib/clients/types";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -69,7 +69,7 @@ async function generateDraft(client: ClientRow, senderName: string, userId: stri
   ].join("\n");
 
   const model = await defaultModel();
-  const anthropic = new Anthropic();
+  const anthropic = anthropicClient();
   const message = await anthropic.messages.create({
     model,
     max_tokens: 1024,

@@ -24,6 +24,7 @@ import { isNotionConfigured } from "@/lib/notion/client";
 import { listChildPages } from "@/lib/notion/read";
 import { computeStats, failingTurns } from "./stats";
 import type { RagAnalysisRow, RagGapReport } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const FALLBACK_MODEL = "claude-sonnet-4-6";
 const ROOT_PAGE_ID = process.env.NOTION_ROOT_PAGE_ID ?? "3911c2f23b0e81368321d2f8a4ea524e";
@@ -171,7 +172,7 @@ Rules:
 
 ${NO_EM_DASH_RULE_EN}`;
 
-  const client = new Anthropic({ timeout: 180_000 });
+  const client = anthropicClient({ timeout: 180_000 });
   const msg = await withAnthropicRetry(
     () =>
       client.messages.create({

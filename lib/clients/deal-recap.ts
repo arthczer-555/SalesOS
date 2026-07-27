@@ -5,6 +5,7 @@ import { getModelPreference } from "../models/get-model-preference";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { renderClientContextForPrompt, type ClientEnrichmentContext } from "./context";
 import type { DealRecap } from "./types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 // Recap "comment ce deal a été signé" - style Coachello-GPT.
 // Format structuré pour pouvoir réutiliser la timeline dans une fiche CS,
@@ -129,7 +130,7 @@ export async function generateDealRecap(
   const model = await getModelPreference("clients", DEAL_RECAP_MODEL);
   const prompt = renderClientContextForPrompt(ctx);
 
-  const client = new Anthropic({ timeout: 600_000 });
+  const client = anthropicClient({ timeout: 600_000 });
   const msg = await withAnthropicRetry(
     () =>
       client.messages.create({

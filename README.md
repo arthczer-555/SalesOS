@@ -308,6 +308,9 @@ SLACK_NEW_MEETINGS_CHANNEL=           # (optionnel) id du canal Slack #1y-new-me
 RAG_INSIGHTS_SLACK_MODE=              # "prod" (DM Arthur + RAG_INSIGHTS_RECIPIENTS) | "test" (défaut, DM Arthur seul)
 RAG_INSIGHTS_RECIPIENTS=              # (optionnel) emails destinataires en prod, séparés par des virgules. Défaut : gaspard@coachello.io
 NOTION_ROOT_PAGE_ID=                  # (optionnel) racine 🧭 DATABASE, partagée avec l'explorateur Notion. Défaut : la page actuelle.
+
+# Alerte crédit épuisé (Claude, Apollo, HeyGen, Bright Data, Tavily)
+CREDIT_ALERT_RECIPIENTS=              # (optionnel) emails DM Slack en cas de crédit à sec, séparés par des virgules. Défaut : gaspard@coachello.io (Arthur est toujours ajouté)
 ```
 
 > Ne jamais committer `.env.local`. Il est dans `.gitignore`.
@@ -665,6 +668,9 @@ Voir section 11 pour les détails.
 - **[crypto.ts](lib/crypto.ts)** — AES-256-GCM. Pour clés API Claude et refresh tokens OAuth.
 - **[admin.ts](lib/admin.ts)** — Vérification des droits admin.
 - **[log-usage.ts](lib/log-usage.ts)** — `logUsage()` fire-and-forget → table `usage_logs`.
+- **[credit-error.ts](lib/credit-error.ts)** — Détection "crédit épuisé" chez un fournisseur payant + message unique côté UI : **"Insufficient credit. See with Gaspard."** (`isCreditText`, `friendlyErrorMessage`, `InsufficientCreditError`). Isomorphe (le front l'importe). Ne matche jamais un rate limit (429), qui se réessaie au lieu de se recharger.
+- **[credit-alert.ts](lib/credit-alert.ts)** — Alerte Slack : DM à `CREDIT_ALERT_RECIPIENTS` (défaut `gaspard@coachello.io`) **+ Arthur**, une fois par fournisseur toutes les 30 min (anti-spam en mémoire process). `guardCredit()` / `asCreditError()` / `reportInsufficientCredit()`.
+- **[anthropic-client.ts](lib/anthropic-client.ts)** — `anthropicClient()` remplace `new Anthropic()` **partout** (~90 appels) : même client, plus un `fetch` qui repère la réponse crédit d'Anthropic (un 400 "Your credit balance is too low"), alerte Slack et la remplace par un 402 dont le message est déjà celui montré au user. Points branchés en plus : [anthropic-retry.ts](lib/anthropic-retry.ts), [chat/loop.ts](lib/chat/loop.ts) (chat), [apollo/client.ts](lib/apollo/client.ts), [heygen/client.ts](lib/heygen/client.ts), [brightdata/](lib/brightdata/), [tavily.ts](lib/tavily.ts).
 
 ### Intégrations
 - **[hubspot.ts](lib/hubspot.ts)** — Client HubSpot CRM (contacts, deals, companies, associations batch, context rendering pour l'IA).

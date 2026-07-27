@@ -23,6 +23,7 @@ import {
   type LeadFile,
   type LeadMatchStrategy,
 } from "@/lib/marketing-types";
+import { anthropicClient } from "@/lib/anthropic-client";
 
 const ANALYZE_MODEL = "claude-haiku-4-5-20251001";
 const MAX_IMAGES_PER_LEAD = 3;
@@ -186,7 +187,7 @@ async function extractLeadInfo(lead: Lead): Promise<{
     },
   ];
 
-  const client = new Anthropic({ timeout: 60_000, maxRetries: 0 });
+  const client = anthropicClient({ timeout: 60_000, maxRetries: 0 });
   const message = await withAnthropicRetry(
     () =>
       client.messages.create({
