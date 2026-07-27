@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import {
+  getAvatarDetails,
   listAvatarGroupLooks,
   listAvatarGroups,
   listAvatars,
@@ -37,37 +38,49 @@ function envDefaults(): StudioDefaults {
 // `group_type=PUBLIC` distingue les avatars studio pro. `kind=init` ne renvoie donc
 // que langues + défauts + l'avatar par défaut résolu (pas les listes complètes).
 export async function GET(req: NextRequest) {
-  const user = await getAuthenticatedUser();
-  if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
-  if (!process.env.HEYGEN_API_KEY) {
-    return NextResponse.json({ error: "HEYGEN_API_KEY missing" }, { status: 500 });
-  }
-
   const params = req.nextUrl.searchParams;
   const kind = (params.get("kind") ?? "").trim().toLowerCase();
 
+  // L'auth est dans le try : si elle jette (session Clerk illisible, Supabase
+  // KO), on renvoie un JSON d'erreur exploitable plutôt qu'un 500 HTML opaque
+  // que le front affichait sous la forme "(HTTP 500)".
   try {
+    const user = await getAuthenticatedUser();
+    if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    if (!process.env.HEYGEN_API_KEY) {
+      return NextResponse.json({ error: "HEYGEN_API_KEY missing" }, { status: 500 });
+    }
+
     // ── UI : langues + défauts + avatar par défaut résolu ─────────────────
     // On NE renvoie PLUS les milliers d'avatars du compte : le sélecteur passe
     // par les personas (kind=avatar_groups). On résout juste l'avatar par
     // défaut (Teresa, un talking_photo) pour l'afficher avec nom + preview.
+    // ATTENTION : ne PAS appeler listAvatars() ici. Sur ce compte HeyGen,
+    // GET /v2/avatars met ~63 s (1264 avatars) et dépassait le timeout de la
+    // fonction : la route mourait avant de répondre et le front affichait
+    // "Studio options unavailable (HTTP 500)". En prime l'endpoint renvoie
+    // `talking_photos: []`, donc l'avatar par défaut (Teresa, un photo avatar)
+    // n'y était de toute façon jamais trouvé. On le résout par son id avec
+    // getAvatarDetails (~0,5 s), en best-effort : s'il échoue, le front
+    // retombe sur son placeholder qui garde l'id env.
     if (kind === "init") {
       const defaults = envDefaults();
-      const [avatarsRes, voices] = await Promise.all([listAvatars(), listVoices()]);
+      const [voices, details] = await Promise.all([
+        listVoices(),
+        defaults.avatarId ? getAvatarDetails(defaults.avatarId).catch(() => null) : null,
+      ]);
       const languages = Array.from(
         new Set(voices.map((v) => (v.language ?? "").trim()).filter(Boolean)),
       ).sort((a, b) => a.localeCompare(b));
 
-      let defaultAvatar: StudioAvatar | undefined;
-      if (defaults.avatarId) {
-        const tp = avatarsRes.talking_photos.find((p) => p.talking_photo_id === defaults.avatarId);
-        const av = avatarsRes.avatars.find((a) => a.avatar_id === defaults.avatarId);
-        if (tp) {
-          defaultAvatar = { id: tp.talking_photo_id, type: "talking_photo", name: tp.talking_photo_name ?? "Photo avatar", preview: tp.preview_image_url };
-        } else if (av) {
-          defaultAvatar = { id: av.avatar_id, type: "avatar", name: av.avatar_name, preview: av.preview_image_url };
-        }
-      }
+      const defaultAvatar: StudioAvatar | undefined = details
+        ? {
+            id: details.id,
+            type: details.type,
+            name: details.name ?? (details.type === "talking_photo" ? "Photo avatar" : "Avatar"),
+            preview: details.preview,
+          }
+        : undefined;
       return NextResponse.json({ languages, defaults, defaultAvatar });
     }
 
@@ -112,6 +125,8 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Legacy : helper de config dev (catalogue brut filtré) ─────────────
+    // Passe par listAvatars() (~60 s sur ce compte) : à n'appeler qu'en local,
+    // jamais depuis l'UI, sous peine de timeout de la fonction.
     const q = (params.get("q") ?? "").trim().toLowerCase();
     const lang = (params.get("lang") ?? "").trim().toLowerCase();
     const gender = (params.get("gender") ?? "").trim().toLowerCase();
@@ -139,6 +154,6 @@ export async function GET(req: NextRequest) {
       voices: voiceList,
     });
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "HeyGen error" }, { status: 502 });
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Studio error" }, { status: 502 });
   }
 }

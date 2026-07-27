@@ -193,6 +193,31 @@ export async function listAvatars(): Promise<{
   return { avatars: json.data?.avatars ?? [], talking_photos: json.data?.talking_photos ?? [] };
 }
 
+/**
+ * Détail d'un seul avatar (studio OU photo avatar), par id : nom + preview.
+ * À préférer à `listAvatars()` pour résoudre un avatar connu : ~0,5 s contre
+ * ~60 s pour le catalogue complet (qui, en plus, ne renvoie pas les photo
+ * avatars sur ce compte).
+ */
+export async function getAvatarDetails(
+  id: string,
+): Promise<{ id: string; type: HeygenAvatarType; name?: string; preview?: string } | null> {
+  assertConfigured();
+  const res = await fetch(`${BASE}/v2/avatar/${encodeURIComponent(id)}/details`, {
+    headers: authHeaders(),
+  });
+  const json = (await res.json().catch(() => ({}))) as {
+    data?: { id?: string; type?: string; name?: string; preview_image_url?: string };
+  };
+  if (!res.ok || !json.data?.id) return null;
+  return {
+    id: json.data.id,
+    type: json.data.type === "talking_photo" ? "talking_photo" : "avatar",
+    name: json.data.name ?? undefined,
+    preview: json.data.preview_image_url ?? undefined,
+  };
+}
+
 /** Liste les voix du compte (id + nom + langue) pour retrouver le voice_id voulu. */
 export async function listVoices(): Promise<HeygenVoice[]> {
   assertConfigured();
