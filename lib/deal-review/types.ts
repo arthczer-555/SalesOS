@@ -49,6 +49,27 @@ export type DealRow = {
 };
 
 /**
+ * Une ligne de deal clos sur la période. Sert à rendre le win rate et les
+ * "touches to close" cliquables : un clic sur le KPI doit pouvoir lister les
+ * deals qui le composent, pas seulement afficher un pourcentage.
+ */
+export type ClosedDealRow = {
+  id: string;
+  dealname: string;
+  won: boolean;
+
+  ownerId: string;
+  ownerName: string;
+  ownerAccent: string;
+
+  amount: number | null;
+  closedate: string | null;
+  createdate: string | null;
+  daysToClose: number | null;
+  touchPoints: number | null;
+};
+
+/**
  * Repère de touch points par étape. `medianTouchPoints` est volontairement
  * `null` quand l'étape compte moins de MIN_STAGE_SAMPLE deals ouverts : une
  * médiane sur 1 ou 2 deals ne veut rien dire et induirait en erreur.
@@ -113,6 +134,8 @@ export type WonBenchmark = {
 export type DealReviewResponse = {
   /** Deals ouverts du pipeline sales, nurture inclus (filtré côté client). */
   deals: DealRow[];
+  /** Deals clos du pipeline sales depuis `periodStart` (gagnés et perdus). */
+  closedDeals: ClosedDealRow[];
   stages: StageBenchmark[];
   reps: RepSummary[];
   /** Agrégats globaux, calculés hors nurture. */

@@ -23,6 +23,7 @@ import {
   MIN_STAGE_SAMPLE,
   MIN_WON_SAMPLE,
   STALE_CONTACT_DAYS,
+  type ClosedDealRow,
   type DealReviewResponse,
   type DealReviewTotals,
   type DealRow,
@@ -51,12 +52,14 @@ const OPEN_DEAL_PROPS = [
 ];
 
 const CLOSED_DEAL_PROPS = [
+  "dealname",
   "hubspot_owner_id",
   "hs_is_closed_won",
   "days_to_close",
   "num_contacted_notes",
   "amount",
   "closedate",
+  "createdate",
 ];
 
 /* ── Helpers purs ─────────────────────────────────────────────────────── */
@@ -81,6 +84,12 @@ function daysSince(raw: string | undefined, now: number): number | null {
   const ms = Date.parse(raw);
   if (Number.isNaN(ms)) return null;
   return Math.max(0, Math.floor((now - ms) / 864e5));
+}
+
+/** Date de closing en ms, 0 si absente : les deals sans date finissent en bas. */
+function closedAtMs(row: ClosedDealRow): number {
+  const ms = row.closedate ? Date.parse(row.closedate) : NaN;
+  return Number.isNaN(ms) ? 0 : ms;
 }
 
 function startOfPeriod(): string {
@@ -112,6 +121,7 @@ export function buildStageBenchmarks(
   });
 }
 
+/** Seules les colonnes utiles aux agrégats ; `ClosedDealRow` en est un sur-ensemble. */
 type ClosedDeal = {
   ownerId: string;
   won: boolean;
@@ -349,13 +359,13 @@ export async function buildDealReview(): Promise<DealReviewResponse> {
     const stage = stageById.get(p.dealstage ?? "");
     const stageLabel = stage?.label ?? p.dealstage ?? "—";
     const ownerId = p.hubspot_owner_id ?? "";
-    const ownerName = ownerNames.get(ownerId) || "Non assigné";
+    const ownerName = ownerNames.get(ownerId) || "Unassigned";
     const scoreEntry = scores.get(row.id);
     const claapEntry = claap.get(row.id);
 
     return {
       id: row.id,
-      dealname: p.dealname || "Sans nom",
+      dealname: p.dealname || "Untitled deal",
       stageId: p.dealstage ?? "",
       stageLabel,
       stageOrder: stage?.order ?? 999,
@@ -381,15 +391,25 @@ export async function buildDealReview(): Promise<DealReviewResponse> {
     };
   });
 
-  const closed: ClosedDeal[] = closedRows.map((row) => {
+  const closedDeals: ClosedDealRow[] = closedRows.map((row) => {
     const p = row.properties ?? {};
+    const ownerId = p.hubspot_owner_id ?? "";
+    const ownerName = ownerNames.get(ownerId) || "Unassigned";
     return {
-      ownerId: p.hubspot_owner_id ?? "",
+      id: row.id,
+      dealname: p.dealname || "Untitled deal",
       won: p.hs_is_closed_won === "true",
+      ownerId,
+      ownerName,
+      ownerAccent: repAccent(ownerName),
+      amount: num(p.amount),
+      closedate: p.closedate || null,
+      createdate: p.createdate || null,
       daysToClose: num(p.days_to_close),
       touchPoints: num(p.num_contacted_notes),
     };
   });
+  const closed: ClosedDeal[] = closedDeals;
 
   const stageBenchmarks = buildStageBenchmarks(deals, openStages);
   const repSummaries = buildRepSummaries(deals, closed, ownerNames, salesOwnerIds);
@@ -428,6 +448,9 @@ export async function buildDealReview(): Promise<DealReviewResponse> {
 
   return {
     deals,
+    // Les plus récents d'abord : c'est l'ordre de lecture attendu quand on
+    // ouvre la liste depuis le KPI win rate.
+    closedDeals: [...closedDeals].sort((a, b) => closedAtMs(b) - closedAtMs(a)),
     stages: stageBenchmarks,
     reps: repSummaries,
     totals,

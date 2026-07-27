@@ -1,8 +1,10 @@
 // Helpers d'affichage du Deal Review. Les formateurs € et les couleurs RAG
 // viennent du dashboard AE plutôt que d'être redupliqués : les deux onglets
 // doivent utiliser exactement les mêmes seuils et le même format.
+//
+// L'UI de cet onglet est en anglais (vocabulaire sales partagé avec HubSpot).
 
-import type { DealRow, RepSummary, StageBenchmark } from "@/lib/deal-review/types";
+import type { ClosedDealRow, DealRow, RepSummary, StageBenchmark } from "@/lib/deal-review/types";
 import { STALE_CONTACT_DAYS } from "@/lib/deal-review/types";
 import { COLORS } from "@/lib/design/tokens";
 
@@ -19,7 +21,26 @@ export function fmtNum(n: number | null, suffix = ""): string {
 }
 
 export function fmtPct(n: number | null): string {
-  return n == null ? "—" : `${n} %`;
+  return n == null ? "—" : `${n}%`;
+}
+
+export function fmtDate(iso: string | null): string {
+  if (!iso) return "—";
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return "—";
+  return new Date(ms).toLocaleDateString("en-GB", {
+    day: "2-digit",
+    month: "short",
+    year: "2-digit",
+  });
+}
+
+export function fmtLongDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
 }
 
 /** Couleur d'un delta de touch points face à la médiane de l'étape. */
@@ -37,6 +58,47 @@ export function contactColor(days: number | null): string {
   if (days > STALE_CONTACT_DAYS) return COLORS.err;
   if (days > 7) return COLORS.warn;
   return COLORS.ink2;
+}
+
+/* ── Filtres cliquables ───────────────────────────────────────────────── */
+
+/**
+ * Un "flag" est un sous-ensemble de deals ouverts adressable en un clic :
+ * chaque KPI, chaque pastille d'alerte et chaque cellule du tableau par AE
+ * pointe vers l'un de ces flags. Une seule définition du prédicat pour que le
+ * compteur du KPI et la liste filtrée ne puissent jamais diverger.
+ */
+export type DealFlag = "stalled" | "staleContact" | "noNextStep" | "untouched" | "noContact";
+
+export const FLAG_LABEL: Record<DealFlag, string> = {
+  stalled: "Stalled",
+  staleContact: `No contact >${STALE_CONTACT_DAYS}d`,
+  noNextStep: "No next step",
+  untouched: "Never touched",
+  noContact: "0 contacts",
+};
+
+export const FLAG_HINT: Record<DealFlag, string> = {
+  stalled: "HubSpot: time in stage is 20% above the owner's closed-won average",
+  staleContact: `No activity logged in the CRM for more than ${STALE_CONTACT_DAYS} days`,
+  noNextStep: "No next activity scheduled in HubSpot",
+  untouched: "No contact logged on this deal (num_contacted_notes = 0)",
+  noContact: "No contact record associated with the deal in the CRM",
+};
+
+export function matchesFlag(deal: DealRow, flag: DealFlag): boolean {
+  switch (flag) {
+    case "stalled":
+      return deal.isStalled;
+    case "staleContact":
+      return deal.daysSinceContact == null || deal.daysSinceContact > STALE_CONTACT_DAYS;
+    case "noNextStep":
+      return !deal.nextActivityAt;
+    case "untouched":
+      return deal.touchPoints === 0;
+    case "noContact":
+      return deal.numContacts === 0;
+  }
 }
 
 /* ── Tri du tableau ───────────────────────────────────────────────────── */
@@ -88,16 +150,52 @@ export function sortDeals(
         return d[key];
     }
   };
-  return [...deals].sort((a, b) => {
-    const va = value(a);
-    const vb = value(b);
-    // Les valeurs absentes finissent toujours en bas, quel que soit le sens.
-    if (va == null && vb == null) return 0;
-    if (va == null) return 1;
-    if (vb == null) return -1;
-    if (typeof va === "string" && typeof vb === "string") return sign * va.localeCompare(vb);
-    return sign * (Number(va) - Number(vb));
-  });
+  return [...deals].sort((a, b) => compare(value(a), value(b), sign));
+}
+
+/* ── Tri du tableau des deals clos ────────────────────────────────────── */
+
+export type ClosedSortKey =
+  | "dealname"
+  | "ownerName"
+  | "won"
+  | "amount"
+  | "closedate"
+  | "daysToClose"
+  | "touchPoints";
+
+export function sortClosedDeals(
+  deals: ClosedDealRow[],
+  key: ClosedSortKey,
+  dir: SortDir,
+): ClosedDealRow[] {
+  const sign = dir === "asc" ? 1 : -1;
+  const value = (d: ClosedDealRow): string | number | null => {
+    switch (key) {
+      case "dealname":
+        return d.dealname.toLowerCase();
+      case "ownerName":
+        return d.ownerName.toLowerCase();
+      case "won":
+        return d.won ? 1 : 0;
+      case "closedate": {
+        const ms = d.closedate ? Date.parse(d.closedate) : NaN;
+        return Number.isNaN(ms) ? null : ms;
+      }
+      default:
+        return d[key];
+    }
+  };
+  return [...deals].sort((a, b) => compare(value(a), value(b), sign));
+}
+
+/** Comparateur commun : les valeurs absentes finissent en bas dans les deux sens. */
+function compare(va: string | number | null, vb: string | number | null, sign: number): number {
+  if (va == null && vb == null) return 0;
+  if (va == null) return 1;
+  if (vb == null) return -1;
+  if (typeof va === "string" && typeof vb === "string") return sign * va.localeCompare(vb);
+  return sign * (Number(va) - Number(vb));
 }
 
 /**
@@ -109,34 +207,11 @@ export function sortDeals(
  * "1 contact" et "sans suite" sont remontés en agrégat (KPI et tableau par AE)
  * plutôt qu'en pastille de ligne.
  */
-export function dealAlerts(
-  deal: DealRow,
-): Array<{ key: string; label: string; title: string; tone: "err" | "warn" }> {
-  const out: Array<{ key: string; label: string; title: string; tone: "err" | "warn" }> = [];
-  if (deal.touchPoints === 0) {
-    out.push({
-      key: "untouched",
-      label: "Jamais touché",
-      tone: "err",
-      title: "Aucun contact loggé dans HubSpot sur ce deal (num_contacted_notes = 0)",
-    });
-  }
-  if (deal.isStalled) {
-    out.push({
-      key: "stalled",
-      label: "Stalled",
-      tone: "err",
-      title: "HubSpot : temps dans l'étape supérieur de 20 % à la moyenne closed-won de l'owner",
-    });
-  }
-  if (deal.numContacts === 0) {
-    out.push({
-      key: "no-contact",
-      label: "0 contact",
-      tone: "warn",
-      title: "Aucun contact associé au deal dans le CRM",
-    });
-  }
+export function dealAlerts(deal: DealRow): Array<{ flag: DealFlag; tone: "err" | "warn" }> {
+  const out: Array<{ flag: DealFlag; tone: "err" | "warn" }> = [];
+  if (matchesFlag(deal, "untouched")) out.push({ flag: "untouched", tone: "err" });
+  if (matchesFlag(deal, "stalled")) out.push({ flag: "stalled", tone: "err" });
+  if (matchesFlag(deal, "noContact")) out.push({ flag: "noContact", tone: "warn" });
   return out;
 }
 
@@ -145,11 +220,10 @@ export function subsetTotals(deals: DealRow[]) {
   return {
     openDeals: deals.length,
     pipeline: deals.reduce((sum, d) => sum + (d.amount ?? 0), 0),
-    stalledCount: deals.filter((d) => d.isStalled).length,
-    noNextActivityCount: deals.filter((d) => !d.nextActivityAt).length,
-    staleContactCount: deals.filter(
-      (d) => d.daysSinceContact == null || d.daysSinceContact > STALE_CONTACT_DAYS,
-    ).length,
+    stalledCount: deals.filter((d) => matchesFlag(d, "stalled")).length,
+    noNextActivityCount: deals.filter((d) => matchesFlag(d, "noNextStep")).length,
+    staleContactCount: deals.filter((d) => matchesFlag(d, "staleContact")).length,
+    untouchedCount: deals.filter((d) => matchesFlag(d, "untouched")).length,
   };
 }
 

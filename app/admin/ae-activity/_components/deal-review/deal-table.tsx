@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import type { DealRow, StageBenchmark } from "@/lib/deal-review/types";
@@ -11,6 +11,8 @@ import { reliabilityColor } from "@/lib/deal-scoring";
 import {
   contactColor,
   dealAlerts,
+  FLAG_HINT,
+  FLAG_LABEL,
   fmtEURCompact,
   fmtNum,
   firstName,
@@ -18,6 +20,7 @@ import {
   sortDeals,
   touchDelta,
   touchDeltaStyle,
+  type DealFlag,
   type SortDir,
   type SortKey,
 } from "./helpers";
@@ -34,34 +37,75 @@ function columns(showOwner: boolean): Column[] {
   return [
     { key: "dealname", label: "Deal", align: "left" },
     ...(showOwner ? [{ key: "ownerName" as SortKey, label: "AE", align: "left" as const, width: 92 }] : []),
-    { key: "stageOrder", label: "Étape", align: "left", width: 176 },
-    { key: "amount", label: "Montant", align: "right", width: 88, title: "amount HubSpot, vide sur une partie du pipeline" },
-    { key: "score", label: "Note", align: "right", width: 92, title: "Score IA /100 (SalesOS)" },
+    { key: "stageOrder", label: "Stage", align: "left", width: 176 },
+    { key: "amount", label: "Amount", align: "right", width: 88, title: "HubSpot amount, empty on part of the pipeline" },
+    { key: "score", label: "Score", align: "right", width: 92, title: "AI score /100 (SalesOS)" },
     {
       key: "touchPoints",
       label: "Touch pts",
       align: "right",
       width: 108,
-      title: "num_contacted_notes : calls, emails, meetings, LinkedIn, SMS loggés dans HubSpot",
+      title: "num_contacted_notes: calls, emails, meetings, LinkedIn, SMS logged in HubSpot",
     },
-    { key: "claapCalls", label: "Claap", align: "right", width: 84, title: "Meetings Claap analysés + note moyenne /10" },
-    { key: "daysSinceContact", label: "Fraîcheur", align: "right", width: 116, title: "Jours dans l'étape · jours depuis le dernier contact" },
-    { key: null, label: "Alertes", align: "left", width: 200 },
+    { key: "claapCalls", label: "Claap", align: "right", width: 84, title: "Claap meetings analysed + average score /10" },
+    { key: "daysSinceContact", label: "Freshness", align: "right", width: 116, title: "Days in stage · days since last contact" },
+    { key: null, label: "Alerts", align: "left", width: 200 },
   ];
+}
+
+/** Cellule cliquable : tout ce qui filtre partage le même affordance visuel. */
+function FilterCell({
+  onClick,
+  title,
+  children,
+}: {
+  onClick: () => void;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      title={title}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onKeyDown={(e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        e.stopPropagation();
+        onClick();
+      }}
+      className="filter-cell"
+    >
+      {children}
+    </span>
+  );
 }
 
 export function DealTable({
   deals,
   stages,
   showOwner,
+  sortKey,
+  sortDir,
+  onSortChange,
+  onFilterStage,
+  onFilterRep,
+  onFilterFlag,
 }: {
   deals: DealRow[];
   stages: StageBenchmark[];
   showOwner: boolean;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSortChange: (key: SortKey, dir: SortDir) => void;
+  onFilterStage: (stageId: string) => void;
+  onFilterRep: (ownerId: string) => void;
+  onFilterFlag: (flag: DealFlag) => void;
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>("amount");
-  const [sortDir, setSortDir] = useState<SortDir>("desc");
-
   const medianByStage = useMemo(() => medianByStageMap(stages), [stages]);
   const sorted = useMemo(
     () => sortDeals(deals, sortKey, sortDir, medianByStage),
@@ -72,11 +116,10 @@ export function DealTable({
   function onSort(key: SortKey | null) {
     if (!key) return;
     if (key === sortKey) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      onSortChange(key, sortDir === "asc" ? "desc" : "asc");
     } else {
-      setSortKey(key);
       // Les colonnes textuelles se lisent mieux de A à Z, les chiffres du plus grand au plus petit.
-      setSortDir(key === "dealname" || key === "ownerName" ? "asc" : "desc");
+      onSortChange(key, key === "dealname" || key === "ownerName" ? "asc" : "desc");
     }
   }
 
@@ -86,7 +129,7 @@ export function DealTable({
         className="text-center text-sm py-14"
         style={{ color: COLORS.ink4, background: COLORS.bgCard, borderRadius: RADIUS.lg, border: `1px solid ${COLORS.line}` }}
       >
-        Aucun deal ne correspond aux filtres.
+        No deal matches the current filters.
       </div>
     );
   }
@@ -147,6 +190,7 @@ export function DealTable({
                 <td style={{ padding: "9px 12px" }}>
                   <Link
                     href={`/deals?dealId=${d.id}`}
+                    title="Open the deal detail panel"
                     style={{ display: "flex", alignItems: "center", gap: 8, color: COLORS.ink0, fontWeight: 500 }}
                   >
                     <span
@@ -181,30 +225,40 @@ export function DealTable({
 
                 {showOwner && (
                   <td style={{ padding: "9px 12px", color: COLORS.ink2, whiteSpace: "nowrap" }}>
-                    {firstName(d.ownerName)}
+                    <FilterCell
+                      onClick={() => onFilterRep(d.ownerId)}
+                      title={`Filter on ${d.ownerName}`}
+                    >
+                      {firstName(d.ownerName)}
+                    </FilterCell>
                   </td>
                 )}
 
-                {/* Étape */}
+                {/* Étape — cliquable pour isoler l'étape */}
                 <td style={{ padding: "9px 12px" }}>
-                  <span
-                    style={{
-                      display: "inline-block",
-                      maxWidth: 160,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      verticalAlign: "middle",
-                      fontSize: 11,
-                      fontWeight: 600,
-                      padding: "2px 8px",
-                      borderRadius: 999,
-                      color: stageColor(d.stageOrder),
-                      background: `${stageColor(d.stageOrder)}14`,
-                    }}
+                  <FilterCell
+                    onClick={() => onFilterStage(d.stageId)}
+                    title={`Filter on stage "${d.stageLabel}"`}
                   >
-                    {d.stageLabel}
-                  </span>
+                    <span
+                      style={{
+                        display: "inline-block",
+                        maxWidth: 160,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        verticalAlign: "middle",
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: "2px 8px",
+                        borderRadius: 999,
+                        color: stageColor(d.stageOrder),
+                        background: `${stageColor(d.stageOrder)}14`,
+                      }}
+                    >
+                      {d.stageLabel}
+                    </span>
+                  </FilterCell>
                 </td>
 
                 {/* Montant */}
@@ -222,7 +276,7 @@ export function DealTable({
                     <ScoreBadge value={d.score} scale={100} size="sm" />
                     {d.reliability != null && (
                       <span
-                        title={`${d.reliability}/5 propriétés de qualification remplies`}
+                        title={`${d.reliability}/5 qualification properties filled in`}
                         style={{ fontSize: 10, fontWeight: 700, color: reliabilityColor(d.reliability) }}
                       >
                         {d.reliability}/5
@@ -234,14 +288,14 @@ export function DealTable({
                 {/* Touch points + écart à la médiane de l'étape */}
                 <td style={{ padding: "9px 12px", textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                   <span
-                    title={`${d.touchPoints} contacts loggés · ${d.salesActivities} activités au total (notes et tâches incluses)`}
+                    title={`${d.touchPoints} logged contacts · ${d.salesActivities} activities in total (notes and tasks included)`}
                     style={{ color: COLORS.ink0, fontWeight: 600 }}
                   >
                     {d.touchPoints}
                   </span>
                   {delta != null && (
                     <span
-                      title={`Médiane de l'étape « ${d.stageLabel} » : ${fmtNum(medianByStage.get(d.stageId) ?? null)}`}
+                      title={`Median for stage "${d.stageLabel}": ${fmtNum(medianByStage.get(d.stageId) ?? null)}`}
                       style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: deltaStyle.fg }}
                     >
                       {deltaStyle.label}
@@ -267,41 +321,45 @@ export function DealTable({
 
                 {/* Fraîcheur : jours dans l'étape · jours depuis le dernier contact */}
                 <td style={{ padding: "9px 12px", textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-                  <span title="Jours dans l'étape courante" style={{ color: COLORS.ink3 }}>
-                    {d.daysInStage == null ? "—" : `${d.daysInStage}j`}
+                  <span title="Days in the current stage" style={{ color: COLORS.ink3 }}>
+                    {d.daysInStage == null ? "—" : `${d.daysInStage}d`}
                   </span>
                   <span style={{ color: COLORS.ink5, margin: "0 4px" }}>·</span>
                   <span
                     title={
                       d.daysSinceContact == null
-                        ? "Jamais contacté (aucune activité loggée)"
-                        : `Dernier contact il y a ${d.daysSinceContact} jours`
+                        ? "Never contacted (no activity logged)"
+                        : `Last contact ${d.daysSinceContact} days ago`
                     }
                     style={{ color: contactColor(d.daysSinceContact), fontWeight: 600 }}
                   >
-                    {d.daysSinceContact == null ? "jamais" : `${d.daysSinceContact}j`}
+                    {d.daysSinceContact == null ? "never" : `${d.daysSinceContact}d`}
                   </span>
                 </td>
 
-                {/* Alertes */}
+                {/* Alertes — chaque pastille filtre le tableau sur ce signal */}
                 <td style={{ padding: "9px 12px" }}>
                   <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
                     {alerts.map((a) => (
-                      <span
-                        key={a.key}
-                        title={a.title}
-                        style={{
-                          fontSize: 10,
-                          fontWeight: 600,
-                          padding: "2px 6px",
-                          borderRadius: 999,
-                          color: a.tone === "err" ? COLORS.err : COLORS.warn,
-                          background: a.tone === "err" ? COLORS.errBg : COLORS.warnBg,
-                          whiteSpace: "nowrap",
-                        }}
+                      <FilterCell
+                        key={a.flag}
+                        onClick={() => onFilterFlag(a.flag)}
+                        title={`${FLAG_HINT[a.flag]} — click to filter`}
                       >
-                        {a.label}
-                      </span>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 600,
+                            padding: "2px 6px",
+                            borderRadius: 999,
+                            color: a.tone === "err" ? COLORS.err : COLORS.warn,
+                            background: a.tone === "err" ? COLORS.errBg : COLORS.warnBg,
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {FLAG_LABEL[a.flag]}
+                        </span>
+                      </FilterCell>
                     ))}
                   </span>
                 </td>
