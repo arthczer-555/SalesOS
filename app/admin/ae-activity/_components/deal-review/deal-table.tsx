@@ -1,0 +1,315 @@
+"use client";
+
+import { useMemo, useState } from "react";
+import Link from "next/link";
+import { ArrowDown, ArrowUp } from "lucide-react";
+import type { DealRow, StageBenchmark } from "@/lib/deal-review/types";
+import { COLORS, RADIUS, SHADOWS } from "@/lib/design/tokens";
+import { ScoreBadge } from "@/components/ui/score-badge";
+import { stageColor } from "@/app/deals/_helpers";
+import { reliabilityColor } from "@/lib/deal-scoring";
+import {
+  contactColor,
+  dealAlerts,
+  fmtEURCompact,
+  fmtNum,
+  firstName,
+  medianByStageMap,
+  sortDeals,
+  touchDelta,
+  touchDeltaStyle,
+  type SortDir,
+  type SortKey,
+} from "./helpers";
+
+type Column = {
+  key: SortKey | null;
+  label: string;
+  align: "left" | "right" | "center";
+  width?: number;
+  title?: string;
+};
+
+function columns(showOwner: boolean): Column[] {
+  return [
+    { key: "dealname", label: "Deal", align: "left" },
+    ...(showOwner ? [{ key: "ownerName" as SortKey, label: "AE", align: "left" as const, width: 92 }] : []),
+    { key: "stageOrder", label: "Étape", align: "left", width: 176 },
+    { key: "amount", label: "Montant", align: "right", width: 88, title: "amount HubSpot, vide sur une partie du pipeline" },
+    { key: "score", label: "Note", align: "right", width: 92, title: "Score IA /100 (SalesOS)" },
+    {
+      key: "touchPoints",
+      label: "Touch pts",
+      align: "right",
+      width: 108,
+      title: "num_contacted_notes : calls, emails, meetings, LinkedIn, SMS loggés dans HubSpot",
+    },
+    { key: "claapCalls", label: "Claap", align: "right", width: 84, title: "Meetings Claap analysés + note moyenne /10" },
+    { key: "daysSinceContact", label: "Fraîcheur", align: "right", width: 116, title: "Jours dans l'étape · jours depuis le dernier contact" },
+    { key: null, label: "Alertes", align: "left", width: 200 },
+  ];
+}
+
+export function DealTable({
+  deals,
+  stages,
+  showOwner,
+}: {
+  deals: DealRow[];
+  stages: StageBenchmark[];
+  showOwner: boolean;
+}) {
+  const [sortKey, setSortKey] = useState<SortKey>("amount");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  const medianByStage = useMemo(() => medianByStageMap(stages), [stages]);
+  const sorted = useMemo(
+    () => sortDeals(deals, sortKey, sortDir, medianByStage),
+    [deals, sortKey, sortDir, medianByStage],
+  );
+  const cols = columns(showOwner);
+
+  function onSort(key: SortKey | null) {
+    if (!key) return;
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      // Les colonnes textuelles se lisent mieux de A à Z, les chiffres du plus grand au plus petit.
+      setSortDir(key === "dealname" || key === "ownerName" ? "asc" : "desc");
+    }
+  }
+
+  if (deals.length === 0) {
+    return (
+      <div
+        className="text-center text-sm py-14"
+        style={{ color: COLORS.ink4, background: COLORS.bgCard, borderRadius: RADIUS.lg, border: `1px solid ${COLORS.line}` }}
+      >
+        Aucun deal ne correspond aux filtres.
+      </div>
+    );
+  }
+
+  return (
+    <div
+      style={{
+        background: COLORS.bgCard,
+        border: `1px solid ${COLORS.line}`,
+        borderRadius: RADIUS.lg,
+        boxShadow: SHADOWS.card,
+        overflowX: "auto",
+      }}
+    >
+      <table style={{ width: "100%", minWidth: 1080, borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ background: COLORS.bgSoft }}>
+            {cols.map((c) => {
+              const active = c.key === sortKey;
+              return (
+                <th
+                  key={c.label}
+                  title={c.title}
+                  onClick={() => onSort(c.key)}
+                  style={{
+                    textAlign: c.align,
+                    padding: "10px 12px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: 0.3,
+                    textTransform: "uppercase",
+                    color: active ? COLORS.ink0 : COLORS.ink3,
+                    borderBottom: `1px solid ${COLORS.line}`,
+                    cursor: c.key ? "pointer" : "default",
+                    whiteSpace: "nowrap",
+                    width: c.width,
+                    userSelect: "none",
+                  }}
+                >
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 3 }}>
+                    {c.label}
+                    {active &&
+                      (sortDir === "asc" ? <ArrowUp size={11} /> : <ArrowDown size={11} />)}
+                  </span>
+                </th>
+              );
+            })}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((d) => {
+            const delta = touchDelta(d, medianByStage);
+            const deltaStyle = touchDeltaStyle(delta);
+            const alerts = dealAlerts(d);
+            return (
+              <tr key={d.id} className="interactive-row" style={{ borderBottom: `1px solid ${COLORS.line}` }}>
+                {/* Deal — lien vers le panneau de détail existant de /deals */}
+                <td style={{ padding: "9px 12px" }}>
+                  <Link
+                    href={`/deals?dealId=${d.id}`}
+                    style={{ display: "flex", alignItems: "center", gap: 8, color: COLORS.ink0, fontWeight: 500 }}
+                  >
+                    <span
+                      style={{
+                        width: 6,
+                        height: 6,
+                        borderRadius: "50%",
+                        background: d.ownerAccent,
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>
+                      {d.dealname}
+                    </span>
+                    {d.isNurture && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          padding: "1px 5px",
+                          borderRadius: 999,
+                          background: COLORS.bgSoft,
+                          color: COLORS.ink3,
+                          flexShrink: 0,
+                        }}
+                      >
+                        nurture
+                      </span>
+                    )}
+                  </Link>
+                </td>
+
+                {showOwner && (
+                  <td style={{ padding: "9px 12px", color: COLORS.ink2, whiteSpace: "nowrap" }}>
+                    {firstName(d.ownerName)}
+                  </td>
+                )}
+
+                {/* Étape */}
+                <td style={{ padding: "9px 12px" }}>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      maxWidth: 160,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      verticalAlign: "middle",
+                      fontSize: 11,
+                      fontWeight: 600,
+                      padding: "2px 8px",
+                      borderRadius: 999,
+                      color: stageColor(d.stageOrder),
+                      background: `${stageColor(d.stageOrder)}14`,
+                    }}
+                  >
+                    {d.stageLabel}
+                  </span>
+                </td>
+
+                {/* Montant */}
+                <td style={{ padding: "9px 12px", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                  {d.amount == null ? (
+                    <span style={{ color: COLORS.ink4 }}>—</span>
+                  ) : (
+                    <span style={{ color: COLORS.ink0, fontWeight: 500 }}>{fmtEURCompact(d.amount)}</span>
+                  )}
+                </td>
+
+                {/* Note IA + fiabilité de la qualification */}
+                <td style={{ padding: "9px 12px", textAlign: "right", whiteSpace: "nowrap" }}>
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                    <ScoreBadge value={d.score} scale={100} size="sm" />
+                    {d.reliability != null && (
+                      <span
+                        title={`${d.reliability}/5 propriétés de qualification remplies`}
+                        style={{ fontSize: 10, fontWeight: 700, color: reliabilityColor(d.reliability) }}
+                      >
+                        {d.reliability}/5
+                      </span>
+                    )}
+                  </span>
+                </td>
+
+                {/* Touch points + écart à la médiane de l'étape */}
+                <td style={{ padding: "9px 12px", textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                  <span
+                    title={`${d.touchPoints} contacts loggés · ${d.salesActivities} activités au total (notes et tâches incluses)`}
+                    style={{ color: COLORS.ink0, fontWeight: 600 }}
+                  >
+                    {d.touchPoints}
+                  </span>
+                  {delta != null && (
+                    <span
+                      title={`Médiane de l'étape « ${d.stageLabel} » : ${fmtNum(medianByStage.get(d.stageId) ?? null)}`}
+                      style={{ marginLeft: 6, fontSize: 11, fontWeight: 600, color: deltaStyle.fg }}
+                    >
+                      {deltaStyle.label}
+                    </span>
+                  )}
+                </td>
+
+                {/* Claap */}
+                <td style={{ padding: "9px 12px", textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                  {d.claapCalls === 0 ? (
+                    <span style={{ color: COLORS.ink4 }}>—</span>
+                  ) : (
+                    <span style={{ color: COLORS.ink1 }}>
+                      {d.claapCalls}
+                      {d.claapAvgScore != null && (
+                        <span style={{ color: COLORS.ink3, fontSize: 11, marginLeft: 4 }}>
+                          {fmtNum(d.claapAvgScore)}/10
+                        </span>
+                      )}
+                    </span>
+                  )}
+                </td>
+
+                {/* Fraîcheur : jours dans l'étape · jours depuis le dernier contact */}
+                <td style={{ padding: "9px 12px", textAlign: "right", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                  <span title="Jours dans l'étape courante" style={{ color: COLORS.ink3 }}>
+                    {d.daysInStage == null ? "—" : `${d.daysInStage}j`}
+                  </span>
+                  <span style={{ color: COLORS.ink5, margin: "0 4px" }}>·</span>
+                  <span
+                    title={
+                      d.daysSinceContact == null
+                        ? "Jamais contacté (aucune activité loggée)"
+                        : `Dernier contact il y a ${d.daysSinceContact} jours`
+                    }
+                    style={{ color: contactColor(d.daysSinceContact), fontWeight: 600 }}
+                  >
+                    {d.daysSinceContact == null ? "jamais" : `${d.daysSinceContact}j`}
+                  </span>
+                </td>
+
+                {/* Alertes */}
+                <td style={{ padding: "9px 12px" }}>
+                  <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                    {alerts.map((a) => (
+                      <span
+                        key={a.key}
+                        title={a.title}
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 600,
+                          padding: "2px 6px",
+                          borderRadius: 999,
+                          color: a.tone === "err" ? COLORS.err : COLORS.warn,
+                          background: a.tone === "err" ? COLORS.errBg : COLORS.warnBg,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {a.label}
+                      </span>
+                    ))}
+                  </span>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}

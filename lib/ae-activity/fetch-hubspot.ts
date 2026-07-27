@@ -69,11 +69,18 @@ export async function fetchDispositionLabelMap(): Promise<Record<string, string>
 export type PipelineStage = { id: string; label: string; isClosed: boolean; isLost: boolean };
 
 /**
- * Étapes du pipeline "sales", ordonnées par displayOrder. On prend le pipeline
- * configuré via DEALS_SALES_PIPELINE_ID, sinon le premier pipeline HubSpot (=
- * Kanban /deals, exclut le pipeline Customer Success).
+ * Pipeline "sales" (id + étapes ordonnées par displayOrder). On prend le
+ * pipeline configuré via DEALS_SALES_PIPELINE_ID, sinon le premier pipeline
+ * HubSpot (= Kanban /deals, exclut le pipeline Customer Success).
+ *
+ * `pipelineId` est null si la lecture échoue : les appelants qui filtrent
+ * dessus doivent traiter ce cas (pas de filtre plutôt qu'un filtre faux).
  */
-export async function fetchSalesPipelineStages(): Promise<PipelineStage[]> {
+export async function fetchSalesPipeline(): Promise<{
+  pipelineId: string | null;
+  pipelineLabel: string | null;
+  stages: PipelineStage[];
+}> {
   try {
     const res = await hubspotFetch<{
       results?: Array<{
@@ -83,10 +90,10 @@ export async function fetchSalesPipelineStages(): Promise<PipelineStage[]> {
       }>;
     }>("/crm/v3/pipelines/deals");
     const pipelines = res.results ?? [];
-    if (pipelines.length === 0) return [];
+    if (pipelines.length === 0) return { pipelineId: null, pipelineLabel: null, stages: [] };
     const wantedId = process.env.DEALS_SALES_PIPELINE_ID;
     const pipeline = (wantedId && pipelines.find((p) => p.id === wantedId)) || pipelines[0];
-    return [...pipeline.stages]
+    const stages = [...pipeline.stages]
       .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
       .map((s) => {
         const isClosed = s.metadata?.isClosed === "true";
@@ -94,9 +101,15 @@ export async function fetchSalesPipelineStages(): Promise<PipelineStage[]> {
         const isLost = s.id === "closedlost" || /lost|perdu/i.test(s.label) || (isClosed && prob === "0.0");
         return { id: s.id, label: s.label, isClosed, isLost };
       });
+    return { pipelineId: pipeline.id, pipelineLabel: pipeline.label ?? null, stages };
   } catch {
-    return [];
+    return { pipelineId: null, pipelineLabel: null, stages: [] };
   }
+}
+
+/** Étapes seules du pipeline sales. Voir `fetchSalesPipeline`. */
+export async function fetchSalesPipelineStages(): Promise<PipelineStage[]> {
+  return (await fetchSalesPipeline()).stages;
 }
 
 async function searchRows(
