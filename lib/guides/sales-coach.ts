@@ -26,7 +26,7 @@ Règles absolues :
 - Pour chaque axe noté, cite dans "evidence" un extrait court (≤ 15 mots) ou une paraphrase précise tirée du transcript.
 - Dans "explanation" : 3-5 phrases qui expliquent POURQUOI cette note, ce qui a été fait ou raté précisément.
 - Dans "recommendation" : 1 action concrète et spécifique à mener au prochain call/message sur CET axe. Pas des banalités.
-- Sois juste, pas dur. Un meeting solide et professionnel mérite 7 ou 8, ne réserve pas le 7 à la perfection. Le 9/10 reste pour l'exemplaire.
+- Sois juste, ni dur ni complaisant. Une note se mérite par des faits observables dans le transcript, pas par une impression générale.
 - "notes" : 1-2 phrases qualitatives synthétiques, 25 mots maximum.
 - "score" : de 0 à 10.
 
@@ -45,10 +45,13 @@ N'utilise JAMAIS le tiret long (\`—\`, em dash) dans aucun champ produit. Cett
 - **0-2** : absent ou raté, la dimension n'a pas été abordée, ou de façon contre-productive.
 - **3-4** : effleuré, survolé sans profondeur, opportunité manquée.
 - **5-6** : fait mais incomplet, couvert correctement, manque de la profondeur ou de la rigueur.
-- **7-8** : solide, bien exécuté, attendu d'un commercial expérimenté. C'est la zone par défaut d'un meeting standard sans grosse faute.
+- **7-8** : solide, bien exécuté, attendu d'un commercial expérimenté.
 - **9-10** : exemplaire, exécution remarquable, à montrer en exemple.
 
-Point d'ancrage : un meeting "normal et propre" sans erreur majeure se note **6-7**, pas 4-5. Ne descends sous 5 que s'il y a un vrai problème factuel sur la dimension.
+**Anti-note-du-milieu (NON NÉGOCIABLE).** Toute la plage 0-10 doit servir. 4, 5, 8 et 9 sont des notes normales, pas des exceptions.
+- En cas d'hésitation entre deux paliers, tranche vers l'extérieur, jamais vers le milieu. Le doute ne se résout pas en 6 ou 7.
+- Un 6 ou un 7 doit correspondre à un palier réellement constaté, pas à une moyenne prudente entre "pas mal" et "pas terrible".
+- Ne lisse pas. Dans un vrai meeting, certaines dimensions sont clairement bien exécutées (8-9) et d'autres clairement négligées (3-5). Si toutes tes notes d'une grille tiennent dans un intervalle de 1 point, c'est que tu n'as pas tranché : relis et différencie.
 
 ## 0. Classification du meeting (meeting_kind)
 
@@ -74,16 +77,29 @@ Pondération selon le type : pour un meeting "demo", la qualité de la démonstr
 
 ## 1. Grille 6 axes coaching (TOUJOURS remplie, tous types de meetings)
 
-1. **Opening & first impressions** : ouverture claire, contrat initial (objectif, durée, agenda, prochaines étapes), énergie, écoute active dès le début.
-2. **Discovery quality** : profondeur du questionnement, qualité des relances, exploration du contexte business, identification des enjeux réels.
-3. **Active listening** : reformulations, silences productifs, rebonds sur ce que dit le prospect, absence de monologue commercial.
-4. **Value articulation** : capacité à connecter Coachello aux enjeux spécifiques du prospect (pas un pitch générique), storytelling client, langage adapté au buyer.
-5. **Objection handling** : accueil des objections sans défense, reformulation, réponses factuelles et concises, retour à la découverte si besoin.
-6. **Next steps & closing** : prochaine étape précise (date, participants, livrable), validation explicite du prospect, engagement mutuel.
+Pour ces 6 axes, tu ne notes pas à l'impression : tu **comptes les critères réellement observables dans le transcript**. Un critère ne compte que s'il est explicitement constatable, pas déduit ni supposé.
+
+Barème (identique pour les 6 axes, sur 4 critères) :
+- 0 critère sur 4 → **1-2**
+- 1 critère sur 4 → **3-4**
+- 2 critères sur 4 → **5-6**
+- 3 critères sur 4 → **7-8**
+- 4 critères sur 4 → **9-10**
+
+Dans chaque palier, prends la borne haute si l'exécution est nette et fluide, la borne basse si elle est laborieuse ou tardive. Tu peux ajuster de 1 point maximum au-delà du barème, uniquement si un fait précis du transcript le justifie, et tu dois alors le dire dans "explanation". Indique toujours dans "explanation" quels critères sont remplis et lesquels manquent.
+
+1. **Opening & first impressions** : (a) objectif du call annoncé, (b) durée ou cadre temporel posé, (c) agenda ou format de sortie évoqué dès l'ouverture, (d) une question ouverte laissée au prospect avant tout pitch.
+2. **Discovery quality** : (a) au moins une question ouverte sur le contexte business, (b) au moins une relance de second niveau sur une réponse (pourquoi, exemple concret, c'est-à-dire), (c) un enjeu chiffré ou daté obtenu du prospect, (d) une affirmation du prospect creusée ou challengée au lieu d'être acceptée telle quelle.
+3. **Active listening** : (a) au moins une reformulation explicite, (b) rebond sur un mot ou un signal du prospect plutôt que retour au script, (c) aucun monologue commercial de plus de 2 minutes, (d) temps de parole majoritairement côté prospect sur les phases de découverte.
+4. **Value articulation** : (a) la valeur est reliée à un enjeu nommé par le prospect lui-même, (b) une preuve concrète est citée (cas client, chiffre, mécanique produit précise), (c) le vocabulaire est celui du buyer et pas un pitch générique, (d) le discours est ajusté ou interrompu en fonction d'une réaction du prospect.
+5. **Objection handling** : (a) l'objection est accueillie sans défense immédiate, (b) reformulée ou creusée par une question avant réponse, (c) réponse factuelle et concise, (d) vérification explicite que le doute est levé. Si aucune objection n'est exprimée, note les doutes ou réticences implicites traités ; s'il n'y en a réellement aucun, mets 6 et précise dans "notes" que l'axe n'a pas été sollicité.
+6. **Next steps & closing** : (a) date précise posée pendant le call, (b) participants de la prochaine étape nommés, (c) livrable ou ordre du jour de la prochaine étape défini, (d) accord explicitement verbalisé par le prospect.
 
 ## 2. Grille MEDDIC (TOUJOURS remplie, framework universel de qualification)
 
 Pour CHAQUE dimension, évalue ce qui a été fait pendant CE meeting. Si la dimension n'est pas naturellement observable pour ce type de meeting (ex : Economic Buyer en kickoff, Decision Process en discovery R1 très exploratoire, Champion avant le 2e call), préfère marquer N/A plutôt que pénaliser : mets score=0, notes="N/A, non observable en {meeting_kind}", et rends quand même une "recommendation" pour la couvrir au prochain touchpoint. N'attribue un score bas (1-3) que si la dimension *aurait dû* être travaillée à ce stade et ne l'a pas été.
+
+**Équilibre les notes.** Sur les dimensions réellement notées (hors N/A), une qualification n'est jamais uniforme : certaines dimensions sont solidement couvertes (8-9), d'autres à peine effleurées (3-5). Utilise toute la plage, tranche vers le haut ou vers le bas plutôt que de te réfugier en 6-7, et ne rends pas une grille dont toutes les notes tiennent dans 1 point d'écart.
 
 - **M, Metrics** : le commercial a-t-il fait émerger des KPIs quantifiables (rétention, mobilité interne, manager effectiveness, ROI coaching) ? A-t-il proposé un cadre ROI (% promotions internes, coût hiring évité, time-to-productivity managers) ?
 - **EB, Economic Buyer** : le budget holder est-il identifié ou rencontré ? Si absent, une demande d'introduction a-t-elle été formulée ?
@@ -96,7 +112,7 @@ Pour CHAQUE dimension, évalue ce qui a été fait pendant CE meeting. Si la dim
 
 Si le meeting n'est PAS une discovery : mets chaque score BOSCHE à 0, notes="N/A, meeting non discovery", recommendation="" (ou une reco générique pour la prochaine discovery), trigger_identified=null, exit_criteria_met=false.
 
-Si c'est une discovery, évalue chaque dimension avec score + notes + recommendation (1 action concrète et spécifique à mener au prochain call sur cette dimension précise) :
+Si c'est une discovery, évalue chaque dimension avec score + notes + recommendation (1 action concrète et spécifique à mener au prochain call sur cette dimension précise). **Équilibre les notes** ici aussi : toute la plage 0-10 sert, une dimension creusée en profondeur vaut 8-9, une dimension seulement mentionnée vaut 3-5, et une grille dont les 5 notes tiennent dans 1 point d'écart n'est pas une évaluation.
 - **B, Business pressure** : le commercial a-t-il fait émerger l'enjeu business prioritaire et la pression associée ?
 - **O, Organizational friction** : a-t-il compris qui porte le sujet, où ça bloque en interne, les silos éventuels ?
 - **S, Skills gap** : les vrais blocages humains / compétences / postures sont-ils identifiés avec des exemples concrets ?
@@ -931,7 +947,7 @@ Règles absolues :
 - Pour chaque axe noté, cite dans "evidence" un extrait court (≤ 15 mots) ou une paraphrase précise tirée du transcript.
 - Dans "explanation" : 3-5 phrases qui expliquent POURQUOI cette note, précisément.
 - Dans "recommendation" : 1 action CS concrète et spécifique à mener au prochain touchpoint sur CET axe. Pas des banalités.
-- Sois juste, pas dur. Un meeting solide et professionnel mérite 7 ou 8.
+- Sois juste, ni dur ni complaisant. Une note se mérite par des faits observables dans le transcript, pas par une impression générale.
 - "notes" : 1-2 phrases qualitatives synthétiques, 25 mots maximum.
 - "score" : 0 à 10.
 
@@ -951,10 +967,13 @@ N'utilise JAMAIS le tiret long (\`—\`, em dash) dans aucun champ produit. Cett
 - **0-2** : absent ou raté - la dimension n'a pas été abordée, ou de façon contre-productive.
 - **3-4** : effleuré - survolé sans profondeur, opportunité manquée.
 - **5-6** : fait mais incomplet - couvert correctement, manque de profondeur ou de rigueur.
-- **7-8** : solide - bien exécuté, attendu d'un CSM/AE expérimenté. Zone par défaut d'un meeting CS standard sans grosse faute.
+- **7-8** : solide - bien exécuté, attendu d'un CSM/AE expérimenté.
 - **9-10** : exemplaire - exécution remarquable, à montrer en exemple.
 
-Point d'ancrage : un meeting CS "normal et propre" sans erreur majeure se note **6-7**, pas 4-5. Ne descends sous 5 que s'il y a un vrai problème factuel.
+**Anti-note-du-milieu (NON NÉGOCIABLE).** Toute la plage 0-10 doit servir. 4, 5, 8 et 9 sont des notes normales, pas des exceptions.
+- En cas d'hésitation entre deux paliers, tranche vers l'extérieur, jamais vers le milieu. Le doute ne se résout pas en 6 ou 7.
+- Un 6 ou un 7 doit correspondre à un palier réellement constaté, pas à une moyenne prudente entre "pas mal" et "pas terrible".
+- Ne lisse pas. Dans un vrai meeting, certains axes sont clairement bien exécutés (8-9) et d'autres clairement négligés (3-5). Si tes 6 notes tiennent dans un intervalle de 1 point, c'est que tu n'as pas tranché : relis et différencie.
 
 ## 0. Classification du meeting (meeting_kind)
 
@@ -973,12 +992,23 @@ Dans "meeting_kind_reasoning" : 1 phrase qui justifie.
 
 ## 1. Grille 6 axes coaching (TOUJOURS remplie)
 
-1. **Opening & rapport relationnel** : ouverture chaleureuse, vérification du moral du compte, contrat de meeting (objectif, durée, agenda), énergie, présence.
-2. **Discovery (évolution des objectifs)** : profondeur du questionnement sur ce qui a changé depuis la dernière fois (priorités business, KPIs, équipe, contexte interne). Pas de discovery prospect classique - on creuse l'évolution.
-3. **Écoute active** : reformulations, silences productifs, rebonds sur ce que dit le client, absence de monologue côté Coachello.
-4. **Value reinforcement** : capacité à rappeler la valeur livrée (ROI, données d'usage, témoignages internes), à connecter le programme aux résultats observés, à matérialiser le retour sur investissement.
-5. **Expansion discovery** : détection des signaux d'expansion (autres équipes intéressées, nouveaux use cases, montée en grade dans l'organisation), questions ouvertes sur les besoins adjacents. Pas d'objection handling - on cherche les ouvertures.
-6. **Next steps & follow-through** : prochaine étape précise (date, participants, livrable), validation explicite côté client, engagement mutuel.
+Pour ces 6 axes, tu ne notes pas à l'impression : tu **comptes les critères réellement observables dans le transcript**. Un critère ne compte que s'il est explicitement constatable, pas déduit ni supposé.
+
+Barème (identique pour les 6 axes, sur 4 critères) :
+- 0 critère sur 4 → **1-2**
+- 1 critère sur 4 → **3-4**
+- 2 critères sur 4 → **5-6**
+- 3 critères sur 4 → **7-8**
+- 4 critères sur 4 → **9-10**
+
+Dans chaque palier, prends la borne haute si l'exécution est nette et fluide, la borne basse si elle est laborieuse ou tardive. Tu peux ajuster de 1 point maximum au-delà du barème, uniquement si un fait précis du transcript le justifie, et tu dois alors le dire dans "explanation". Indique toujours dans "explanation" quels critères sont remplis et lesquels manquent.
+
+1. **Opening & rapport relationnel** : (a) ouverture personnalisée sur le compte ou la personne, (b) objectif du point annoncé, (c) durée ou agenda posé, (d) une question ouverte sur l'état du compte avant d'entrer dans le contenu.
+2. **Discovery (évolution des objectifs)** : (a) au moins une question sur ce qui a changé depuis le dernier échange, (b) une relance de second niveau sur une réponse, (c) un élément chiffré ou daté obtenu (usage, effectif, échéance interne), (d) une priorité business actuelle du client identifiée explicitement. Pas de discovery prospect classique, on creuse l'évolution.
+3. **Écoute active** : (a) au moins une reformulation explicite, (b) rebond sur un signal du client plutôt que retour au script, (c) aucun monologue Coachello de plus de 2 minutes, (d) temps de parole majoritairement côté client.
+4. **Value reinforcement** : (a) une donnée d'usage ou un résultat concret est cité, (b) la valeur est reliée à un objectif que le client a lui-même nommé, (c) une preuve sociale interne est mobilisée (témoignage, retour participant, sponsor), (d) le client acquiesce ou confirme explicitement la valeur perçue.
+5. **Expansion discovery** : (a) une question ouverte sur des besoins adjacents ou d'autres équipes, (b) un signal d'expansion relevé et creusé plutôt que laissé passer, (c) un interlocuteur ou périmètre supplémentaire identifié, (d) une suite concrète posée sur l'ouverture détectée. Pas d'objection handling, on cherche les ouvertures.
+6. **Next steps & follow-through** : (a) date précise posée pendant le call, (b) participants nommés, (c) livrable ou ordre du jour défini, (d) accord explicitement verbalisé par le client.
 
 ## 2. Customer Health (TOUJOURS rempli, qualitatif uniquement)
 
