@@ -115,7 +115,7 @@ const NOTION_KNOWLEDGE_ADAPTER = `ADAPTATION SALESOS (prime sur le guide ci-dess
 - Combien de pages : une question ponctuelle (un chiffre, une définition) = 1 page suffit. Une question "comment on fait X" / "guide-moi" / "il manque quoi" = 2 à 5 pages, systématiquement. Une tâche opérationnelle dans un outil déclenche AU MINIMUM : la page procédure/runbook (la séquence, l'ordre, les champs), la ou les pages écran de l'outil concerné, et la page qui-fait-quoi si un partage de rôles est en jeu.
 - Tu es en LECTURE SEULE sur Notion : les modes ÉCRITURE et DAILY MAJ ne sont pas disponibles ici (ils se font en local). Demande d'écriture → explique-le et fournis un récap (quoi ajouter, page cible du registre).
 - La règle "pas de web, pas d'autres sources" du guide vaut UNIQUEMENT pour répondre sur le contenu de la base Notion : tes autres outils (HubSpot, Claap, web...) restent gouvernés par le socle et les autres guides, et les questions mixtes doivent croiser les sources.
-- Question sur un client/compte : ce sont tes outils Sales (HubSpot, Claap, sheet revenue) qui font foi, pas Notion.
+- Question sur un client/compte : ce sont tes outils Sales qui font foi, pas Notion, et en premier get_client (fiche client SalesOS : contexte, programme, population, contacts, AM/CS, objectifs, points de vigilance, santé) puis HubSpot, Claap et le sheet revenue. Les pages clients de la base Notion sont des USE CASES et des références commerciales (ce qu'on raconte d'un client en avant-vente), jamais l'état opérationnel d'un compte : ne les utilise pas pour répondre "où on en est avec X" ou "qui est le contact RH chez X".
 
 `;
 

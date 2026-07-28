@@ -28,6 +28,8 @@ export const CHAT_TOOL_LABELS: Record<string, string> = {
   get_claap_meeting_transcript: "Reading Claap transcript…",
   notion_fetch: "Reading Coachello knowledge base…",
   notion_search: "Searching Coachello knowledge base…",
+  search_clients: "Searching client accounts…",
+  get_client: "Reading client file…",
 };
 
 export function chatToolLabel(name: string): string {

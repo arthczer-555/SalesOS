@@ -29,6 +29,7 @@ const SOURCE_KIND_LABELS: Record<string, string> = {
   drive: "Drive",
   gmail: "Gmail",
   billing: "Revenue",
+  client: "Fiche client",
   guide: "Guide",
 };
 

@@ -6,7 +6,7 @@ import type Anthropic from "@anthropic-ai/sdk";
  * chat_jobs.sources, affichée par le front en indicateurs "ce que je consulte".
  */
 export type ChatSource = {
-  kind: "notion" | "claap" | "drive" | "gmail" | "billing" | "guide";
+  kind: "notion" | "claap" | "drive" | "gmail" | "billing" | "guide" | "client";
   title: string;
   url?: string;
 };
@@ -15,6 +15,8 @@ export type ChatSource = {
 export type ToolContext = {
   userId: string;
   userOwnerId: string | null;
+  /** Email de l'utilisateur connecté : sert aux filtres "mes clients" (owner/AM/CS). */
+  userEmail: string | null;
   onProgress: (msg: string) => void;
   onSource: (source: ChatSource) => void;
 };

@@ -71,6 +71,7 @@ export async function runChat(args: {
   // 2) user_prompt + modèle + owner + identité
   let chatModel = DEFAULT_CHAT_MODEL;
   let userOwnerId: string | null = null;
+  let userEmail: string | null = null;
   let userDisplay = userId;
   let userPrompt = "";
   if (process.env.SUPABASE_URL) {
@@ -81,6 +82,7 @@ export async function runChat(args: {
     chatModel = model;
     userPrompt = userData?.user_prompt?.trim() ?? "";
     userOwnerId = userData?.hubspot_owner_id ?? null;
+    userEmail = userData?.email ?? null;
     userDisplay = userData?.name ?? userData?.email ?? userId;
   }
 
@@ -106,7 +108,7 @@ export async function runChat(args: {
     system,
     tools,
     messages,
-    toolContext: { userId, userOwnerId },
+    toolContext: { userId, userOwnerId, userEmail },
     emit,
   });
 

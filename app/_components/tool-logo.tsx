@@ -36,6 +36,7 @@ export function logoKeyForTool(toolName: string): LogoKey {
   if (toolName.includes("linkedin")) return "linkedin";
   if (toolName.includes("drive")) return "drive";
   if (toolName === "get_billing_revenue") return "sheets";
+  if (toolName === "search_clients" || toolName === "get_client") return "coachello";
   if (toolName === "web_search") return "web";
   return "hubspot"; // search_contacts, search_deals, get_deals, get_deal_*, get_companies...
 }
@@ -48,6 +49,7 @@ export function logoKeyForSourceKind(kind: string): LogoKey {
     case "drive": return "drive";
     case "gmail": return "gmail";
     case "billing": return "sheets";
+    case "client": return "coachello";
     case "guide": return "guide";
     default: return "web";
   }
