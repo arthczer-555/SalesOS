@@ -261,8 +261,13 @@ export async function runLoop(args: {
           if (block.type !== "tool_result" || typeof block.content !== "string") return block;
           if (block.content.length <= MAX_RESULT_CHARS) return block;
           if (block.content.startsWith(GUIDE_RESULT_PREFIX)) return block;
-          const firstLine = block.content.split("\n")[0];
-          return { ...block, content: `${firstLine}\n[résultat volumineux tronqué - données déjà traitées]` };
+          // Coupe sur les CARACTÈRES, pas sur la première ligne : les handlers
+          // renvoient du JSON.stringify sans indentation (une seule ligne, zéro
+          // \n), donc un split("\n")[0] rendait ce pruning totalement inopérant
+          // et laissait les gros résultats (transcripts Claap, threads HubSpot)
+          // dans le contexte à tous les tours suivants.
+          const head = block.content.slice(0, MAX_RESULT_CHARS);
+          return { ...block, content: `${head}\n[résultat volumineux tronqué - données déjà traitées]` };
         });
         return { ...msg, content: pruned };
       });
