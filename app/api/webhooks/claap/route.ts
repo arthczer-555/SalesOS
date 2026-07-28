@@ -136,33 +136,34 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Claap mis-classifies external meetings as "internal" whenever no external
-    // attendee was captured in the calendar invite — systematic on Teams
-    // invites forwarded by the prospect. We used to drop those recordings
-    // entirely (no row, no alert), which silently lost real sales meetings
-    // whenever the deal resolver ALSO came back empty. We no longer drop
-    // anything: every recording produces a row, and a missing deal falls into
-    // the `awaiting_manual_deal` + Slack alert path below, exactly like an
-    // external meeting with no deal.
-    //
-    // The persisted `meeting_type` is normalised to "external" because
-    // "internal" is the exclusion filter of the listing routes
-    // (app/api/sales-coach/list, recaps/list) — keeping it would make the row
-    // invisible in the UI and the Slack link pointless. A NULL would be
-    // excluded too (`meeting_type <> 'internal'` is NULL, not TRUE, on NULL
-    // rows), hence the hard "external". Claap's original verdict only survives
-    // in the log line below.
-    if (meetingType !== "external") {
+    // Internal override safeguard: Claap mis-classifies some external meetings
+    // as "internal" when no external attendee was captured in the calendar
+    // invite. We only promote internal→external when ALL of these hold:
+    //   - the title yields a non-trivial search hint (titleHint)
+    //   - the auto-resolve actually found a matching HubSpot deal
+    // No HubSpot footprint → trust Claap and drop. The user can still
+    // manually analyse the recording from the "Analyser un meeting passé"
+    // modal if they disagree with this verdict.
+    if (meetingType === "internal" && dealId && titleHint) {
       console.log(
-        `[claap-webhook] recording ${rec.id} classified "${meetingType || "unknown"}" by Claap — kept as external (deal=${dealId ?? "none"}, titleHint=${titleHint ?? "none"})`,
+        `[claap-webhook] overriding internal→external for recording ${rec.id} — deal ${dealId} matched via title hint "${titleHint}"`,
       );
       meetingType = "external";
+    }
+
+    // Internal meetings (after title-based override) are dropped entirely — no
+    // row created, no UI noise.
+    if (meetingType === "internal") {
+      return NextResponse.json({ ok: true, ignored: "meeting_type_internal" });
     }
 
     // Only skip when truly unanalysable. A missing deal is OK — analysis still
     // produces value via the 6 coaching axes + MEDDIC, and the deal can be
     // attached later from the UI.
-    const shouldSkip = !recorderEmail || !transcriptUrl;
+    const shouldSkip =
+      meetingType !== "external" ||
+      !recorderEmail ||
+      !transcriptUrl;
 
     const externalParticipants = recorderEmail
       ? extractExternalParticipants(rec.meeting?.participants, recorderEmail)
@@ -187,7 +188,11 @@ export async function POST(req: NextRequest) {
     };
 
     if (shouldSkip) {
-      const reason = !recorderEmail ? "no_recorder_email" : "no_transcript";
+      const reason = meetingType !== "external"
+        ? `meeting_type_${meetingType}`
+        : !recorderEmail
+          ? "no_recorder_email"
+          : "no_transcript";
       await db.from("sales_coach_analyses").upsert(
         { ...baseRow, status: "skipped", error_message: reason },
         { onConflict: "claap_recording_id" },
