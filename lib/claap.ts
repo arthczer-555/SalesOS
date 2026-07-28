@@ -35,6 +35,14 @@ export type ClaapRecording = {
   recorder?: ClaapParticipant;
   transcripts?: ClaapTranscript[];
   workspace?: { id?: string; name?: string };
+  // Contenu généré par l'IA de Claap. Absent de la liste des recordings, servi
+  // uniquement par le détail (`GET /recordings/{id}`). Ces champs nomment la
+  // société et les interlocuteurs même quand l'invite n'a rien donné : ils sont
+  // la seule piste exploitable sur les meetings où Claap n'a capté ni
+  // participant externe ni conferenceUrl. Voir `fetchClaapMeetingContext`.
+  keyTakeaways?: { langIso2?: string; text?: string }[];
+  outlines?: { langIso2?: string; text?: string }[];
+  actionItems?: { langIso2?: string; items?: { description?: string; isChecked?: boolean }[] }[];
 };
 
 async function claapFetch<T>(path: string): Promise<T> {
@@ -644,6 +652,42 @@ export async function searchClaapMeetingsPage(opts: {
   }
 
   return { matches, nextCursor: cursor };
+}
+
+/**
+ * Résumé IA d'un recording (key takeaways + plan + action items), condensé en
+ * un bloc de texte court, ou null s'il n'y a rien d'exploitable.
+ *
+ * À quoi ça sert : quand Claap ne capte pas l'invite (aucun participant externe,
+ * pas de conferenceUrl), il classe le meeting "internal" et le titre ne dit
+ * souvent rien d'utile ("Coachello (Démo roleplay Avatar)"). Son résumé, lui,
+ * nomme la société et les interlocuteurs. C'est ce qui permet de retrouver le
+ * deal en dernier recours, via `resolveDealFromMeetingContext`.
+ *
+ * Le texte est tronqué : on ne veut que l'en-tête du résumé, là où les noms
+ * apparaissent, pas le compte-rendu complet qui gonflerait le prompt.
+ */
+export async function fetchClaapMeetingContext(recordingId: string): Promise<string | null> {
+  const rec = await getClaapRecording(recordingId).catch(() => null);
+  if (!rec) return null;
+  return buildMeetingContext(rec);
+}
+
+/** Extrait le contexte d'un recording déjà chargé (pas d'appel réseau). */
+export function buildMeetingContext(rec: ClaapRecording): string | null {
+  const parts: string[] = [];
+  const takeaway = rec.keyTakeaways?.find((k) => k.text)?.text;
+  if (takeaway) parts.push(`Résumé : ${takeaway.slice(0, 1200)}`);
+  const outline = rec.outlines?.find((o) => o.text)?.text;
+  if (outline) parts.push(`Plan : ${outline.slice(0, 800)}`);
+  const actions = (rec.actionItems ?? [])
+    .flatMap((a) => a.items ?? [])
+    .map((i) => i.description)
+    .filter((d): d is string => !!d)
+    .slice(0, 5);
+  if (actions.length > 0) parts.push(`Actions : ${actions.join(" | ").slice(0, 600)}`);
+  const text = parts.join("\n").trim();
+  return text.length > 0 ? text : null;
 }
 
 /**

@@ -1029,12 +1029,15 @@ const DEAL_MATCH_MODEL = "claude-haiku-4-5-20251001";
 const DEAL_MATCH_MAX_CANDIDATES = 1000;
 const DEAL_MATCH_CLOSED_WON_WINDOW_MONTHS = 24;
 
-const DEAL_MATCH_SYSTEM_PROMPT = `Tu reçois un titre de meeting Claap et une liste de deals HubSpot.
+const DEAL_MATCH_SYSTEM_PROMPT = `Tu reçois un titre de meeting Claap, parfois le résumé du meeting, et une liste de deals HubSpot.
 Ton job : identifier LE deal qui correspond clairement à la société rencontrée dans ce meeting.
 
 Règles :
 - Matching SÉMANTIQUE : "Qonto & Coachello" → deal "Qonto SAS" ou "Qonto - Plan Pro".
 - Tolère variations orthographiques, suffixes (SAS, Inc, Group), abréviations courantes.
+- Quand un résumé est fourni, c'est souvent la seule source du nom de la société : le titre peut être générique ("Démo produit", "Rencontre Coachello"). Cherche-y le nom de l'entreprise rencontrée et celui des interlocuteurs.
+- Ce résumé est transcrit à l'oral : les noms propres peuvent être déformés phonétiquement ("Irelia" pour "Erilia", "Mersenne" pour "Mersen"). Accepte un deal dont le nom est phonétiquement proche de la société citée, à condition qu'aucun autre candidat ne soit plausible.
+- Ignore "Coachello" et ses collaborateurs : c'est notre propre société, jamais la cible du match.
 - **Si plusieurs deals matchent la même société, préfère closed_won au deal open** (priorité au statut client confirmé pour que le meeting soit classé "client" et non "prospect").
 - Si tu as un doute ou aucun match clair, renvoie dealId=null. Ne devine pas.
 
@@ -1110,9 +1113,40 @@ async function listDealMatchCandidates(): Promise<DealMatchCandidate[]> {
     });
 }
 
+/**
+ * Étape 5 : matching sémantique sur le RÉSUMÉ du meeting quand tout le reste a
+ * échoué, y compris l'étape 4 (qui ne voit que le titre, et n'est même pas
+ * atteinte quand le titre ne donne aucun hint exploitable).
+ *
+ * Cas typique : Claap n'a capté aucun participant externe, le titre est
+ * générique ("Coachello (Démo roleplay Avatar)"), mais son résumé nomme la
+ * société et les interlocuteurs. Le matching doit rester sémantique : Claap
+ * transcrit phonétiquement les noms entendus à l'oral ("Irelia" pour "Erilia"),
+ * ce qu'aucune recherche par token ne rattraperait.
+ *
+ * `meetingContext` vient de `fetchClaapMeetingContext` (lib/claap.ts).
+ */
+export async function resolveDealFromMeetingContext(
+  meetingContext: string,
+  recorderEmail: string,
+  meetingTitle?: string | null,
+): Promise<string | null> {
+  const context = meetingContext.trim();
+  if (!context) return null;
+  return resolveDealViaLLM(meetingTitle?.trim() || "(titre non exploitable)", recorderEmail, context);
+}
+
+/** ` · closed YYYY-MM-DD` pour un candidat, ou "" si la date est absente ou illisible. */
+function formatCandidateCloseDate(closedate: string | null): string {
+  if (!closedate) return "";
+  const d = /^\d+$/.test(closedate) ? new Date(Number(closedate)) : new Date(closedate);
+  return Number.isNaN(d.getTime()) ? "" : ` · closed ${d.toISOString().slice(0, 10)}`;
+}
+
 async function resolveDealViaLLM(
   meetingTitle: string,
   recorderEmail: string,
+  meetingContext?: string | null,
 ): Promise<string | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
   const cleanTitle = meetingTitle.trim();
@@ -1130,12 +1164,20 @@ async function resolveDealViaLLM(
   }
 
   const candidateLines = candidates.map((c) => {
-    const closeStr = c.closedate ? ` · closed ${new Date(Number(c.closedate)).toISOString().slice(0, 10)}` : "";
+    // `closedate` revient en ISO 8601 depuis /crm/v3/objects/deals/search
+    // ("2026-10-30T10:28:56.296Z"), pas en epoch-ms — contrairement au format
+    // attendu côté FILTRE, d'où la confusion d'origine. `Number()` dessus donne
+    // NaN, et `new Date(NaN).toISOString()` lève une RangeError qui faisait
+    // planter tout l'appel : l'étape 4 ne renvoyait jamais de deal dès qu'un
+    // candidat closed_won portait une date. On lit les deux formats et on
+    // ignore une date illisible plutôt que de casser la résolution entière.
+    const closeStr = formatCandidateCloseDate(c.closedate);
     return `- ${c.id} · ${c.dealname} · ${c.status}${closeStr}`;
   });
   const userMsg = [
     `Meeting title : ${cleanTitle}`,
     `Recorder email : ${recorderEmail}`,
+    ...(meetingContext ? [``, `Résumé du meeting (généré par Claap) :`, meetingContext] : []),
     ``,
     `Deals HubSpot disponibles (${candidates.length}) :`,
     ...candidateLines,

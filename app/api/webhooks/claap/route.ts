@@ -2,10 +2,16 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   resolveDealFromParticipants,
+  resolveDealFromMeetingContext,
   resolveCompanyFromParticipants,
   type CompanyMatchSnapshot,
 } from "@/lib/hubspot";
-import { extractExternalParticipants, extractInternalEmails, extractTitleSearchHint } from "@/lib/claap";
+import {
+  extractExternalParticipants,
+  extractInternalEmails,
+  extractTitleSearchHint,
+  fetchClaapMeetingContext,
+} from "@/lib/claap";
 import { sendManualDealAlert } from "@/lib/sales-coach/admin-alert";
 
 export const dynamic = "force-dynamic";
@@ -92,6 +98,27 @@ export async function POST(req: NextRequest) {
       .map((p) => p.email)
       .filter((e): e is string => !!e);
 
+    // Un meeting "internal" où Claap a bel et bien lu l'invite (plusieurs
+    // participants listés, tous internes) est un vrai point interne. La
+    // mis-classification qu'on cherche à rattraper a la signature inverse :
+    // Claap n'a listé personne d'autre que le recorder. Mesuré sur 150
+    // recordings : les 33 meetings à récupérer listent 1 participant, les 4
+    // vrais points internes en listent 2 à 9.
+    //
+    // La distinction est indispensable AVANT l'étape 5 : un point commercial
+    // interne parle nommément de comptes clients, et le matching sémantique
+    // l'accrocherait à leur deal. Cas réel : "Weekly Sales Catchup", 9
+    // participants Coachello, rattaché au deal "Adyen - Program Leadership
+    // Accelerator" parce que l'équipe y parlait d'Adyen. Le meeting serait
+    // analysé et débriefé comme un call de vente avec Adyen.
+    const capturedExternals = recorderEmail
+      ? extractExternalParticipants(rec.meeting?.participants, recorderEmail)
+      : [];
+    const looksGenuinelyInternal =
+      (rec.meeting?.type ?? "") === "internal" &&
+      participantEmails.length > 1 &&
+      capturedExternals.length === 0;
+
     // Fallback: if Claap didn't link a (valid) deal, try to resolve via
     // participant emails (stage 1+2 inside the resolver), the title hint
     // (stage 3), and finally LLM semantic matching against the active deal
@@ -134,19 +161,56 @@ export async function POST(req: NextRequest) {
           `[claap-webhook] matched company ${companyMatch.id} (${companyMatch.name ?? "?"}, lifecycle=${companyMatch.lifecyclestage ?? "?"}) for recording ${rec.id}`,
         );
       }
+
+      // ── Étape 5 : matching sur le résumé Claap ────────────────────────────
+      // Dernier recours quand les 4 étapes précédentes sont muettes, ce qui
+      // arrive systématiquement sur les meetings dont Claap n'a pas lu
+      // l'invite : aucun participant externe à matcher (étapes 1-2), et un
+      // titre sans nom de société qui coupe court aux étapes 3-4.
+      // Le résumé généré par Claap, lui, nomme la société et les
+      // interlocuteurs. Exemple réel : "Coachello (Démo roleplay Avatar)",
+      // aucun externe capté, résolveur bredouille, alors que le résumé citait
+      // Erilia et ses trois interlocutrices, avec un deal ouvert à 20 k€.
+      // L'appel n'a lieu que sur un échec complet : un appel Claap + un appel
+      // LLM, tous deux hors du chemin nominal.
+      if (!dealId && !looksGenuinelyInternal) {
+        const meetingContext = await fetchClaapMeetingContext(rec.id).catch((e) => {
+          console.warn("[claap-webhook] meeting context fetch failed:", e);
+          return null;
+        });
+        if (meetingContext) {
+          dealId = await resolveDealFromMeetingContext(
+            meetingContext,
+            recorderEmail,
+            rec.title ?? null,
+          ).catch((e) => {
+            console.warn("[claap-webhook] context-based deal resolve failed:", e);
+            return null;
+          });
+          if (dealId) {
+            console.log(
+              `[claap-webhook] resolved deal ${dealId} from the Claap summary for recording ${rec.id}`,
+            );
+          }
+        }
+      }
     }
 
     // Internal override safeguard: Claap mis-classifies some external meetings
     // as "internal" when no external attendee was captured in the calendar
-    // invite. We only promote internal→external when ALL of these hold:
-    //   - the title yields a non-trivial search hint (titleHint)
-    //   - the auto-resolve actually found a matching HubSpot deal
-    // No HubSpot footprint → trust Claap and drop. The user can still
-    // manually analyse the recording from the "Analyser un meeting passé"
-    // modal if they disagree with this verdict.
-    if (meetingType === "internal" && dealId && titleHint) {
+    // invite. A resolved HubSpot deal is the evidence that promotes the meeting
+    // back to "external" — whichever stage found it, including the summary-based
+    // stage 5 above.
+    //
+    // The title hint used to be required on top of the deal. It no longer is:
+    // on exactly the meetings this safeguard exists for, Claap captured nothing
+    // and the title carries no company name, so demanding a hint threw away
+    // meetings whose deal we had just proven. No deal at all → trust Claap and
+    // drop; the recording stays reachable from the "Analyser un meeting passé"
+    // modal.
+    if (meetingType === "internal" && dealId && !looksGenuinelyInternal) {
       console.log(
-        `[claap-webhook] overriding internal→external for recording ${rec.id} — deal ${dealId} matched via title hint "${titleHint}"`,
+        `[claap-webhook] overriding internal→external for recording ${rec.id} — deal ${dealId} resolved`,
       );
       meetingType = "external";
     }
@@ -165,9 +229,7 @@ export async function POST(req: NextRequest) {
       !recorderEmail ||
       !transcriptUrl;
 
-    const externalParticipants = recorderEmail
-      ? extractExternalParticipants(rec.meeting?.participants, recorderEmail)
-      : [];
+    const externalParticipants = capturedExternals;
     const internalEmails = recorderEmail
       ? extractInternalEmails(rec.meeting?.participants, recorderEmail)
       : [];
