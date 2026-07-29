@@ -1,123 +1,153 @@
 import { db } from "@/lib/db";
-import {
-  collectWatchlistRawItems,
-  collectDiscoveryRawItems,
-  collectLinkedInPostDiscovery,
-} from "./sources";
+import { collectGlobalNews, collectLinkedInPostDiscovery } from "./sources";
 import { classifyItems } from "./classify";
 import { linkExistingCompanies } from "./resolve-company";
 import { dedupeKey, contentKey, titleOverlap } from "./dedupe";
-import type { ScoredSignal, SignalFeed } from "./types";
+import { enrichUntilTarget, newEnrichContext, type EnrichedSignal } from "./enrich-lead";
+import type { ScoredSignal } from "./types";
 
 // ── Réglages (faciles à ajuster) ─────────────────────────────────────────────
 // Le tri par SUJET/PERSONA est fait en amont par le gate de pertinence
-// (lib/signal-scoring) ; ces seuils ne filtrent que la qualité/fraîcheur, ils
-// restent volontairement modérés pour laisser passer les news générales de
-// marché (levées, M&A, expansion) qui scorent moyennement faute de décideur nommé.
-const MIN_SCORE_WATCHLIST = 45;
-const MIN_SCORE_DISCOVERY = 62; // barre plus haute pour le discovery
-const MIN_SCORE_POST_DISCOVERY = 55; // posts LinkedIn : scorés sur l'intent, barre intermédiaire
+// (lib/signal-scoring) ; ce seuil ne filtre que la qualité intrinsèque du fait.
+//
+// Il a changé d'échelle avec la refonte : l'actionnabilité (0-25) est sortie du
+// score pour devenir une condition d'entrée vérifiée à l'enrichissement, et ses
+// points ont été redistribués sur l'ICP et la force du fait. À RECALIBRER sur un
+// premier run à blanc (scripts/test-signals-sweep.ts --dry-run) avant de figer.
+const MIN_SCORE = 70;
+// Un post LinkedIn est structurellement pénalisé sur "force du fait" (pas
+// d'évènement daté) alors que c'est le canal qui donne le lead le plus sûr :
+// sans seuil dédié, on tuerait la source la plus rentable du pipeline.
+const MIN_SCORE_POST = 62;
+
 const FRESHNESS_DAYS = 14; // fenêtre de visibilité du feed
-// Cap quotidien : on n'insère QUE les N meilleurs signaux net-nouveaux par run,
-// tous feeds confondus (watchlist + discovery). Empêche le feed de se noyer ;
-// les signaux s'accumulent ensuite jusqu'à 14 j (FRESHNESS_DAYS) puis expirent.
+/** Signaux insérés par run, tous types confondus. */
 const DAILY_CAP = 10;
-const CAP_PER_COMPANY = 5; // max signaux 'new' par compte watchlist
-const CAP_DISCOVERY = 50; // max signaux 'new' discovery globaux
-const COMPANY_CONCURRENCY = 4;
+/**
+ * Plafond de signaux vivants. DOIT valoir au moins DAILY_CAP x FRESHNESS_DAYS,
+ * sinon on expire des signaux qu'on vient de payer en enrichissement et que
+ * l'utilisateur n'a jamais vus (l'ancien plafond de 50 en aurait détruit 90).
+ */
+const CAP_LIVE = DAILY_CAP * FRESHNESS_DAYS;
+
+/** Budget temps de l'enrichissement (la Background Function tient 15 min). */
+const ENRICH_DEADLINE_MS = 8 * 60_000;
+/** Requêtes SERP de résolution de domaine autorisées par run. */
+const SERP_BUDGET = 30;
 
 export interface SweepOptions {
-  feed?: SignalFeed | "both";
-  /** Restreindre à certains comptes (refresh ciblé). Sinon tous. */
-  companyIds?: string[];
-  /** Inclure les datasets LinkedIn lents (jobs/posts). Daily only. */
-  includeSlowSources?: boolean;
   userId?: string | null;
+  /** Test : n'insère rien, renvoie quand même toutes les métriques. */
+  dryRun?: boolean;
+  /** Test : restreint la grille de requêtes (ids de lib/signals/queries.ts). */
+  onlyQueries?: string[] | null;
 }
 
 export interface SweepResult {
   ok: boolean;
+  /** Items bruts récoltés. */
+  collected: number;
+  /** Signaux au-dessus du seuil de qualité. */
+  scored: number;
+  /** Restants après dédup (URL + contenu + flou). */
+  candidates: number;
+  /** Signaux passés à l'enrichissement. */
+  enrichAttempts: number;
+  /** Jetés faute de lead joignable, par cause. */
+  droppedNoDomain: number;
+  droppedNoPerson: number;
   inserted: number;
-  watchlist: number;
-  discovery: number;
   expired: number;
   error?: string;
 }
 
 /**
  * Orchestrateur unique du pipeline Signals, réutilisé par le cron quotidien et
- * le refresh manuel. Récolte -> classify Claude -> dedupe -> insert des N meilleurs
- * net-nouveaux (cap quotidien) -> rétention (expiration + plafonds).
+ * le refresh manuel.
+ *
+ * Scan marché global -> classify Claude -> rattachement aux comptes connus ->
+ * dédup -> enrichissement lead en descendant le classement -> insert des 10
+ * meilleurs MUNIS D'UN LEAD -> rétention.
+ *
+ * L'ordre compte : la dédup passe AVANT l'enrichissement, sinon on dépenserait
+ * des appels réseau sur des faits déjà vus il y a trois jours, ce qui est
+ * fréquent sur un flux de presse.
  */
 export async function runSignalsSweep(opts: SweepOptions = {}): Promise<SweepResult> {
-  const feed = opts.feed ?? "both";
   const userId = opts.userId ?? null;
+  const empty: SweepResult = {
+    ok: true, collected: 0, scored: 0, candidates: 0, enrichAttempts: 0,
+    droppedNoDomain: 0, droppedNoPerson: 0, inserted: 0, expired: 0,
+  };
+
   try {
-    const all: ScoredSignal[] = [];
-
-    // ── Watchlist ──
-    if (feed === "watchlist" || feed === "both") {
-      let q = db.from("scope_companies").select("id, name").order("name", { ascending: true });
-      if (opts.companyIds?.length) q = q.in("id", opts.companyIds);
-      const { data: companiesRaw } = await q;
-      const companies = (companiesRaw ?? []) as { id: string; name: string }[];
-
-      // Vrais événements uniquement (news SERP + posts/jobs LinkedIn). La source
-      // Apollo "nouveaux décideurs ICP" a été retirée du feed : ce ne sont pas des
-      // événements temps-réel mais un annuaire de personnes, qui noyait le feed.
-      const watchlistSignals = await mapLimit(companies, COMPANY_CONCURRENCY, async (c) => {
-        const raw = await collectWatchlistRawItems(c, { includeSlowSources: opts.includeSlowSources });
-        const scored = await classifyItems(raw, { userId });
-        return scored.filter((s) => s.score >= MIN_SCORE_WATCHLIST);
-      });
-      for (const arr of watchlistSignals) all.push(...arr);
+    // 1. Récolte : news globales + posts LinkedIn, en parallèle.
+    const [news, posts] = await Promise.all([
+      collectGlobalNews(opts.onlyQueries),
+      collectLinkedInPostDiscovery(opts.onlyQueries),
+    ]);
+    const raw = [...news, ...posts];
+    console.log(`[signals/sweep] récolte: ${news.length} news + ${posts.length} posts = ${raw.length} items`);
+    if (raw.length === 0) {
+      console.warn("[signals/sweep] récolte VIDE : vérifier le compte Bright Data (une zone suspendue renvoie 200 sans corps)");
+      return { ...empty, expired: await applyRetention() };
     }
 
-    // ── Discovery ──
-    if (feed === "discovery" || feed === "both") {
-      // News thématique (SERP) + posts LinkedIn par mots-clés (SERP). Les deux
-      // sont bon marché (aucun record de dataset).
-      const [news, posts] = await Promise.all([
-        collectDiscoveryRawItems(),
-        collectLinkedInPostDiscovery(),
-      ]);
-      const scored = await classifyItems([...news, ...posts], { userId });
-      // Barre plus basse pour les posts (scorés sur l'intent, pas un évènement dur).
-      const kept = scored.filter((s) =>
-        s.signal_type === "linkedin_post"
-          ? s.score >= MIN_SCORE_POST_DISCOVERY
-          : s.score >= MIN_SCORE_DISCOVERY,
-      );
-      all.push(...kept);
-    }
+    // 2. Scoring Claude.
+    const scored = await classifyItems(raw, { userId });
+    const kept = scored.filter((s) =>
+      s.signal_type === "linkedin_post" ? s.score >= MIN_SCORE_POST : s.score >= MIN_SCORE,
+    );
+    console.log(`[signals/sweep] scoring: ${scored.length} émis, ${kept.length} au-dessus du seuil`);
 
-    // Relie au watchlist tout signal non encore rattaché dont le compte y figure
-    // déjà (discovery, ou item watchlist reclassé en discovery par la réconciliation
-    // de classify quand son vrai sujet était une AUTRE société). Bascule en feed
-    // watchlist + scope_company_id, ce qui le fait remonter sur la fiche compte.
-    const { data: companiesRaw } = await db.from("scope_companies").select("id, name");
-    const linked = linkExistingCompanies(all, (companiesRaw ?? []) as { id: string; name: string }[]);
+    // 3. Rattachement aux comptes déjà suivis, AVANT l'enrichissement : ça offre
+    //    gratuitement le domaine officiel et les contacts CRM, c'est-à-dire le
+    //    meilleur lead possible, au moment exact où on en a besoin.
+    const { data: companies } = await db.from("scope_companies").select("id, name");
+    const linked = linkExistingCompanies(kept, (companies ?? []) as { id: string; name: string }[]);
 
-    const inserted = await persistSignals(linked, userId);
-    const counts = linked.reduce(
-      (acc, s) => {
-        acc[s.feed]++;
-        return acc;
-      },
-      { watchlist: 0, discovery: 0 } as Record<SignalFeed, number>,
+    // 4. Dédup (URL, contenu, flou) contre la base.
+    const candidates = await dedupeAgainstDb(linked);
+    console.log(`[signals/sweep] dédup: ${candidates.length} net-nouveaux`);
+
+    // 5. Enrichissement : on descend le classement jusqu'à DAILY_CAP leads.
+    const ranked = [...candidates].sort((a, b) => b.s.score - a.s.score);
+    const ctx = newEnrichContext({ deadlineMs: ENRICH_DEADLINE_MS, serpBudget: SERP_BUDGET });
+    const { enriched, attempts } = await enrichUntilTarget(ranked.map((c) => c.s), {
+      target: DAILY_CAP,
+      ctx,
+    });
+    console.log(
+      `[signals/sweep] enrichissement: ${enriched.length}/${DAILY_CAP} leads en ${attempts} tentatives ` +
+        `(jetés: ${ctx.drops.no_domain} sans domaine, ${ctx.drops.no_person} sans personne)`,
     );
 
+    // 6. Insert.
+    const byUrlKey = new Map(ranked.map((c) => [dedupeKey(c.s), c]));
+    const inserted = opts.dryRun ? 0 : await persistEnriched(enriched, byUrlKey, userId);
+
+    // 7. Rétention.
     const expired = await applyRetention();
 
-    return { ok: true, inserted, watchlist: counts.watchlist, discovery: counts.discovery, expired };
+    return {
+      ok: true,
+      collected: raw.length,
+      scored: kept.length,
+      candidates: candidates.length,
+      enrichAttempts: attempts,
+      droppedNoDomain: ctx.drops.no_domain,
+      droppedNoPerson: ctx.drops.no_person,
+      inserted,
+      expired,
+    };
   } catch (e) {
     const error = e instanceof Error ? e.message : String(e);
     console.error("[signals/run-sweep] failed:", error);
-    return { ok: false, inserted: 0, watchlist: 0, discovery: 0, expired: 0, error };
+    return { ...empty, ok: false, error };
   }
 }
 
-// ── Persistance (insert only new) ────────────────────────────────────────────
+// ── Dédup (3 niveaux, en amont de l'enrichissement) ──────────────────────────
 
 interface Candidate {
   s: ScoredSignal;
@@ -138,8 +168,14 @@ function norm(s: string): string {
 // Sert de filet pour les lignes antérieures à la migration (sans content_key).
 const FUZZY_OVERLAP = 0.6;
 
-async function persistSignals(signals: ScoredSignal[], userId: string | null): Promise<number> {
-  if (signals.length === 0) return 0;
+/**
+ * Écarte tout ce qui est déjà connu : doublons internes au run (par URL puis par
+ * contenu), puis lignes déjà en base (tous statuts), puis filet flou sur les
+ * titres. C'est la partie la plus éprouvée du pipeline, elle n'a fait que
+ * remonter en amont de l'enrichissement.
+ */
+async function dedupeAgainstDb(signals: ScoredSignal[]): Promise<Candidate[]> {
+  if (signals.length === 0) return [];
 
   // 1) Dédup en mémoire sur dedupe_key (URL) : garde le meilleur score.
   const byKey = new Map<string, Candidate>();
@@ -183,52 +219,12 @@ async function persistSignals(signals: ScoredSignal[], userId: string | null): P
     }
   }
 
-  let pool = candidates.filter((c) => !seenUrl.has(c.key) && !(c.ck && seenContent.has(c.ck)));
+  const pool = candidates.filter((c) => !seenUrl.has(c.key) && !(c.ck && seenContent.has(c.ck)));
 
   // 4) Filet anti-doublon flou : pour les lignes existantes SANS content_key
   //    (antérieures à la migration), on retombe sur un recouvrement de titres au
-  //    sein de la même société + même type. Couvre le cas "même nomination déjà
-  //    rejetée, ressortie via une autre URL" tant que l'historique n'a pas de
-  //    content_key.
-  pool = await dropFuzzyDuplicates(pool);
-
-  // Cap quotidien : les DAILY_CAP meilleurs net-nouveaux au score, tous feeds confondus.
-  const fresh = pool.sort((a, b) => b.s.score - a.s.score).slice(0, DAILY_CAP);
-  if (fresh.length === 0) return 0;
-
-  const rows = fresh.map(({ s, key, ck }) => ({
-    scope_company_id: s.scope_company_id,
-    feed: s.feed,
-    company_name: s.company_name,
-    company_domain: s.company_domain,
-    company_linkedin: null,
-    signal_type: s.signal_type,
-    source: s.source,
-    category: s.category,
-    title: s.title.slice(0, 300),
-    url: s.url,
-    summary: s.summary,
-    why_relevant: s.why_relevant,
-    suggested_action: s.suggested_action,
-    payload: s.author ? { author: s.author } : null,
-    score: s.score,
-    dedupe_key: key,
-    content_key: ck,
-    signal_date: s.signal_date,
-    created_by: userId,
-  }));
-
-  // ignoreDuplicates : ON CONFLICT (dedupe_key) DO NOTHING. Renvoie seulement
-  // les lignes réellement insérées.
-  const { data, error } = await db
-    .from("prospect_signals")
-    .upsert(rows, { onConflict: "dedupe_key", ignoreDuplicates: true })
-    .select("id");
-  if (error) {
-    console.error("[signals/persist] upsert error:", error.message);
-    return 0;
-  }
-  return data?.length ?? 0;
+  //    sein de la même société + même type.
+  return dropFuzzyDuplicates(pool);
 }
 
 /**
@@ -269,6 +265,65 @@ async function dropFuzzyDuplicates(pool: Candidate[]): Promise<Candidate[]> {
   });
 }
 
+// ── Persistance ──────────────────────────────────────────────────────────────
+
+async function persistEnriched(
+  enriched: EnrichedSignal[],
+  byUrlKey: Map<string, Candidate>,
+  userId: string | null,
+): Promise<number> {
+  if (enriched.length === 0) return 0;
+
+  const rows = enriched.map((s) => {
+    const key = dedupeKey(s);
+    return {
+      scope_company_id: s.scope_company_id,
+      feed: s.feed,
+      company_name: s.company_name,
+      company_domain: s.company_domain,
+      signal_type: s.signal_type,
+      source: s.source,
+      title: s.title.slice(0, 300),
+      url: s.url,
+      summary: s.summary,
+      why_relevant: s.why_relevant,
+      suggested_action: s.suggested_action,
+      payload: s.author ? { author: s.author } : null,
+      score: s.score,
+      score_breakdown: s.score_breakdown ?? null,
+      query_id: s.query_id ?? null,
+      domain_via: s.domain_via,
+      dedupe_key: key,
+      content_key: byUrlKey.get(key)?.ck ?? contentKey(s),
+      signal_date: s.signal_date,
+      created_by: userId,
+      // Lead : la raison d'être de la ligne. L'email est deviné ici ; le reveal
+      // Apollo (1 crédit) n'aura lieu qu'au clic, dans lib/signals/act.ts.
+      lead_first_name: s.lead.first_name,
+      lead_last_name: s.lead.last_name,
+      lead_full_name: s.lead.full_name,
+      lead_title: s.lead.title,
+      lead_linkedin: s.lead.linkedin,
+      lead_apollo_id: s.lead.apollo_id,
+      lead_email: s.lead.email,
+      lead_email_source: s.lead.email_source,
+      lead_source: s.lead.source,
+    };
+  });
+
+  // ignoreDuplicates : ON CONFLICT (dedupe_key) DO NOTHING. Renvoie seulement
+  // les lignes réellement insérées.
+  const { data, error } = await db
+    .from("prospect_signals")
+    .upsert(rows, { onConflict: "dedupe_key", ignoreDuplicates: true })
+    .select("id");
+  if (error) {
+    console.error("[signals/persist] upsert error:", error.message);
+    return 0;
+  }
+  return data?.length ?? 0;
+}
+
 // ── Rétention (anti-empilement) ──────────────────────────────────────────────
 
 async function applyRetention(): Promise<number> {
@@ -297,29 +352,16 @@ async function applyRetention(): Promise<number> {
     .select("id");
   expired += stale.data?.length ?? 0;
 
-  // 2) Plafonds : on récupère les 'new' restants et on expire le surplus.
+  // 2) Plafond global : on garde les CAP_LIVE meilleurs et on expire le surplus.
   const { data: live } = await db
     .from("prospect_signals")
-    .select("id, feed, scope_company_id, score")
+    .select("id, score")
     .eq("status", "new")
     .order("score", { ascending: false })
     .range(0, 9_999); // au-delà du défaut Supabase (~1000) pour ne pas rater le surplus
-  const rows = (live ?? []) as { id: string; feed: SignalFeed; scope_company_id: string | null; score: number }[];
+  const rows = (live ?? []) as { id: string; score: number }[];
 
-  const toExpire: string[] = [];
-  const perCompany = new Map<string, number>();
-  let discoveryCount = 0;
-  for (const r of rows) {
-    if (r.feed === "watchlist" && r.scope_company_id) {
-      const n = (perCompany.get(r.scope_company_id) ?? 0) + 1;
-      perCompany.set(r.scope_company_id, n);
-      if (n > CAP_PER_COMPANY) toExpire.push(r.id);
-    } else {
-      discoveryCount++;
-      if (discoveryCount > CAP_DISCOVERY) toExpire.push(r.id);
-    }
-  }
-
+  const toExpire = rows.slice(CAP_LIVE).map((r) => r.id);
   if (toExpire.length > 0) {
     // Chunk pour éviter une clause IN trop longue.
     for (let i = 0; i < toExpire.length; i += 200) {
@@ -334,19 +376,4 @@ async function applyRetention(): Promise<number> {
   }
 
   return expired;
-}
-
-// ── Utilitaire concurrence ───────────────────────────────────────────────────
-
-async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let idx = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (idx < items.length) {
-      const cur = idx++;
-      out[cur] = await fn(items[cur]);
-    }
-  });
-  await Promise.all(workers);
-  return out;
 }

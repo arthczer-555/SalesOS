@@ -13,8 +13,11 @@ export interface SignalsListResponse {
   error?: string;
 }
 
+// `payload` est indispensable : la carte lit `payload.author` pour afficher
+// l'auteur d'un post LinkedIn. Il manquait ici depuis la mise en service, donc
+// l'auteur n'a jamais pu s'afficher (lecture d'undefined, sans erreur).
 const COLS =
-  "id, scope_company_id, feed, company_name, company_domain, company_linkedin, signal_type, source, category, title, url, summary, why_relevant, suggested_action, score, status, snooze_until, actioned_at, dismissed_at, draft_subject, draft_body, draft_recipient, signal_date, created_at, updated_at";
+  "id, scope_company_id, feed, company_name, company_domain, company_linkedin, signal_type, source, category, title, url, summary, why_relevant, suggested_action, payload, score, status, snooze_until, actioned_at, dismissed_at, draft_subject, draft_body, draft_recipient, signal_date, created_at, updated_at, lead_first_name, lead_last_name, lead_full_name, lead_title, lead_linkedin, lead_apollo_id, lead_email, lead_email_source, lead_source, lead_revealed_at, score_breakdown, query_id, domain_via";
 
 export async function GET(req: NextRequest) {
   const user = await getAuthenticatedUser();

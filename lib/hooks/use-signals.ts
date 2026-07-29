@@ -26,9 +26,8 @@ export interface SignalActionResult {
   error?: string;
 }
 
-export function useSignals(params: { feed: "all" | "watchlist" | "discovery"; owner?: string; type?: string }) {
+export function useSignals(params: { owner?: string; type?: string }) {
   const search = new URLSearchParams();
-  if (params.feed !== "all") search.set("feed", params.feed);
   if (params.owner) search.set("owner", params.owner);
   if (params.type) search.set("type", params.type);
   const qs = search.toString();

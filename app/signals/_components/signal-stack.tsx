@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ExternalLink, Check, X, Building2, Sparkles, Eye, Linkedin, Newspaper } from "lucide-react";
+import { ExternalLink, Check, X, Building2, Eye, Linkedin, Newspaper, User } from "lucide-react";
 import { COLORS, RADIUS, SHADOWS, companyAvatarGradient } from "@/lib/design/tokens";
 import type { SignalRow } from "@/lib/signals/types";
 import type { SignalAction } from "@/lib/hooks/use-signals";
@@ -29,19 +29,23 @@ function metaFor(s: SignalRow) {
 const SOURCE_META: Record<string, { label: string; Icon: typeof Building2 }> = {
   brightdata_linkedin: { label: "LinkedIn", Icon: Linkedin },
   brightdata_serp: { label: "News", Icon: Newspaper },
-  apollo: { label: "Apollo", Icon: Building2 },
 };
 
 function sourceMetaFor(s: SignalRow) {
   return SOURCE_META[s.source] ?? { label: s.source.replace(/_/g, " "), Icon: Building2 };
 }
 
-/** Auteur d'un post LinkedIn discovery (stocké dans payload). */
-function authorOf(s: SignalRow): string | null {
-  if (s.signal_type !== "linkedin_post") return null;
-  const a = (s.payload as { author?: { name?: string } } | null)?.author;
-  return a?.name?.trim() || null;
-}
+/**
+ * Fiabilité de l'email affiché. Le sales doit voir en un coup d'œil s'il envoie
+ * à une adresse vérifiée ou à une supposition : c'est ce qui change sa décision.
+ */
+const EMAIL_META: Record<string, { label: string; fg: string; bg: string }> = {
+  crm: { label: "verified email", fg: COLORS.ok, bg: COLORS.okBg },
+  pattern: { label: "deduced email", fg: COLORS.info, bg: COLORS.infoBg },
+  guess: { label: "assumed email", fg: COLORS.warn, bg: COLORS.warnBg },
+  apollo: { label: "revealed email", fg: COLORS.ok, bg: COLORS.okBg },
+  pending_reveal: { label: "reveal on act · 1 credit", fg: COLORS.ink2, bg: COLORS.bgSoft },
+};
 
 function fmtDate(iso: string | null): string {
   if (!iso) return "";
@@ -268,13 +272,11 @@ function SignalCard({ signal, drag = 0, muted = false }: { signal: SignalRow; dr
             <span style={{ fontSize: 11, fontWeight: 600, color: meta.fg, background: meta.bg, padding: "2px 8px", borderRadius: 999 }}>
               {meta.label}
             </span>
-            {signal.feed === "discovery" ? (
-              <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.brand, background: COLORS.brandTint, padding: "2px 8px", borderRadius: 999, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <Sparkles size={11} /> Discovery
-              </span>
-            ) : (
+            {/* Tout le feed est de la découverte marché : le seul distinguo utile
+                est "cette société est déjà un compte suivi". */}
+            {signal.scope_company_id && (
               <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.ink2, background: COLORS.bgSoft, padding: "2px 8px", borderRadius: 999, display: "inline-flex", alignItems: "center", gap: 4 }}>
-                <Eye size={11} /> Watchlist
+                <Eye size={11} /> Tracked account
               </span>
             )}
             {signal.signal_date && <span style={{ fontSize: 11, color: COLORS.ink3 }}>{fmtDate(signal.signal_date)}</span>}
@@ -286,11 +288,60 @@ function SignalCard({ signal, drag = 0, muted = false }: { signal: SignalRow; dr
       {/* Titre du signal. */}
       <div style={{ fontSize: 16, fontWeight: 600, color: COLORS.ink0, lineHeight: 1.35 }}>{signal.title}</div>
 
-      {/* Auteur du post LinkedIn (discovery) : acter l'ajoute à la watchlist + HubSpot. */}
-      {authorOf(signal) && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.ink2, marginTop: -6 }}>
-          <Linkedin size={12} style={{ color: "#0A66C2" }} />
-          Post by {authorOf(signal)}
+      {/* LE LEAD : la raison d'être de la carte. Chaque signal du feed arrive avec
+          quelqu'un à qui écrire, sinon il n'aurait pas été inséré. */}
+      {signal.lead_full_name && (
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            alignItems: "flex-start",
+            padding: "10px 12px",
+            background: COLORS.bgSoft,
+            borderRadius: RADIUS.md,
+            border: `1px solid ${COLORS.line}`,
+          }}
+        >
+          <User size={15} style={{ color: COLORS.ink2, flexShrink: 0, marginTop: 2 }} />
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {signal.lead_full_name}
+              </span>
+              {signal.lead_linkedin && (
+                <a
+                  href={signal.lead_linkedin}
+                  target="_blank"
+                  rel="noreferrer"
+                  onPointerDown={(e) => e.stopPropagation()}
+                  style={{ display: "inline-flex", color: "#0A66C2" }}
+                >
+                  <Linkedin size={13} />
+                </a>
+              )}
+            </div>
+            {signal.lead_title && (
+              <div style={{ fontSize: 12, color: COLORS.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {signal.lead_title}
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
+              {signal.lead_email && (
+                <span style={{ fontSize: 12, color: COLORS.ink1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "100%" }}>
+                  {signal.lead_email}
+                </span>
+              )}
+              {(() => {
+                const em = EMAIL_META[signal.lead_email_source ?? ""] ?? null;
+                if (!em) return null;
+                return (
+                  <span style={{ fontSize: 10, fontWeight: 600, color: em.fg, background: em.bg, padding: "2px 6px", borderRadius: 999 }}>
+                    {em.label}
+                  </span>
+                );
+              })()}
+            </div>
+          </div>
         </div>
       )}
 
@@ -300,6 +351,11 @@ function SignalCard({ signal, drag = 0, muted = false }: { signal: SignalRow; dr
         {signal.why_relevant && (
           <div style={{ marginTop: 10, color: COLORS.ink2, fontStyle: "italic" }}>
             Why it matters: {signal.why_relevant}
+          </div>
+        )}
+        {signal.suggested_action && (
+          <div style={{ marginTop: 8, color: COLORS.brand, fontWeight: 500 }}>
+            → {signal.suggested_action}
           </div>
         )}
       </div>

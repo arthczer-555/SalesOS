@@ -9,6 +9,13 @@ import { hubspotFetch, hubspotAssociate, createCompany } from "@/lib/hubspot";
 import { resolveHubspotCompanyId } from "@/lib/watchlist/resolve-hubspot-company";
 import type { SignalRow, SignalCandidate, SignalAuthor } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+// Devinette d'email : implémentation UNIQUE, partagée avec le sweep de nuit.
+// Le sweep et cette modale doivent produire exactement la même adresse, sinon on
+// affiche une adresse et on en envoie une autre.
+import { companyDomainFromHubspot, emailMatchesDomain, guessEmail } from "./email-pattern";
+// Extraction des personnes nommées : partagée avec le sweep, qui s'en sert pour
+// décider si un signal a un lead avant même de l'insérer.
+import { extractNominees } from "./enrich-lead";
 
 // Mots-clés ICP pour reconnaître un bon contact (buyer RH / People / L&D).
 const ICP_KEYWORDS = ["chro", "drh", "ressources humaines", "human resources", "people", "talent", "l&d", "learning", "hrbp", "rh", "formation"];
@@ -28,11 +35,7 @@ export interface CandidatesResult {
 }
 
 /** Personne clé citée dans un signal (nominé) ou auteur d'un post LinkedIn. */
-interface NomineePerson {
-  firstName: string;
-  lastName: string;
-  title: string | null;
-}
+type NomineePerson = { firstName: string | null; lastName: string | null; title: string | null };
 
 /**
  * Prépare la liste des destinataires possibles pour un signal SANS rien dépenser
@@ -109,8 +112,9 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
     }
   }
 
-  // Candidats Apollo ICP (emails masqués, reveal à la demande).
-  const apolloPeople: { id: string; first: string; last: string }[] = [];
+  // Candidats Apollo ICP (emails masqués, reveal à la demande). Rappel : People
+  // Search masque le nom de famille, donc ces candidats sont RÉVÉLABLES mais leur
+  // email n'est pas devinable — d'où l'absence de `guessEmail` sur cette branche.
   if (isApolloConfigured() && sig.company_name) {
     const search = await apolloSearchPeople({
       organizationName: sig.company_name,
@@ -122,7 +126,6 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
       const name = (p.name || `${p.first_name ?? ""} ${p.last_name ?? ""}`).trim();
       if (!name || !p.id || seenNames.has(name.toLowerCase())) continue;
       seenNames.add(name.toLowerCase());
-      if (p.first_name && p.last_name) apolloPeople.push({ id: p.id, first: p.first_name, last: p.last_name });
       out.push({
         key: `apollo:${p.id}`,
         source: "apollo",
@@ -160,13 +163,10 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
       : await extractNominees(sig).catch(() => []);
   const validNominees = nominees.filter((n) => n.firstName || n.lastName);
   if (validNominees.length > 0) {
-    // Pas de contact CRM pour apprendre le pattern d'emails ? On révèle UN collègue
-    // ICP via Apollo (1 crédit) pour comprendre la structure des emails de la
-    // société, puis on devine l'email des nominés.
-    if (samples.length === 0 && apolloPeople.length > 0 && isApolloConfigured()) {
-      const learned = await learnEmailPattern(apolloPeople, out);
-      if (learned) samples.push(learned);
-    }
+    // Cette fonction ne dépense RIEN : lister des candidats ne doit jamais coûter
+    // un crédit. Les échantillons d'emails viennent des contacts HubSpot du même
+    // domaine (samplesForDomain, gratuit) ; le reveal Apollo n'a lieu qu'au draft,
+    // sur une action explicite de l'utilisateur.
     // ICP RH/People en tête : c'est notre buyer prioritaire (ex : la DRH nommée
     // passe devant le COO nommé dans la même annonce).
     const ranked = [...validNominees].sort((a, b) => Number(isIcp(b.title)) - Number(isIcp(a.title)));
@@ -207,69 +207,10 @@ export async function getSignalCandidates(signalId: string): Promise<CandidatesR
 
 // ── Extraction de la personne nommée + devinette d'email ─────────────────────
 
-const NOMINEE_MODEL = "claude-haiku-4-5-20251001";
-
-const NOMINEE_TOOL: Anthropic.Tool = {
-  name: "emit_nominees",
-  description: "Renvoie la/les personne(s) citée(s) nommément dans le signal (nommée, promue, recrutée, ou dont la prise de poste est annoncée).",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      people: {
-        type: "array",
-        description: "Chaque personne explicitement nommée. Liste vide si aucune personne précise n'est citée.",
-        items: {
-          type: "object",
-          properties: {
-            first_name: { type: "string", description: "Prénom." },
-            last_name: { type: "string", description: "Nom de famille." },
-            title: { type: "string", description: "Nouveau poste/titre, ou vide." },
-          },
-          required: ["first_name", "last_name"],
-        },
-      },
-    },
-    required: ["people"],
-  },
-};
-
-/**
- * Extrait la/les personne(s) nommée(s), promue(s) ou recrutée(s) citée(s)
- * nommément dans un signal (max 4). Une annonce peut en citer plusieurs (ex :
- * réorganisation de gouvernance nommant un COO ET une DRH). Liste vide si aucune.
- */
-async function extractNominees(sig: SignalRow): Promise<NomineePerson[]> {
-  if (!process.env.ANTHROPIC_API_KEY) return [];
-  const client = anthropicClient({ timeout: 30_000, maxRetries: 1 });
-  const msg = await client.messages.create({
-    model: NOMINEE_MODEL,
-    max_tokens: 400,
-    system:
-      "Tu extrais les personnes citées NOMMÉMENT qui sont nommées, promues, recrutées ou dont la prise de poste est annoncée dans un signal de prospection. Inclure chaque personne nommée (une réorganisation de gouvernance peut en citer plusieurs). N'invente aucun nom : uniquement des personnes explicitement citées par leur nom. Si aucune personne précise n'est citée (juste l'entreprise), renvoie une liste vide. Réponds uniquement via emit_nominees.",
-    messages: [{ role: "user", content: `Titre: ${sig.title}\nRésumé: ${sig.summary ?? ""}` }],
-    tools: [NOMINEE_TOOL],
-    tool_choice: { type: "tool" as const, name: "emit_nominees" },
-  });
-  logUsage(null, NOMINEE_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "signals_nominee");
-  const block = msg.content.find((b) => b.type === "tool_use");
-  if (!block || !("input" in block)) return [];
-  const out = block.input as { people?: { first_name?: string; last_name?: string; title?: string }[] };
-  const result: NomineePerson[] = [];
-  const seen = new Set<string>();
-  for (const p of out.people ?? []) {
-    const firstName = (p.first_name ?? "").trim();
-    const lastName = (p.last_name ?? "").trim();
-    if (!firstName && !lastName) continue;
-    const k = `${firstName} ${lastName}`.toLowerCase();
-    if (seen.has(k)) continue;
-    seen.add(k);
-    result.push({ firstName, lastName, title: (p.title ?? "").trim() || null });
-    if (result.length >= 4) break;
-  }
-  return result;
-}
-
 // ── Posts LinkedIn discovery : résolution de l'auteur -> société + contact ───
+
+/** Tri/extraction de masse : rapide et économique. */
+const AUTHOR_MODEL = "claude-haiku-4-5-20251001";
 
 interface ResolvedAuthor {
   name: string;
@@ -306,14 +247,14 @@ async function extractAuthorCompany(
   if (!process.env.ANTHROPIC_API_KEY || (!headline && !postSummary)) return null;
   const client = anthropicClient({ timeout: 20_000, maxRetries: 1 });
   const msg = await client.messages.create({
-    model: NOMINEE_MODEL,
+    model: AUTHOR_MODEL,
     max_tokens: 150,
     system: "Tu déduis l'employeur ACTUEL et le poste d'une personne à partir de son intitulé de profil LinkedIn et d'un extrait de son post. Si la société n'est pas clairement identifiable, renvoie company vide. Pas d'invention. Réponds uniquement via emit_author_company.",
     messages: [{ role: "user", content: `Auteur: ${authorName}\nHeadline LinkedIn: ${headline || "(inconnu)"}\nExtrait du post: ${postSummary || "(aucun)"}` }],
     tools: [AUTHOR_TOOL],
     tool_choice: { type: "tool" as const, name: "emit_author_company" },
   });
-  logUsage(null, NOMINEE_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "signals_author");
+  logUsage(null, AUTHOR_MODEL, msg.usage.input_tokens, msg.usage.output_tokens, "signals_author");
   const block = msg.content.find((b) => b.type === "tool_use");
   if (!block || !("input" in block)) return null;
   const out = block.input as { company?: string; title?: string };
@@ -355,124 +296,6 @@ async function resolvePostAuthor(sig: SignalRow): Promise<ResolvedAuthor | null>
   };
 }
 
-/**
- * Révèle un collègue ICP via Apollo (1 crédit) pour APPRENDRE le pattern d'emails
- * de la société quand on n'a aucun contact CRM. Met aussi à jour l'email de ce
- * candidat dans la liste (il devient joignable). Renvoie l'échantillon ou null.
- */
-async function learnEmailPattern(
-  people: { id: string; first: string; last: string }[],
-  out: SignalCandidate[],
-): Promise<{ first: string; last: string; email: string } | null> {
-  for (const p of people.slice(0, 3)) {
-    const revealed = await revealPerson({ apolloId: p.id }).catch(() => null);
-    const email = revealed?.person?.email;
-    if (email && !email.includes("email_not_unlocked") && email.includes("@")) {
-      const cand = out.find((c) => c.apolloId === p.id);
-      if (cand) {
-        cand.email = email;
-        cand.source = "crm"; // a maintenant un vrai email -> plus de reveal
-        cand.apolloId = null;
-      }
-      return { first: p.first, last: p.last, email };
-    }
-  }
-  return null;
-}
-
-function nameNorm(s: string): string {
-  return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
-}
-
-/** Normalise un domaine (retire protocole, www, chemin, casse). */
-function normDomain(raw: string | null | undefined): string | null {
-  const d = (raw ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .replace(/\/.*$/, "");
-  return d || null;
-}
-
-/** L'email est-il sur le domaine attendu ? true si aucun domaine de référence. */
-function emailMatchesDomain(email: string, domain: string | null): boolean {
-  if (!domain) return true;
-  const at = email.indexOf("@");
-  if (at < 1) return false;
-  return email.slice(at + 1).toLowerCase() === domain;
-}
-
-/**
- * Domaine officiel de la société depuis HubSpot (propriété `domain`). null si
- * indisponible. Best-effort : ne bloque jamais le flux candidats.
- */
-async function companyDomainFromHubspot(hubspotCompanyId: string | null): Promise<string | null> {
-  if (!hubspotCompanyId) return null;
-  try {
-    const res = await hubspotFetch<{ properties?: { domain?: string } }>(
-      `/crm/v3/objects/companies/${hubspotCompanyId}?properties=domain`,
-    );
-    return normDomain(res.properties?.domain);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Devine l'email d'une personne d'après le pattern d'emails connus de la société
- * (échantillons prénom/nom/email). Détecte le format (first.last, flast, ...) sur
- * un échantillon puis l'applique. `preferredDomain` (domaine officiel de la
- * société) prime TOUJOURS sur le domaine des échantillons, pour ne pas deviner un
- * email sur un domaine étranger (ex: maison-mère). null si indéterminable.
- */
-function guessEmail(
-  firstNameRaw: string | undefined,
-  lastNameRaw: string | undefined,
-  samples: { first: string; last: string; email: string }[],
-  preferredDomain?: string | null,
-): string | null {
-  const first = nameNorm(firstNameRaw ?? "");
-  const last = nameNorm(lastNameRaw ?? "");
-  if (!first && !last) return null;
-  const anchor = normDomain(preferredDomain);
-  if (samples.length === 0 && !anchor) return null;
-
-  const templates: { id: string; fn: (f: string, l: string) => string }[] = [
-    { id: "first.last", fn: (f, l) => `${f}.${l}` },
-    { id: "firstlast", fn: (f, l) => `${f}${l}` },
-    { id: "flast", fn: (f, l) => `${f.slice(0, 1)}${l}` },
-    { id: "first_last", fn: (f, l) => `${f}_${l}` },
-    { id: "f.last", fn: (f, l) => `${f.slice(0, 1)}.${l}` },
-    { id: "first.l", fn: (f, l) => `${f}.${l.slice(0, 1)}` },
-    { id: "lastfirst", fn: (f, l) => `${l}${f}` },
-    { id: "first", fn: (f) => f },
-    { id: "last", fn: (_f, l) => l },
-  ];
-
-  for (const s of samples) {
-    const sf = nameNorm(s.first);
-    const sl = nameNorm(s.last);
-    const at = s.email.indexOf("@");
-    if (at < 1 || !sf || !sl) continue;
-    const local = s.email.slice(0, at).toLowerCase();
-    const sampleDomain = s.email.slice(at + 1).toLowerCase();
-    const match = templates.find((t) => t.fn(sf, sl) === local);
-    if (match && first && last) {
-      const domain = anchor ?? sampleDomain;
-      if (domain) return `${match.fn(first, last)}@${domain}`;
-    }
-  }
-  // Pas de pattern reconnu : on retombe sur first.last si on a un domaine fiable
-  // (domaine officiel prioritaire, sinon un domaine unique partagé par les samples).
-  if (first && last) {
-    const sampleDomains = new Set(samples.map((s) => s.email.split("@")[1]?.toLowerCase()).filter(Boolean));
-    const domain = anchor ?? (sampleDomains.size === 1 ? [...sampleDomains][0] : null);
-    if (domain) return `${first}.${last}@${domain}`;
-  }
-  return null;
-}
-
 export interface SignalChoice {
   email?: string | null;
   name?: string | null;
@@ -504,6 +327,13 @@ async function resolveChoiceRecipient(
 ): Promise<{ recipient: DraftRecipient | null; apolloUsed: boolean }> {
   if (c.email) return { recipient: { name: c.name ?? null, email: c.email }, apolloUsed: false };
 
+  // Garde-fou anti double-dépense : si un crédit a DÉJÀ été consommé sur ce
+  // signal, on réutilise l'email révélé au lieu d'en racheter un. Sans ça,
+  // rouvrir la modale sur un signal déjà traité repaie un crédit à chaque fois.
+  if (sig.lead_revealed_at && sig.lead_email) {
+    return { recipient: { name: sig.lead_full_name ?? c.name ?? null, email: sig.lead_email }, apolloUsed: false };
+  }
+
   if (isApolloConfigured() && (c.apolloId || (c.firstName && c.lastName))) {
     const revealed = await revealPerson(
       c.apolloId
@@ -521,6 +351,20 @@ async function resolveChoiceRecipient(
         lastName: revealed?.person?.last_name ?? c.lastName ?? null,
         title: revealed?.person?.title ?? null,
       });
+      // Stampe le crédit dépensé sur le signal : c'est ce qui arme le garde-fou
+      // anti double-dépense ci-dessus, et ce qui remplace le nom masqué par le
+      // vrai nom sur la carte.
+      void db
+        .from("prospect_signals")
+        .update({
+          lead_email: email,
+          lead_email_source: "apollo",
+          lead_revealed_at: new Date().toISOString(),
+          lead_full_name: name ?? sig.lead_full_name,
+          lead_last_name: revealed?.person?.last_name ?? sig.lead_last_name,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", sig.id);
       return { recipient: { name, email }, apolloUsed: true };
     }
     // Secours : email deviné si Apollo n'a rien révélé.

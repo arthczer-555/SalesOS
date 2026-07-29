@@ -86,6 +86,43 @@ Chaque email envoyé est tracé dans `outreach_log` (mass-prospection + prospect
 
 > **Market Intel (retiré)** : la feature de signaux de marché (`/intel`, table `market_signals`, alertes Slack) a été supprimée. Les pages `/intel` et `/enrichment` n'existent plus. La construction de listes de prospects vit désormais dans la Watch List (onglet **Lists**, voir ci-dessous) et alimente Mass Prospection.
 
+### Signals (`/signals`)
+
+**10 signaux de marché par jour, chacun avec quelqu'un à qui écrire.** Feed en pile de cartes (swipe droite = agir, gauche = ignorer), alimenté par un cron quotidien (05:00 UTC).
+
+Le principe qui gouverne tout le pipeline : **un signal n'entre dans le feed que si on sait déjà à qui écrire**. Un signal sans lead joignable est jeté et le sweep descend le classement jusqu'à en trouver 10 qui en ont un.
+
+**Le sweep** ([lib/signals/run-sweep.ts](lib/signals/run-sweep.ts)) :
+1. **Scan marché global** ([queries.ts](lib/signals/queries.ts), [sources.ts](lib/signals/sources.ts)) : ~36 requêtes Google News (France, US, UK, DACH, Espagne, Italie, Benelux, Nordics) x 5 familles d'évènements (levées, nominations RH, restructurations, scaling, programmes leadership) + 10 thèmes de posts LinkedIn. Il n'y a **plus de balayage compte par compte** de la watchlist : on surveille des évènements, pas des sociétés.
+2. **Scoring Claude** ([classify.ts](lib/signals/classify.ts), Haiku, batches parallélisés) sur 5 critères : fit ICP société, force du fait, fenêtre d'achat, fraîcheur, fiabilité source. Seuil `MIN_SCORE`.
+3. **Rattachement** aux comptes déjà suivis ([resolve-company.ts](lib/signals/resolve-company.ts)) : donne gratuitement le domaine officiel et les contacts CRM.
+4. **Dédup** à 3 niveaux (URL canonique, empreinte sémantique `content_key`, recouvrement de titres).
+5. **Enrichissement lead** ([enrich-lead.ts](lib/signals/enrich-lead.ts)) : voir ci-dessous.
+6. Insert des 10 meilleurs + rétention 14 jours (plafond `CAP_LIVE` = 10 x 14).
+
+**Trouver le lead** — on collecte tous les candidats possibles puis on garde le meilleur, jamais le premier trouvé (sinon un article de levée citant le CEO donnerait le CEO alors qu'Apollo a la DRH) :
+
+| Priorité | Source | Ce qu'on obtient |
+|---|---|---|
+| 100 | Auteur d'un post LinkedIn | nom complet + profil, gratuit (le canal le moins cher) |
+| 90 | Nominé ICP extrait de l'article (Haiku) | nom complet + poste |
+| 80 | Contact HubSpot ICP du compte | nom + **email réel vérifié** |
+| 70 | Apollo ICP | prénom + poste + id **révélable** |
+| 40-30 | Nominé ou contact hors ICP | dernier recours |
+
+**Emails** : devinés au sweep par pattern société ([email-pattern.ts](lib/signals/email-pattern.ts), gratuit, pattern appris sur de vrais contacts HubSpot du même domaine). Le **reveal Apollo payant (1 crédit) n'a lieu qu'au clic** sur "Generate email", jamais pendant le sweep. `lead_revealed_at` empêche de repayer si on rouvre la modale. La carte affiche la fiabilité : *verified* (CRM), *deduced* (pattern), *assumed* (first.last par défaut), *reveal on act*.
+
+> ⚠️ **Contrainte Apollo à connaître** : `mixed_people/api_search` masque le nom de famille (`last_name_obfuscated: "Bi***m"`) et ne renvoie **pas** le domaine de la société. Un lead Apollo est donc *révélable* mais son email n'est pas *devinable*. Vérifiable avec `npx tsx scripts/probe-apollo.ts`.
+
+**Résolution du domaine** ([resolve-domain.ts](lib/signals/resolve-domain.ts)), du gratuit vers le payant : compte watchlist → HubSpot, HubSpot par nom, hôte de l'article, SERP "site officiel". Deux garde-fous indispensables, parce que le mode d'échec est silencieux et envoie un vrai mail à une vraie mauvaise adresse : une liste `PRESS_DOMAINS` (sinon on fabrique `prenom.nom@lesechos.fr`) et une vérification que le domaine ressemble au nom cherché (sans elle, "CMS Energy" matche "So Energy" à 0,896 pour un seuil fuzzy à 0,85).
+
+**Tests** (aucun crédit dépensé, aucune écriture) :
+- `npx tsx scripts/test-signals-enrich.ts --limit 20` — rejoue l'enrichissement sur l'historique et sort le **taux de survie**, le chiffre qui décide de la viabilité du pipeline.
+- `npx tsx scripts/test-signals-sweep.ts --dry-run --only fr-funding` — pipeline complet sans insertion, `--only` pour itérer sans relancer 46 requêtes.
+- `npx tsx scripts/test-signals-sweep.ts --dist` — distribution des scores, **à faire avant de figer `MIN_SCORE`** (la grille a changé d'échelle, le seuil actuel est une hypothèse).
+
+Chaque signal porte son `query_id` : de quoi voir en base quelle requête produit et éteindre les stériles (`enabled: false` dans `queries.ts`).
+
 ### Clients (`/clients`)
 Suivi des comptes post-signature (Customer Success). À la signature d'un deal (webhook HubSpot closed-won), un client est créé et enrichi par Claude à partir du contexte HubSpot + transcripts Claap :
 - **Fiche client** : ~30 champs extraits (besoins, stakeholders, contexte, risques…), éditables manuellement (les éditions manuelles sont préservées au refresh).
@@ -208,6 +245,7 @@ Répertoire interne Coachello : grille de cartes vers les outils de la plateform
 - **Auth** : `BRIGHTDATA_API_KEY` + `BRIGHTDATA_SERP_ZONE` + `BRIGHTDATA_LINKEDIN_DATASET_ID`
 - **Code** : [lib/brightdata/serp.ts](lib/brightdata/serp.ts) (SERP, synchrone), [lib/brightdata/linkedin.ts](lib/brightdata/linkedin.ts) (adaptateur LinkedIn), [lib/brightdata/dataset.ts](lib/brightdata/dataset.ts) (datasets async)
 - **Banc d'essai** : page `/scrape-test` (LinkedIn + suite SERP complète)
+- **Panne silencieuse (à connaître)** : quand le compte Bright Data est suspendu (facturation) ou la zone coupée, l'API répond **HTTP 200 avec un corps vide** et ne met le motif que dans les en-têtes `x-brd-err-code` / `x-brd-err-msg`. Tout ce qui dépend de la SERP (Signals, veille marché watchlist, recherche de profils) renvoie alors « 0 résultat » sans erreur. `fetchSerp` détecte désormais ces en-têtes : `ok: false` + DM Slack d'alerte crédit sur les codes facturation (`client_10020` = compte suspendu). Vérif en 5 s : `curl -s -D - -o /dev/null -X POST https://api.brightdata.com/request -H "Authorization: Bearer $BRIGHTDATA_API_KEY" -H "Content-Type: application/json" -d '{"zone":"salesos_serp","url":"https://www.google.com/search?q=test&brd_json=1","format":"raw"}'`
 
 ### Claap
 - **Usage** : enregistrements meetings, transcripts, déclenchement Sales Coach + recap Slack post-meeting (template Plusgrade)
@@ -405,7 +443,7 @@ lib/
 
   # Domaines métier
   deal-scoring.ts         # 3 modèles × 6 dimensions de scoring
-  signal-scoring.ts       # Scoring signaux marché (outil Claude)
+  signal-scoring.ts       # Scoring signaux marché (outil Claude + prompt)
   lead-analysis.ts        # Analyse leads + matching HubSpot
   keyword-relevance.ts    # Classification SEO keywords (batch)
   prospect-enrichment.ts  # Enrichissement contexte entreprise (Tavily)
@@ -691,7 +729,8 @@ Voir section 11 pour les détails.
 
 ### Domaines métier
 - **[deal-scoring.ts](lib/deal-scoring.ts)** — 3 modèles (Generic, Human Coaching, AI Coaching), 6 dimensions /100, reliability 0–5, helpers UI (`scoreBadge`, `reliabilityLabel`, `healthIndicator`).
-- **[signal-scoring.ts](lib/signal-scoring.ts)** — Outil Claude pour scorer les signaux (funding, hiring, expansion…), association entreprise + raison.
+- **[signal-scoring.ts](lib/signal-scoring.ts)** — Outil Claude + prompt de scoring des signaux (5 critères : fit ICP, force du fait, fenêtre d'achat, fraîcheur, fiabilité source). L'actionnabilité n'est PAS un critère : elle est vérifiée en aval par l'enrichissement lead.
+- **[signals/](lib/signals/)** — Pipeline Signals : `queries.ts` (grille de scan), `sources.ts` (récolte SERP), `classify.ts` (scoring), `resolve-domain.ts` + `email-pattern.ts` + `enrich-lead.ts` (lead joignable), `dedupe.ts`, `run-sweep.ts` (orchestration), `act.ts` (reveal + rédaction + envoi).
 - **[lead-analysis.ts](lib/lead-analysis.ts)** — Extraction LLM (email, nom, entreprise), matching HubSpot, snapshots deals, time-to-close.
 - **[keyword-relevance.ts](lib/keyword-relevance.ts)** — Classification SEO via Claude (batch, context hash, table `marketing_keyword_relevance`).
 - **[prospect-enrichment.ts](lib/prospect-enrichment.ts)** — Enrichissement Tavily (news RH/stratégie) avant prospection.
@@ -1007,6 +1046,50 @@ CREATE TABLE watchlist_company_briefs (
 );
 ```
 
+### Signals (`/signals`)
+
+```sql
+-- Feed de signaux de marché. Une ligne = un fait + LE lead à qui écrire :
+-- sans lead joignable, le signal n'est jamais inséré (cf. lib/signals/enrich-lead.ts).
+CREATE TABLE prospect_signals (
+  id UUID PRIMARY KEY,
+  scope_company_id UUID REFERENCES scope_companies(id) ON DELETE CASCADE,  -- non nul = compte déjà suivi
+  feed TEXT CHECK (feed IN ('watchlist','discovery')),
+  company_name TEXT NOT NULL,
+  company_domain TEXT,                    -- résolu à l'enrichissement, base de l'email deviné
+  signal_type TEXT,                       -- funding | hiring | nomination | expansion | restructuring | content | job_change | linkedin_post
+  source TEXT,                            -- brightdata_serp | brightdata_linkedin
+  title TEXT NOT NULL,
+  url TEXT,
+  summary TEXT,
+  why_relevant TEXT,
+  suggested_action TEXT,                  -- angle d'accroche, affiché sur la carte ET injecté dans la rédaction
+  payload JSONB,                          -- { author: { name, linkedin } } pour les posts LinkedIn
+  score INTEGER NOT NULL DEFAULT 0,
+  score_breakdown JSONB,                  -- sous-scores du modèle (sert au recalibrage du seuil)
+  query_id TEXT,                          -- requête de queries.ts qui a produit le signal (rendement)
+  domain_via TEXT,                        -- étage ayant fourni le domaine (hubspot_scope, hubspot_name, article_host, serp)
+  dedupe_key TEXT NOT NULL UNIQUE,        -- URL canonique
+  content_key TEXT,                       -- empreinte sémantique (même fait, 2 URLs)
+  status TEXT DEFAULT 'new',              -- new | actioned | dismissed | snoozed | expired | deleted
+  snooze_until TIMESTAMPTZ,
+  actioned_at TIMESTAMPTZ,
+  dismissed_at TIMESTAMPTZ,
+  draft_subject TEXT, draft_body TEXT, draft_recipient JSONB,
+  -- Lead : la raison d'être de la ligne
+  lead_first_name TEXT, lead_last_name TEXT, lead_full_name TEXT,
+  lead_title TEXT, lead_linkedin TEXT,
+  lead_apollo_id TEXT,                    -- permet le reveal (1 crédit) au clic
+  lead_email TEXT,
+  lead_email_source TEXT,                 -- crm | pattern | guess | pending_reveal | apollo
+  lead_source TEXT,                       -- post_author | nominee | crm | apollo_icp
+  lead_revealed_at TIMESTAMPTZ,           -- non nul = crédit déjà dépensé, ne pas repayer
+  created_by UUID, signal_date TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- DEPRECATED, plus écrits : category (duplicat de signal_type), company_linkedin.
+```
+
 ### Outreach log
 
 ```sql
@@ -1084,6 +1167,14 @@ Implémentées en tant que **Netlify Scheduled / Background Functions** dans [ne
 | `clients-monthly-refresh-scheduled.mts` | `0 3 1 * *` (1er du mois, 3h UTC) | refresh incrémental des clients | `X-Cron-Secret` | Re-enrichit les fiches clients sur les nouvelles activités du mois. |
 | `ae-activity-refresh-scheduled.mts` | `0 6 * * 1` (tous les lundis 6h UTC) | `POST /.netlify/functions/ae-activity-refresh-background` | `Bearer CRON_SECRET` | Recalcule le dashboard **AE Sales Activity** (activité HubSpot + revenu Sheet + Claap + Slack + coaching) pour tous les reps sales. Aussi déclenchable à la demande via le bouton "Refresh" (`X-Internal-Secret`). |
 | `rag-insights-scheduled.mts` | `0 7 * * 1` (tous les lundis 7h UTC) | `POST /.netlify/functions/rag-insights-background` | `Bearer CRON_SECRET` | Analyse les nouveaux tours de CoachelloGPT (**RAG Insights**), reconstruit le rapport de trous Notion et envoie le **recap Slack hebdo** (DM Arthur en test, + `RAG_INSIGHTS_RECIPIENTS` en prod). Aussi déclenchable via les boutons "Refresh analysis" / "Send Slack recap" de `/admin/rag` (`X-Internal-Secret`). |
+| `signals-sweep-scheduled.mts` | `0 5 * * *` (tous les jours 5h UTC) | `POST /.netlify/functions/signals-sweep-background` | `Bearer CRON_SECRET` | Sweep **Signals** : scan marché global, scoring Claude, dédup, recherche d'un lead joignable, insert des 10 meilleurs, rétention 14 j. |
+| `marketing-posts-scrape-scheduled.mts` | `0 6 * * 1` (tous les lundis 6h UTC) | `POST /.netlify/functions/marketing-posts-scrape-background` | `Bearer CRON_SECRET` | Scrape les posts LinkedIn des sources `LINKEDIN_OWN_POST_SOURCES` (dataset Bright Data, poll 6 min). |
+
+#### Ce que le sweep Signals a coûté avant la refonte (juillet 2026)
+
+À garder en tête avant de rebrancher une source : le sweep coûtait **5,56 $/jour**, dont 5,10 $ pour les **datasets LinkedIn** (3,4k lignes facturées/jour). Deux causes cumulées : aucune borne `limit_per_input` sur les découvertes (Bright Data remontait et facturait tout ce que LinkedIn expose, alors que le code n'en gardait que 8-10), et un `collectAndWait` qui n'attend que 20-25 s là où une découverte LinkedIn met plusieurs minutes (le snapshot est payé, le résultat jeté). Bilan sur toute la vie de la feature : **4 signaux sur 529** venaient de cette source.
+
+Depuis : `limit_per_input` (10) sur toutes les découvertes LinkedIn ([lib/brightdata/dataset.ts](lib/brightdata/dataset.ts)), et les datasets ne sont plus appelés par le sweep du tout. Coût actuel : **~0,11 $/jour**.
 
 #### Deal digest par AE (`/api/deals/ae-digest`, `lib/deals/ae-digest.ts`)
 

@@ -42,6 +42,16 @@ export interface ApolloPerson {
   email: string | null;
   email_status: string | null;
   organization_name: string | null;
+  /** Domaine officiel de la société (`organization.primary_domain`). Présent sur
+   *  /people/match, ABSENT de /mixed_people/api_search (cf. `name_is_partial`). */
+  organization_domain: string | null;
+  /**
+   * Vrai quand People Search a masqué le nom de famille (`last_name_obfuscated`,
+   * ex. "Bi***m"). Dans ce cas `last_name` et `name` sont null : la personne est
+   * REVELABLE (via `id`, 1 crédit) mais son email n'est pas DEVINABLE. Les deux
+   * chemins n'ont rien à voir, d'où ce drapeau plutôt qu'un nom tronqué.
+   */
+  name_is_partial: boolean;
   /** Numéro de tél. présent dans la réponse synchrone (rare : le reveal Apollo
    *  est en général async via webhook). null si absent. */
   phone: string | null;
@@ -118,17 +128,25 @@ async function apolloFetch<T>(endpoint: string, body: Record<string, unknown>): 
 
 function mapPerson(p: Record<string, unknown>): ApolloPerson {
   const org = (p.organization as Record<string, unknown> | null) ?? null;
+  const lastName = (p.last_name as string) ?? null;
+  // People Search renvoie `last_name_obfuscated: "Bi***m"` au lieu du nom : on ne
+  // le mappe PAS sur last_name (ce serait un faux nom qui finirait dans un email
+  // deviné), on lève juste le drapeau.
+  const partial = !lastName && typeof p.last_name_obfuscated === "string";
+  const domain = (org?.primary_domain as string) ?? (org?.website_url as string) ?? null;
   return {
     id: String(p.id ?? ""),
     first_name: (p.first_name as string) ?? null,
-    last_name: (p.last_name as string) ?? null,
-    name: (p.name as string) ?? null,
+    last_name: lastName,
+    name: (p.name as string) ?? (lastName && p.first_name ? `${p.first_name} ${lastName}` : null),
     title: (p.title as string) ?? null,
     seniority: (p.seniority as string) ?? null,
     linkedin_url: (p.linkedin_url as string) ?? null,
     email: (p.email as string) ?? null,
     email_status: (p.email_status as string) ?? null,
     organization_name: (org?.name as string) ?? ((p.organization_name as string) ?? null),
+    organization_domain: domain ? domain.replace(/^https?:\/\//, "").replace(/^www\./, "").replace(/\/.*$/, "") : null,
+    name_is_partial: partial,
     phone: extractPhone(p),
   };
 }

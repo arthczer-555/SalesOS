@@ -96,38 +96,68 @@ export function SignalActModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [close]);
 
-  // Étape 1 : récupère les candidats.
+  /**
+   * Le lead est déjà connu : il a été calculé au sweep, sinon le signal ne serait
+   * pas dans le feed. On ouvre donc directement sur lui, sans appel réseau ni
+   * écran d'attente. La recherche d'autres candidats devient volontaire.
+   */
   React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const r = await fetch(`/api/signals/${signal.id}/candidates`, { method: "POST" });
-        const json = (await r.json().catch(() => ({}))) as {
-          candidates?: SignalCandidate[];
-          apolloConfigured?: boolean;
-          scopeCompanyId?: string | null;
-          error?: string;
-        };
-        if (!alive) return;
-        const list = json.candidates ?? [];
-        setCandidates(list);
-        setApolloConfigured(json.apolloConfigured ?? false);
-        if (json.scopeCompanyId) setScopeCompanyId(json.scopeCompanyId);
-        // Pré-coche le meilleur candidat (focus / top ICP), sinon l'email custom.
-        setSelectedKeys(new Set([list[0]?.key ?? CUSTOM_KEY]));
-        if (json.error) setPrepError(json.error);
-        setPhase("pick");
-      } catch (e) {
-        if (alive) {
-          setPrepError(e instanceof Error ? e.message : "Failed");
-          setPhase("pick");
-        }
-      }
-    })();
-    return () => {
-      alive = false;
-    };
+    if (!signal.lead_full_name) {
+      // Signal antérieur à la refonte (aucun lead stocké) : on retombe sur la
+      // recherche de candidats à l'ancienne.
+      void loadOtherCandidates();
+      return;
+    }
+    setCandidates([
+      {
+        key: "lead",
+        source: signal.lead_source === "crm" ? "crm" : signal.lead_source === "apollo_icp" ? "apollo" : "nominee",
+        name: signal.lead_full_name,
+        title: signal.lead_title,
+        email: signal.lead_email,
+        apolloId: signal.lead_apollo_id,
+        icp: true,
+        focus: true,
+        guessed: signal.lead_email_source === "guess" || signal.lead_email_source === "pattern",
+        firstName: signal.lead_first_name,
+        lastName: signal.lead_last_name,
+        guessEmail: signal.lead_email,
+      },
+    ]);
+    setSelectedKeys(new Set(["lead"]));
+    setPhase("pick");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signal.id]);
+
+  /** Cherche d'autres contacts dans la société (gratuit : aucun crédit consommé). */
+  const [loadingOthers, setLoadingOthers] = React.useState(false);
+  async function loadOtherCandidates() {
+    setLoadingOthers(true);
+    try {
+      const r = await fetch(`/api/signals/${signal.id}/candidates`, { method: "POST" });
+      const json = (await r.json().catch(() => ({}))) as {
+        candidates?: SignalCandidate[];
+        apolloConfigured?: boolean;
+        scopeCompanyId?: string | null;
+        error?: string;
+      };
+      const list = json.candidates ?? [];
+      setApolloConfigured(json.apolloConfigured ?? false);
+      if (json.scopeCompanyId) setScopeCompanyId(json.scopeCompanyId);
+      // Fusionne sans écraser le lead déjà sélectionné.
+      setCandidates((prev) => {
+        const seen = new Set(prev.map((c) => c.name.toLowerCase()));
+        return [...prev, ...list.filter((c) => !seen.has(c.name.toLowerCase()))];
+      });
+      setSelectedKeys((prev) => (prev.size ? prev : new Set([list[0]?.key ?? CUSTOM_KEY])));
+      if (json.error) setPrepError(json.error);
+    } catch (e) {
+      setPrepError(e instanceof Error ? e.message : "Failed");
+    } finally {
+      setLoadingOthers(false);
+      setPhase("pick");
+    }
+  }
 
   async function generate() {
     // Construit la liste des destinataires choisis.
@@ -308,6 +338,13 @@ export function SignalActModal({
               <div style={{ fontSize: 13, color: COLORS.ink1, fontWeight: 600 }}>
                 Who should we reach out to? <span style={{ color: COLORS.ink3, fontWeight: 400 }}>· select one or several</span>
               </div>
+              {/* Le coût est annoncé AVANT le clic : un email déjà connu ne coûte
+                  rien, un lead Apollo consomme 1 crédit au moment de rédiger. */}
+              {signal.lead_email_source === "pending_reveal" && (
+                <div style={{ fontSize: 12, color: COLORS.ink2, background: COLORS.bgSoft, padding: "8px 10px", borderRadius: RADIUS.md }}>
+                  Apollo hides this person&apos;s last name and email. Generating the draft will reveal them (1 Apollo credit).
+                </div>
+              )}
               <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 280, overflowY: "auto" }}>
                 {candidates.map((c) => (
                   <RecipientOption
@@ -349,6 +386,30 @@ export function SignalActModal({
                   )}
                 </RecipientOption>
               </div>
+
+              {/* Chercher d'autres contacts reste possible, mais c'est désormais un
+                  choix explicite : le lead du signal suffit dans le cas nominal. */}
+              {candidates.length <= 1 && (
+                <button
+                  onClick={loadOtherCandidates}
+                  disabled={loadingOthers}
+                  style={{
+                    alignSelf: "flex-start",
+                    background: "none",
+                    border: "none",
+                    padding: 0,
+                    fontSize: 12,
+                    color: COLORS.brand,
+                    cursor: loadingOthers ? "default" : "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {loadingOthers ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                  {loadingOthers ? "Searching…" : `Find other contacts at ${signal.company_name}`}
+                </button>
+              )}
 
               {selectedCount > 1 && (
                 <div style={{ fontSize: 12, color: COLORS.ink2, display: "inline-flex", alignItems: "center", gap: 6 }}>

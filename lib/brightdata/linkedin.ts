@@ -364,7 +364,12 @@ export async function getCompanyPosts(usernameOrUrl: string, opts: { timeoutMs?:
   const rows = await collectAndWait<Record<string, unknown>>(
     DATASETS.posts,
     [{ url }],
-    { timeoutMs: opts.timeoutMs ?? 25_000, discover: { type: "discover_new", discoverBy: "company_url" } },
+    {
+      timeoutMs: opts.timeoutMs ?? 25_000,
+      // 10 posts suffisent partout (l'appelant le plus gourmand en garde 8) et
+      // on ne paie que ce qu'on lit. Cf. `limitPerInput` dans dataset.ts.
+      discover: { type: "discover_new", discoverBy: "company_url", limitPerInput: 10 },
+    },
   );
   const data: CompanyPost[] = rows.map((r) => ({
     postUrl: str(r.url),
@@ -387,7 +392,9 @@ export async function getCompanyJobs(companyNameOrUrl: string, opts: { timeoutMs
     [isUrl ? { url: companyNameOrUrl } : { keyword: companyNameOrUrl }],
     {
       timeoutMs: opts.timeoutMs ?? 25_000,
-      discover: { type: "discover_new", discoverBy: isUrl ? "url" : "keyword" },
+      // Une découverte par mot-clé remonte sinon TOUTES les offres de la boîte,
+      // toutes facturées, alors que l'appelant en garde 10.
+      discover: { type: "discover_new", discoverBy: isUrl ? "url" : "keyword", limitPerInput: 10 },
     },
   );
   const data = rows.map((r) => ({
@@ -414,7 +421,10 @@ export async function getPeoplePosts(usernameOrUrl: string, opts: { timeoutMs?: 
   const rows = await collectAndWait<Record<string, unknown>>(
     DATASETS.posts,
     [{ url }],
-    { timeoutMs: opts.timeoutMs ?? 25_000, discover: { type: "discover_new", discoverBy: "profile_url" } },
+    {
+      timeoutMs: opts.timeoutMs ?? 25_000,
+      discover: { type: "discover_new", discoverBy: "profile_url", limitPerInput: 10 },
+    },
   );
   const data: CompanyPost[] = rows.map((r) => ({
     postUrl: str(r.url),
@@ -437,7 +447,10 @@ export async function getPeopleActivity(username: string, opts: { timeoutMs?: nu
   const rows = await collectAndWait<Record<string, unknown>>(
     DATASETS.posts,
     [{ url }],
-    { timeoutMs: opts.timeoutMs ?? 25_000, discover: { type: "discover_new", discoverBy: "profile_url" } },
+    {
+      timeoutMs: opts.timeoutMs ?? 25_000,
+      discover: { type: "discover_new", discoverBy: "profile_url", limitPerInput: 10 },
+    },
   );
   const data = rows.map((r) => ({
     type: "post",

@@ -44,6 +44,29 @@ export interface SerpResult {
 const SERP_TIMEOUT_MS = 20_000;
 
 /**
+ * Codes `x-brd-err-code` qui relèvent de la facturation (compte suspendu, zone
+ * désactivée faute de paiement) : ils appellent une alerte Slack, pas un retry.
+ */
+const BRD_BILLING_CODES = new Set(["client_10020", "client_10021"]);
+
+/**
+ * Erreur remontée par le proxy Bright Data lui-même (pas par Google).
+ *
+ * Piège : dans ce cas l'API répond **HTTP 200 avec un corps vide**, et le motif
+ * réel n'est QUE dans les en-têtes `x-brd-err-*`. Sans ce test, un compte
+ * suspendu se traduit par « 0 résultat » partout, en silence — Signals a tourné
+ * à vide du 6 au 29 juillet 2026 sans une seule alerte.
+ */
+function brdProxyError(res: Response, text: string): { code: string; msg: string } | null {
+  const code = res.headers.get("x-brd-err-code");
+  const msg = res.headers.get("x-brd-err-msg") || res.headers.get("x-brd-error") || "";
+  if (code || msg) return { code: code ?? "unknown", msg: msg || `x-brd-err-code ${code}` };
+  // Corps vide sur un 200 : Google ne renvoie jamais ça, c'est le proxy qui a coupé.
+  if (res.ok && !text.trim()) return { code: "empty_body", msg: "réponse Bright Data vide (200)" };
+  return null;
+}
+
+/**
  * Appelle la SERP API Bright Data avec une URL Google déjà construite.
  * Ne lève jamais (timeout ou erreur réseau compris) : renvoie le détail dans
  * `SerpResult` pour que l'appelant décide quoi en faire (le front lit `data`
@@ -73,15 +96,26 @@ export async function fetchSerp(googleUrl: string): Promise<SerpResult> {
 
     // Best-effort côté appelant : une zone sans balance renvoie juste [] plus
     // haut, personne ne voit rien. L'alerte Slack est ici le seul signal.
-    if (!res.ok && (res.status === 402 || isCreditText(text))) {
+    const proxyErr = brdProxyError(res, text);
+    const billing =
+      res.status === 402 ||
+      isCreditText(text) ||
+      (proxyErr !== null && (BRD_BILLING_CODES.has(proxyErr.code) || isCreditText(proxyErr.msg)));
+
+    if (billing) {
       await reportInsufficientCredit({
         provider: "Bright Data",
-        detail: text.slice(0, 300) || `HTTP ${res.status}`,
+        detail: (proxyErr?.msg || text).slice(0, 300) || `HTTP ${res.status}`,
         context: "Bright Data SERP (Signals / veille marché)",
       });
+    } else if (proxyErr) {
+      console.error(`[brightdata/serp] proxy error ${proxyErr.code}: ${proxyErr.msg}`);
     }
 
-    return { status: res.status, ok: res.ok, ms, sentBody, data, isJson };
+    // Un proxy error n'est jamais un succès, même annoncé en 200 : sinon les
+    // appelants parsent un corps vide et concluent « aucun résultat ».
+    if (proxyErr && data === text) data = proxyErr.msg;
+    return { status: res.status, ok: res.ok && !proxyErr, ms, sentBody, data, isJson };
   } catch (e) {
     const ms = Math.round(performance.now() - start);
     const aborted = e instanceof Error && e.name === "TimeoutError";

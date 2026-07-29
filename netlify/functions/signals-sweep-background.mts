@@ -1,12 +1,12 @@
 import type { Context } from "@netlify/functions";
 import { runSignalsSweep, type SweepOptions } from "../../lib/signals/run-sweep";
 
-// Background function : sweep complet du pipeline Signals (récolte + classify
-// Claude + dedupe + persist + rétention). Peut durer plusieurs minutes (datasets
-// LinkedIn + Claude par compte) : runtime Background Function ~15 min.
+// Background function : sweep complet du pipeline Signals (scan marché global +
+// classify Claude + dédup + recherche d'un lead joignable pour chaque signal +
+// persist + rétention). Dure typiquement 8-11 min : runtime Background ~15 min.
 //
 // Auth : Bearer CRON_SECRET (posé par le cron planifié ou /api/signals/refresh).
-// Body : SweepOptions ({ feed?, companyIds?, includeSlowSources?, userId? })
+// Body : SweepOptions ({ userId?, dryRun?, onlyQueries? })
 export default async (req: Request, _ctx: Context) => {
   const cronSecret = process.env.CRON_SECRET;
   const authHeader = req.headers.get("authorization");

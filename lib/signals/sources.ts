@@ -1,34 +1,35 @@
+/**
+ * Récolte des items bruts du scan marché global (Google News + posts LinkedIn),
+ * via la SERP Bright Data uniquement.
+ *
+ * Il n'y a plus de balayage compte par compte : on ne surveille plus des
+ * sociétés, on surveille des évènements. Le rattachement à un compte connu se
+ * fait après coup (`linkExistingCompanies`), ce qui donne la même information
+ * pour 46 requêtes/jour au lieu de 302.
+ */
+
 import { fetchSerp, parseGoogleDate, BRIGHTDATA_API_KEY } from "@/lib/brightdata/serp";
-import { getCompanyJobs, getCompanyPosts } from "@/lib/brightdata/linkedin";
-import { slugifyCompany } from "@/lib/slugify-company";
-import { searchPeople as apolloSearchPeople, isApolloConfigured, type ApolloPerson } from "@/lib/apollo/client";
-import { GLOBAL_SCAN_QUERIES } from "@/lib/signal-scoring";
-import type { RawItem, ScoredSignal, SignalType } from "./types";
+import { enabledPostQueries, enabledScanQueries } from "./queries";
+import { mapLimit } from "./util";
+import type { RawItem, SignalType } from "./types";
 
 // Fenêtre de fraîcheur des sources (jours). On récolte large puis Claude trie.
 const SINCE_DAYS = 21;
 
-// Presets ICP Coachello (buyers RH / People / L&D).
-const ICP_TITLES = ["CHRO", "DRH", "VP People", "Head of L&D", "People", "Talent", "HRBP", "Learning"];
-const ICP_SENIORITIES = ["c_suite", "vp", "head", "director"];
+/** Nb de posts gardés par requête mot-clé. */
+const MAX_POSTS_PER_QUERY = 15;
 
-// Découverte de posts LinkedIn : nb de posts gardés par requête mot-clé.
-const MAX_POSTS_PER_QUERY = 12;
+/** Requêtes SERP simultanées : borne la charge et la latence de la récolte. */
+const FETCH_CONCURRENCY = 6;
 
-// Thèmes "post intéressant" pour la découverte LinkedIn : intentions / contextes
-// favorables au coaching (leadership, L&D, scaling, transfo, prise de poste...).
-// Chaque thème est croisé avec `site:linkedin.com/posts` via la SERP. FR + EN.
-// On récolte large ; Claude tranche ensuite sur l'intention réelle (Famille 3).
-const POST_DISCOVERY_THEMES = [
-  { q: `("nouveaux managers" OR "prise de poste" OR "devenir manager" OR "first-time manager")`, lang: "fr" },
-  { q: `("programme de leadership" OR "développement du leadership" OR "leadership development" OR "leadership program")`, lang: "fr" },
-  { q: `("programme de coaching" OR "coaching des managers" OR "accompagnement des managers" OR "manager coaching")`, lang: "fr" },
-  { q: `("learning and development" OR "L&D" OR "montée en compétences" OR "upskilling" OR "reskilling")`, lang: "en" },
-  { q: `("transformation managériale" OR "conduite du changement" OR "change management" OR réorganisation)`, lang: "fr" },
-  { q: `("we are scaling" OR "growing our team" OR "scaling our team" OR "doubling our team")`, lang: "en" },
-  { q: `("culture d'entreprise" OR "engagement collaborateurs" OR "qualité de vie au travail" OR "employee engagement")`, lang: "fr" },
-  { q: `("séminaire managers" OR "offsite leadership" OR "leadership offsite" OR "manager onboarding")`, lang: "en" },
-];
+/** Type pressenti par famille de requête (le scorer peut le corriger). */
+const FAMILY_KIND: Record<string, SignalType> = {
+  funding: "funding",
+  people_move: "nomination",
+  restructuring: "restructuring",
+  scaling: "hiring",
+  leadership_program: "content",
+};
 
 function sinceDate(days = SINCE_DAYS): string {
   const d = new Date();
@@ -48,27 +49,18 @@ interface GoogleNewsItem {
 }
 
 /**
- * Lance une requête Google News arbitraire (pas liée à une société) via la SERP
- * API et renvoie des RawItem. Best-effort : [] si pas de clé / échec.
+ * Lance une requête Google News et renvoie des RawItem.
+ * Best-effort : [] si pas de clé / échec (le sweep continue sur les autres).
  */
 async function fetchNews(
   query: string,
-  opts: {
-    feed: RawItem["feed"];
-    kindHint: SignalType;
-    knownCompanyName?: string | null;
-    knownCompanyId?: string | null;
-    country?: string;
-    lang?: string;
-    num?: number;
-  },
+  opts: { kindHint: SignalType; queryId: string; country: string; lang: string; num: number },
 ): Promise<RawItem[]> {
   if (!BRIGHTDATA_API_KEY || !query.trim()) return [];
-  const country = (opts.country ?? "fr").toLowerCase();
-  const lang = (opts.lang ?? "fr").toLowerCase();
-  const num = opts.num ?? 20;
   const q = `${query} after:${sinceDate()}`;
-  const url = `https://www.google.com/search?q=${encodeURIComponent(q)}&tbm=nws&brd_json=1&num=${num}&hl=${lang}&gl=${country}`;
+  const url =
+    `https://www.google.com/search?q=${encodeURIComponent(q)}&tbm=nws&brd_json=1` +
+    `&num=${opts.num}&hl=${opts.lang.toLowerCase()}&gl=${opts.country.toLowerCase()}`;
 
   const r = await fetchSerp(url).catch(() => null);
   if (!r || !r.isJson || !r.ok) return [];
@@ -80,228 +72,39 @@ async function fetchNews(
     const title = (n.title || "").trim();
     if (!link || !title) continue;
     items.push({
-      feed: opts.feed,
+      feed: "discovery",
       source: "brightdata_serp",
       kindHint: opts.kindHint,
       title,
       url: link,
       snippet: (n.description || n.snippet || "").trim(),
       date: (n.date || n.time || "").trim() || null,
-      knownCompanyName: opts.knownCompanyName ?? null,
-      knownCompanyId: opts.knownCompanyId ?? null,
+      queryId: opts.queryId,
     });
   }
   return items;
 }
 
-// ── Discovery : requêtes thématiques larges (max recall) ────────────────────
-
 /**
- * Construit la liste des requêtes discovery : déclencheurs de changement (FR+EN)
- * croisés avec l'ICP Coachello, plus le scan marché global (levées, M&A,
- * expansion...). On récolte large ; le tri sujet/persona est fait ensuite par
- * Claude (gate de pertinence dans lib/signal-scoring), qui écarte notamment les
- * nominations de dirigeants hors RH/People/L&D (CRO, CFO...).
+ * Récolte toute la grille de news globale. `onlyQueries` limite aux ids donnés :
+ * c'est le mode de développement, pour itérer sur le scoring sans relancer 36
+ * requêtes à chaque essai.
  */
-export function buildDiscoveryQueries(): { query: string; lang: string; country: string }[] {
-  const fr = [
-    "nouveau DRH nomination",
-    "nouvelle directrice des ressources humaines",
-    '"Head of L&D" OR "responsable formation" nomination',
-    "restructuration réorganisation entreprise",
-    "plan social transformation managériale",
-    "levée de fonds scale-up recrutement managers",
-    "développement leadership programme managers",
-    "VP People Talent nomination",
-  ];
-  const en = [
-    "appoints new CHRO Chief People Officer",
-    '"Head of Learning and Development" appointed',
-    "company restructuring reorganization leadership",
-    "leadership development program managers",
-    "layoffs management transformation",
-    "raises funding scaling management team",
-    "new VP People Talent hire",
-  ];
-  return [
-    ...fr.map((query) => ({ query, lang: "fr", country: "fr" })),
-    ...en.map((query) => ({ query, lang: "en", country: "us" })),
-    ...GLOBAL_SCAN_QUERIES.map((query) => ({ query, lang: "fr", country: "fr" })),
-  ];
-}
-
-/** Récolte tous les RawItem discovery (Google News thématique). */
-export async function collectDiscoveryRawItems(): Promise<RawItem[]> {
-  const queries = buildDiscoveryQueries();
-  const batches = await Promise.allSettled(
-    queries.map((q) =>
-      fetchNews(q.query, {
-        feed: "discovery",
-        kindHint: "nomination",
-        country: q.country,
-        lang: q.lang,
-        num: 20,
-      }),
-    ),
+export async function collectGlobalNews(onlyQueries?: string[] | null): Promise<RawItem[]> {
+  const queries = enabledScanQueries(onlyQueries);
+  const batches = await mapLimit(queries, FETCH_CONCURRENCY, (q) =>
+    fetchNews(q.q, {
+      kindHint: FAMILY_KIND[q.family] ?? "nomination",
+      queryId: q.id,
+      country: q.gl,
+      lang: q.hl,
+      num: q.num,
+    }).catch(() => [] as RawItem[]),
   );
-  const items: RawItem[] = [];
-  for (const b of batches) if (b.status === "fulfilled") items.push(...b.value);
-  return dedupeByUrl(items);
+  return dedupeByUrl(batches.flat());
 }
 
-// ── Watchlist : par compte ──────────────────────────────────────────────────
-
-/**
- * Récolte les RawItem d'un compte watchlist (news ciblées + hiring + posts).
- * `includeSlowSources=false` (refresh manuel) saute les datasets LinkedIn
- * (jobs/posts), lents, et ne garde que la news SERP (rapide).
- */
-export async function collectWatchlistRawItems(
-  company: { id: string; name: string },
-  opts: { includeSlowSources?: boolean } = {},
-): Promise<RawItem[]> {
-  const name = company.name.trim();
-  if (!name) return [];
-  const quoted = `"${name}"`;
-  const slug = slugifyCompany(name);
-
-  const newsQueries: { q: string; kind: SignalType }[] = [
-    { q: `${quoted} (levée OR financement OR acquisition OR rachat OR funding OR raises)`, kind: "funding" },
-    { q: `${quoted} (nomination OR "nouveau directeur" OR "nouvelle directrice" OR DRH OR appoints OR "joins as")`, kind: "nomination" },
-    { q: `${quoted} (restructuration OR réorganisation OR "plan social" OR layoffs OR restructuring)`, kind: "restructuring" },
-  ];
-
-  const tasks: Promise<RawItem[]>[] = newsQueries.map((nq) =>
-    fetchNews(nq.q, {
-      feed: "watchlist",
-      kindHint: nq.kind,
-      knownCompanyName: name,
-      knownCompanyId: company.id,
-      num: 15,
-    }),
-  );
-
-  if (opts.includeSlowSources) {
-    // Hiring (dataset LinkedIn, best-effort court).
-    tasks.push(
-      getCompanyJobs(name, { timeoutMs: 20_000 })
-        .then((r) =>
-          (r.data ?? []).slice(0, 10).map<RawItem>((j) => ({
-            feed: "watchlist",
-            source: "brightdata_linkedin",
-            kindHint: "hiring",
-            title: `${name} is hiring: ${j.title}`,
-            url: j.url || null,
-            snippet: `Open role: ${j.title}${j.location ? ` (${j.location})` : ""}`,
-            date: j.postedAt || null,
-            knownCompanyName: name,
-            knownCompanyId: company.id,
-          })),
-        )
-        .catch(() => [] as RawItem[]),
-    );
-    // Posts entreprise (dataset LinkedIn, best-effort).
-    tasks.push(
-      getCompanyPosts(slug, { timeoutMs: 22_000 })
-        .then((r) =>
-          (r.data ?? []).slice(0, 8).map<RawItem>((p) => ({
-            feed: "watchlist",
-            source: "brightdata_linkedin",
-            kindHint: "linkedin_post",
-            title: `${name} on LinkedIn: ${p.text.slice(0, 70)}${p.text.length > 70 ? "…" : ""}`,
-            url: p.postUrl || null,
-            snippet: p.text.slice(0, 400),
-            date: p.postedAt || null,
-            knownCompanyName: name,
-            knownCompanyId: company.id,
-          })),
-        )
-        .catch(() => [] as RawItem[]),
-    );
-  }
-
-  const settled = await Promise.allSettled(tasks);
-  const items: RawItem[] = [];
-  for (const s of settled) if (s.status === "fulfilled") items.push(...s.value);
-  return dedupeByUrl(items);
-}
-
-// ── Apollo : nouveaux décideurs ICP (signal people_move, sans crédit) ───────
-
-const SENIORITY_SCORE: Record<string, number> = {
-  c_suite: 80,
-  vp: 72,
-  head: 66,
-  director: 58,
-};
-
-/**
- * Cherche les décideurs ICP d'un compte via Apollo (searchPeople = gratuit, pas
- * de reveal). Réutilisé pour les signaux "nouveau décideur" ET le scrape de
- * leurs posts LinkedIn. Best-effort : [] si Apollo absent / échec.
- */
-export async function searchIcpDecisionMakers(params: {
-  companyName: string;
-  domain?: string | null;
-}): Promise<ApolloPerson[]> {
-  if (!isApolloConfigured() || !params.companyName.trim()) return [];
-  const res = await apolloSearchPeople({
-    domain: params.domain ?? undefined,
-    organizationName: params.domain ? undefined : params.companyName,
-    titles: ICP_TITLES,
-    seniorities: ICP_SENIORITIES,
-    perPage: 10,
-  }).catch(() => null);
-  return res?.people ?? [];
-}
-
-/**
- * À partir des décideurs ICP (cf searchIcpDecisionMakers), émet un signal
- * "nouveau décideur" pour ceux ABSENTS du CRM. Le reveal d'email (1 crédit)
- * n'a lieu qu'au "act". Pur (pas d'appel réseau).
- */
-export function peopleMovesFromApollo(
-  people: ApolloPerson[],
-  params: {
-    companyName: string;
-    scopeCompanyId: string;
-    domain?: string | null;
-    existingEmails: Set<string>;
-    existingNames: Set<string>;
-  },
-): ScoredSignal[] {
-  const out: ScoredSignal[] = [];
-  for (const p of people) {
-    const name = (p.name || `${p.first_name ?? ""} ${p.last_name ?? ""}`).trim();
-    if (!name) continue;
-    const nameKey = name.toLowerCase();
-    const emailKey = (p.email ?? "").toLowerCase();
-    // Déjà en CRM (par email réel ou par nom) => pas un nouveau décideur pour nous.
-    if (emailKey && !emailKey.includes("email_not_unlocked") && params.existingEmails.has(emailKey)) continue;
-    if (params.existingNames.has(nameKey)) continue;
-
-    const score = SENIORITY_SCORE[(p.seniority ?? "").toLowerCase()] ?? 55;
-    out.push({
-      feed: "watchlist",
-      source: "apollo",
-      signal_type: "job_change",
-      company_name: params.companyName,
-      company_domain: params.domain ?? null,
-      scope_company_id: params.scopeCompanyId,
-      category: "leadership",
-      title: `${name}${p.title ? ` - ${p.title}` : ""} at ${params.companyName}`,
-      url: p.linkedin_url,
-      summary: `Decision-maker on the ICP not yet in our CRM. ${p.title ?? ""} at ${params.companyName}. Worth reaching out.`.trim(),
-      why_relevant: "New ICP decision-maker (HR / People / L&D) to engage.",
-      suggested_action: "Reveal contact and send a tailored opening message.",
-      score,
-      signal_date: null,
-    });
-  }
-  return out;
-}
-
-// ── Discovery : posts LinkedIn par mots-clés (SERP, pas de scrape de records) ──
+// ── Posts LinkedIn (SERP organique, aucun record de dataset) ─────────────────
 
 interface SerpOrganic {
   link?: string;
@@ -319,6 +122,19 @@ async function fetchSerpOrganic(query: string, lang: string, num: number): Promi
   if (!r || !r.isJson || !r.ok) return [];
   const data = r.data as { organic?: SerpOrganic[] } | null;
   return Array.isArray(data?.organic) ? data!.organic : [];
+}
+
+/**
+ * Un nom de personne plausible ? Deux ou trois tokens d'au moins deux lettres.
+ *
+ * Garde-fou du fallback "humanisation du slug" ci-dessous : sans lui, des slugs
+ * exotiques produisent des noms bruités qui partiraient ensuite dans un email
+ * deviné. Mieux vaut perdre un post que fabriquer un destinataire.
+ */
+function looksLikePersonName(name: string): boolean {
+  const tokens = name.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length < 2 || tokens.length > 3) return false;
+  return tokens.every((t) => t.replace(/[^\p{L}]/gu, "").length >= 2);
 }
 
 /**
@@ -354,29 +170,24 @@ function parsePostAuthor(postUrl: string, title: string): { name: string; linked
       .join(" ")
       .trim();
   }
-  if (!name) return null;
+  if (!name || !looksLikePersonName(name)) return null;
   return { name, linkedin };
 }
 
 /**
  * Découvre des posts LinkedIn "intéressants" par mots-clés (thèmes coaching /
  * leadership / L&D / scaling...) via la SERP Google `site:linkedin.com/posts`.
- * Feed discovery, pas lié à un compte : la société de l'auteur est résolue plus
- * tard, au "act". Pas cher (SERP, aucun record de dataset). Best-effort.
+ *
+ * Canal le moins cher au lead de tout le pipeline : l'auteur du post EST le lead,
+ * nom et URL de profil compris, sans un seul appel payant supplémentaire.
  */
-export async function collectLinkedInPostDiscovery(): Promise<RawItem[]> {
-  const batches = await Promise.allSettled(
-    POST_DISCOVERY_THEMES.map((t) =>
-      fetchSerpOrganic(`${t.q} site:linkedin.com/posts`, t.lang, 15),
-    ),
-  );
-
-  const items: RawItem[] = [];
-  for (const b of batches) {
-    if (b.status !== "fulfilled") continue;
-    let kept = 0;
-    for (const o of b.value) {
-      if (kept >= MAX_POSTS_PER_QUERY) break;
+export async function collectLinkedInPostDiscovery(onlyQueries?: string[] | null): Promise<RawItem[]> {
+  const queries = enabledPostQueries(onlyQueries);
+  const batches = await mapLimit(queries, FETCH_CONCURRENCY, async (t) => {
+    const organic = await fetchSerpOrganic(`${t.q} site:linkedin.com/posts`, t.hl, 15).catch(() => []);
+    const items: RawItem[] = [];
+    for (const o of organic) {
+      if (items.length >= MAX_POSTS_PER_QUERY) break;
       const url = o.link || o.url || "";
       if (!/linkedin\.com\/posts\//i.test(url)) continue;
       const title = (o.title || "").trim();
@@ -392,14 +203,15 @@ export async function collectLinkedInPostDiscovery(): Promise<RawItem[]> {
         url,
         snippet: snippet.slice(0, 400),
         date: null,
-        // Fallback d'affichage tant que la société réelle n'est pas résolue (act).
+        // Fallback d'affichage tant que la société réelle n'est pas résolue.
         knownCompanyName: author.name,
         author,
+        queryId: t.id,
       });
-      kept++;
     }
-  }
-  return dedupeByUrl(items);
+    return items;
+  });
+  return dedupeByUrl(batches.flat());
 }
 
 // ── Utilitaire ───────────────────────────────────────────────────────────────

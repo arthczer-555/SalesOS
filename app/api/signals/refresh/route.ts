@@ -16,14 +16,12 @@ export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ ok: false, error: "Not authenticated" }, { status: 401 });
 
-  const body = (await req.json().catch(() => ({}))) as { feed?: SweepOptions["feed"]; companyIds?: string[] };
+  const body = (await req.json().catch(() => ({}))) as { onlyQueries?: string[] };
 
-  // Refresh manuel : pas de datasets lents (latence), news SERP uniquement.
-  // Le cron quotidien fait le sweep complet.
+  // Le refresh manuel fait exactement le même travail que le cron : depuis la
+  // refonte, le sweep n'a plus de sources lentes à écarter.
   const opts: SweepOptions = {
-    feed: body.feed ?? "both",
-    companyIds: Array.isArray(body.companyIds) ? body.companyIds : undefined,
-    includeSlowSources: false,
+    onlyQueries: Array.isArray(body.onlyQueries) ? body.onlyQueries : null,
     userId: user.id,
   };
 

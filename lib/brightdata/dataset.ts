@@ -28,7 +28,19 @@ export const DATASETS = {
 } as const;
 
 export type DiscoverBy =
-  | { type: "discover_new"; discoverBy: string }
+  | {
+      type: "discover_new";
+      discoverBy: string;
+      /**
+       * Nombre max de lignes collectées PAR ENTRÉE (`limit_per_input` côté
+       * Bright Data). À renseigner systématiquement en discovery : sans borne,
+       * le scraper remonte tout ce que LinkedIn expose (des centaines de lignes
+       * pour une seule entreprise) et **chaque ligne est facturée**, même quand
+       * l'appelant n'en garde que 8 ou 10. C'est ce trou qui a fait ~5 $/jour de
+       * Web Scraper API pour 4 signaux au total (juillet 2026).
+       */
+      limitPerInput?: number;
+    }
   | { type: "collect" };
 
 /**
@@ -45,6 +57,9 @@ export async function triggerDataset(
   if (discover.type === "discover_new") {
     params.set("type", "discover_new");
     params.set("discover_by", discover.discoverBy);
+    if (discover.limitPerInput && discover.limitPerInput > 0) {
+      params.set("limit_per_input", String(discover.limitPerInput));
+    }
   }
   const res = await fetch(`${BASE}/trigger?${params.toString()}`, {
     method: "POST",

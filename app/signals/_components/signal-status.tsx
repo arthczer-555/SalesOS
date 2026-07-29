@@ -142,9 +142,7 @@ export function SignalStatus() {
               </div>
 
               {/* Répartition par source (signaux 'new'). */}
-              <div style={{ fontSize: 11, color: COLORS.ink3, marginBottom: 6 }}>
-                {stats.total_new} live · {stats.by_feed.watchlist} watchlist · {stats.by_feed.discovery} discovery
-              </div>
+              <div style={{ fontSize: 11, color: COLORS.ink3, marginBottom: 6 }}>{stats.total_new} live signals</div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {stats.by_source.length === 0 ? (
                   <div style={{ fontSize: 12, color: COLORS.ink2 }}>No live signals yet.</div>
@@ -162,6 +160,34 @@ export function SignalStatus() {
                   })
                 )}
               </div>
+
+              {/* D'où viennent les leads et quelle est la fiabilité des emails :
+                  les deux chiffres qui disent si le pipeline fait son travail. */}
+              {stats.by_lead_source.length > 0 && (
+                <div style={{ marginTop: 14, borderTop: `1px solid ${COLORS.line}`, paddingTop: 10 }}>
+                  <div style={{ fontSize: 11, color: COLORS.ink3, marginBottom: 6 }}>Leads found via</div>
+                  <div style={{ fontSize: 12, color: COLORS.ink1 }}>
+                    {stats.by_lead_source.map((l) => `${l.source.replace(/_/g, " ")} ${l.count}`).join(" · ")}
+                  </div>
+                  <div style={{ fontSize: 11, color: COLORS.ink3, margin: "8px 0 4px" }}>Email confidence</div>
+                  <div style={{ fontSize: 12, color: COLORS.ink1 }}>
+                    {stats.by_email_source.map((l) => `${l.source.replace(/_/g, " ")} ${l.count}`).join(" · ")}
+                  </div>
+                </div>
+              )}
+
+              {/* Rendement par requête : ce qui permet d'éteindre les stériles. */}
+              {stats.top_queries.length > 0 && (
+                <div style={{ marginTop: 12, borderTop: `1px solid ${COLORS.line}`, paddingTop: 10 }}>
+                  <div style={{ fontSize: 11, color: COLORS.ink3, marginBottom: 6 }}>Top queries</div>
+                  {stats.top_queries.slice(0, 5).map((q) => (
+                    <div key={q.query_id} style={{ display: "flex", fontSize: 12, color: COLORS.ink1 }}>
+                      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{q.query_id}</span>
+                      <span style={{ marginLeft: "auto", color: COLORS.ink3 }}>{q.count}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </>
           )}
         </div>

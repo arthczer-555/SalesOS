@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { RefreshCw, Radar, Eye, Layers, Sparkles, Loader2, X } from "lucide-react";
+import { RefreshCw, Layers, Sparkles, Loader2, X, UserPlus, Banknote, Shuffle, Users, Linkedin } from "lucide-react";
 import { COLORS, RADIUS } from "@/lib/design/tokens";
 import { PageHeader } from "@/components/ui/page-header";
 import { TabBar } from "@/components/ui/tab-bar";
@@ -11,7 +11,13 @@ import { SignalStack } from "./_components/signal-stack";
 import { SignalActModal } from "./_components/signal-act-modal";
 import { SignalStatus } from "./_components/signal-status";
 
-type Filter = "all" | "watchlist" | "discovery";
+/**
+ * Le feed n'a plus qu'une seule origine (scan marché global), donc les anciens
+ * onglets Watchlist/Discovery ne partitionnaient plus rien d'utile. On filtre
+ * désormais par TYPE d'évènement, ce que l'API supportait déjà sans que l'UI
+ * ne l'expose.
+ */
+type Filter = "all" | "nomination" | "funding" | "restructuring" | "hiring" | "linkedin_post";
 type Banner = { kind: "ok" | "warn"; node: React.ReactNode; sticky?: boolean };
 
 export default function SignalsPage() {
@@ -20,7 +26,9 @@ export default function SignalsPage() {
   const [banner, setBanner] = React.useState<Banner | null>(null);
   const [actSignal, setActSignal] = React.useState<SignalRow | null>(null);
 
-  const { signals, error, isLoading, mutate, act, refresh } = useSignals({ feed: filter });
+  const { signals, error, isLoading, mutate, act, refresh } = useSignals(
+    filter === "all" ? {} : { type: filter },
+  );
 
   // Référence vers la liste courante : sert de baseline au refresh sans recréer
   // les callbacks (sinon le polling capture des closures périmées).
@@ -155,8 +163,11 @@ export default function SignalsPage() {
           <TabBar
             tabs={[
               { key: "all", label: "All", icon: Layers },
-              { key: "watchlist", label: "Watchlist", icon: Eye },
-              { key: "discovery", label: "Discovery", icon: Radar },
+              { key: "nomination", label: "Leadership", icon: UserPlus },
+              { key: "funding", label: "Funding", icon: Banknote },
+              { key: "restructuring", label: "Transformation", icon: Shuffle },
+              { key: "hiring", label: "Hiring", icon: Users },
+              { key: "linkedin_post", label: "LinkedIn", icon: Linkedin },
             ]}
             active={filter}
             onChange={(k) => setFilter(k as Filter)}
@@ -193,12 +204,10 @@ export default function SignalsPage() {
           </div>
         )}
 
-        {filter !== "watchlist" && (
-          <div style={{ maxWidth: 460, margin: "0 auto 16px", display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: COLORS.ink2 }}>
-            <Sparkles size={13} style={{ color: COLORS.brand }} />
-            Discovery cards are companies outside your watchlist. Acting adds them to your watchlist.
-          </div>
-        )}
+        <div style={{ maxWidth: 460, margin: "0 auto 16px", display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: COLORS.ink2 }}>
+          <Sparkles size={13} style={{ color: COLORS.brand }} />
+          Up to 10 market signals a day, each with someone to email. Acting adds the company to your watchlist.
+        </div>
 
         {error ? (
           <div style={{ textAlign: "center", color: COLORS.err, fontSize: 13, padding: "40px 0" }}>{error}</div>

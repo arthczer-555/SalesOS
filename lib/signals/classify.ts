@@ -1,16 +1,20 @@
 import { withAnthropicRetry } from "@/lib/anthropic-retry";
 import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
-import { BUSINESS_CONTEXT_PROMPT_BLOCK } from "@/lib/business-context";
+// Le bloc "sales" (personas ordonnes, pains, concurrents) donne au modele de quoi
+// juger si le DRH de cette boite ouvrirait le mail : il n'etait pas injecte ici.
+import { BUSINESS_CONTEXT_PROMPT_BLOCK, SALES_CONTEXT_PROMPT_BLOCK } from "@/lib/business-context";
 import { signalScoringTool, SIGNAL_ANALYSIS_PROMPT } from "@/lib/signal-scoring";
-import { normCompany } from "./resolve-company";
-import type { RawItem, ScoredSignal, SignalType, SignalFeed } from "./types";
+import { mapLimit } from "./util";
+import type { RawItem, ScoredSignal, SignalType } from "./types";
 import { rawDateToIso } from "./sources";
 import { anthropicClient } from "@/lib/anthropic-client";
 
 // Haiku : tri/scoring de masse sur beaucoup d'items, rapide et économique.
 const MODEL = "claude-haiku-4-5-20251001";
 const BATCH = 25;
+/** Appels Haiku simultanes : 3 tient le budget temps sans saturer l'API. */
+const BATCH_CONCURRENCY = 3;
 
 const VALID_TYPES = new Set<SignalType>([
   "funding",
@@ -25,6 +29,8 @@ const VALID_TYPES = new Set<SignalType>([
 
 interface ScoredItemRaw {
   index?: number;
+  /** Sous-scores du modèle : persistés pour pouvoir recalibrer le seuil. */
+  score_breakdown?: Record<string, number>;
   company_name?: string;
   signal_type?: string;
   title?: string;
@@ -66,14 +72,22 @@ export async function classifyItems(
   const byUrl = new Map<string, RawItem>();
   for (const it of items) if (it.url) byUrl.set(it.url, it);
 
-  const out: ScoredSignal[] = [];
-  for (let i = 0; i < items.length; i += BATCH) {
-    const slice = items.slice(i, i + BATCH);
-    const scored = await scoreBatch(slice, opts.userId ?? null).catch((e) => {
+  // Batches parallelises : ~600 items font 24 appels Haiku. En serie (l'ancien
+  // comportement) c'est 5-6 min, sur lesquelles viendraient s'empiler les minutes
+  // d'enrichissement, or la Background Function n'a que 15 min au total.
+  const slices: RawItem[][] = [];
+  for (let i = 0; i < items.length; i += BATCH) slices.push(items.slice(i, i + BATCH));
+
+  const results = await mapLimit(slices, BATCH_CONCURRENCY, (slice) =>
+    scoreBatch(slice, opts.userId ?? null).catch((e) => {
       console.warn("[signals/classify] batch failed:", e instanceof Error ? e.message : e);
       return [] as ScoredItemRaw[];
-    });
+    }),
+  );
 
+  const out: ScoredSignal[] = [];
+  for (const [bi, scored] of results.entries()) {
+    const slice = slices[bi];
     for (const s of scored) {
       const url = typeof s.source_url === "string" ? s.source_url : "";
       // Rattachement à l'item d'origine : par INDEX [N] recopié par le modèle (fiable
@@ -90,31 +104,19 @@ export async function classifyItems(
       if (!title) continue;
 
       const extracted = (s.company_name || "").trim();
-      // Réconciliation du flux watchlist : un item issu d'une requête ciblée sur un
-      // compte connu n'EST PAS forcément un signal sur ce compte (le SERP renvoie
-      // parfois un article dont le vrai sujet est une AUTRE société). On ne garde le
-      // rattachement watchlist QUE si la société extraite par le modèle correspond au
-      // compte interrogé (ou si le modèle n'a rien extrait). Sinon on reclasse en
-      // discovery sur la société réelle : linkExistingCompanies pourra la rebrancher
-      // si elle est elle-même en watchlist.
-      const knownWatchlist = raw?.feed === "watchlist" && !!raw.knownCompanyId;
-      const keepWatchlist =
-        knownWatchlist && (!extracted || companyMatches(extracted, raw!.knownCompanyName ?? ""));
-
-      const feed: SignalFeed = keepWatchlist ? "watchlist" : "discovery";
-      const companyName = keepWatchlist
-        ? raw!.knownCompanyName!.trim()
-        : extracted || raw?.knownCompanyName?.trim() || "";
+      // Plus de flux par compte : tout entre en discovery, et linkExistingCompanies
+      // rebranche ensuite sur un compte de la watchlist quand le nom correspond.
+      const companyName = extracted || raw?.knownCompanyName?.trim() || "";
       if (!companyName) continue;
 
       out.push({
-        feed,
+        feed: "discovery",
         source,
         signal_type: type,
         company_name: companyName,
-        company_domain: null, // résolu plus tard (resolve-company) pour le discovery
-        scope_company_id: keepWatchlist ? raw!.knownCompanyId! : null,
-        category: type,
+        company_domain: null, // résolu à l'enrichissement (resolve-domain.ts)
+        scope_company_id: null,
+        category: null, // duplicat de signal_type : on arrête de l'écrire
         title,
         url: url || raw?.url || null,
         summary: typeof s.summary === "string" ? s.summary.trim() : null,
@@ -124,6 +126,8 @@ export async function classifyItems(
         signal_date: monthToIso(s.signal_date) ?? rawDateToIso(raw?.date ?? null),
         author: raw?.author ?? null,
         dedupe_signature: typeof s.dedupe_signature === "string" ? s.dedupe_signature.trim() : null,
+        score_breakdown: s.score_breakdown ?? null,
+        query_id: raw?.queryId ?? null,
       });
     }
   }
@@ -140,7 +144,7 @@ async function scoreBatch(items: RawItem[], userId: string | null): Promise<Scor
     })
     .join("\n\n");
 
-  const system = `${SIGNAL_ANALYSIS_PROMPT}\n\nIMPORTANT : pour chaque signal émis, recopie EXACTEMENT dans "index" le numéro [N] de l'item analysé (le crochet en tête de ligne) et dans "source_url" l'URL fournie de cet item (champ "URL:"). N'invente aucune URL ni aucun index. ${NO_EM_DASH_RULE}\n\n${BUSINESS_CONTEXT_PROMPT_BLOCK}`;
+  const system = `${SIGNAL_ANALYSIS_PROMPT}\n\nIMPORTANT : pour chaque signal émis, recopie EXACTEMENT dans "index" le numéro [N] de l'item analysé (le crochet en tête de ligne) et dans "source_url" l'URL fournie de cet item (champ "URL:"). N'invente aucune URL ni aucun index. ${NO_EM_DASH_RULE}\n\n${BUSINESS_CONTEXT_PROMPT_BLOCK}\n\n${SALES_CONTEXT_PROMPT_BLOCK}`;
 
   const client = anthropicClient({ timeout: 120_000 });
   const msg = await withAnthropicRetry(
@@ -166,19 +170,6 @@ async function scoreBatch(items: RawItem[], userId: string | null): Promise<Scor
   if (!block || !("input" in block)) return [];
   const parsed = block.input as { signals?: ScoredItemRaw[] };
   return Array.isArray(parsed.signals) ? parsed.signals : [];
-}
-
-/**
- * Deux noms de société désignent-ils le même compte ? Comparaison sur les noms
- * normalisés (sans accents/suffixes juridiques), tolérante aux variantes par
- * inclusion ("Verint" ~ "Verint Systems"). Sert à valider le rattachement
- * watchlist contre la société réellement extraite de l'article.
- */
-function companyMatches(a: string, b: string): boolean {
-  const na = normCompany(a);
-  const nb = normCompany(b);
-  if (!na || !nb) return false;
-  return na === nb || na.includes(nb) || nb.includes(na);
 }
 
 function normalizeType(raw: string | undefined, hint: SignalType | undefined): SignalType {

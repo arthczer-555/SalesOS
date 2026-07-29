@@ -36,6 +36,8 @@ export interface RawItem {
   knownCompanyId?: string | null;
   /** Auteur d'un post LinkedIn discovery (résolu en société/contact au "act"). */
   author?: SignalAuthor | null;
+  /** Requête de la grille qui a produit cet item (lib/signals/queries.ts). */
+  queryId?: string | null;
 }
 
 /** Auteur d'un post LinkedIn discovery (stocké dans prospect_signals.payload). */
@@ -70,6 +72,10 @@ export interface ScoredSignal {
    * qui déduplique la même info venue de 2 sources/URLs différentes.
    */
   dedupe_signature?: string | null;
+  /** Sous-scores du modèle (icp, event_strength, buying_window, ...). */
+  score_breakdown?: Record<string, number> | null;
+  /** Requête de la grille qui a produit ce signal (analyse de rendement). */
+  query_id?: string | null;
 }
 
 /** Destinataire candidat proposé dans le pop-up d'action (CRM, Apollo ou nominé). */
@@ -124,4 +130,22 @@ export interface SignalRow {
   signal_date: string | null;
   created_at: string;
   updated_at: string;
+  // ── Lead joignable, calculé au sweep (cf. lib/signals/enrich-lead.ts) ──────
+  lead_first_name: string | null;
+  lead_last_name: string | null;
+  lead_full_name: string | null;
+  lead_title: string | null;
+  lead_linkedin: string | null;
+  /** Permet le reveal Apollo (1 crédit) au clic quand l'email est absent. */
+  lead_apollo_id: string | null;
+  lead_email: string | null;
+  /** crm | pattern | guess | pending_reveal | apollo */
+  lead_email_source: string | null;
+  /** post_author | nominee | crm | apollo_icp */
+  lead_source: string | null;
+  /** Non nul dès qu'un crédit Apollo a été dépensé : anti double-dépense. */
+  lead_revealed_at: string | null;
+  score_breakdown: Record<string, number> | null;
+  query_id: string | null;
+  domain_via: string | null;
 }
