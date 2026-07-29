@@ -53,6 +53,7 @@ async function main() {
     provider: "Claude (Anthropic)",
     detail: "TEST manuel via scripts/test-credit-alert.ts — aucun crédit réellement épuisé.",
     context: "scripts/test-credit-alert.ts",
+    force: true, // sinon la garde "1 alerte / jour / fournisseur" avale le test
   });
   console.log("Envoyé (voir Slack).");
 }

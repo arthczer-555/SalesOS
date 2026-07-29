@@ -13,10 +13,14 @@
  * défaut `gaspard@coachello.io`) + Arthur, résolu par display name comme dans
  * les autres pipelines Slack (`CLAAP_NOTE_SLACK_TEST_USER`).
  *
+ * Fréquence : 1 DM par fournisseur et par jour, garde partagée en base
+ * (`credit_alert_log`, cf. migration du même nom).
+ *
  * Serveur uniquement (lit SLACK_BOT_TOKEN). Best-effort : une alerte qui échoue
  * ne casse jamais l'appel métier.
  */
 
+import { db } from "@/lib/db";
 import { dmRecipient, findArthurFallbackRecipient, lookupSlackIdByEmail } from "@/lib/slack/lookup";
 import {
   errorText,
@@ -28,21 +32,69 @@ import {
 
 /**
  * Anti-spam : une même situation (chat + cron + retries) peut lever 50 fois en
- * une minute. On ne DM qu'une fois par fournisseur et par fenêtre.
+ * une minute, et un fournisseur à sec le reste des heures. On ne DM qu'une fois
+ * par fournisseur et par jour.
  *
- * Mémoire process : en serverless, deux instances chaudes peuvent chacune
- * envoyer son alerte. Doublon occasionnel accepté — c'est le prix à payer pour
- * éviter une table + une migration pour un compteur.
+ * Le compteur vit en base (`credit_alert_log`) et non en mémoire : chaque
+ * invocation serverless et chaque script local est un process neuf, un throttle
+ * local ne voit donc rien des alertes déjà parties ailleurs.
  */
-const ALERT_WINDOW_MS = 30 * 60 * 1000;
+const ALERT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+/** Court-circuit process-local : évite un aller-retour DB par retry d'un run. */
 const lastAlertAt = new Map<CreditProvider, number>();
 
-function shouldAlert(provider: CreditProvider): boolean {
+/**
+ * Revendique le créneau du jour pour `provider` : `true` seulement pour le
+ * process qui gagne. L'UPDATE conditionnel puis l'INSERT en conflit sont
+ * atomiques côté Postgres, donc deux instances concurrentes ne peuvent pas
+ * gagner toutes les deux.
+ *
+ * Base injoignable ou table absente : on laisse passer l'alerte (perdre un
+ * signal de crédit à sec coûte plus cher qu'un doublon) et on retombe sur le
+ * throttle mémoire.
+ */
+async function claimAlertSlot(provider: CreditProvider): Promise<boolean> {
   const now = Date.now();
   const last = lastAlertAt.get(provider);
   if (last && now - last < ALERT_WINDOW_MS) return false;
-  lastAlertAt.set(provider, now);
-  return true;
+
+  const nowIso = new Date(now).toISOString();
+  const cutoff = new Date(now - ALERT_WINDOW_MS).toISOString();
+
+  try {
+    const updated = await db
+      .from("credit_alert_log")
+      .update({ last_alert_at: nowIso })
+      .eq("provider", provider)
+      .lt("last_alert_at", cutoff)
+      .select("provider");
+    if (updated.error) throw updated.error;
+    if (updated.data && updated.data.length > 0) {
+      lastAlertAt.set(provider, now);
+      return true;
+    }
+
+    // Aucune ligne mise à jour : soit première alerte pour ce fournisseur, soit
+    // une alerte de moins de 24h. L'INSERT tranche — un conflit de clé (23505)
+    // signifie que la ligne existe et est donc récente.
+    const inserted = await db
+      .from("credit_alert_log")
+      .insert({ provider, last_alert_at: nowIso });
+    if (!inserted.error) {
+      lastAlertAt.set(provider, now);
+      return true;
+    }
+    if (inserted.error.code === "23505") return false;
+    throw inserted.error;
+  } catch (e) {
+    console.error(
+      "[credit] throttle DB indisponible, alerte envoyée sans garde partagée:",
+      e instanceof Error ? e.message : String(e),
+    );
+    lastAlertAt.set(provider, now);
+    return true;
+  }
 }
 
 function recipientEmails(): string[] {
@@ -65,8 +117,8 @@ function renderAlert(args: { provider: CreditProvider; context?: string; detail:
 }
 
 /**
- * Envoie le DM Slack d'alerte (Gaspard + Arthur), throttlé par fournisseur.
- * Ne lève jamais.
+ * Envoie le DM Slack d'alerte (Gaspard + Arthur), 1 fois par jour et par
+ * fournisseur. Ne lève jamais.
  */
 export async function reportInsufficientCredit(args: {
   provider?: CreditProvider;
@@ -74,13 +126,15 @@ export async function reportInsufficientCredit(args: {
   detail: string;
   /** Où ça a cassé, ex. "CoachelloGPT chat", "cron deal scoring". */
   context?: string;
+  /** Ignore la garde 24h — réservé aux tests manuels (scripts/test-credit-alert.ts). */
+  force?: boolean;
 }): Promise<void> {
   const provider = args.provider ?? guessCreditProvider(args.detail);
   console.error(
     `[credit] ${provider} out of credit${args.context ? ` (${args.context})` : ""}: ${args.detail}`,
   );
-  if (!shouldAlert(provider)) return;
   if (!process.env.SLACK_BOT_TOKEN) return;
+  if (!args.force && !(await claimAlertSlot(provider))) return;
 
   const text = renderAlert({ provider, context: args.context, detail: args.detail });
 
