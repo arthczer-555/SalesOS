@@ -1,7 +1,9 @@
 // ────────────────────────────────────────────────────────────────────────
 // Orchestrateur du dashboard AE : recalcule le snapshot de chaque rep et le
-// persiste dans ae_activity_snapshots (1 row/rep). Déclenché 1x/semaine (cron)
-// ou à la demande (bouton "Refresh").
+// persiste dans ae_activity_snapshots (1 row/rep). Déclenché 1x/jour (cron
+// 06:00 UTC), à l'ouverture d'un dashboard périmé, ou à la demande (bouton
+// "Refresh"). Seule la reco de coaching reste hebdo, plafonnée dans
+// buildCoaching : tout le reste est recalculé à chaque passage.
 //
 // Pour chaque rep : activité HubSpot (REST) → buckets (4 granularités) +
 // funnel + lost reasons, revenu/objectifs (Sheet Drive), meetings tenus
@@ -11,7 +13,14 @@
 // ────────────────────────────────────────────────────────────────────────
 
 import { db } from "@/lib/db";
-import { GRANULARITIES, type AeActivityMeta, type AeActivityResponse, type RepSnapshot, type RevenuePerf } from "./types";
+import {
+  GRANULARITIES,
+  emptyRevenueStream,
+  type AeActivityMeta,
+  type AeActivityResponse,
+  type RepSnapshot,
+  type RevenuePerf,
+} from "./types";
 import { bucketize } from "./aggregate";
 import {
   fetchDispositionLabelMap,
@@ -50,21 +59,37 @@ async function setMeta(fields: Partial<{
 
 export type RefreshResult = { ok: boolean; repCount: number; error?: string };
 
+export type RefreshOptions = {
+  /**
+   * Ne recalculer que ces reps (owner ids HubSpot). Sert au rafraîchissement à
+   * la demande depuis le dashboard : un rep qui ouvre sa page ne doit pas
+   * relancer les 8 autres. Le statut global (ae_activity_meta) et le nettoyage
+   * des reps sortis de l'équipe restent réservés au refresh complet, sinon la
+   * page AE Activity afficherait "running" en boucle.
+   */
+  ownerIds?: string[];
+};
+
 /**
- * Recalcule et persiste le snapshot de tous les reps sales. Idempotent :
+ * Recalcule et persiste le snapshot des reps sales. Idempotent :
  * upsert par rep_owner_id + nettoyage des reps qui ne sont plus sales.
  */
-export async function runAeActivityRefresh(): Promise<RefreshResult> {
+export async function runAeActivityRefresh(opts: RefreshOptions = {}): Promise<RefreshResult> {
   const start = startDay();
   const end = todayDay();
   const now = new Date().toISOString();
+  const targeted = (opts.ownerIds ?? []).filter(Boolean);
+  const isPartial = targeted.length > 0;
 
-  await setMeta({ status: "running", started_at: now, finished_at: null, error_message: null });
+  if (!isPartial) {
+    await setMeta({ status: "running", started_at: now, finished_at: null, error_message: null });
+  }
 
   try {
-    const reps = await listSalesReps();
+    const allReps = await listSalesReps();
+    const reps = isPartial ? allReps.filter((r) => targeted.includes(r.ownerId)) : allReps;
     if (reps.length === 0) {
-      await setMeta({ status: "done", finished_at: new Date().toISOString(), rep_count: 0 });
+      if (!isPartial) await setMeta({ status: "done", finished_at: new Date().toISOString(), rep_count: 0 });
       return { ok: true, repCount: 0 };
     }
 
@@ -88,10 +113,11 @@ export async function runAeActivityRefresh(): Promise<RefreshResult> {
 
         const claapDays = claapHeld.get((rep.email ?? "").toLowerCase()) ?? [];
         // Slack : le map est keyé par email du posteur (fallback slack user id).
-        const slackDays =
+        const slackMeetings =
           slackBooked.get((rep.email ?? "").toLowerCase()) ??
           (rep.slackUserId ? slackBooked.get(rep.slackUserId) : undefined) ??
           [];
+        const slackDays = slackMeetings.map((m) => m.day);
 
         // Leads marketing attribués au rep (owner du deal matché).
         const repLeads = leads.byOwner.get(rep.ownerId) ?? [];
@@ -104,28 +130,28 @@ export async function runAeActivityRefresh(): Promise<RefreshResult> {
           GRANULARITIES.map((g) => [g, bucketize(hs.raw, claapDays, slackDays, leadDays, g)]),
         ) as RepSnapshot["byGranularity"];
 
-        const rr = revenueSheet.byRep.get(repKeyFromName(rep.name));
+        const sheetKey = repKeyFromName(rep.name);
+        const rr = revenueSheet.byRep.get(sheetKey);
         const revenue: RevenuePerf = rr
-          ? {
-              matched: true,
-              sheetName: repKeyFromName(rep.name),
-              newTarget: rr.newTarget,
-              newBilled: rr.newBilled,
-              renewTarget: rr.renewTarget,
-              renewBilled: rr.renewBilled,
-              quarters: rr.quarters,
-            }
+          ? { matched: true, sheetName: sheetKey, newBiz: rr.newBiz, renew: rr.renew, csmRenew: rr.csmRenew }
           : {
               matched: false,
               sheetName: null,
-              newTarget: null,
-              newBilled: null,
-              renewTarget: null,
-              renewBilled: null,
-              quarters: [],
+              newBiz: emptyRevenueStream(),
+              renew: emptyRevenueStream(),
+              csmRenew: emptyRevenueStream(),
             };
 
-        const coaching = await buildCoaching(rep.userId, rep.name, start);
+        // Snapshot précédent : sert à réutiliser la reco de coaching quand
+        // aucune nouvelle analyse Sales Coach n'est arrivée depuis.
+        const { data: prevRow } = await db
+          .from("ae_activity_snapshots")
+          .select("payload")
+          .eq("rep_owner_id", rep.ownerId)
+          .maybeSingle();
+        const previousCoaching = (prevRow?.payload as RepSnapshot | undefined)?.coaching ?? null;
+
+        const coaching = await buildCoaching(rep.userId, rep.name, start, previousCoaching);
 
         const dataWarnings = [...hs.warnings];
         if (!revenue.matched && !revenueSheet.ok) dataWarnings.push("revenue_sheet");
@@ -134,6 +160,7 @@ export async function runAeActivityRefresh(): Promise<RefreshResult> {
           repOwnerId: rep.ownerId,
           repName: rep.name,
           repEmail: rep.email,
+          roles: rep.roles,
           accent: rep.accent,
           byGranularity,
           funnel: hs.funnel,
@@ -141,6 +168,7 @@ export async function runAeActivityRefresh(): Promise<RefreshResult> {
           lostReasons: hs.lostReasons,
           revenue,
           coaching,
+          slackMeetings: [...slackMeetings].sort((a, b) => b.ts.localeCompare(a.ts)),
           dataWarnings,
         };
 
@@ -159,6 +187,10 @@ export async function runAeActivityRefresh(): Promise<RefreshResult> {
       } catch (e) {
         console.error(`[ae-activity] rep ${rep.name} (${rep.ownerId}) failed:`, e instanceof Error ? e.message : e);
       }
+    }
+
+    if (isPartial) {
+      return { ok: true, repCount: reps.length };
     }
 
     // Nettoyage : supprime les rows des reps qui ne sont plus sales.

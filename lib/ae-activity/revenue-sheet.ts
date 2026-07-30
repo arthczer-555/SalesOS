@@ -13,23 +13,25 @@
 // ────────────────────────────────────────────────────────────────────────
 
 import * as XLSX from "xlsx";
+import {
+  emptyRevenueStream,
+  type AccountRevenue,
+  type QuarterAmount,
+  type RevenueStream,
+} from "./types";
 
 // Fichier "Dashboard revenue 2026 .xlsx" (partagé, mis à jour en continu).
 // Surchargagle via env si le fichier de référence change.
 const DEFAULT_FILE_ID = "1zjB-phoCampmQOFNwwiYnw6jwjvrfwmb";
 
-export type RevenueQuarterRaw = {
-  quarter: "Q1" | "Q2" | "Q3" | "Q4";
-  newTarget: number | null;
-  newBilled: number | null;
-};
+// Les 3 onglets de suivi ont la MÊME structure (bloc de perf par rep + bloc
+// "DÉTAIL DES DEALS"), seuls les libellés de colonnes changent.
+type StreamKey = "newBiz" | "renew" | "csmRenew";
 
 export type RepRevenue = {
-  newTarget: number | null;
-  newBilled: number | null;
-  renewTarget: number | null;
-  renewBilled: number | null;
-  quarters: RevenueQuarterRaw[];
+  newBiz: RevenueStream;
+  renew: RevenueStream;
+  csmRenew: RevenueStream;
 };
 
 export type RevenueSheet = {
@@ -105,88 +107,157 @@ function isRepRowEnd(cell: unknown): boolean {
   return n === "" || n === "total";
 }
 
-// ── Parse l'onglet "Suivi New" : NEW target/billed + par trimestre, par AE ──
-function parseNew(wb: XLSX.WorkBook, byRep: Map<string, RepRevenue>): boolean {
-  for (const sheetName of wb.SheetNames) {
-    const grid = sheetGrid(wb, sheetName);
-    // En-tête = ligne contenant "AE" ET un libellé "objectif new".
-    const headerIdx = grid.findIndex(
-      (r) => Array.isArray(r) && r.some((c) => norm(c) === "ae") && r.some((c) => norm(c).includes("objectif new")),
-    );
-    if (headerIdx === -1) continue;
-
-    const header = grid[headerIdx].map((c) => norm(c));
-    const aeCol = header.findIndex((h) => h === "ae");
-    const newTargetCol = header.findIndex((h) => h.includes("objectif new"));
-    const newBilledCol = header.findIndex((h) => h.includes("new facture"));
-    const objQ: Record<number, number> = {};
-    const facQ: Record<number, number> = {};
-    header.forEach((h, i) => {
-      const mo = /^obj q([1-4])/.exec(h);
-      if (mo) objQ[Number(mo[1])] = i;
-      const mf = /^facture q([1-4])/.exec(h);
-      if (mf) facQ[Number(mf[1])] = i;
-    });
-
-    for (let i = headerIdx + 1; i < grid.length; i++) {
-      const r = grid[i];
-      if (!Array.isArray(r)) continue;
-      if (isRepRowEnd(r[aeCol])) break;
-      const key = repKeyFromName(String(r[aeCol]));
-      if (!key) continue;
-      const quarters: RevenueQuarterRaw[] = ([1, 2, 3, 4] as const).map((q) => ({
-        quarter: `Q${q}` as RevenueQuarterRaw["quarter"],
-        newTarget: objQ[q] != null ? parseAmount(r[objQ[q]]) : null,
-        newBilled: facQ[q] != null ? parseAmount(r[facQ[q]]) : null,
-      }));
-      const existing = byRep.get(key) ?? emptyRepRevenue();
-      existing.newTarget = newTargetCol >= 0 ? parseAmount(r[newTargetCol]) : null;
-      existing.newBilled = newBilledCol >= 0 ? parseAmount(r[newBilledCol]) : null;
-      existing.quarters = quarters;
-      byRep.set(key, existing);
-    }
-    return true;
-  }
-  return false;
+/** Colonnes "Obj Qn" / "Facturé Qn" d'une ligne d'en-tête normalisée. */
+function quarterCols(header: string[]): { obj: Record<number, number>; fac: Record<number, number> } {
+  const obj: Record<number, number> = {};
+  const fac: Record<number, number> = {};
+  header.forEach((h, i) => {
+    const mo = /^obj q([1-4])/.exec(h);
+    if (mo) obj[Number(mo[1])] = i;
+    const mf = /^facture q([1-4])/.exec(h);
+    if (mf) fac[Number(mf[1])] = i;
+  });
+  return { obj, fac };
 }
 
-// ── Parse le bloc "RENEW / SALES" (onglet Dashboard) : renew target/billed ──
-function parseRenew(wb: XLSX.WorkBook, byRep: Map<string, RepRevenue>): void {
-  for (const sheetName of wb.SheetNames) {
-    const grid = sheetGrid(wb, sheetName);
-    for (let r = 0; r < grid.length; r++) {
-      const row = grid[r];
-      if (!Array.isArray(row)) continue;
-      const markerCol = row.findIndex((c) => norm(c).replace(/ /g, "") === "renew/sales");
-      if (markerCol === -1) continue;
+/**
+ * Bloc de performance d'un onglet "Suivi *" :
+ * `AE | <target> | <billed> | % Atteinte | Obj Q1 | Facturé Q1 | … | Facturé Q4`
+ * puis une ligne par rep jusqu'à "TOTAL" ou une ligne vide.
+ *
+ * Le libellé de la colonne rep est toujours "AE", y compris dans les onglets
+ * Renew et CSM où il désigne en réalité l'AM ou le CSM.
+ */
+function parsePerfBlock(
+  grid: Grid,
+  targetLabel: string,
+  billedLabel: string,
+): Map<string, Pick<RevenueStream, "target" | "billed" | "quarters">> {
+  const out = new Map<string, Pick<RevenueStream, "target" | "billed" | "quarters">>();
+  const headerIdx = grid.findIndex(
+    (r) => Array.isArray(r) && r.some((c) => norm(c) === "ae") && r.some((c) => norm(c).includes(targetLabel)),
+  );
+  if (headerIdx === -1) return out;
 
-      // En-tête AE/Target/Facturé dans les ~4 lignes suivantes, colonnes >= markerCol-1.
-      for (let h = r; h <= r + 4 && h < grid.length; h++) {
-        const hr = grid[h];
-        if (!Array.isArray(hr)) continue;
-        const aeCol = hr.findIndex((c, i) => i >= markerCol - 1 && norm(c) === "ae");
-        const targetCol = hr.findIndex((c, i) => i >= markerCol - 1 && norm(c) === "target");
-        const billedCol = hr.findIndex((c, i) => i >= markerCol - 1 && norm(c) === "facture");
-        if (aeCol === -1 || targetCol === -1 || billedCol === -1) continue;
-        for (let i = h + 1; i < grid.length; i++) {
-          const rr = grid[i];
-          if (!Array.isArray(rr)) continue;
-          if (isRepRowEnd(rr[aeCol])) break;
-          const key = repKeyFromName(String(rr[aeCol]));
-          if (!key) continue;
-          const existing = byRep.get(key) ?? emptyRepRevenue();
-          existing.renewTarget = parseAmount(rr[targetCol]);
-          existing.renewBilled = parseAmount(rr[billedCol]);
-          byRep.set(key, existing);
-        }
-        return; // bloc renew traité
-      }
-    }
+  const header = grid[headerIdx].map((c) => norm(c));
+  const aeCol = header.findIndex((h) => h === "ae");
+  const targetCol = header.findIndex((h) => h.includes(targetLabel));
+  const billedCol = header.findIndex((h) => h.includes(billedLabel));
+  const { obj, fac } = quarterCols(header);
+
+  for (let i = headerIdx + 1; i < grid.length; i++) {
+    const r = grid[i];
+    if (!Array.isArray(r)) continue;
+    if (isRepRowEnd(r[aeCol])) break;
+    const key = repKeyFromName(String(r[aeCol]));
+    if (!key) continue;
+    out.set(key, {
+      target: targetCol >= 0 ? parseAmount(r[targetCol]) : null,
+      billed: billedCol >= 0 ? parseAmount(r[billedCol]) : null,
+      quarters: ([1, 2, 3, 4] as const).map((q) => ({
+        quarter: `Q${q}` as QuarterAmount["quarter"],
+        target: obj[q] != null ? parseAmount(r[obj[q]]) : null,
+        billed: fac[q] != null ? parseAmount(r[fac[q]]) : null,
+      })),
+    });
   }
+  return out;
+}
+
+/**
+ * Bloc "DÉTAIL DES DEALS" : `Company | AE|AM|CSM | … | Billed 2026`.
+ *
+ * On cible ce premier bloc, le seul à porter le nom du rep en colonne et un
+ * libellé "Billed 2026". Les blocs suivants de la même ligne (un par rep, avec
+ * un simple "Billed") sont redondants.
+ */
+function parseAccountsBlock(grid: Grid): Map<string, AccountRevenue[]> {
+  const out = new Map<string, AccountRevenue[]>();
+  const headerIdx = grid.findIndex(
+    (r) =>
+      Array.isArray(r) && r.some((c) => norm(c) === "company") && r.some((c) => norm(c) === "billed 2026"),
+  );
+  if (headerIdx === -1) return out;
+
+  const header = grid[headerIdx].map((c) => norm(c));
+  const companyCol = header.findIndex((h) => h === "company");
+  const billedCol = header.findIndex((h) => h === "billed 2026");
+  const ownerCol = header.findIndex(
+    (h, i) => i > companyCol && (h === "ae" || h === "am" || h === "csm"),
+  );
+  if (companyCol === -1 || billedCol === -1 || ownerCol === -1) return out;
+
+  for (let i = headerIdx + 1; i < grid.length; i++) {
+    const r = grid[i];
+    if (!Array.isArray(r)) continue;
+    const company = String(r[companyCol] ?? "").trim();
+    if (!company) break; // fin du bloc
+    const key = repKeyFromName(String(r[ownerCol]));
+    const billed = parseAmount(r[billedCol]);
+    if (!key || billed == null) continue;
+    out.set(key, (out.get(key) ?? []).concat({ company, billed }));
+  }
+  for (const list of out.values()) list.sort((a, b) => b.billed - a.billed);
+  return out;
+}
+
+/**
+ * Identifie le flux porté par un onglet à partir de ses libellés de colonnes
+ * (et non de son nom, qui peut être renommé) : "objectif new" → New,
+ * "target renew" → Renew, que l'onglet distingue AM et CSM par son titre.
+ */
+function detectStream(sheetName: string, grid: Grid): StreamKey | null {
+  const hasLabel = (needle: string): boolean =>
+    grid.some((r) => Array.isArray(r) && r.some((c) => norm(c).includes(needle)));
+
+  if (hasLabel("objectif new")) return "newBiz";
+  if (!hasLabel("target renew")) return null;
+  // "par csm" figure dans le titre du bloc ; le nom d'onglet sert de filet.
+  const isCsm = hasLabel("par csm") || norm(sheetName).includes("csm");
+  return isCsm ? "csmRenew" : "renew";
 }
 
 function emptyRepRevenue(): RepRevenue {
-  return { newTarget: null, newBilled: null, renewTarget: null, renewBilled: null, quarters: [] };
+  return {
+    newBiz: emptyRevenueStream(),
+    renew: emptyRevenueStream(),
+    csmRenew: emptyRevenueStream(),
+  };
+}
+
+const STREAM_LABELS: Record<StreamKey, { target: string; billed: string }> = {
+  newBiz: { target: "objectif new", billed: "new facture" },
+  renew: { target: "target renew", billed: "renew facture" },
+  csmRenew: { target: "target renew", billed: "renew facture" },
+};
+
+/**
+ * Parcourt les onglets et remplit `byRep`. Renvoie les flux effectivement
+ * trouvés, pour distinguer "le Sheet a bougé" de "ce rep n'y figure pas".
+ */
+function parseWorkbook(wb: XLSX.WorkBook, byRep: Map<string, RepRevenue>): Set<StreamKey> {
+  const found = new Set<StreamKey>();
+
+  for (const sheetName of wb.SheetNames) {
+    const grid = sheetGrid(wb, sheetName);
+    if (grid.length === 0) continue;
+    const stream = detectStream(sheetName, grid);
+    if (!stream || found.has(stream)) continue;
+
+    const labels = STREAM_LABELS[stream];
+    const perf = parsePerfBlock(grid, labels.target, labels.billed);
+    if (perf.size === 0) continue;
+    const accounts = parseAccountsBlock(grid);
+
+    for (const [key, p] of perf) {
+      const rep = byRep.get(key) ?? emptyRepRevenue();
+      rep[stream] = { ...p, accounts: accounts.get(key) ?? [] };
+      byRep.set(key, rep);
+    }
+    found.add(stream);
+  }
+
+  return found;
 }
 
 export async function fetchRevenueSheet(): Promise<RevenueSheet> {
@@ -204,9 +275,12 @@ export async function fetchRevenueSheet(): Promise<RevenueSheet> {
     }
     const buf = Buffer.from(await res.arrayBuffer());
     const wb = XLSX.read(buf, { type: "buffer" });
-    const okNew = parseNew(wb, byRep);
-    parseRenew(wb, byRep); // best-effort, ne bloque pas
-    return { ok: okNew && byRep.size > 0, byRep };
+    const found = parseWorkbook(wb, byRep);
+    // Les onglets Renew/CSM sont best-effort : c'est le New qui conditionne
+    // la validité du parsing (c'est la métrique AE de référence).
+    if (!found.has("renew")) console.warn("[ae-activity] revenue sheet : bloc Renew introuvable");
+    if (!found.has("csmRenew")) console.warn("[ae-activity] revenue sheet : bloc CSM introuvable");
+    return { ok: found.has("newBiz") && byRep.size > 0, byRep };
   } catch (e) {
     console.warn("[ae-activity] revenue sheet failed:", e instanceof Error ? e.message : e);
     return { ok: false, byRep };

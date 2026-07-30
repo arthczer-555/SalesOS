@@ -15,10 +15,10 @@ import type { ActivityBucket, Granularity, RepSnapshot } from "@/lib/ae-activity
 
 // Métriques comparables entre reps (vue "Tous").
 const METRICS = [
-  { key: "calls", label: "Appels sortants", get: (b: ActivityBucket) => b.outboundCalls },
-  { key: "booked", label: "Meetings bookés", get: (b: ActivityBucket) => b.meetingsScheduled },
-  { key: "held", label: "Meetings tenus", get: (b: ActivityBucket) => b.meetingsHeld },
-  { key: "leads", label: "Leads inbound", get: (b: ActivityBucket) => b.leadsInbound },
+  { key: "calls", label: "Outbound calls", get: (b: ActivityBucket) => b.outboundCalls },
+  { key: "booked", label: "Meetings booked", get: (b: ActivityBucket) => b.meetingsScheduled },
+  { key: "held", label: "Meetings held", get: (b: ActivityBucket) => b.meetingsHeld },
+  { key: "leads", label: "Inbound leads", get: (b: ActivityBucket) => b.leadsInbound },
 ] as const;
 
 type MetricKey = (typeof METRICS)[number]["key"];

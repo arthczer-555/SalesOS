@@ -1,7 +1,17 @@
 import type { Config } from "@netlify/functions";
 
 /**
- * Cron hebdo (lundi 06:00 UTC) du refresh du dashboard AE Sales Activity.
+ * Cron quotidien (06:00 UTC, avant la journée de travail) du refresh du
+ * dashboard AE Sales Activity.
+ *
+ * Quotidien et pas hebdo à cause de la vue manager : /admin/ae-activity lit la
+ * base sans jamais déclencher de recalcul, contrairement au dashboard d'un rep
+ * (/api/me/dashboard/refresh, garde de 3h). Un cron hebdo y donnait donc des
+ * chiffres vieux de plusieurs jours pour tout rep qui ne s'était pas connecté.
+ *
+ * La reco de coaching, elle, reste HEBDO : elle est plafonnée à une génération
+ * par rep et par semaine dans buildCoaching (RECO_MAX_AGE_MS), donc ce passage
+ * quotidien recalcule la data sans repayer un appel Claude par rep et par jour.
  *
  * Déclencheur léger : POST vers la Background Function qui fait le gros du
  * travail (fetch HubSpot + Sheet + Claap + Slack + coaching, plusieurs minutes).
@@ -36,5 +46,5 @@ export default async () => {
 };
 
 export const config: Config = {
-  schedule: "0 6 * * 1", // tous les lundis à 06:00 UTC
+  schedule: "0 6 * * *", // tous les jours à 06:00 UTC
 };

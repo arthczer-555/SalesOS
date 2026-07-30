@@ -120,7 +120,12 @@ async function searchRows(
   return hubspotSearchAll<HsRow>(objectType as HubspotObjectType, body, maxRecords);
 }
 
-// Lit une association v4 en batch (meetings → contacts|deals, emails → contacts).
+// Lit une association v4 en batch (calls|meetings → contacts|deals, emails → contacts).
+//
+// L'API renvoie `toObjectId` en NOMBRE alors que tous les identifiants
+// manipulés ici sont des chaînes (ids HubSpot des recherches, clés des Sets de
+// leads). On normalise en string, sans quoi chaque comparaison échoue en
+// silence et tout retombe sur la branche par défaut.
 async function batchAssoc(
   fromType: string,
   fromIds: string[],
@@ -130,52 +135,91 @@ async function batchAssoc(
   for (let i = 0; i < fromIds.length; i += 100) {
     const chunk = fromIds.slice(i, i + 100);
     const res = await hubspotFetch<{
-      results?: Array<{ from?: { id: string }; to?: Array<{ toObjectId: string }> }>;
+      results?: Array<{ from?: { id: string | number }; to?: Array<{ toObjectId: string | number }> }>;
     }>(`/crm/v4/associations/${fromType}/${toType}/batch/read`, "POST", {
       inputs: chunk.map((id) => ({ id })),
     });
     for (const row of res.results ?? []) {
       const fid = row.from?.id;
-      if (fid) out.set(fid, (row.to ?? []).map((t) => t.toObjectId));
+      if (fid != null) out.set(String(fid), (row.to ?? []).map((t) => String(t.toObjectId)));
     }
   }
   return out;
 }
 
+// Artefacts de calendrier loggés par HubSpot comme des emails sortants
+// ("Re: Refused: Coachello x XPeng@Thursday…", "Accepted: …"). Ce n'est pas de
+// l'activité commerciale, on les exclut du compteur.
+const CALENDAR_SUBJECT_RE =
+  /^\s*(?:(?:re|fwd|tr)\s*:\s*)*(?:refused|accepted|declined|invitation|canceled|cancelled|tentative|updated invitation)\s*:/i;
+
+// Un contact est SUR UN DEAL (donc pas une cible de prospection) s'il a au
+// moins un deal rattaché. Critère unique et volontairement littéral : c'est la
+// définition que porte l'UI ("cold" vs "on a deal"), et la seule qui reste
+// vérifiable d'un coup d'œil dans HubSpot depuis la fiche contact.
+function hasAssociatedDeal(p: Record<string, string> | undefined): boolean {
+  return Number(p?.num_associated_deals ?? 0) > 0;
+}
+
 /**
- * Emails de PROSPECTION = emails sortants vers un contact "sans email entrant"
- * (on n'a jamais reçu d'email de lui → prospection à froid). On associe chaque
- * email à son contact, on repère les contacts qui nous ont écrit (email
- * entrant), et on garde les sortants vers les autres. Best-effort : si
- * l'association échoue, on retombe sur tous les emails sortants.
+ * Prospection à froid vs échange sur un deal existant, pour un type
+ * d'engagement donné (appels ou emails).
+ *
+ * Un engagement compte comme prospection à froid si AUCUN de ses contacts
+ * associés n'a de deal (cf. `hasAssociatedDeal`). Conséquence assumée : les
+ * emails d'un CSM vers un compte client sans deal ouvert tombent en
+ * prospection. C'est le prix d'un critère lisible, et le rôle `csm` masque
+ * déjà ces deux cards sur son dashboard.
+ *
+ * Best-effort : si les associations ou le batch read échouent, la map revient
+ * vide et les engagements restent NON classés plutôt que d'être tous comptés à
+ * tort en prospection.
  */
-async function classifyProspectionEmailDays(
-  rows: Array<{ id: string; day: string; direction: string }>,
-): Promise<string[]> {
-  const outbound = rows.filter((r) => r.direction !== "INCOMING_EMAIL");
-  if (rows.length === 0) return [];
+async function classifyOnDeal(
+  objectType: "calls" | "emails",
+  ids: string[],
+): Promise<Map<string, boolean>> {
+  const out = new Map<string, boolean>();
+  if (ids.length === 0) return out;
 
-  let emailToContacts: Map<string, string[]>;
+  let callToContacts: Map<string, string[]>;
   try {
-    emailToContacts = await batchAssoc("emails", rows.map((r) => r.id), "contacts");
+    callToContacts = await batchAssoc(objectType, ids, "contacts");
   } catch {
-    return outbound.map((r) => r.day); // association indispo → tous les sortants
+    return out;
   }
 
-  const inboundContacts = new Set<string>();
-  for (const r of rows) {
-    if (r.direction === "INCOMING_EMAIL") {
-      for (const c of emailToContacts.get(r.id) ?? []) inboundContacts.add(c);
+  const contactIds = new Set<string>();
+  for (const ids of callToContacts.values()) ids.forEach((c) => contactIds.add(c));
+
+  const onDeal = new Map<string, boolean>();
+  const list = [...contactIds];
+  try {
+    for (let i = 0; i < list.length; i += 100) {
+      const chunk = list.slice(i, i + 100);
+      const res = await hubspotFetch<{ results?: HsRow[] }>(
+        "/crm/v3/objects/contacts/batch/read",
+        "POST",
+        {
+          properties: ["num_associated_deals"],
+          inputs: chunk.map((id) => ({ id })),
+        },
+      );
+      for (const c of res.results ?? []) {
+        onDeal.set(c.id, hasAssociatedDeal(c.properties));
+      }
     }
+  } catch {
+    return out;
   }
 
-  const days: string[] = [];
-  for (const r of outbound) {
-    const cids = emailToContacts.get(r.id) ?? [];
-    const knownContact = cids.some((c) => inboundContacts.has(c));
-    if (!knownContact) days.push(r.day); // contact sans email entrant → prospection
+  for (const id of ids) {
+    // Un engagement sans contact associé n'est rattachable à aucun deal : on le
+    // compte en prospection.
+    const cids = callToContacts.get(id) ?? [];
+    out.set(id, cids.some((c) => onDeal.get(c) === true));
   }
-  return days;
+  return out;
 }
 
 /**
@@ -287,47 +331,77 @@ export async function fetchOwnerHubspot(
   const funnelCounts = new Map<string, number>();
   const lostCounts = new Map<string, number>();
 
-  // ── Calls ────────────────────────────────────────────────────────────────
+  // ── Calls (+ cold call vs call sur un deal) ──────────────────────────────
   try {
     const rows = await searchRows(
       "calls",
       {
-        properties: ["hs_timestamp", "hs_call_direction", "hs_call_disposition"],
+        properties: ["hs_timestamp", "hs_call_direction", "hs_call_disposition", "hs_call_duration"],
         filterGroups: ownerDateFilter(ownerId, "hs_timestamp", startMs, endMs),
       },
       5000,
     );
+    // Seuls les sortants sont classés cold/on-deal : c'est la seule direction
+    // qui relève d'une décision de prospection.
+    const outboundIds = rows
+      .filter((r) => r.properties?.hs_call_direction === "OUTBOUND")
+      .map((r) => r.id);
+    const onDeal = await classifyOnDeal("calls", outboundIds);
+    // Sans classification, `cold` et `on a deal` valent 0 alors que le total ne
+    // bouge pas : c'est indistinguable d'un rep qui n'appelle que ses deals.
+    if (outboundIds.length > 0 && onDeal.size < outboundIds.length) warnings.push("calls_split");
     for (const r of rows) {
       const day = toDayString(r.properties?.hs_timestamp);
       if (!day) continue;
       const dispRaw = r.properties?.hs_call_disposition || null;
       const disposition = dispRaw ? ctx.dispositionMap[dispRaw] ?? dispRaw : null;
-      raw.calls.push({ date: day, direction: r.properties?.hs_call_direction ?? "", disposition });
+      const rawDuration = Number(r.properties?.hs_call_duration);
+      raw.calls.push({
+        date: day,
+        direction: r.properties?.hs_call_direction ?? "",
+        disposition,
+        durationMs: Number.isFinite(rawDuration) ? rawDuration : null,
+        onDeal: onDeal.has(r.id) ? onDeal.get(r.id)! : null,
+      });
     }
   } catch (e) {
     warnings.push("calls");
     console.warn(`[ae-activity] calls fetch failed for ${ownerId}:`, e instanceof Error ? e.message : e);
   }
 
-  // ── Emails de prospection (sortants vers un contact "sans email entrant") ──
+  // ── Emails sortants ───────────────────────────────────────────────────────
+  // On filtre la direction côté HubSpot (les entrants sont ~7x plus nombreux) et
+  // on ne fait AUCUNE association : l'ancien filtre "prospection" enchaînait des
+  // centaines de POST batch par rep et finissait en timeout, ce qui affichait 0.
   try {
     const rows = await searchRows(
       "emails",
       {
-        properties: ["hs_timestamp", "hs_email_direction"],
-        filterGroups: ownerDateFilter(ownerId, "hs_timestamp", startMs, endMs),
+        properties: ["hs_timestamp", "hs_email_direction", "hs_email_subject"],
+        filterGroups: [
+          {
+            filters: [
+              { propertyName: "hubspot_owner_id", operator: "EQ", value: ownerId },
+              { propertyName: "hs_email_direction", operator: "NEQ", value: "INCOMING_EMAIL" },
+              { propertyName: "hs_timestamp", operator: "GTE", value: startMs },
+              { propertyName: "hs_timestamp", operator: "LTE", value: endMs },
+            ],
+          },
+        ],
       },
-      12000,
+      6000,
     );
-    const emailRows = rows
-      .map((r) => ({
-        id: r.id,
-        day: toDayString(r.properties?.hs_timestamp),
-        direction: r.properties?.hs_email_direction ?? "",
-      }))
-      .filter((r): r is { id: string; day: string; direction: string } => !!r.day);
-    const prospectionDays = await classifyProspectionEmailDays(emailRows);
-    for (const day of prospectionDays) raw.emails.push({ date: day });
+    const kept = rows.filter(
+      (r) => toDayString(r.properties?.hs_timestamp) && !CALENDAR_SUBJECT_RE.test(r.properties?.hs_email_subject ?? ""),
+    );
+    const emailOnDeal = await classifyOnDeal("emails", kept.map((r) => r.id));
+    // Idem : un « Prospecting emails: 0 » doit dire zéro prospection, pas
+    // « on n'a pas réussi à classer ».
+    if (kept.length > 0 && emailOnDeal.size < kept.length) warnings.push("emails_split");
+    for (const r of kept) {
+      const day = toDayString(r.properties?.hs_timestamp)!;
+      raw.emails.push({ date: day, onDeal: emailOnDeal.has(r.id) ? emailOnDeal.get(r.id)! : null });
+    }
   } catch (e) {
     warnings.push("emails");
     console.warn(`[ae-activity] emails fetch failed for ${ownerId}:`, e instanceof Error ? e.message : e);

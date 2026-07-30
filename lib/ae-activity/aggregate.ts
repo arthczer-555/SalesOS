@@ -7,11 +7,17 @@
 // cheval sur deux mois. Toute la logique de date est en UTC.
 // ────────────────────────────────────────────────────────────────────────
 
-import type { ActivityBucket, Granularity } from "./types";
+import { CONNECTED_CALL_MIN_MS, type ActivityBucket, type Granularity } from "./types";
 
 // Atomes produits par fetch-hubspot.ts (un par enregistrement HubSpot).
-export type CallAtom = { date: string; direction: string; disposition: string | null };
-export type EmailAtom = { date: string }; // 1 email de prospection sortant
+export type CallAtom = {
+  date: string;
+  direction: string;
+  disposition: string | null;
+  durationMs: number | null;
+  onDeal: boolean | null; // null = association indisponible (ni cold ni on-deal)
+};
+export type EmailAtom = { date: string; onDeal: boolean | null }; // 1 email sortant
 export type MeetingAtom = { date: string; source: "inbound" | "self" | null };
 export type FlagAtom = { date: string; inbound: boolean }; // deals ouverts
 export type ClosedAtom = { date: string; won: boolean };
@@ -67,6 +73,9 @@ export function periodKeyForDate(day: string, gran: Granularity): string {
     const qStartMonth = Math.floor(month / 3) * 3 + 1;
     return `${year}-${String(qStartMonth).padStart(2, "0")}-01`;
   }
+  if (gran === "year") {
+    return `${year}-01-01`;
+  }
   // semester
   return `${year}-${month <= 5 ? "H1" : "H2"}`;
 }
@@ -87,18 +96,29 @@ export function formatPeriodLabel(key: string, gran: Granularity): string {
     const mm = d.toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" });
     return `${mm} '${String(d.getUTCFullYear()).slice(2)}`;
   }
+  if (gran === "year") {
+    return String(d.getUTCFullYear());
+  }
   // quarter
   const q = Math.floor(d.getUTCMonth() / 3) + 1;
   return `Q${q} ${d.getUTCFullYear()}`;
 }
 
-function newBucket(key: string, label: string): ActivityBucket {
+/** Bucket vide. Exporté pour que l'agrégation UI ("Tous") parte du même
+ *  squelette et n'oublie pas un compteur ajouté ici. */
+export function newBucket(key: string, label: string): ActivityBucket {
   return {
     key,
     label,
     outboundCalls: 0,
     inboundCalls: 0,
+    connectedCalls: 0,
+    connectedColdCalls: 0,
+    callsOnDeal: 0,
+    callsCold: 0,
     emailsOut: 0,
+    emailsCold: 0,
+    emailsOnDeal: 0,
     meetingsScheduled: 0,
     meetingsInboundSourced: 0,
     meetingsSelfSourced: 0,
@@ -140,6 +160,13 @@ export function bucketize(
     const b = ensure(c.date);
     if (c.direction === "OUTBOUND") {
       b.outboundCalls++;
+      const connected = c.durationMs != null && c.durationMs >= CONNECTED_CALL_MIN_MS;
+      if (connected) b.connectedCalls++;
+      if (c.onDeal === true) b.callsOnDeal++;
+      else if (c.onDeal === false) {
+        b.callsCold++;
+        if (connected) b.connectedColdCalls++;
+      }
       const label = c.disposition || "Unknown";
       b.dispositions[label] = (b.dispositions[label] || 0) + 1;
     } else if (c.direction === "INBOUND") {
@@ -148,7 +175,10 @@ export function bucketize(
   }
 
   for (const e of raw.emails) {
-    ensure(e.date).emailsOut++; // emails de prospection (déjà filtrés côté fetch)
+    const b = ensure(e.date);
+    b.emailsOut++;
+    if (e.onDeal === true) b.emailsOnDeal++;
+    else if (e.onDeal === false) b.emailsCold++;
   }
 
   for (const m of raw.meetings) {

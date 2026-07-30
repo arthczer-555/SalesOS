@@ -11,6 +11,11 @@
 // ────────────────────────────────────────────────────────────────────────
 
 import { toDayString } from "./aggregate";
+import type { SlackBookedMeeting } from "./types";
+
+// Longueur max conservée par message : de quoi identifier le prospect dans le
+// drill-down sans gonfler le payload JSONB du snapshot.
+const MAX_TEXT_LEN = 300;
 
 type SlackMessage = {
   type?: string;
@@ -19,6 +24,7 @@ type SlackMessage = {
   user?: string;
   ts?: string;
   thread_ts?: string;
+  text?: string;
 };
 
 type HistoryResponse = {
@@ -35,12 +41,14 @@ type UserInfoResponse = {
 };
 
 /**
- * Map clé → jours "YYYY-MM-DD" des meetings déclarés depuis `startDay`. La clé
- * est l'email du posteur (lowercase) quand résolu, sinon son slack user id.
+ * Map clé → meetings déclarés depuis `startDay`. La clé est l'email du posteur
+ * (lowercase) quand résolu, sinon son slack user id.
  * Best-effort : map vide si le canal ou le token ne sont pas configurés.
  */
-export async function fetchSlackSelfBookedMeetings(startDay: string): Promise<Map<string, string[]>> {
-  const out = new Map<string, string[]>();
+export async function fetchSlackSelfBookedMeetings(
+  startDay: string,
+): Promise<Map<string, SlackBookedMeeting[]>> {
+  const out = new Map<string, SlackBookedMeeting[]>();
   const channel = process.env.SLACK_NEW_MEETINGS_CHANNEL;
   // Bot token en priorité (a le scope channels:history + users:read.email).
   // Fallback user token.
@@ -49,8 +57,8 @@ export async function fetchSlackSelfBookedMeetings(startDay: string): Promise<Ma
 
   const oldest = String(Math.floor(Date.parse(`${startDay}T00:00:00Z`) / 1000));
 
-  // 1) Collecte des jours par slack user id (posteur).
-  const byUid = new Map<string, string[]>();
+  // 1) Collecte des meetings par slack user id (posteur).
+  const byUid = new Map<string, SlackBookedMeeting[]>();
   let cursor: string | undefined;
   let guard = 0;
   try {
@@ -73,7 +81,7 @@ export async function fetchSlackSelfBookedMeetings(startDay: string): Promise<Ma
         const day = toDayString(String(Math.floor(Number(m.ts) * 1000)));
         if (!day) continue;
         const arr = byUid.get(m.user) ?? [];
-        arr.push(day);
+        arr.push({ day, ts: m.ts, text: (m.text ?? "").slice(0, MAX_TEXT_LEN) });
         byUid.set(m.user, arr);
       }
       cursor = data.response_metadata?.next_cursor || undefined;
@@ -85,7 +93,7 @@ export async function fetchSlackSelfBookedMeetings(startDay: string): Promise<Ma
   }
 
   // 2) Résout chaque posteur uid → email et ré-agrège par email (fallback uid).
-  for (const [uid, days] of byUid) {
+  for (const [uid, meetings] of byUid) {
     let key = uid;
     try {
       const res = await fetch(`https://slack.com/api/users.info?user=${encodeURIComponent(uid)}`, {
@@ -97,7 +105,7 @@ export async function fetchSlackSelfBookedMeetings(startDay: string): Promise<Ma
     } catch {
       // garde l'uid comme clé
     }
-    out.set(key, (out.get(key) ?? []).concat(days));
+    out.set(key, (out.get(key) ?? []).concat(meetings));
   }
 
   return out;
