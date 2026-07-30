@@ -103,10 +103,10 @@ export default async function AdminPage() {
   }));
 
 
-  // La largeur est portée par chaque section : User management prend toute la
-  // largeur disponible, le reste (guides, modèles) reste lisible en colonne.
+  // Toutes les sections partagent la même colonne centrée à 80 % : la table
+  // users a besoin de largeur, et le reste doit rester aligné avec elle.
   return (
-    <div className="p-8 space-y-10">
+    <div className="p-8 space-y-10 w-4/5 mx-auto">
       {/* Header */}
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
@@ -148,7 +148,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Users */}
-      <div className="w-4/5 mx-auto">
+      <div>
         <div className="mb-6">
           <h1 className="text-xl font-semibold" style={{ color: "#111" }}>
             User management
@@ -161,7 +161,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Modèles IA */}
-      <div className="max-w-4xl">
+      <div>
         <div className="mb-4">
           <h2 className="text-base font-semibold" style={{ color: "#111" }}>AI models</h2>
           <p className="text-xs mt-1" style={{ color: "#888" }}>
@@ -174,7 +174,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Guides IA */}
-      <div className="max-w-4xl">
+      <div>
         <div className="mb-4">
           <h2 className="text-base font-semibold" style={{ color: "#111" }}>
             AI guides
