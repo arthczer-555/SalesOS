@@ -3,6 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { UsersTable } from "./_components/users-table";
+import { readSalesRolesMap } from "@/lib/users/read-sales-roles";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 import { GuideEditor } from "../settings/_components/guide-editor";
 import { ModelPreferencesAdmin } from "./_components/model-preferences-admin";
@@ -92,8 +93,10 @@ export default async function AdminPage() {
   const totalMap = aggregate(allLogs);
   const monthMap = aggregate(monthLogs);
 
+  const salesRolesMap = await readSalesRolesMap();
   const usersWithStatus = (users ?? []).map((u) => ({
     ...u,
+    sales_roles: salesRolesMap.get(u.id) ?? [],
     claude_key_active: keyMap.get(u.id) ?? false,
     usageTotal: totalMap.get(u.id) ?? { ...EMPTY },
     usageMonth: monthMap.get(u.id) ?? { ...EMPTY },
@@ -112,6 +115,13 @@ export default async function AdminPage() {
         </div>
         <div className="flex items-center gap-2">
           <a
+            href="/admin/ideas"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+            style={{ background: "#fff", color: "#666", border: "1px solid #e5e5e5" }}
+          >
+            Ideas →
+          </a>
+          <a
             href="/admin/rag"
             className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
             style={{ background: "#fff", color: "#666", border: "1px solid #e5e5e5" }}
@@ -124,6 +134,13 @@ export default async function AdminPage() {
             style={{ background: "#fff", color: "#666", border: "1px solid #e5e5e5" }}
           >
             Logs &amp; Usage →
+          </a>
+          <a
+            href="/dashboard/demo"
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+            style={{ background: "#fff", color: "#666", border: "1px solid #e5e5e5" }}
+          >
+            View as →
           </a>
         </div>
       </div>

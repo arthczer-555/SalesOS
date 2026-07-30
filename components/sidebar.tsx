@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Sparkles,
+  LayoutDashboard,
   CalendarDays,
   Briefcase,
   GraduationCap,
@@ -34,6 +35,7 @@ import { useSidebar } from "@/components/sidebar/sidebar-context";
 type NavEntry = { href: string; label: string; icon: LucideIcon; match?: string[] };
 
 const nav: NavEntry[] = [
+  { href: "/dashboard", label: "My dashboard", icon: LayoutDashboard },
   { href: "/", label: "CoachelloGPT", icon: Sparkles },
   { href: "/briefing", label: "Briefing", icon: CalendarDays },
   { href: "/deals", label: "Deals", icon: Briefcase },
@@ -239,6 +241,7 @@ function SidebarBody({
           </button>
         )}
 
+        {/* « Voir comme » vit dans le header de /admin, pas ici. */}
         {isAdmin && (
           <NavLink
             href="/admin/ae-activity"
