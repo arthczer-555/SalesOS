@@ -35,7 +35,9 @@ const GUIDE_RESULT_RE = /^GUIDE "([^"]+)"/;
 // ignorer les tokens cache sous-estimait le coût d'un facteur 4-10x.
 function pricingFor(model: string): { input: number; output: number } {
   if (model.includes("haiku")) return { input: 1, output: 5 };
-  if (model.includes("opus")) return { input: 15, output: 75 };
+  // Opus 4.6 / 4.8 / 5 sont à 5/25 par MTok, pas 15/75 (tarif Opus 4.1 et
+  // antérieurs). Garder ce tarif aligné sur PRICING de app/admin/logs/page.tsx.
+  if (model.includes("opus")) return { input: 5, output: 25 };
   return { input: 3, output: 15 }; // sonnet et défaut
 }
 
