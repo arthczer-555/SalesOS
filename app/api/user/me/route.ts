@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { normalizeSignature, type EmailSignature } from "@/lib/email/signature";
+import { readUserSalesFields } from "@/lib/users/read-sales-roles";
 
 export async function GET() {
   const user = await getAuthenticatedUser();
@@ -13,6 +14,8 @@ export async function GET() {
     db.from("users").select("slack_display_name, hubspot_owner_id, email_signature").eq("id", user.id).single(),
   ]);
 
+  const sales = await readUserSalesFields(user.id);
+
   const response = NextResponse.json({
     id: user.id,
     email: user.email,
@@ -23,6 +26,8 @@ export async function GET() {
     slack_display_name: userRow.data?.slack_display_name ?? null,
     hubspot_owner_id: userRow.data?.hubspot_owner_id ?? null,
     email_signature: userRow.data?.email_signature ?? null,
+    is_sales: sales.isSales,
+    sales_roles: sales.roles,
   });
   response.headers.set("Cache-Control", "private, max-age=60, stale-while-revalidate=120");
   return response;

@@ -26,8 +26,10 @@
 // ce sont des clients déjà gagnés, ils n'ont rien à faire dans un digest de
 // deals à closer.
 //
-// Destinataires : UNIQUEMENT les users de la table `users` marqués is_sales=true
-// (toggle Sales dans /admin). Un owner HubSpot sans user sales actif est ignoré.
+// Destinataires : UNIQUEMENT les users de la table `users` porteurs du rôle AE
+// (cases AE/AM/CSM dans /admin). Un AM qui ne fait que du renouvellement, un CSM
+// ou un owner HubSpot sans user AE sont ignorés — c'est un digest de deals de
+// prospection. Le flag `is_sales` ne joue plus ici.
 //
 // Mode via env DÉDIÉ DEALS_AE_DIGEST_MODE (indépendant de SLACK_MODE) :
 //   - "test" (défaut) : tous les DM (des owners sales) partent chez Arthur
@@ -377,23 +379,41 @@ function renderMessage(args: {
 }
 
 // ─── Résolution du destinataire ───────────────────────────────────────────────
-// Strict : on n'envoie QU'À un user présent dans la table `users` ET marqué
-// `is_sales = true` (toggle Sales dans l'admin). Pas de fallback sur un lookup
-// par nom ni sur Arthur en prod : un owner HubSpot sans user sales actif est
-// ignoré (évite les DM aux gens partis / non-sales). cf [[project_hosting_netlify]]
+// Strict : on n'envoie QU'À un user présent dans la table `users` ET porteur du
+// rôle AE (`sales_roles` contient 'ae'). Le digest est une revue de deals de
+// prospection : un AM qui ne fait que du renouvellement ou un CSM n'en ont pas
+// l'usage. Pas de fallback sur un lookup par nom ni sur Arthur en prod : un
+// owner HubSpot sans user AE est ignoré (évite les DM aux gens partis /
+// non-sales). cf [[project_hosting_netlify]]
 async function resolveRecipient(
   ownerId: string,
   owner: Owner | undefined,
   mode: "test" | "prod",
 ): Promise<{ memberId: string; label: string; firstName: string } | null> {
-  const { data: u } = await db
+  // `sales_roles` peut ne pas encore exister (migrations manuelles) : on
+  // retombe alors sur l'ancien critère is_sales plutôt que de n'envoyer à
+  // personne.
+  let u: { slack_user_id?: string | null; email?: string | null; name?: string | null } | null = null;
+  const withRoles = await db
     .from("users")
-    .select("slack_user_id, email, name, is_sales")
+    .select("slack_user_id, email, name, is_sales, sales_roles")
     .eq("hubspot_owner_id", ownerId)
     .maybeSingle();
 
-  // Filtre dur : doit être un user sales actif.
-  if (!u || u.is_sales !== true) return null;
+  if (!withRoles.error) {
+    const row = withRoles.data;
+    const roles = Array.isArray(row?.sales_roles) ? (row.sales_roles as string[]) : [];
+    if (!row || !roles.includes("ae")) return null;
+    u = row;
+  } else {
+    const base = await db
+      .from("users")
+      .select("slack_user_id, email, name, is_sales")
+      .eq("hubspot_owner_id", ownerId)
+      .maybeSingle();
+    if (!base.data || base.data.is_sales !== true) return null;
+    u = base.data;
+  }
 
   const email = (u.email as string | null) ?? owner?.email ?? null;
   const fullName =
@@ -549,7 +569,7 @@ export async function buildAndSendAeDigests(): Promise<AeDigestResult> {
       const recipient = await resolveRecipient(ownerId, owners.get(ownerId), mode);
       if (!recipient) {
         // Owner non rattaché à un user sales actif (ou Slack introuvable) : on
-        // ignore silencieusement, ce n'est pas une erreur. cf flag is_sales.
+        // ignore silencieusement, ce n'est pas une erreur. cf rôle AE.
         skipped++;
         console.log(`[ae-digest] owner ${ownerId} skipped (pas de user sales actif / Slack)`);
         continue;

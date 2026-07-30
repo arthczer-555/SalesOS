@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { SetKeyDialog } from "./set-key-dialog";
+import { SALES_ROLES, SALES_ROLE_HINT, SALES_ROLE_LABEL, type SalesRole } from "@/lib/sales-roles";
 
 function formatCost(usd: number): string {
   if (usd === 0) return "—";
@@ -29,6 +30,7 @@ interface User {
   created_at: string;
   is_admin: boolean;
   is_sales: boolean;
+  sales_roles: SalesRole[];
   claude_key_active: boolean;
   usageTotal: UsageStat;
   usageMonth: UsageStat;
@@ -38,6 +40,10 @@ export function UsersTable({ users }: { users: User[] }) {
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [localUsers, setLocalUsers] = useState(users);
   const [savingSales, setSavingSales] = useState<string | null>(null);
+  const [savingRoles, setSavingRoles] = useState<string | null>(null);
+  // Un PATCH qui échoue annulait le changement sans rien dire : on affiche la
+  // raison, sinon l'utilisateur clique dans le vide sans comprendre.
+  const [roleError, setRoleError] = useState<string | null>(null);
 
   const handleKeySaved = (userId: string) => {
     setLocalUsers((prev) =>
@@ -67,8 +73,49 @@ export function UsersTable({ users }: { users: User[] }) {
     }
   };
 
+  /** Rôles cumulables : chaque case bascule indépendamment. */
+  const toggleRole = async (user: User, role: SalesRole) => {
+    const current = user.sales_roles ?? [];
+    const next = current.includes(role) ? current.filter((r) => r !== role) : [...current, role];
+    const ordered = SALES_ROLES.filter((r) => next.includes(r));
+    setSavingRoles(user.id);
+    setRoleError(null);
+    setLocalUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, sales_roles: ordered } : u)));
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sales_roles: ordered }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      setLocalUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, sales_roles: current } : u)));
+      setRoleError(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setSavingRoles(null);
+    }
+  };
+
   return (
     <>
+      {roleError && (
+        <div
+          className="mb-3 rounded-lg px-3 py-2 text-[12px]"
+          style={{ background: "#fee2e2", color: "#991b1b" }}
+        >
+          Roles could not be saved: {roleError}.
+          {/^column|sales_roles/i.test(roleError) && (
+            <>
+              {" "}
+              The <code>add_users_sales_roles_2026_07_29.sql</code> migration has most likely not been applied in
+              Supabase yet.
+            </>
+          )}
+        </div>
+      )}
       <div
         className="border rounded-xl overflow-hidden"
         style={{ borderColor: "#eeeeee" }}
@@ -105,6 +152,13 @@ export function UsersTable({ users }: { users: User[] }) {
                 title="Receives the per-AE deal digest on Slack"
               >
                 Sales
+              </th>
+              <th
+                className="text-left px-4 py-3 font-medium"
+                style={{ color: "#888" }}
+                title="Drives the dashboard blocks: AE sees New, AM sees Renew, CSM sees Renew delivery. Only AE receives the deal digest."
+              >
+                Roles
               </th>
               <th
                 className="text-left px-4 py-3 font-medium"
@@ -168,7 +222,7 @@ export function UsersTable({ users }: { users: User[] }) {
                     disabled={savingSales === user.id}
                     role="switch"
                     aria-checked={user.is_sales}
-                    title={user.is_sales ? "Receives the deal digest" : "Does not receive the deal digest"}
+                    title={user.is_sales ? "On the sales roster" : "Not on the sales roster"}
                     className="inline-flex items-center transition-colors"
                     style={{
                       width: 38,
@@ -191,6 +245,38 @@ export function UsersTable({ users }: { users: User[] }) {
                       }}
                     />
                   </button>
+                </td>
+                <td className="px-4 py-3">
+                  {user.is_sales ? (
+                    <div className="flex gap-1">
+                      {SALES_ROLES.map((role) => {
+                        const on = (user.sales_roles ?? []).includes(role);
+                        return (
+                          <button
+                            key={role}
+                            type="button"
+                            onClick={() => toggleRole(user, role)}
+                            disabled={savingRoles === user.id}
+                            aria-pressed={on}
+                            title={SALES_ROLE_HINT[role]}
+                            className="text-[11px] px-2 py-1 rounded-lg border font-medium transition-colors"
+                            style={{
+                              borderColor: on ? "#111" : "#e5e5e5",
+                              background: on ? "#111" : "transparent",
+                              color: on ? "#fff" : "#888",
+                              cursor: savingRoles === user.id ? "wait" : "pointer",
+                            }}
+                          >
+                            {SALES_ROLE_LABEL[role]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <span className="text-xs" style={{ color: "#ccc" }}>
+                      —
+                    </span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <span className="text-xs" style={{ color: "#555" }}>
