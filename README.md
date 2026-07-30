@@ -29,7 +29,7 @@ Plateforme interne de l'équipe commerciale et marketing de Coachello. Connecté
 
 ## 1. Modules & fonctionnalités
 
-### CoachelloGPT — Agent IA (page d'accueil `/`)
+### CoachelloGPT — Agent IA (`/chat`)
 Agent conversationnel unique, architecture **"manifest"** (2026-07-21, plan : [__documentation/coachello-gpt-rag-plan.md](__documentation/coachello-gpt-rag-plan.md)) : un socle court + un catalogue de guides, et l'agent charge lui-même les guides détaillés via l'outil `load_guide` selon la question. Deux fonctionnements, croisables dans une même réponse :
 - **Sales** : HubSpot (contacts, deals, entreprises), **fiches clients SalesOS** (table `clients` : programme, contacts, objectifs, points de vigilance, santé), Slack, Gmail, Google Drive, sheet revenue (source de vérité CA), LinkedIn (Bright Data), Claap (meetings + transcripts), web (Tavily)
 - **Connaissance Coachello** : base Notion `🧭 DATABASE` (programmes, pricing, pédagogie, positionnement, finance) en **lecture seule stricte** ; l'écriture Notion reste locale (repo `Coachello.RAG`)
@@ -173,8 +173,10 @@ Répertoire interne Coachello : grille de cartes vers les outils de la plateform
 ### Prompt (`/prompt`)
 Éditeur du prompt système (« user instructions ») envoyé à Claude lors des chats. Bouton « Charger le prompt par défaut ».
 
-### Mon dashboard (`/dashboard`) — premier onglet
-Page d'accueil de SalesOS, accessible à tous. Un seul écran, **trois couches qui se cumulent** selon le profil (un Head of Sales est les trois à la fois) :
+### Mon dashboard (`/dashboard`) — page d'accueil
+**C'est là qu'on arrive par défaut**, accessible à tous. `/` ne rend rien : elle redirige vers `/dashboard` ([app/page.tsx](app/page.tsx)), et reste la porte d'entrée unique (redirection post-connexion Clerk, signets, `redirect("/")` des pages admin refusées à un non-admin) pour n'avoir qu'un endroit à changer si l'accueil bouge. Le chat, qui occupait `/`, vit sur [`/chat`](app/chat/page.tsx) ; un vieux lien `/?q=<question>` est réacheminé vers `/chat` avec sa question intacte.
+
+Un seul écran, **trois couches qui se cumulent** selon le profil (un Head of Sales est les trois à la fois) :
 - **Tout le monde** : bonjour, et le *pouls de l'entreprise* (facturé vs objectif du trimestre en cours + cumul annuel, via [app/api/company/pulse/route.ts](app/api/company/pulse/route.ts), agrégé et sans ventilation par personne).
 - **Qui porte un rôle** (`users.sales_roles`) : *Mon New* pour un AE, *Mon Renew* pour un AM, *Mon Renew (CSM)* pour un CSM — année + trimestre en cours, plus gros comptes, et un message de rythme calé sur l'avancement du trimestre. Puis *My activity* (meetings, appels, taux de conversation, emails, deals gagnés) et *My coaching recommendation*.
 - **La reco de coaching** : **une seule** consigne de 1 à 2 phrases, celle qui porte sur le point revenant dans **le plus grand nombre de meetings** Sales Coach. Générée par Claude au refresh du snapshot ([lib/ae-activity/coaching.ts](lib/ae-activity/coaching.ts)), affichée à l'identique sur le dashboard du rep et dans sa page AE Activity : rep et manager doivent travailler le même point. ⚠ Le critère est la **récurrence, pas la gravité** — les signaux sont donc comptés par meeting distinct et passés au modèle avec leur fréquence. Les dédupliquer avant l'appel (ce que faisait l'ancien bloc « 3-5 axes ») détruisait cette information. Le nombre de meetings concernés n'est **pas affiché** : seul le modèle pourrait l'estimer, donc il serait invérifiable. La note Claap reste une métrique de pilotage : elle est affichée dans AE Activity, pas sur le dashboard du rep.
@@ -187,7 +189,7 @@ Page d'accueil de SalesOS, accessible à tous. Un seul écran, **trois couches q
 - **« Voir comme »** : [`/dashboard/demo`](app/dashboard/demo/page.tsx), réservée aux admins, affiche le dashboard **réel** de n'importe quel collaborateur avec ses vrais chiffres, via un sélecteur d'utilisateur ([app/api/admin/user-dashboard/route.ts](app/api/admin/user-dashboard/route.ts)). La construction du dashboard est partagée avec `/api/me/dashboard` ([lib/dashboard/me.ts](lib/dashboard/me.ts)) et les blocs sont importés depuis `/dashboard` : ce qui s'y affiche est littéralement ce que voit la personne, sinon la vue mentirait. Lecture seule.
 
 ### Pastille « Any question ? »
-[components/ask-widget.tsx](components/ask-widget.tsx), montée dans le layout, donc présente sur toutes les pages sauf le chat lui-même et `/sign-in`. Elle ne répond pas sur place : la question part vers `/?q=…` et CoachelloGPT l'envoie automatiquement au montage ([app/page.tsx](app/page.tsx) → `ChatWorkspace initialPrompt`). Dupliquer le moteur de conversation dans une popup aurait signifié maintenir deux chats.
+[components/ask-widget.tsx](components/ask-widget.tsx), montée dans le layout, donc présente sur toutes les pages sauf le chat lui-même et `/sign-in`. Elle ne répond pas sur place : la question part vers `/chat?q=…` et CoachelloGPT l'envoie automatiquement au montage ([app/chat/page.tsx](app/chat/page.tsx) → `ChatWorkspace initialPrompt`). Dupliquer le moteur de conversation dans une popup aurait signifié maintenir deux chats.
 
 ### Admin (`/admin`) — réservé aux `users.is_admin = true`
 - **Gestion des utilisateurs** : liste des inscrits, assignation des clés API Claude, suivi tokens + coût (mensuel + total), toggle **Sales** et **rôles sales cumulables (AE / AM / CSM)** par utilisateur.
@@ -539,7 +541,7 @@ Voir section 1 pour la description fonctionnelle de chaque module. Cette section
 
 | Page | Fichier | Pour modifier |
 |------|---------|---------------|
-| `/` et `/c/[id]` CoachelloGPT | [app/_components/chat-workspace.tsx](app/_components/chat-workspace.tsx) | Outils : [app/api/chat/route.ts](app/api/chat/route.ts) — Prompt : [lib/guides/bot.ts](lib/guides/bot.ts) · Vue partagée : [app/c/[id]/page.tsx](app/c/[id]/page.tsx) |
+| `/chat` et `/c/[id]` CoachelloGPT | [app/_components/chat-workspace.tsx](app/_components/chat-workspace.tsx) | Outils : [app/api/chat/route.ts](app/api/chat/route.ts) — Prompt : [lib/guides/bot.ts](lib/guides/bot.ts) · Vue partagée : [app/c/[id]/page.tsx](app/c/[id]/page.tsx) |
 | `/briefing` | [app/briefing/page.tsx](app/briefing/page.tsx) | Collecte : [app/api/briefing/gather/route.ts](app/api/briefing/gather/route.ts) — Synthèse : [app/api/briefing/synthesize/route.ts](app/api/briefing/synthesize/route.ts) — Guide : [lib/guides/briefing.ts](lib/guides/briefing.ts) |
 | `/deals` | [app/deals/page.tsx](app/deals/page.tsx) | Scoring : [app/api/deals/score/route.ts](app/api/deals/score/route.ts) — Analyse : [app/api/deals/analyze/route.ts](app/api/deals/analyze/route.ts) — Algo : [lib/deal-scoring.ts](lib/deal-scoring.ts) |
 | `/prospecting` | [app/prospecting/page.tsx](app/prospecting/page.tsx) | Recherche : [app/api/prospection/search/route.ts](app/api/prospection/search/route.ts) — Génération : [app/api/prospection/generate/route.ts](app/api/prospection/generate/route.ts) — Guide : [lib/guides/prospection.ts](lib/guides/prospection.ts) |

@@ -122,7 +122,7 @@ export function ChatWorkspace({
   // L'URL suit la conversation ouverte sans passer par le router Next : une
   // vraie navigation remonterait le composant et ferait perdre le chat en cours.
   const syncUrl = useCallback((id: string | null) => {
-    window.history.replaceState(null, "", id ? `/c/${id}` : "/");
+    window.history.replaceState(null, "", id ? `/c/${id}` : "/chat");
   }, []);
 
   const startNewConversation = () => {

@@ -60,7 +60,7 @@ export default function PromptPage() {
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: "var(--c-line)", background: "var(--c-bg-card)" }}>
         <button
-          onClick={() => router.push("/")}
+          onClick={() => router.push("/chat")}
           className="flex items-center gap-2 text-sm transition-colors hover:text-[#111]"
           style={{ color: "#888" }}
         >

@@ -18,7 +18,9 @@ import { COLORS, SHADOWS } from "@/lib/design/tokens";
 // Pages où la pastille ne doit pas apparaître : le chat lui-même (redondant),
 // la page de connexion, et le pokédex qui masque déjà toute la navigation.
 const HIDDEN_PREFIXES = ["/sign-in", "/pokedex"];
-const HIDDEN_EXACT = ["/"];
+// `/` redirige vers l'accueil et ne rend rien, mais reste listée : la pastille
+// n'a aucune raison d'y clignoter le temps de la redirection.
+const HIDDEN_EXACT = ["/", "/chat"];
 
 // Volontairement mélangées : des questions sur ses propres chiffres et des
 // questions de connaissance (process, produit, historique client). C'est le
@@ -48,7 +50,7 @@ function useAsk() {
   return (question: string) => {
     const q = question.trim();
     if (!q) return false;
-    router.push(`/?q=${encodeURIComponent(q)}`);
+    router.push(`/chat?q=${encodeURIComponent(q)}`);
     return true;
   };
 }

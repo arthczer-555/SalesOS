@@ -43,7 +43,7 @@ export function SharedConversationView({
               whiteSpace: "nowrap",
             }}
           >
-            {title || "Conversation partagée"}
+            {title || "Shared conversation"}
           </span>
           <span
             style={{
@@ -56,11 +56,11 @@ export function SharedConversationView({
               flexShrink: 0,
             }}
           >
-            Partagée par {ownerName ?? "un collègue"}
+            Shared by {ownerName ?? "a teammate"}
           </span>
         </div>
         <Link
-          href="/"
+          href="/chat"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -77,7 +77,7 @@ export function SharedConversationView({
             textDecoration: "none",
           }}
         >
-          Ouvrir CoachelloGPT
+          Open CoachelloGPT
           <ArrowRight size={13} />
         </Link>
       </div>
@@ -85,7 +85,7 @@ export function SharedConversationView({
       <div className="flex-1 overflow-y-auto" style={{ padding: "16px 24px" }}>
         <div className="max-w-3xl mx-auto space-y-5" style={{ paddingTop: 8 }}>
           {messages.length === 0 ? (
-            <p style={{ fontSize: 12.5, color: COLORS.ink5 }}>Cette conversation est vide.</p>
+            <p style={{ fontSize: 12.5, color: COLORS.ink5 }}>This conversation is empty.</p>
           ) : (
             messages.map((m, i) => <MessageBubble key={i} message={m} />)
           )}

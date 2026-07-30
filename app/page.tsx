@@ -1,15 +1,20 @@
-import { ChatWorkspace } from "./_components/chat-workspace";
+import { redirect } from "next/navigation";
 
-// Nouveau chat. Dès le premier message, l'URL devient /c/<id> (voir
-// ChatWorkspace) pour que la conversation soit adressable et partageable.
+// `/` est la porte d'entrée de SalesOS : on y arrive après connexion, depuis un
+// signet, ou par les `redirect("/")` des pages admin refusées à un non-admin.
+// Elle ne rend rien et envoie vers la page d'accueil du moment, aujourd'hui le
+// dashboard personnel. Garder cette indirection évite de retoucher tous les
+// appelants le jour où l'accueil change.
 //
-// `?q=` permet d'arriver ici avec une question déjà posée : c'est ce que fait
-// la pastille « Any question ? » présente sur le reste de l'app.
+// Le chat, qui vivait ici, est passé sur /chat. Les anciens liens (dont
+// `/?q=<question>`) atterrissent donc sur le dashboard : on préserve la
+// question en la repassant à /chat plutôt que de la perdre en route.
 export default async function HomePage({
   searchParams,
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
   const { q } = await searchParams;
-  return <ChatWorkspace initialPrompt={q?.trim() || undefined} />;
+  const question = q?.trim();
+  redirect(question ? `/chat?q=${encodeURIComponent(question)}` : "/dashboard");
 }

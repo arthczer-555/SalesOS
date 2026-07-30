@@ -36,7 +36,7 @@ type NavEntry = { href: string; label: string; icon: LucideIcon; match?: string[
 
 const nav: NavEntry[] = [
   { href: "/dashboard", label: "My dashboard", icon: LayoutDashboard },
-  { href: "/", label: "CoachelloGPT", icon: Sparkles },
+  { href: "/chat", label: "CoachelloGPT", icon: Sparkles },
   { href: "/briefing", label: "Briefing", icon: CalendarDays },
   { href: "/deals", label: "Deals", icon: Briefcase },
   { href: "/sales-coach", label: "Sales Coach", icon: GraduationCap },
