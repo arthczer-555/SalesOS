@@ -600,3 +600,115 @@
 .prose tbody tr:nth-child(even) {
   background: #f9fafb;
 }
+/* ── Ask bar : la barre « Any question ? » du dashboard ─────────────────
+   Bordure en dégradé animé (deux couches : le dégradé tourne derrière une
+   pastille blanche), point lumineux qui respire, spotlight en ouverture. */
+.askbar {
+  position: relative;
+  border-radius: 999px;
+  padding: 1.5px;
+  background: linear-gradient(
+    115deg,
+    var(--c-brand) 0%,
+    #ff7ab0 25%,
+    var(--c-brand-tint) 50%,
+    #ff7ab0 75%,
+    var(--c-brand) 100%
+  );
+  background-size: 300% 100%;
+  animation: askbar-sweep 6s linear infinite;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.askbar:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(240, 21, 99, 0.18);
+}
+.askbar-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border-radius: 999px;
+  background: var(--c-bg-card);
+  padding: 10px 12px 10px 14px;
+  text-align: left;
+}
+.askbar-dot {
+  position: relative;
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: var(--c-brand);
+}
+.askbar-dot::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 1.5px solid var(--c-brand);
+  animation: askbar-halo 2.2s ease-out infinite;
+}
+.askbar-caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: -2px;
+  background: var(--c-brand);
+  animation: askbar-blink 1s steps(1) infinite;
+}
+@keyframes askbar-sweep {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 300% 50%;
+  }
+}
+@keyframes askbar-halo {
+  0% {
+    opacity: 0.7;
+    transform: scale(0.7);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.6);
+  }
+}
+@keyframes askbar-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  51%,
+  100% {
+    opacity: 0;
+  }
+}
+.askbar-overlay {
+  animation: askbar-fade 0.14s ease-out;
+}
+.askbar-panel {
+  animation: askbar-rise 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes askbar-fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes askbar-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .askbar,
+  .askbar-dot::after,
+  .askbar-caret,
+  .askbar-overlay,
+  .askbar-panel {
+    animation: none;
+  }
+}

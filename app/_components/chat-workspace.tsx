@@ -39,7 +39,15 @@ function normalizeToolSteps(raw: unknown): ToolStep[] {
 // conversation précise, quand on en est l'auteur). L'URL suit la conversation
 // ouverte via history.replaceState : on garde le state du chat intact (pas de
 // navigation Next), tout en rendant chaque conversation adressable/partageable.
-export function ChatWorkspace({ initialConversationId }: { initialConversationId?: string }) {
+export function ChatWorkspace({
+  initialConversationId,
+  initialPrompt,
+}: {
+  initialConversationId?: string;
+  /** Question arrivée par l'URL (pastille « Any question ? ») : envoyée telle
+   *  quelle au montage, pour que l'utilisateur atterrisse sur la réponse. */
+  initialPrompt?: string;
+}) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [apiHistory, setApiHistory] = useState<ApiMessage[]>([]);
   const [input, setInput] = useState("");
@@ -204,8 +212,8 @@ export function ChatWorkspace({ initialConversationId }: { initialConversationId
     }
   };
 
-  const send = async () => {
-    const text = input.trim();
+  const sendText = async (raw: string) => {
+    const text = raw.trim();
     if ((!text && attachments.length === 0) || loading || uploadingCount > 0) return;
     const sentAttachments = attachments;
     const attachmentIds = sentAttachments.map((a) => a.id);
@@ -354,6 +362,19 @@ export function ChatWorkspace({ initialConversationId }: { initialConversationId
       setLoading(false);
     }
   };
+
+  const send = () => sendText(input);
+
+  // Question arrivée par l'URL : on l'envoie directement plutôt que de passer
+  // par setInput, dont la valeur ne serait pas encore lue au moment de l'envoi.
+  const sendTextRef = useRef(sendText);
+  sendTextRef.current = sendText;
+  const autoAskedRef = useRef(false);
+  useEffect(() => {
+    if (!initialPrompt || autoAskedRef.current) return;
+    autoAskedRef.current = true;
+    void sendTextRef.current(initialPrompt);
+  }, [initialPrompt]);
 
   const isHome = messages.length === 0;
   const { user } = useUser();

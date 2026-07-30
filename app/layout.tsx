@@ -8,6 +8,7 @@ import { SWRProvider } from "@/components/swr-provider";
 import { Prefetch } from "@/components/prefetch";
 import Sidebar from "@/components/sidebar";
 import { SidebarProvider } from "@/components/sidebar/sidebar-context";
+import { AskWidget } from "@/components/ask-widget";
 
 const geist = Geist({ subsets: ["latin"] });
 const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-chats" });
@@ -41,6 +42,7 @@ export default function RootLayout({
                       {children}
                     </main>
                   </div>
+                  <AskWidget />
                 </SidebarProvider>
               </ToastProvider>
             </TooltipProvider>
