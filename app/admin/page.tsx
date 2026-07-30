@@ -148,7 +148,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Users */}
-      <div className="w-4/5">
+      <div className="w-4/5 mx-auto">
         <div className="mb-6">
           <h1 className="text-xl font-semibold" style={{ color: "#111" }}>
             User management
