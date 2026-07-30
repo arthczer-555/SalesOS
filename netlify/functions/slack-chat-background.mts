@@ -3,9 +3,13 @@ import { resolveSlackUser } from "../../lib/slack/user-resolve";
 import { loadThreadMessages, saveThreadMessages } from "../../lib/slack/chat-thread";
 import { postMessage, updateMessage, getRecentMessages, getChannelName } from "../../lib/slack/api";
 import { toSlackMrkdwn } from "../../lib/slack/mrkdwn";
+import { slackToolLabel } from "../../lib/chat/tool-labels";
 
 const UNRECOGNIZED_TEXT =
-  "Désolé, je ne reconnais pas ton compte Slack. Demande à Arthur de te configurer dans SalesOS.";
+  "Sorry, I don't recognize your Slack account. Ask Arthur to set you up in SalesOS.";
+
+/** Premier feedback posté avant tout appel d'outil, et repli du rendu d'avancement. */
+const THINKING_TEXT = "🤔 Thinking…";
 
 /**
  * Évite de répéter le refus : si le dernier message du bot dans ce canal est
@@ -39,57 +43,6 @@ type Payload = {
 };
 
 /**
- * Mapping des noms de tools internes vers des labels lisibles pour l'utilisateur,
- * affichés progressivement dans le message Slack pendant que Claude travaille.
- */
-const TOOL_LABELS: Record<string, string> = {
-  load_guide: "📖 Chargement d'un guide interne",
-  notion_fetch: "📚 Lecture base de connaissance Coachello",
-  notion_search: "📚 Recherche base de connaissance Coachello",
-  get_billing_revenue: "💶 Lecture sheet revenue",
-  search_clients: "🤝 Recherche clients Coachello",
-  get_client: "🤝 Lecture fiche client",
-  get_revenue_kpis: "📈 Lecture KPIs revenue",
-  search_contacts: "📇 Recherche HubSpot (contacts)",
-  search_deals: "💼 Recherche HubSpot (deals)",
-  get_deals: "💼 Récupération du pipeline HubSpot",
-  get_companies: "🏢 Recherche HubSpot (entreprises)",
-  get_contact_details: "📋 Détails contact",
-  get_contact_activity: "📋 Historique contact",
-  get_deal_activity: "📋 Historique deal",
-  get_deal_contacts: "👥 Contacts du deal",
-  search_slack: "💬 Recherche Slack",
-  get_slack_channel_history: "💬 Lecture canal Slack",
-  send_slack_message: "📤 Envoi Slack",
-  web_search: "🌐 Recherche web",
-  search_drive: "📂 Google Drive",
-  read_drive_file: "📂 Lecture fichier Drive",
-  read_drive_excel: "📊 Lecture Excel Drive",
-  list_drive_folder: "📂 Liste dossier Drive",
-  search_gmail: "📧 Recherche Gmail",
-  read_gmail_message: "📧 Lecture email",
-  search_linkedin_people: "🔗 Recherche LinkedIn (profils)",
-  get_linkedin_profile: "🔗 Profil LinkedIn",
-  get_linkedin_profile_by_email: "🔗 LinkedIn par email",
-  get_linkedin_activity: "🔗 Activité LinkedIn",
-  get_linkedin_likes: "🔗 Likes LinkedIn",
-  get_linkedin_posts: "🔗 Posts LinkedIn",
-  get_linkedin_similar_profiles: "🔗 Profils similaires",
-  get_linkedin_company: "🏢 Entreprise LinkedIn",
-  get_linkedin_company_posts: "🏢 Posts entreprise LinkedIn",
-  get_linkedin_company_jobs: "🏢 Offres LinkedIn",
-  search_linkedin_companies: "🔗 Recherche entreprises LinkedIn",
-  search_linkedin_posts: "🔗 Recherche posts LinkedIn",
-  get_linkedin_post_reactions: "🔗 Réactions post LinkedIn",
-  find_email_by_linkedin: "📧 Email finder",
-  find_decision_maker_email: "📧 Email décideur",
-};
-
-function labelForTool(name: string): string {
-  return TOOL_LABELS[name] ?? `🛠️ ${name}`;
-}
-
-/**
  * Découpe un texte en blocs sûrs pour Slack. La limite du champ `text` de
  * chat.update est de 12 000 caractères, mais Slack compte en octets UTF-8 :
  * un texte français (accents = 2 octets, emojis = 4) peut dépasser la limite
@@ -111,7 +64,7 @@ function splitForSlack(text: string, cap = 3500, maxChunks = 6): string[] {
     chunks.push(rest.slice(0, cut).trimEnd());
     rest = rest.slice(cut).trimStart();
   }
-  if (rest.length > cap) rest = rest.slice(0, cap) + "\n\n_…(réponse tronquée)_";
+  if (rest.length > cap) rest = rest.slice(0, cap) + "\n\n_…(answer truncated)_";
   if (rest) chunks.push(rest);
   return balanceFences(chunks.length ? chunks : [text]);
 }
@@ -173,7 +126,7 @@ export default async (req: Request) => {
     const posted = await postMessage({
       channel,
       thread_ts: threadTs || undefined,
-      text: "🤔 Je réfléchis…",
+      text: THINKING_TEXT,
     });
     placeholderTs = posted.ts;
   } catch (e) {
@@ -199,11 +152,11 @@ export default async (req: Request) => {
   const MIN_UPDATE_MS = 1100; // Slack rate-limit ~1/sec par message
 
   const renderProgress = (): string => {
-    if (toolsCalled.length === 0) return "🤔 Je réfléchis…";
+    if (toolsCalled.length === 0) return THINKING_TEXT;
     const last = toolsCalled[toolsCalled.length - 1];
-    const lines = ["🤔 _En cours…_", ""];
-    for (const t of toolsCalled.slice(0, -1)) lines.push(`✅ ${labelForTool(t)}`);
-    lines.push(`⏳ ${labelForTool(last)}`);
+    const lines = ["🤔 _Working on it…_", ""];
+    for (const t of toolsCalled.slice(0, -1)) lines.push(`✅ ${slackToolLabel(t)}`);
+    lines.push(`⏳ ${slackToolLabel(last)}`);
     return lines.join("\n");
   };
 
@@ -233,7 +186,7 @@ export default async (req: Request) => {
 
     const finalText = result.finalText.trim()
       ? toSlackMrkdwn(result.finalText)
-      : "_(Pas de réponse générée — réessaie en reformulant.)_";
+      : "_(No answer generated. Try rephrasing your question.)_";
 
     // Le placeholder reçoit le 1er bloc ; les suivants sont postés en réponse
     // dans le fil. Évite le msg_too_long de chat.update sur les longues réponses.
@@ -253,7 +206,7 @@ export default async (req: Request) => {
   } catch (e) {
     const errMsg = e instanceof ChatAuthError
       ? e.message
-      : `Erreur : ${e instanceof Error ? e.message : "inconnue"}`;
+      : `Error: ${e instanceof Error ? e.message : "unknown"}`;
     console.error("[slack-chat-bg] runChat failed:", e);
     try {
       await updateMessage({ channel, ts: placeholderTs, text: `⚠️ ${errMsg}` });

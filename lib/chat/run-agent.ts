@@ -55,7 +55,7 @@ export async function runChat(args: {
       .eq("service", "claude")
       .single();
     if (!keyRow?.is_active) {
-      throw new ChatAuthError("Ton accès Claude n'est pas encore configuré. Contacte Arthur.", 402);
+      throw new ChatAuthError("Your Claude access is not set up yet. Ask Arthur to enable it.", 402);
     }
     claudeApiKey = decrypt({
       encryptedKey: keyRow.encrypted_key,

@@ -12,7 +12,7 @@ import type { SlackBlock } from "./api";
 export function buildHomeView(args: {
   userName: string | null;
 }): { type: "home"; blocks: SlackBlock[] } {
-  const greeting = args.userName ? `Salut ${args.userName} 👋` : "Salut 👋";
+  const greeting = args.userName ? `Hi ${args.userName} 👋` : "Hi 👋";
 
   return {
     type: "home",
@@ -26,24 +26,24 @@ export function buildHomeView(args: {
         text: {
           type: "mrkdwn",
           text:
-            "Je suis *CoachelloGPT*, ton assistant commercial connecté à HubSpot, Gmail, Drive, LinkedIn et Slack.\n" +
-            "Pose-moi une question dans l'onglet *Chat* et je te réponds avec le contexte de tes deals et de ton équipe.",
+            "I'm *CoachelloGPT*, your sales assistant connected to HubSpot, Gmail, Drive, LinkedIn and Slack.\n" +
+            "Ask me anything in the *Chat* tab and I'll answer with the context of your deals and your team.",
         },
       },
       { type: "divider" },
       {
         type: "section",
-        text: { type: "mrkdwn", text: "*Exemples de questions*" },
+        text: { type: "mrkdwn", text: "*Example questions*" },
       },
       {
         type: "section",
         text: {
           type: "mrkdwn",
           text:
-            "• _Quels sont mes deals en stage \"Demo completed\" ?_\n" +
-            "• _Résume-moi le dernier meeting avec Lacoste._\n" +
-            "• _Trouve le Head of L&D de Danone et son email._\n" +
-            "• _Cherche dans Slack ce qu'on a dit sur Engie cette semaine._",
+            "• _Which of my deals are in the \"Demo completed\" stage?_\n" +
+            "• _Summarize the last meeting with Lacoste._\n" +
+            "• _Find the Head of L&D at Danone and their email._\n" +
+            "• _Search Slack for what we said about Engie this week._",
         },
       },
       { type: "divider" },
@@ -52,7 +52,7 @@ export function buildHomeView(args: {
         elements: [
           {
             type: "mrkdwn",
-            text: "Tape ta question dans l'onglet *Chat* ci-dessus, ou mentionne *@SalesOS* dans n'importe quel canal.",
+            text: "Type your question in the *Chat* tab above, or mention *@SalesOS* in any channel.",
           },
         ],
       },
