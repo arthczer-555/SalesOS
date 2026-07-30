@@ -10,21 +10,44 @@ export type HubspotObjectType = "contacts" | "deals" | "companies" | "leads";
 // 504 opaque côté navigateur.
 const HUBSPOT_CALL_TIMEOUT_MS = 15_000;
 
+// HubSpot applique une limite par SECONDE (~10 req/s). Les traitements qui
+// enchaînent des batchs (associations, batch reads) la touchent forcément : un
+// 429 n'est pas une erreur, juste une invitation à ralentir. Sans ce retry, un
+// rep entier ressortait à 0 au milieu d'un refresh.
+const RATE_LIMIT_RETRIES = 4;
+const RATE_LIMIT_BASE_DELAY_MS = 350;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 export async function hubspotFetch<T = unknown>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const res = await fetch(`https://api.hubapi.com${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${process.env.HUBSPOT_ACCESS_TOKEN}`,
-      "Content-Type": "application/json",
-    },
-    signal: AbortSignal.timeout(HUBSPOT_CALL_TIMEOUT_MS),
-    ...(body ? { body: JSON.stringify(body) } : {}),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`HubSpot ${res.status}: ${text.slice(0, 200)}`);
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`https://api.hubapi.com${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${process.env.HUBSPOT_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      signal: AbortSignal.timeout(HUBSPOT_CALL_TIMEOUT_MS),
+      ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+
+    if (res.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+      // `Retry-After` est en secondes quand il est fourni ; sinon backoff
+      // exponentiel, qui suffit pour une limite à la seconde.
+      const retryAfter = Number(res.headers.get("retry-after"));
+      const wait = Number.isFinite(retryAfter) && retryAfter > 0
+        ? retryAfter * 1000
+        : RATE_LIMIT_BASE_DELAY_MS * 2 ** attempt;
+      await sleep(wait);
+      continue;
+    }
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`HubSpot ${res.status}: ${text.slice(0, 200)}`);
+    }
+    return res.json() as Promise<T>;
   }
-  return res.json() as Promise<T>;
 }
 
 type SearchResponse<T> = {
@@ -159,10 +182,13 @@ export async function hubspotGetAssociations(
   }
 }
 
+// `toObjectId` arrive en NOMBRE dans la réponse v4, alors que tous les ids
+// manipulés côté app sont des chaînes. On normalise à la lecture, sinon toute
+// comparaison (Set.has, Map.get) échoue en silence.
 type BatchAssocResponse = {
   results?: Array<{
-    from?: { id: string };
-    to?: Array<{ toObjectId: string }>;
+    from?: { id: string | number };
+    to?: Array<{ toObjectId: string | number }>;
   }>;
 };
 
@@ -185,8 +211,8 @@ export async function hubspotBatchAssociations(
       );
       for (const row of data.results ?? []) {
         const id = row.from?.id;
-        if (!id) continue;
-        result.set(id, (row.to ?? []).map((t) => t.toObjectId));
+        if (id == null) continue;
+        result.set(String(id), (row.to ?? []).map((t) => String(t.toObjectId)));
       }
     } catch {
       // Ignore batch errors — missing ids will be treated as unassociated
