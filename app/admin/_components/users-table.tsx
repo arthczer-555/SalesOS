@@ -120,7 +120,18 @@ export function UsersTable({ users }: { users: User[] }) {
         className="border rounded-xl overflow-hidden"
         style={{ borderColor: "#eeeeee" }}
       >
-        <table className="w-full text-sm">
+        {/* Colonnes compactées : la table doit tenir sans scroll horizontal,
+            sinon le bouton de configuration de clé sort de l'écran. */}
+        <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+          <colgroup>
+            <col style={{ width: "18%" }} />
+            <col style={{ width: "24%" }} />
+            <col style={{ width: "13%" }} />
+            <col style={{ width: "7%" }} />
+            <col style={{ width: "22%" }} />
+            <col style={{ width: "8%" }} />
+            <col style={{ width: "8%" }} />
+          </colgroup>
           <thead>
             <tr
               style={{
@@ -129,50 +140,50 @@ export function UsersTable({ users }: { users: User[] }) {
               }}
             >
               <th
-                className="text-left px-4 py-3 font-medium"
+                className="text-left px-3 py-2.5 font-medium text-xs"
                 style={{ color: "#888" }}
               >
                 Name
               </th>
               <th
-                className="text-left px-4 py-3 font-medium"
+                className="text-left px-3 py-2.5 font-medium text-xs"
                 style={{ color: "#888" }}
               >
                 Email
               </th>
               <th
-                className="text-left px-4 py-3 font-medium"
+                className="text-left px-3 py-2.5 font-medium text-xs"
                 style={{ color: "#888" }}
+                title="Click a badge to set or edit the key"
               >
                 Claude key
               </th>
               <th
-                className="text-left px-4 py-3 font-medium"
+                className="text-left px-3 py-2.5 font-medium text-xs"
                 style={{ color: "#888" }}
                 title="Receives the per-AE deal digest on Slack"
               >
                 Sales
               </th>
               <th
-                className="text-left px-4 py-3 font-medium"
+                className="text-left px-3 py-2.5 font-medium text-xs"
                 style={{ color: "#888" }}
                 title="Drives the dashboard blocks: AE sees New, AM sees Renew, CSM sees Renew delivery. Only AE receives the deal digest."
               >
                 Roles
               </th>
               <th
-                className="text-left px-4 py-3 font-medium"
+                className="text-left px-3 py-2.5 font-medium text-xs"
                 style={{ color: "#888" }}
               >
                 This month
               </th>
               <th
-                className="text-left px-4 py-3 font-medium"
+                className="text-left px-3 py-2.5 font-medium text-xs"
                 style={{ color: "#888" }}
               >
                 Total
               </th>
-              <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody>
@@ -182,40 +193,42 @@ export function UsersTable({ users }: { users: User[] }) {
                 style={{ borderTop: i > 0 ? "1px solid #eeeeee" : undefined }}
               >
                 <td
-                  className="px-4 py-3 font-medium"
+                  className="px-3 py-2.5 font-medium"
                   style={{ color: "#111" }}
                 >
-                  {user.name ?? "—"}
-                  {user.is_admin && (
-                    <span
-                      className="ml-2 text-[10px] px-1.5 py-0.5 rounded-full"
-                      style={{ background: "#fde8ef", color: "#f01563" }}
-                    >
-                      admin
-                    </span>
-                  )}
+                  <span className="block truncate" title={user.name ?? undefined}>
+                    {user.name ?? "—"}
+                    {user.is_admin && (
+                      <span
+                        className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full"
+                        style={{ background: "#fde8ef", color: "#f01563" }}
+                      >
+                        admin
+                      </span>
+                    )}
+                  </span>
                 </td>
-                <td className="px-4 py-3" style={{ color: "#555" }}>
-                  {user.email}
+                <td className="px-3 py-2.5" style={{ color: "#555" }}>
+                  <span className="block truncate text-xs" title={user.email}>
+                    {user.email}
+                  </span>
                 </td>
-                <td className="px-4 py-3">
-                  {user.claude_key_active ? (
-                    <span
-                      className="text-xs px-2 py-1 rounded-full"
-                      style={{ background: "#f0fdf4", color: "#16a34a" }}
-                    >
-                      ✓ Active
-                    </span>
-                  ) : (
-                    <span
-                      className="text-xs px-2 py-1 rounded-full"
-                      style={{ background: "#fef9c3", color: "#854d0e" }}
-                    >
-                      Not configured
-                    </span>
-                  )}
+                <td className="px-3 py-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedUser(user)}
+                    title={user.claude_key_active ? "Edit the Claude key" : "Set the Claude key"}
+                    className="text-[11px] px-2 py-1 rounded-full whitespace-nowrap transition-opacity hover:opacity-70"
+                    style={
+                      user.claude_key_active
+                        ? { background: "#f0fdf4", color: "#16a34a" }
+                        : { background: "#fef9c3", color: "#854d0e" }
+                    }
+                  >
+                    {user.claude_key_active ? "✓ Active" : "Set key"}
+                  </button>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-3 py-2.5">
                   <button
                     type="button"
                     onClick={() => toggleSales(user)}
@@ -246,7 +259,7 @@ export function UsersTable({ users }: { users: User[] }) {
                     />
                   </button>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-3 py-2.5">
                   {user.is_sales ? (
                     <div className="flex gap-1">
                       {SALES_ROLES.map((role) => {
@@ -259,7 +272,7 @@ export function UsersTable({ users }: { users: User[] }) {
                             disabled={savingRoles === user.id}
                             aria-pressed={on}
                             title={SALES_ROLE_HINT[role]}
-                            className="text-[11px] px-2 py-1 rounded-lg border font-medium transition-colors"
+                            className="text-[11px] px-1.5 py-1 rounded-lg border font-medium transition-colors whitespace-nowrap"
                             style={{
                               borderColor: on ? "#111" : "#e5e5e5",
                               background: on ? "#111" : "transparent",
@@ -278,38 +291,23 @@ export function UsersTable({ users }: { users: User[] }) {
                     </span>
                   )}
                 </td>
-                <td className="px-4 py-3">
-                  <span className="text-xs" style={{ color: "#555" }}>
+                {/* Tokens et coût empilés : deux colonnes étroites plutôt qu'un
+                    débordement horizontal. */}
+                <td className="px-3 py-2.5">
+                  <span className="block text-xs leading-tight" style={{ color: "#555" }}>
                     {formatTokens(user.usageMonth.input + user.usageMonth.output)}
                   </span>
-                  <span className="text-xs ml-1.5" style={{ color: "#aaa" }}>
+                  <span className="block text-[11px] leading-tight" style={{ color: "#aaa" }}>
                     {formatCost(user.usageMonth.costUsd)}
                   </span>
                 </td>
-                <td className="px-4 py-3">
-                  <span className="text-xs" style={{ color: "#555" }}>
+                <td className="px-3 py-2.5">
+                  <span className="block text-xs leading-tight" style={{ color: "#555" }}>
                     {formatTokens(user.usageTotal.input + user.usageTotal.output)}
                   </span>
-                  <span className="text-xs ml-1.5" style={{ color: "#aaa" }}>
+                  <span className="block text-[11px] leading-tight" style={{ color: "#aaa" }}>
                     {formatCost(user.usageTotal.costUsd)}
                   </span>
-                </td>
-                <td className="px-4 py-3 text-right">
-                  <button
-                    onClick={() => setSelectedUser(user)}
-                    className="text-xs px-3 py-1.5 rounded-lg border transition-colors"
-                    style={{ borderColor: "#e5e5e5", color: "#888" }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.borderColor = "#f01563";
-                      e.currentTarget.style.color = "#f01563";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.borderColor = "#e5e5e5";
-                      e.currentTarget.style.color = "#888";
-                    }}
-                  >
-                    {user.claude_key_active ? "Edit" : "Set"}
-                  </button>
                 </td>
               </tr>
             ))}
@@ -317,7 +315,7 @@ export function UsersTable({ users }: { users: User[] }) {
               <tr>
                 <td
                   colSpan={7}
-                  className="px-4 py-8 text-center text-sm"
+                  className="px-3 py-8 text-center text-sm"
                   style={{ color: "#aaa" }}
                 >
                   No users. Invite team members to sign in.

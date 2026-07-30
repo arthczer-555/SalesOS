@@ -103,10 +103,12 @@ export default async function AdminPage() {
   }));
 
 
+  // La largeur est portée par chaque section : User management prend toute la
+  // largeur disponible, le reste (guides, modèles) reste lisible en colonne.
   return (
-    <div className="p-8 max-w-4xl mx-auto space-y-10">
+    <div className="p-8 space-y-10">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-xl font-semibold" style={{ color: "#111" }}>Admin</h1>
           <p className="text-xs mt-1" style={{ color: "#888" }}>
@@ -146,7 +148,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Users */}
-      <div>
+      <div className="w-4/5">
         <div className="mb-6">
           <h1 className="text-xl font-semibold" style={{ color: "#111" }}>
             User management
@@ -159,7 +161,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Modèles IA */}
-      <div>
+      <div className="max-w-4xl">
         <div className="mb-4">
           <h2 className="text-base font-semibold" style={{ color: "#111" }}>AI models</h2>
           <p className="text-xs mt-1" style={{ color: "#888" }}>
@@ -172,7 +174,7 @@ export default async function AdminPage() {
       </div>
 
       {/* Guides IA */}
-      <div>
+      <div className="max-w-4xl">
         <div className="mb-4">
           <h2 className="text-base font-semibold" style={{ color: "#111" }}>
             AI guides
