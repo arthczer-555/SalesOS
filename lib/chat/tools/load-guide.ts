@@ -40,7 +40,10 @@ const module_: ToolModule = {
       const staleNote = bundle.stale
         ? "\n\n(Note : guide servi depuis le snapshot de secours, GitHub était indisponible ; il peut dater de quelques heures.)"
         : "";
-      return `GUIDE "${slug}" (suis ces instructions pour la suite de la conversation) :\n\n${pack.body}${staleNote}`;
+      // Les guides sont rédigés en français et arrivent APRÈS le system dans le
+      // contexte : sans ce rappel, une question en anglais repart en français.
+      const langNote = `\n\n(RAPPEL LANGUE : ce guide est rédigé en français, c'est un document de travail. Ta réponse, elle, doit être INTÉGRALEMENT dans la langue de la question de l'utilisateur. Traduis le contenu utile, ne le recopie pas tel quel.)`;
+      return `GUIDE "${slug}" (suis ces instructions pour la suite de la conversation) :\n\n${pack.body}${staleNote}${langNote}`;
     },
   },
 };

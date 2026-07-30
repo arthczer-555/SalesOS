@@ -29,6 +29,25 @@ import { anthropicClient } from "@/lib/anthropic-client";
 // l'admin via /admin > Modèles IA (clé "chat").
 const DEFAULT_CHAT_MODEL = "claude-sonnet-4-6";
 
+/**
+ * Texte de la dernière question de l'utilisateur (ignore les documents joints
+ * et les tool_result). Sert à ancrer la langue de la réponse dans le system.
+ */
+function lastUserText(messages: Anthropic.MessageParam[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role !== "user") continue;
+    if (typeof m.content === "string") return m.content.trim() || undefined;
+    const text = m.content
+      .filter((b): b is Anthropic.TextBlockParam => b.type === "text")
+      .map((b) => b.text)
+      .join("\n")
+      .trim();
+    if (text) return text;
+  }
+  return undefined;
+}
+
 export async function runChat(args: {
   userId: string;
   messages: Anthropic.MessageParam[];
@@ -93,6 +112,7 @@ export async function runChat(args: {
     userPrompt,
     channelName,
     betterThinking,
+    lastUserMessage: lastUserText(messages),
   });
 
   // 4) Tools : cache_control sur la DERNIÈRE définition -> tout le bloc tools

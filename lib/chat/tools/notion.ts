@@ -59,7 +59,10 @@ const module_: ToolModule = {
         const capped = body.length > CAP
           ? body.slice(0, CAP) + `\n…(page tronquée à ${CAP} caractères ; refetch une sous-page précise pour le détail)`
           : body;
-        return `# ${page.title}\nURL : ${page.url}\n\n${capped}`;
+        // La base est rédigée en français et ce contenu arrive après le system,
+        // donc juste avant la rédaction : sans rappel, il entraîne la réponse
+        // en français même quand la question est dans une autre langue.
+        return `# ${page.title}\nURL : ${page.url}\n\n${capped}\n\n(RAPPEL LANGUE : source en français. Ta réponse doit être dans la langue de la question de l'utilisateur : traduis ce contenu, ne le recopie pas.)`;
       } catch (e) {
         return `Erreur Notion : ${e instanceof Error ? e.message : "inconnue"}`;
       }
