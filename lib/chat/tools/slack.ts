@@ -4,6 +4,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import type { ToolModule } from "./types";
+import { toSlackMrkdwn } from "@/lib/slack/mrkdwn";
 
 // ── Helpers API ──────────────────────────────────────────────────────────────
 
@@ -185,7 +186,10 @@ const module_: ToolModule = {
         if (!ch) return `Canal "${target}" introuvable.`;
         channelId = ch.id;
       }
-      await slackPost("/chat.postMessage", { channel: channelId, text: input.message as string });
+      await slackPost("/chat.postMessage", {
+        channel: channelId,
+        text: toSlackMrkdwn(input.message as string),
+      });
       return `Message envoyé dans "${target}".`;
     },
   },

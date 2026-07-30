@@ -2,6 +2,7 @@ import { runChat, ChatAuthError } from "../../lib/chat/core";
 import { resolveSlackUser } from "../../lib/slack/user-resolve";
 import { loadThreadMessages, saveThreadMessages } from "../../lib/slack/chat-thread";
 import { postMessage, updateMessage, getRecentMessages, getChannelName } from "../../lib/slack/api";
+import { toSlackMrkdwn } from "../../lib/slack/mrkdwn";
 
 const UNRECOGNIZED_TEXT =
   "Désolé, je ne reconnais pas ton compte Slack. Demande à Arthur de te configurer dans SalesOS.";
@@ -112,19 +113,23 @@ function splitForSlack(text: string, cap = 3500, maxChunks = 6): string[] {
   }
   if (rest.length > cap) rest = rest.slice(0, cap) + "\n\n_…(réponse tronquée)_";
   if (rest) chunks.push(rest);
-  return chunks.length ? chunks : [text];
+  return balanceFences(chunks.length ? chunks : [text]);
 }
 
 /**
- * Convertit le markdown standard de Claude vers le mrkdwn de Slack :
- *  - **gras** → *gras*
- *  - *italique* → _italique_
- * Les listes, code blocks, links restent compatibles.
+ * Une coupure au milieu d'un bloc de code laisse un ``` non fermé : Slack rend
+ * alors tout le reste du message en monospace. On referme le bloc à la fin du
+ * chunk et on le rouvre au début du suivant.
  */
-function toSlackMrkdwn(text: string): string {
-  return text
-    .replace(/\*\*(.+?)\*\*/g, "*$1*")
-    .replace(/(?<!\*)\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)/g, "_$1_");
+function balanceFences(chunks: string[]): string[] {
+  let open = false;
+  return chunks.map((chunk) => {
+    let out = open ? "```\n" + chunk : chunk;
+    const fences = (out.match(/```/g) ?? []).length;
+    open = fences % 2 === 1;
+    if (open) out += "\n```";
+    return out;
+  });
 }
 
 export default async (req: Request) => {

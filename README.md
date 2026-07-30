@@ -226,6 +226,7 @@ Répertoire interne Coachello : grille de cartes vers les outils de la plateform
 - **Usage** : lecture canaux (notamment `#1a-new-incoming-leads`), envoi DM/messages depuis l'agent, alertes deals, sales coach, leads orphelins
 - **Auth** : Bot Token (`SLACK_BOT_TOKEN`) + User Token (`SLACK_USER_TOKEN`) + Signing Secret
 - **Scopes** : `channels:history`, `channels:read`, `chat:write`, `users:read`, `files:read`
+- **Formatage des messages** : Slack ne parle pas markdown mais **mrkdwn**. Tout texte écrit par Claude passe par [toSlackMrkdwn](lib/slack/mrkdwn.ts) avant l'envoi : titres `#` → gras, `**gras**` → `*gras*`, `*ital*` → `_ital_`, `[texte](url)` → `<url|texte>`, listes → `•`/`◦`, tableaux → bloc de code aligné, `---` supprimé. Les blocs de code sont mis de côté avant conversion (leur contenu n'est jamais transformé) et refermés proprement quand une réponse longue est découpée en plusieurs messages.
 
 ### Gmail, Google Calendar, Google Drive, GA4, Search Console
 - **Usage unifié** : OAuth Google par utilisateur (refresh token chiffré en DB, access token auto-renouvelé)

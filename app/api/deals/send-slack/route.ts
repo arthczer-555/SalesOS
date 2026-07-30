@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { toSlackMrkdwn } from "@/lib/slack/mrkdwn";
 
 export const dynamic = "force-dynamic";
 
@@ -62,7 +63,7 @@ export async function POST(req: NextRequest) {
     const dm = await slackPost("/conversations.open", { users: member.id });
     const channel = dm.channel.id;
 
-    await slackPost("/chat.postMessage", { channel, text });
+    await slackPost("/chat.postMessage", { channel, text: toSlackMrkdwn(text) });
 
     return NextResponse.json({ ok: true });
   } catch (e) {
