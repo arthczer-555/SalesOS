@@ -2,12 +2,11 @@
 // Orchestrateur du dashboard AE : recalcule le snapshot de chaque rep et le
 // persiste dans ae_activity_snapshots (1 row/rep). Déclenché 1x/jour (cron
 // 06:00 UTC), à l'ouverture d'un dashboard périmé, ou à la demande (bouton
-// "Refresh"). Seule la reco de coaching reste hebdo, plafonnée dans
-// buildCoaching : tout le reste est recalculé à chaque passage.
+// "Refresh"). Tout est recalculé à chaque passage.
 //
 // Pour chaque rep : activité HubSpot (REST) → buckets (4 granularités) +
 // funnel + lost reasons, revenu/objectifs (Sheet Drive), meetings tenus
-// (Claap), meetings déclarés (Slack), coaching (Sales Coach). Les sources
+// (Claap), meetings déclarés (Slack), note Sales Coach. Les sources
 // partagées (pipeline, dispositions, Sheet, Claap, Slack) sont fetchées une
 // seule fois. Best-effort partout : un rep en échec n'empêche pas les autres.
 // ────────────────────────────────────────────────────────────────────────
@@ -142,16 +141,7 @@ export async function runAeActivityRefresh(opts: RefreshOptions = {}): Promise<R
               csmRenew: emptyRevenueStream(),
             };
 
-        // Snapshot précédent : sert à réutiliser la reco de coaching quand
-        // aucune nouvelle analyse Sales Coach n'est arrivée depuis.
-        const { data: prevRow } = await db
-          .from("ae_activity_snapshots")
-          .select("payload")
-          .eq("rep_owner_id", rep.ownerId)
-          .maybeSingle();
-        const previousCoaching = (prevRow?.payload as RepSnapshot | undefined)?.coaching ?? null;
-
-        const coaching = await buildCoaching(rep.userId, rep.name, start, previousCoaching);
+        const coaching = await buildCoaching(rep.userId, start);
 
         const dataWarnings = [...hs.warnings];
         if (!revenue.matched && !revenueSheet.ok) dataWarnings.push("revenue_sheet");

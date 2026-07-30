@@ -20,7 +20,6 @@ import { buildKpis, fmtEUR, fmtEURCompact, fmtInt, lastRefreshLabel, pct } from 
 import {
   ActivityBlock,
   Card,
-  CoachingRecoBlock,
   CompanyPulseBlock,
   EmptyState,
   QuarterBars,
@@ -229,7 +228,6 @@ export function MyDashboard({ firstName, isAdmin }: { firstName: string; isAdmin
                   portefeuille et un CSM sa delivery — leurs compteurs d'appels
                   et d'emails froids resteraient à zéro sans rien dire d'utile. */}
               {roles.includes("ae") && <ActivityBlock kpis={kpis} accent={accent} />}
-              <CoachingRecoBlock coaching={rep.coaching} accent={accent} title="My coaching recommendation" />
             </>
           )}
 

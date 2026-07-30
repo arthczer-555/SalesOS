@@ -94,12 +94,7 @@ export type MonthlyScore = {
 };
 
 export type Coaching = {
-  // UNE recommandation de 1-2 phrases, portant sur le point qui revient le plus
-  // souvent dans Sales Coach. Remplace les 3-5 puces de l'ancien bloc coaching :
-  // un rep applique une consigne, pas cinq.
-  recommendation: string | null;
   meetingsAnalyzed: number; // nb de meetings Claap analysés pris en compte
-  generatedAt: string | null; // ISO
   scoreByMonth: MonthlyScore[]; // note Claap par mois, croissant
 };
 

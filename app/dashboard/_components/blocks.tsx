@@ -5,7 +5,7 @@
 // /dashboard/demo (données fictives) de partager exactement le même rendu.
 
 import Link from "next/link";
-import type { Coaching, QuarterAmount, RevenueStream } from "@/lib/ae-activity/types";
+import type { QuarterAmount, RevenueStream } from "@/lib/ae-activity/types";
 import type { RepRevenueLine } from "@/lib/dashboard/global-overview";
 import { COLORS } from "@/lib/design/tokens";
 import { fmtEUR, fmtEURCompact, ragColor, revenueAttainment, type Kpi } from "@/app/admin/ae-activity/_components/helpers";
@@ -189,38 +189,6 @@ export function StreamBlock({
           </ul>
         </div>
       )}
-    </Card>
-  );
-}
-
-/**
- * LA recommandation de coaching du rep : une seule consigne, tirée du point qui
- * revient dans le plus de meetings Sales Coach. Rendue en accent plein car
- * c'est le seul élément prescriptif de la page, tout le reste est descriptif.
- *
- * Rien ne s'affiche sans reco : une carte "no recommendation yet" ajouterait du
- * bruit à un écran qui compte déjà beaucoup de chiffres.
- */
-export function CoachingRecoBlock({
-  coaching,
-  accent,
-  title = "Coaching recommendation",
-}: {
-  coaching: Coaching;
-  accent: string;
-  title?: string;
-}) {
-  if (!coaching.recommendation) return null;
-
-  return (
-    <Card>
-      <SectionTitle title={title} />
-      <p className="text-[14px] leading-relaxed font-medium" style={{ color: COLORS.ink0 }}>
-        <span aria-hidden style={{ color: accent }}>
-          ▸{" "}
-        </span>
-        {coaching.recommendation}
-      </p>
     </Card>
   );
 }

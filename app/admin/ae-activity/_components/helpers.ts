@@ -481,9 +481,7 @@ export function aggregateReps(reps: RepSnapshot[]): RepSnapshot {
       .flatMap((r) => r.slackMeetings ?? [])
       .sort((a, b) => b.ts.localeCompare(a.ts)),
     coaching: {
-      recommendation: null,
       meetingsAnalyzed: reps.reduce((s, r) => s + r.coaching.meetingsAnalyzed, 0),
-      generatedAt: null,
       scoreByMonth: mergeScores(reps),
     },
     dataWarnings: [],

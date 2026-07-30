@@ -271,15 +271,7 @@ function ChartSection({ title, children }: { title: string; children: React.Reac
   );
 }
 
-export function RepBlock({
-  rep,
-  gran,
-  aggregate = false,
-}: {
-  rep: RepSnapshot;
-  gran: Granularity;
-  aggregate?: boolean;
-}) {
+export function RepBlock({ rep, gran }: { rep: RepSnapshot; gran: Granularity }) {
   const buckets = rep.byGranularity[gran] ?? [];
   // Un CSM pur ne prospecte pas : la section Prospecting n'aurait que des zéros.
   const roles = rep.roles ?? [];
@@ -342,7 +334,7 @@ export function RepBlock({
       {/* ── Niveau 3 : le détail, groupé par thème ─────────────────────── */}
       {/* Un CSM pur ne prospecte pas, ne source pas ses meetings et ne crée
           pas de deals : toutes ces sections seraient vides ou trompeuses. Il
-          garde ses cards de revenu, ses meetings tenus et sa reco de coaching. */}
+          garde ses cards de revenu et ses meetings tenus. */}
       {!csmOnly && (
       <>
       <ChartSection title="Prospecting">
@@ -411,36 +403,6 @@ export function RepBlock({
       </>
       )}
 
-      {/* Coaching (par rep uniquement, pas en vue agrégée). Une seule reco, la
-          même que celle affichée au rep sur son dashboard : manager et rep
-          doivent travailler le même point. */}
-      {!aggregate && (
-        <div className="rounded-xl border p-4 mt-4" style={{ borderColor: COLORS.line, background: COLORS.bgCard }}>
-          <h3 className="text-[13px] font-semibold mb-2" style={{ color: COLORS.ink0 }}>
-            Coaching recommendation
-          </h3>
-          {rep.coaching.recommendation ? (
-            <>
-              <p className="text-[13px] leading-relaxed font-medium" style={{ color: COLORS.ink0 }}>
-                <span aria-hidden style={{ color: rep.accent }}>
-                  ▸{" "}
-                </span>
-                {rep.coaching.recommendation}
-              </p>
-              <p
-                className="text-[11px] mt-2.5 rounded-lg px-2.5 py-1.5"
-                style={{ color: COLORS.ink3, background: COLORS.bgSoft }}
-              >
-                Most recurring point across {rep.coaching.meetingsAnalyzed} meeting(s) analysed by Sales Coach.
-              </p>
-            </>
-          ) : (
-            <p className="text-[12px]" style={{ color: COLORS.ink4 }}>
-              No usable Sales Coach analysis for this period yet.
-            </p>
-          )}
-        </div>
-      )}
     </div>
   );
 }

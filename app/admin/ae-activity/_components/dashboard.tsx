@@ -201,7 +201,7 @@ export function AeActivityDashboard() {
       ) : shown ? (
         <>
           {isAggregate && aeReps.length > 1 && <RepCompare reps={aeReps} gran={gran} />}
-          <RepBlock rep={shown} gran={gran} aggregate={isAggregate} />
+          <RepBlock rep={shown} gran={gran} />
           <GlobalPilot reps={reps} />
         </>
       ) : (

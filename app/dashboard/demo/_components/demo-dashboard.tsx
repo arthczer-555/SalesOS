@@ -18,7 +18,6 @@ import { SALES_ROLE_LABEL, parseSalesRoles, type SalesRole } from "@/lib/sales-r
 import { buildKpis, fmtEURCompact, fmtInt, lastRefreshLabel, pct } from "@/app/admin/ae-activity/_components/helpers";
 import {
   ActivityBlock,
-  CoachingRecoBlock,
   CompanyPulseBlock,
   EmptyState,
   QuarterBars,
@@ -203,7 +202,6 @@ export function DemoDashboard() {
                   portefeuille et un CSM sa delivery — leurs compteurs d'appels
                   et d'emails froids resteraient à zéro sans rien dire d'utile. */}
               {roles.includes("ae") && <ActivityBlock kpis={kpis} accent={accent} />}
-              <CoachingRecoBlock coaching={rep.coaching} accent={accent} title="My coaching recommendation" />
             </>
           )}
 
