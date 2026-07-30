@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { notifyNewIdea } from "@/lib/ideas/notify";
 import { IDEA_MAX_LENGTH } from "@/lib/ideas/types";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,17 @@ export async function POST(req: NextRequest) {
 
   const { error } = await db.from("ideas").insert({ user_id: user.id, content });
   if (error) return NextResponse.json({ error: "Could not save your idea" }, { status: 500 });
+
+  // DM Slack best-effort : l'idée est enregistrée, une notification qui échoue
+  // ne doit pas faire croire à l'utilisateur que son dépôt a raté.
+  const notified = await notifyNewIdea({
+    content,
+    authorName: user.name,
+    authorEmail: user.email,
+  });
+  if (!notified.sent && notified.reason !== "slack_disabled") {
+    console.warn(`[ideas] Slack DM not sent: ${notified.reason}`);
+  }
 
   return NextResponse.json({ ok: true });
 }
