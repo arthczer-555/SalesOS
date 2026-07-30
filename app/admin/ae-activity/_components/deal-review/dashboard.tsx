@@ -20,7 +20,11 @@ import {
   matchesFlag,
   repById,
   subsetTotals,
+  closedSubsetStats,
+  quarterOf,
+  QUARTER_FILTERS,
   type ClosedSortKey,
+  type QuarterFilter,
   type DealFlag,
   type SortDir,
   type SortKey,
@@ -96,6 +100,7 @@ export function DealReviewDashboard() {
   const [stageId, setStageId] = useState<string | null>(null);
   const [flag, setFlag] = useState<DealFlag | null>(null);
   const [closedResult, setClosedResult] = useState<ClosedResult>("all");
+  const [quarter, setQuarter] = useState<QuarterFilter>("all");
   const [showNurture, setShowNurture] = useState(false);
   const [query, setQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
@@ -136,10 +141,11 @@ export function DealReviewDashboard() {
     const q = query.trim().toLowerCase();
     return (data?.closedDeals ?? []).filter((d) => {
       if (rep !== "all" && d.ownerId !== rep) return false;
+      if (quarter !== "all" && quarterOf(d.closedate) !== quarter) return false;
       if (q && !d.dealname.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [data?.closedDeals, rep, query]);
+  }, [data?.closedDeals, rep, quarter, query]);
 
   const listedClosed = useMemo(
     () =>
@@ -153,15 +159,22 @@ export function DealReviewDashboard() {
   const selectedRep = rep === "all" ? null : repById(reps, rep);
   const totals = data?.totals ?? null;
 
-  // Win rate et touches to close sont des chiffres de période, calculés côté
-  // serveur avec leurs seuils d'échantillon : on ne les recalcule pas sur la
-  // sous-sélection, on affiche celui de l'AE ou le global.
-  const winRate = selectedRep ? selectedRep.winRate : totals?.winRate ?? null;
-  const closedWon = selectedRep ? selectedRep.closedWon : totals?.closedWon ?? 0;
-  const closedLost = selectedRep ? selectedRep.closedLost : totals?.closedLost ?? 0;
-  const touchesToClose = selectedRep
-    ? selectedRep.medianTouchesToClose
-    : data?.wonBenchmark.medianTouchPoints ?? null;
+  // Win rate et touches to close viennent du serveur, qui applique les seuils
+  // d'échantillon : on ne les recalcule pas sur une sous-sélection d'étape ou
+  // de recherche. Le trimestre fait exception, puisqu'il change réellement la
+  // période de référence.
+  const quarterStats = useMemo(
+    () => (quarter === "all" ? null : closedSubsetStats(scopedClosed)),
+    [quarter, scopedClosed],
+  );
+  const winRate = quarterStats ? quarterStats.winRate : selectedRep ? selectedRep.winRate : totals?.winRate ?? null;
+  const closedWon = quarterStats ? quarterStats.won : selectedRep ? selectedRep.closedWon : totals?.closedWon ?? 0;
+  const closedLost = quarterStats ? quarterStats.lost : selectedRep ? selectedRep.closedLost : totals?.closedLost ?? 0;
+  const touchesToClose = quarterStats
+    ? quarterStats.medianTouches
+    : selectedRep
+      ? selectedRep.medianTouchesToClose
+      : data?.wonBenchmark.medianTouchPoints ?? null;
 
   const repOptions = [
     { v: "all", label: "All" },
@@ -305,6 +318,14 @@ export function DealReviewDashboard() {
       {/* Controls */}
       <div className="flex flex-wrap items-center gap-3 mt-4 mb-3">
         <Seg value={rep} options={repOptions} onChange={setRep} />
+
+        {/* Le trimestre ne s'applique qu'aux deals clos : un deal ouvert n'a
+            pas de date de closing. */}
+        <Seg
+          value={quarter}
+          options={QUARTER_FILTERS.map((q) => ({ v: q, label: q === "all" ? "Year" : q }))}
+          onChange={setQuarter}
+        />
 
         {view === "open" && (
           <button
@@ -456,11 +477,11 @@ export function DealReviewDashboard() {
               title="Won / closed over the period — click to list the won deals"
             />
             <StatPill
-              label="Avg touches to close"
+              label="Median touches to close"
               value={fmtNum(touchesToClose)}
               onClick={() => closedWith("won", { kpi: "touchesToClose", sort: "touchPoints" })}
               active={activeKpi === "touchesToClose"}
-              title="Median touch points on won deals — click to list them"
+              title="Median outbound touches logged BEFORE the close date, on won deals — click to list them"
             />
           </div>
 
@@ -579,11 +600,17 @@ export function DealReviewDashboard() {
             <p>
               Win rate and cycle: sales pipeline deals closed since {fmtLongDate(data.periodStart)},{" "}
               <code>hs_is_closed_won</code> convention. A rate is only shown from 5 closed deals
-              onwards, a cycle from 3 won. &laquo;&nbsp;Avg touches to close&nbsp;&raquo; is the
-              median (not the mean) of touch points on won deals, so a single outlier deal does not
-              move it. Renewals and handovers closed by Customer Success are excluded here while the
-              AE Activity dashboard counts them: a gap of a few deals between the two pages is
-              expected.
+              onwards, a cycle from 3 won. &laquo;&nbsp;Median touches to close&nbsp;&raquo; is the
+              median (not the mean), so a single outlier deal does not move it. Renewals and
+              handovers closed by Customer Success are excluded here while the AE Activity dashboard
+              counts them: a gap of a few deals between the two pages is expected.
+            </p>
+            <p>
+              Touch points are counted from the outbound engagements (calls, sent emails, meetings)
+              associated with the deal, capped at its close date — HubSpot&apos;s{" "}
+              <code>num_contacted_notes</code> keeps growing after the sale (onboarding, kick-off),
+              which used to inflate older won deals. The quarter selector only narrows closed deals:
+              an open deal has no close date.
             </p>
           </footer>
         </>

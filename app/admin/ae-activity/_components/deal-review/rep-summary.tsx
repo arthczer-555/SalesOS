@@ -62,7 +62,7 @@ export function RepSummaryTable({
                 { label: "No next step", align: "right" as const, title: "Deals with no next activity scheduled in HubSpot" },
                 { label: "Win rate", align: "right" as const, title: "Won / (won + lost) over the period" },
                 { label: "Med. cycle", align: "right" as const, title: "Median days_to_close of won deals" },
-                { label: "Avg touches to close", align: "right" as const, title: "Median touch points of won deals" },
+                { label: "Median touches to close", align: "right" as const, title: "Median outbound touches before the close date, on won deals" },
               ].map((c) => (
                 <th
                   key={c.label}

@@ -11,7 +11,7 @@
 // la limite est affichée dans l'UI plutôt que masquée.
 // ────────────────────────────────────────────────────────────────────────
 
-import { hubspotFetch, hubspotSearchAll } from "@/lib/hubspot";
+import { hubspotBatchAssociations, hubspotFetch, hubspotSearchAll } from "@/lib/hubspot";
 import { fetchSalesPipeline } from "@/lib/ae-activity/fetch-hubspot";
 import { listSalesReps } from "@/lib/ae-activity/reps";
 import { isNurtureLabel } from "@/lib/deals/stages";
@@ -90,6 +90,94 @@ function daysSince(raw: string | undefined, now: number): number | null {
 function closedAtMs(row: ClosedDealRow): number {
   const ms = row.closedate ? Date.parse(row.closedate) : NaN;
   return Number.isNaN(ms) ? 0 : ms;
+}
+
+/**
+ * Touch points comptés à la main : sollicitations SORTANTES (appels, emails
+ * envoyés, meetings) associées au deal, dont le timestamp ne dépasse pas une
+ * borne — la date de closing pour un deal gagné, maintenant pour un deal ouvert.
+ *
+ * Pourquoi ne pas se contenter de `num_contacted_notes` : c'est un compteur
+ * cumulatif lu au moment du fetch, qui continue de grimper APRÈS le closing
+ * (onboarding, kick-off, relances CS rattachées au deal). Un deal gagné en
+ * janvier accumule des mois de bruit qu'un deal gagné le mois dernier n'a pas,
+ * ce qui biaise la médiane des "touches to close" en faveur des deals récents.
+ *
+ * Le comptage est appliqué aux deals ouverts ET gagnés avec la même définition :
+ * comparer un deal ouvert à un repère calculé autrement n'aurait aucun sens.
+ * Les emails entrants sont exclus — être contacté n'est pas contacter.
+ */
+async function fetchTouchesBeforeClose(
+  deals: Array<{ id: string; until: string | null }>,
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const nowMs = Date.now();
+  const dated = deals.map((d) => ({
+    id: d.id,
+    limit: d.until && Number.isFinite(Date.parse(d.until)) ? Date.parse(d.until) : nowMs,
+  }));
+  if (dated.length === 0) return counts;
+
+  const closeMs = new Map(dated.map((d) => [d.id, d.limit]));
+  for (const d of dated) counts.set(d.id, 0);
+
+  // Les 3 types en parallèle : en séquence, cette étape triplait le temps de
+  // réponse d'une route déjà fetchée en live.
+  const perType = await Promise.all(
+    (["calls", "emails", "meetings"] as const).map(async (type) => {
+      const partial = new Map<string, number>();
+      let assoc: Map<string, string[]>;
+      try {
+        assoc = await hubspotBatchAssociations("deals", type as never, [...closeMs.keys()]);
+      } catch {
+        return partial; // ce type manquera, les autres restent comptés
+      }
+
+      const engagementIds = [...new Set([...assoc.values()].flat())];
+      const timestamps = new Map<string, number>();
+      try {
+        const chunks: string[][] = [];
+        for (let i = 0; i < engagementIds.length; i += 100) chunks.push(engagementIds.slice(i, i + 100));
+        const props = type === "emails" ? ["hs_timestamp", "hs_email_direction"] : ["hs_timestamp"];
+        const pages = await Promise.all(
+          chunks.map((chunk) =>
+            hubspotFetch<{ results?: HsRow[] }>(`/crm/v3/objects/${type}/batch/read`, "POST", {
+              properties: props,
+              inputs: chunk.map((id) => ({ id })),
+            }),
+          ),
+        );
+        for (const res of pages) {
+          for (const r of res.results ?? []) {
+            // Un email reçu n'est pas une sollicitation : on ne compte que les sortants.
+            if (type === "emails" && r.properties?.hs_email_direction === "INCOMING_EMAIL") continue;
+            const t = Date.parse(r.properties?.hs_timestamp ?? "");
+            if (Number.isFinite(t)) timestamps.set(String(r.id), t);
+          }
+        }
+      } catch {
+        return partial;
+      }
+
+      for (const [dealId, ids] of assoc) {
+        const limit = closeMs.get(dealId);
+        if (limit == null) continue;
+        let n = 0;
+        for (const id of ids) {
+          const t = timestamps.get(id);
+          if (t != null && t <= limit) n++;
+        }
+        partial.set(dealId, n);
+      }
+      return partial;
+    }),
+  );
+
+  for (const partial of perType) {
+    for (const [dealId, n] of partial) counts.set(dealId, (counts.get(dealId) ?? 0) + n);
+  }
+
+  return counts;
 }
 
 function startOfPeriod(): string {
@@ -354,6 +442,16 @@ export async function buildDealReview(): Promise<DealReviewResponse> {
       ? claapResult.value
       : new Map<string, { calls: number; avgScore: number | null }>();
 
+  // Touches comptées à la main, même définition pour les deals ouverts (bornés
+  // à maintenant) et les deals clos (bornés à leur date de closing) : le repère
+  // "touches to close" ne vaut que si on lui compare des deals mesurés pareil.
+  const touchTargets = [
+    ...openRows.map((r) => ({ id: r.id, until: null })),
+    ...closedRows.map((r) => ({ id: r.id, until: r.properties?.closedate ?? null })),
+  ];
+  const touches = await fetchTouchesBeforeClose(touchTargets);
+  if (touchTargets.length > 0 && touches.size === 0) warnings.push("touches");
+
   const deals: DealRow[] = openRows.map((row) => {
     const p = row.properties ?? {};
     const stage = stageById.get(p.dealstage ?? "");
@@ -376,7 +474,7 @@ export async function buildDealReview(): Promise<DealReviewResponse> {
       ownerAccent: repAccent(ownerName),
       score: scoreEntry?.score ?? null,
       reliability: scoreEntry?.reliability ?? null,
-      touchPoints: num(p.num_contacted_notes) ?? 0,
+      touchPoints: touches.get(row.id) ?? num(p.num_contacted_notes) ?? 0,
       salesActivities: num(p.num_notes) ?? 0,
       numContacts: num(p.num_associated_contacts) ?? 0,
       claapCalls: claapEntry?.calls ?? 0,
@@ -406,7 +504,9 @@ export async function buildDealReview(): Promise<DealReviewResponse> {
       closedate: p.closedate || null,
       createdate: p.createdate || null,
       daysToClose: num(p.days_to_close),
-      touchPoints: num(p.num_contacted_notes),
+      // Comptage borné à la closedate ; `num_contacted_notes` reste le repli
+      // quand les associations HubSpot n'ont pas répondu.
+      touchPoints: touches.get(row.id) ?? num(p.num_contacted_notes),
     };
   });
   const closed: ClosedDeal[] = closedDeals;

@@ -215,6 +215,29 @@ function DealsPageInner() {
     }
   }, []);
 
+  /**
+   * Ouvre un deal par son seul id, sans passer par la liste chargée. Sert au
+   * deeplink : la liste ne contient que les deals OUVERTS de l'utilisateur
+   * courant, alors qu'on arrive de la Deal Review sur un deal clos ou sur celui
+   * d'un autre AE. `/api/deals/details` n'a aucune de ces restrictions.
+   */
+  const openDealById = useCallback(async (dealId: string) => {
+    setDetails(null);
+    setLoadingDetails(true);
+    try {
+      const r = await fetch(`/api/deals/details?id=${dealId}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error ?? "Error");
+      setSelectedDeal(data as Deal);
+      setDetails(data as DealDetails);
+    } catch (e) {
+      console.error(e);
+      setSelectedDeal(null);
+    } finally {
+      setLoadingDetails(false);
+    }
+  }, []);
+
   const closeDeal = useCallback(() => {
     setSelectedDeal(null);
     setDetails(null);
@@ -228,12 +251,13 @@ function DealsPageInner() {
   const deepLinkOpenedRef = useRef(false);
   useEffect(() => {
     if (!deepLinkDealId || deepLinkOpenedRef.current || loading) return;
+    deepLinkOpenedRef.current = true;
     const target = deals.find((d) => d.id === deepLinkDealId);
-    if (target) {
-      deepLinkOpenedRef.current = true;
-      openDeal(target);
-    }
-  }, [deepLinkDealId, deals, loading, openDeal]);
+    // Absent de la liste = deal clos ou deal d'un autre AE : on le charge par
+    // son id plutôt que d'échouer en silence, ce qui donnait un clic sans effet.
+    if (target) openDeal(target);
+    else void openDealById(deepLinkDealId);
+  }, [deepLinkDealId, deals, loading, openDeal, openDealById]);
 
   const filteredDeals = useMemo(() => {
     const bySearch = searchQuery

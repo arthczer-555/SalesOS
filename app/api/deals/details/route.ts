@@ -328,14 +328,28 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Nom du propriétaire : la liste /api/deals/list le résout de son côté,
+    // mais un deal ouvert en deeplink (autre AE, deal clos) n'y figure pas.
+    let ownerName = "";
+    if (p.hubspot_owner_id) {
+      try {
+        const owner = await hubspot(`/crm/v3/owners/${p.hubspot_owner_id}`);
+        ownerName = [owner?.firstName, owner?.lastName].filter(Boolean).join(" ") || owner?.email || "";
+      } catch {
+        /* best-effort : le panneau s'ouvre sans le nom */
+      }
+    }
+
     return NextResponse.json({
       id,
       dealname: p.dealname ?? "",
       dealstage: p.dealstage ?? "",
       amount: p.amount ?? "",
       closedate: p.closedate ?? "",
+      createdate: p.createdate ?? "",
       probability: p.hs_deal_stage_probability ?? "",
       ownerId: p.hubspot_owner_id ?? "",
+      ownerName,
       lastContacted: p.notes_last_contacted ?? "",
       lastModified: p.hs_lastmodifieddate ?? "",
       numContacts: p.num_associated_contacts ? parseInt(p.num_associated_contacts) : 0,

@@ -422,6 +422,17 @@ export function DealDetailPanel({
           >
             {details.dealname}
           </h2>
+          {/* La forme /_/ laisse HubSpot résoudre le portail actif : pas de
+              dépendance à une variable d'environnement. */}
+          <a
+            href={`https://app.hubspot.com/contacts/_/deal/${details.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ fontSize: 11, color: COLORS.ink3, textDecoration: "none" }}
+            title="Open this deal in HubSpot"
+          >
+            Open in HubSpot ↗
+          </a>
           <div
             style={{
               display: "flex",

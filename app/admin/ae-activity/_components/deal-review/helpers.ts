@@ -230,3 +230,42 @@ export function subsetTotals(deals: DealRow[]) {
 export function repById(reps: RepSummary[], ownerId: string): RepSummary | null {
   return reps.find((r) => r.ownerId === ownerId) ?? null;
 }
+
+export type QuarterFilter = "all" | "Q1" | "Q2" | "Q3" | "Q4";
+export const QUARTER_FILTERS: QuarterFilter[] = ["all", "Q1", "Q2", "Q3", "Q4"];
+
+/** Trimestre (UTC) d'une date de closing. */
+export function quarterOf(iso: string | null): QuarterFilter | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return null;
+  return `Q${Math.floor(new Date(t).getUTCMonth() / 3) + 1}` as QuarterFilter;
+}
+
+function median(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const s = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+/**
+ * Recalcule win rate et touches to close sur un sous-ensemble de deals clos.
+ * Utilisé uniquement quand un trimestre est sélectionné : sinon on garde les
+ * chiffres du serveur, qui appliquent les seuils d'échantillon.
+ */
+export function closedSubsetStats(deals: ClosedDealRow[]): {
+  won: number;
+  lost: number;
+  winRate: number | null;
+  medianTouches: number | null;
+} {
+  const won = deals.filter((d) => d.won);
+  const lost = deals.filter((d) => !d.won);
+  return {
+    won: won.length,
+    lost: lost.length,
+    winRate: deals.length > 0 ? Math.round((won.length / deals.length) * 100) : null,
+    medianTouches: median(won.map((d) => d.touchPoints).filter((v): v is number => v != null)),
+  };
+}
