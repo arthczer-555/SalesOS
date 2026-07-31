@@ -137,22 +137,22 @@ export function SignatureEditor({
           {/* Fields */}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Full name">
-              <TextInput value={sig.fullName} placeholder="Baptiste Martin" onChange={(v) => set("fullName", v)} />
+              <TextInput value={sig.fullName} onChange={(v) => set("fullName", v)} />
             </Field>
             <Field label="Title">
-              <TextInput value={sig.title} placeholder="Intl Account Director" onChange={(v) => set("title", v)} />
+              <TextInput value={sig.title} onChange={(v) => set("title", v)} />
             </Field>
             <Field label="Booking link">
-              <TextInput value={sig.bookingUrl} placeholder="calendly.com/baptiste" onChange={(v) => set("bookingUrl", v)} />
+              <TextInput value={sig.bookingUrl} onChange={(v) => set("bookingUrl", v)} />
             </Field>
             <Field label="Booking link text">
-              <TextInput value={sig.bookingLabel} placeholder="Book a call with me" onChange={(v) => set("bookingLabel", v)} />
+              <TextInput value={sig.bookingLabel} onChange={(v) => set("bookingLabel", v)} />
             </Field>
             <Field label="Languages">
-              <TextInput value={sig.languages} placeholder="FR/EN/IT" onChange={(v) => set("languages", v)} />
+              <TextInput value={sig.languages} onChange={(v) => set("languages", v)} />
             </Field>
             <Field label="Phone">
-              <TextInput value={sig.phone} placeholder="+33 6 03 47 81 13" onChange={(v) => set("phone", v)} />
+              <TextInput value={sig.phone} onChange={(v) => set("phone", v)} />
             </Field>
           </div>
 
@@ -253,18 +253,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function TextInput({
   value,
-  placeholder,
   onChange,
 }: {
   value: string;
-  placeholder: string;
   onChange: (v: string) => void;
 }) {
   return (
     <input
       type="text"
       value={value}
-      placeholder={placeholder}
       onChange={(e) => onChange(e.target.value)}
       className="w-full text-xs px-3 py-2 border rounded-lg outline-none"
       style={{ borderColor: "#e5e5e5", color: "#111" }}
