@@ -9,7 +9,8 @@ export const dynamic = "force-dynamic";
 
 // GET /api/admin/rag?days=30 — données de la page /admin/rag :
 // les tours analysés de la fenêtre, leurs agrégats, le dernier rapport de gaps
-// et l'état du dernier run.
+// et l'état du dernier run. Tout ça ne bouge qu'au passage du juge : les
+// questions qui arrivent en direct passent par /api/admin/rag/live.
 export async function GET(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user || !isAdmin(user)) {

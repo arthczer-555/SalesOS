@@ -107,6 +107,18 @@ export type RagAnalysisRow = {
   model: string | null;
 };
 
+/**
+ * Un tour vu par la page admin AVANT tout passage du juge :
+ *   - "answering"  : la question vient d'être posée, la réponse s'écrit encore
+ *   - "analyzing"  : la réponse est là, le juge n'a pas encore tourné dessus
+ * Ces lignes sont reconstruites à la volée depuis chat_jobs / slack_chat_threads,
+ * elles n'existent pas dans rag_question_analyses.
+ */
+export type RagPendingState = "answering" | "analyzing";
+
+/** Une ligne du tableau Questions : analysée, ou encore en attente. */
+export type RagRow = RagAnalysisRow & { pending?: RagPendingState };
+
 /** Contenu de rag_gap_reports.payload. */
 export type RagGapReport = {
   gaps: {

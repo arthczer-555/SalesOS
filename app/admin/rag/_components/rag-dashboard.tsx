@@ -6,27 +6,37 @@ import { RotateCw, Send, ThumbsDown, X, ExternalLink } from "lucide-react";
 import {
   RAG_CATEGORY_LABELS,
   RAG_VERDICT_LABELS,
-  type RagAnalysisRow,
   type RagCategory,
   type RagGapReport,
+  type RagPendingState,
+  type RagRow,
   type RagStats,
   type RagVerdict,
 } from "@/lib/rag-insights/types";
 
+// Le tableau se rafraîchit tout seul : une question posée apparaît d'elle-même,
+// en attente d'analyse, sans avoir à relancer le juge. Seul le flux live est
+// pollé vite ; les tours analysés ne bougent qu'au passage du juge.
+const LIVE_REFRESH_MS = 15_000;
+const ANALYSES_REFRESH_MS = 120_000;
+
 type ApiResponse = {
   days: number;
   stats: RagStats;
-  rows: RagAnalysisRow[];
+  rows: RagRow[];
   names: Record<string, string>;
   report: RagGapReport | null;
   reportMeta: { created_at: string; slack_sent_at: string | null; slack_recipients: string | null } | null;
   meta: { status: string; started_at: string | null; finished_at: string | null; error_message: string | null; analyzed_count: number | null } | null;
 };
 
-const fetcher = async (url: string) => {
+/** Réponse de /api/admin/rag/live : les questions pas encore jugées. */
+type LiveResponse = { days: number; pending: RagRow[] };
+
+const fetcher = async <T,>(url: string): Promise<T> => {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json() as Promise<ApiResponse>;
+  return res.json() as Promise<T>;
 };
 
 const COLORS = {
@@ -63,6 +73,14 @@ function fmtDate(iso: string) {
   });
 }
 
+/** Une question qui vient d'arriver se lit mieux en relatif qu'en date. */
+function fmtWhen(iso: string) {
+  const min = (Date.now() - new Date(iso).getTime()) / 60_000;
+  if (min < 1) return "just now";
+  if (min < 60) return `${Math.round(min)} min ago`;
+  return fmtDate(iso);
+}
+
 function sinceLabel(iso: string | null | undefined) {
   if (!iso) return "never";
   const diff = Date.now() - new Date(iso).getTime();
@@ -95,15 +113,34 @@ function Tile({ label, value, sub, tone }: { label: string; value: string; sub?:
   );
 }
 
-function Badge({ verdict }: { verdict: RagVerdict | null }) {
-  if (!verdict) return null;
-  const tone = VERDICT_TONE[verdict] ?? VERDICT_TONE.off_scope;
+const PENDING_LABELS: Record<RagPendingState, string> = {
+  answering: "Answering…",
+  analyzing: "Awaiting analysis",
+};
+
+function Badge({ row }: { row: Pick<RagRow, "verdict" | "pending"> }) {
+  if (row.pending) {
+    return (
+      <span
+        className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap"
+        style={{ background: "#eef2ff", color: "#4f46e5" }}
+      >
+        <span
+          className={`w-1.5 h-1.5 rounded-full ${row.pending === "answering" ? "animate-pulse" : ""}`}
+          style={{ background: "#4f46e5" }}
+        />
+        {PENDING_LABELS[row.pending]}
+      </span>
+    );
+  }
+  if (!row.verdict) return null;
+  const tone = VERDICT_TONE[row.verdict] ?? VERDICT_TONE.off_scope;
   return (
     <span
       className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold whitespace-nowrap"
       style={{ background: tone.bg, color: tone.fg }}
     >
-      {RAG_VERDICT_LABELS[verdict] ?? verdict}
+      {RAG_VERDICT_LABELS[row.verdict] ?? row.verdict}
     </span>
   );
 }
@@ -138,14 +175,21 @@ function Seg<T extends string | number>({
 
 // ── Onglet Overview ──────────────────────────────────────────────────────────
 
-function Overview({ stats }: { stats: RagStats }) {
+function Overview({ stats, pendingCount }: { stats: RagStats; pendingCount: number }) {
   const maxCount = Math.max(1, ...stats.byCategory.map((c) => c.count));
   const knowledgeShare = stats.total > 0 ? Math.round((stats.knowledge / stats.total) * 100) : 0;
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-        <Tile label="Questions" value={String(stats.total)} sub={`${stats.web} web / ${stats.slack} Slack`} />
+        <Tile
+          label="Questions"
+          value={String(stats.total)}
+          sub={
+            `${stats.web} web / ${stats.slack} Slack` +
+            (pendingCount > 0 ? ` · +${pendingCount} not analyzed` : "")
+          }
+        />
         <Tile label="Knowledge" value={`${knowledgeShare}%`} sub={`${stats.knowledge} questions on Notion`} />
         <Tile
           label="Satisfaction"
@@ -213,12 +257,12 @@ function Questions({
   names,
   onSelect,
 }: {
-  rows: RagAnalysisRow[];
+  rows: RagRow[];
   names: Record<string, string>;
-  onSelect: (row: RagAnalysisRow) => void;
+  onSelect: (row: RagRow) => void;
 }) {
   const [source, setSource] = useState<"all" | "web" | "slack">("all");
-  const [verdict, setVerdict] = useState<"all" | RagVerdict>("all");
+  const [verdict, setVerdict] = useState<"all" | "pending" | RagVerdict>("all");
   const [downOnly, setDownOnly] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -226,7 +270,7 @@ function Questions({
     const needle = search.trim().toLowerCase();
     return rows.filter((r) => {
       if (source !== "all" && r.source !== source) return false;
-      if (verdict !== "all" && r.verdict !== verdict) return false;
+      if (verdict === "pending" ? !r.pending : verdict !== "all" && r.verdict !== verdict) return false;
       if (downOnly && !(r.satisfaction_basis === "explicit" && (r.satisfaction ?? 100) <= 30)) return false;
       if (needle && !r.question.toLowerCase().includes(needle)) return false;
       return true;
@@ -247,11 +291,12 @@ function Questions({
         />
         <select
           value={verdict}
-          onChange={(e) => setVerdict(e.target.value as "all" | RagVerdict)}
+          onChange={(e) => setVerdict(e.target.value as "all" | "pending" | RagVerdict)}
           className="text-xs rounded-lg px-3 py-2"
           style={{ border: `1px solid ${COLORS.line}`, background: "#fff", color: COLORS.ink2 }}
         >
           <option value="all">All verdicts</option>
+          <option value="pending">Not analyzed yet</option>
           {(Object.keys(RAG_VERDICT_LABELS) as RagVerdict[]).map((v) => (
             <option key={v} value={v}>
               {RAG_VERDICT_LABELS[v]}
@@ -308,7 +353,7 @@ function Questions({
                   style={{ borderTop: `1px solid ${COLORS.line}` }}
                 >
                   <td className="px-4 py-2.5 whitespace-nowrap" style={{ color: COLORS.ink3 }}>
-                    {fmtDate(r.asked_at)}
+                    {fmtWhen(r.asked_at)}
                   </td>
                   <td className="px-2 py-2.5 whitespace-nowrap" style={{ color: COLORS.ink2 }}>
                     {r.user_id ? (names[r.user_id] ?? "Unknown") : "Unknown"}
@@ -321,7 +366,7 @@ function Questions({
                     {r.category ? (RAG_CATEGORY_LABELS[r.category] ?? r.category) : "-"}
                   </td>
                   <td className="px-2 py-2.5">
-                    <Badge verdict={r.verdict} />
+                    <Badge row={r} />
                   </td>
                   <td
                     className="px-4 py-2.5 text-right font-semibold whitespace-nowrap"
@@ -349,7 +394,7 @@ function DetailDrawer({
   names,
   onClose,
 }: {
-  row: RagAnalysisRow;
+  row: RagRow;
   names: Record<string, string>;
   onClose: () => void;
 }) {
@@ -367,13 +412,23 @@ function DetailDrawer({
               {row.user_id ? (names[row.user_id] ?? "Unknown") : "Unknown"}
             </div>
             <div className="flex items-center gap-2 mt-1.5">
-              <Badge verdict={row.verdict} />
-              <span className="text-sm font-semibold" style={{ color: scoreColor(row.satisfaction) }}>
-                {row.satisfaction ?? "-"}/100
-              </span>
-              <span className="text-[11.5px]" style={{ color: COLORS.ink4 }}>
-                {row.satisfaction_basis === "explicit" ? "explicit feedback" : "inferred"}
-              </span>
+              <Badge row={row} />
+              {row.pending ? (
+                <span className="text-[11.5px]" style={{ color: COLORS.ink4 }}>
+                  {row.pending === "answering"
+                    ? "the answer is still being written"
+                    : "scored on the next analysis run"}
+                </span>
+              ) : (
+                <>
+                  <span className="text-sm font-semibold" style={{ color: scoreColor(row.satisfaction) }}>
+                    {row.satisfaction ?? "-"}/100
+                  </span>
+                  <span className="text-[11.5px]" style={{ color: COLORS.ink4 }}>
+                    {row.satisfaction_basis === "explicit" ? "explicit feedback" : "inferred"}
+                  </span>
+                </>
+              )}
             </div>
           </div>
           <button onClick={onClose} style={{ color: COLORS.ink3 }} aria-label="Close">
@@ -604,10 +659,16 @@ function Gaps({ report }: { report: RagGapReport | null }) {
 export function RagDashboard() {
   const [days, setDays] = useState(30);
   const { data, isLoading, mutate } = useSWR<ApiResponse>(`/api/admin/rag?days=${days}`, fetcher, {
-    revalidateOnFocus: false,
+    refreshInterval: ANALYSES_REFRESH_MS,
+    keepPreviousData: true,
+  });
+  // Flux live : SWR met le timer en pause quand l'onglet n'est pas visible.
+  const { data: live, mutate: mutateLive } = useSWR<LiveResponse>(`/api/admin/rag/live?days=${days}`, fetcher, {
+    refreshInterval: LIVE_REFRESH_MS,
+    keepPreviousData: true,
   });
   const [tab, setTab] = useState<"overview" | "questions" | "gaps">("overview");
-  const [selected, setSelected] = useState<RagAnalysisRow | null>(null);
+  const [selected, setSelected] = useState<RagRow | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [sending, setSending] = useState<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -629,7 +690,7 @@ export function RagDashboard() {
     }
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(async () => {
-      const fresh = await mutate();
+      const [fresh] = await Promise.all([mutate(), mutateLive()]);
       const status = fresh?.meta?.status;
       if (status === "done" || status === "error" || Date.now() - startedAt > 10 * 60_000) {
         if (timerRef.current) clearInterval(timerRef.current);
@@ -657,13 +718,46 @@ export function RagDashboard() {
 
   const stats = data?.stats;
 
+  // Le flux live et les analyses sont deux requêtes : tant qu'elles ne portent
+  // pas sur la même fenêtre, on ignore les pending pour ne pas mélanger.
+  const pending = useMemo(
+    () => (live && live.days === days ? live.pending : []),
+    [live, days],
+  );
+  // Une seule liste pour le tableau : les questions en attente d'analyse se
+  // rangent avec les autres, du plus récent au plus ancien. Un tour analysé
+  // entre deux polls peut être dans les deux listes : la version jugée gagne.
+  const questionRows = useMemo(() => {
+    const rows = data?.rows ?? [];
+    const analyzed = new Set(rows.map((r) => `${r.source}::${r.source_id}::${r.turn_index}`));
+    const stillPending = pending.filter(
+      (r) => !analyzed.has(`${r.source}::${r.source_id}::${r.turn_index}`),
+    );
+    return [...stillPending, ...rows].sort((a, b) => b.asked_at.localeCompare(a.asked_at));
+  }, [pending, data?.rows]);
+
+  const pendingCount = questionRows.filter((r) => r.pending).length;
+
   return (
     <div className="p-6 md:p-8 max-w-[1240px] mx-auto">
       <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-xl font-semibold" style={{ color: COLORS.ink }}>
-            RAG Insights
-          </h1>
+          <div className="flex items-center gap-2.5">
+            <h1 className="text-xl font-semibold" style={{ color: COLORS.ink }}>
+              RAG Insights
+            </h1>
+            <span
+              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold"
+              style={{ background: "#e8f5ee", color: "#12855b" }}
+              title={`Questions show up here as they are asked. Refreshed every ${LIVE_REFRESH_MS / 1000}s.`}
+            >
+              <span
+                className="w-1.5 h-1.5 rounded-full animate-pulse"
+                style={{ background: "#12855b" }}
+              />
+              Live
+            </span>
+          </div>
           <p className="text-[13px] mt-0.5" style={{ color: COLORS.ink3 }}>
             What the team asks CoachelloGPT, how well it answers, and where the Notion base is
             missing content. Web chat and Slack.
@@ -721,7 +815,10 @@ export function RagDashboard() {
           value={tab}
           options={[
             { v: "overview" as const, label: "Overview" },
-            { v: "questions" as const, label: "Questions" },
+            {
+              v: "questions" as const,
+              label: pendingCount > 0 ? `Questions · ${pendingCount} new` : "Questions",
+            },
             { v: "gaps" as const, label: "Notion gaps" },
           ]}
           onChange={setTab}
@@ -743,9 +840,9 @@ export function RagDashboard() {
         </p>
       ) : (
         <>
-          {tab === "overview" && stats && <Overview stats={stats} />}
+          {tab === "overview" && stats && <Overview stats={stats} pendingCount={pendingCount} />}
           {tab === "questions" && (
-            <Questions rows={data?.rows ?? []} names={data?.names ?? {}} onSelect={setSelected} />
+            <Questions rows={questionRows} names={data?.names ?? {}} onSelect={setSelected} />
           )}
           {tab === "gaps" && <Gaps report={data?.report ?? null} />}
         </>

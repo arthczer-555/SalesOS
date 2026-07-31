@@ -78,10 +78,10 @@ type JobRow = {
   created_at: string;
 };
 
-function notionPagesOf(job: JobRow): RagNotionPage[] {
+function notionPagesOf(sources: JobRow["sources"]): RagNotionPage[] {
   const seen = new Set<string>();
   const out: RagNotionPage[] = [];
-  for (const s of job.sources ?? []) {
+  for (const s of sources ?? []) {
     if (s.kind !== "notion" || !s.title) continue;
     const key = s.url ?? s.title;
     if (seen.has(key)) continue;
@@ -92,9 +92,9 @@ function notionPagesOf(job: JobRow): RagNotionPage[] {
 }
 
 /** Packs chargés via load_guide : le libellé de l'étape porte le nom du pack. */
-function guidesOf(job: JobRow): string[] {
+function guidesOf(toolSteps: JobRow["tool_steps"]): string[] {
   const out = new Set<string>();
-  for (const step of job.tool_steps ?? []) {
+  for (const step of toolSteps ?? []) {
     if (step?.name !== "load_guide") continue;
     const label = (step.label ?? "").trim();
     const match = label.match(/[:：]\s*(.+)$/);
@@ -153,8 +153,8 @@ async function collectWebTurns(since: string): Promise<RagTurn[]> {
       askedAt: job.created_at,
       question: truncate(question, MAX_QUESTION),
       answer: truncate(answer, MAX_ANSWER),
-      notionPages: notionPagesOf(job),
-      guidesLoaded: guidesOf(job),
+      notionPages: notionPagesOf(job.sources),
+      guidesLoaded: guidesOf(job.tool_steps),
       userReply: nextQuestion.has(job.id) ? truncate(nextQuestion.get(job.id) as string, MAX_REPLY) : null,
       feedback: job.feedback === "up" || job.feedback === "down" ? job.feedback : null,
     });
@@ -163,7 +163,12 @@ async function collectWebTurns(since: string): Promise<RagTurn[]> {
 }
 
 function lastUserQuestion(job: JobRow): string | null {
-  const messages = Array.isArray(job.input_messages) ? job.input_messages : [];
+  return questionFromMessages(job.input_messages);
+}
+
+/** Dernière vraie question user d'un historique (aussi utilisée par live.ts). */
+export function questionFromMessages(input: unknown): string | null {
+  const messages = Array.isArray(input) ? (input as Anthropic.MessageParam[]) : [];
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role !== "user") continue;
     const text = userText(messages[i]);
@@ -196,7 +201,57 @@ function interpolatedDate(row: ThreadRow, index: number, total: number): string 
   return new Date(start + ((end - start) * index) / (total - 1)).toISOString();
 }
 
-async function collectSlackTurns(since: string): Promise<RagTurn[]> {
+/** Tours d'un thread Slack, dans l'ordre. */
+function turnsFromThread(row: ThreadRow): RagTurn[] {
+  const messages = Array.isArray(row.messages) ? row.messages : [];
+
+  // Déroulé : question user -> TOUT le texte que l'assistant produit ensuite
+  // -> question user suivante (qui sert aussi de réaction au tour précédent).
+  // On concatène les blocs assistant : une réponse Slack commence souvent par
+  // un préambule ("Je vais chercher...") avant l'appel d'outil, et la vraie
+  // réponse n'arrive qu'après le tool_result. Ne garder que le premier bloc
+  // ferait juger un préambule à la place de la réponse.
+  const pairs: { question: string; answer: string }[] = [];
+  let pending: string | null = null;
+  let answer = "";
+  const flush = () => {
+    if (pending && answer.trim()) pairs.push({ question: pending, answer: answer.trim() });
+    pending = null;
+    answer = "";
+  };
+  for (const msg of messages) {
+    if (msg.role === "user") {
+      const text = userText(msg);
+      if (!text) continue; // tool_result : la réponse en cours continue
+      flush();
+      pending = text;
+      continue;
+    }
+    if (msg.role === "assistant" && pending) {
+      const text = assistantText(msg);
+      if (text) answer += (answer ? "\n" : "") + text;
+    }
+  }
+  flush();
+
+  return pairs.map((pair, i) => ({
+    source: "slack" as const,
+    sourceId: row.id,
+    turnIndex: i,
+    userId: row.user_id,
+    askedAt: interpolatedDate(row, i, pairs.length),
+    question: truncate(pair.question, MAX_QUESTION),
+    answer: truncate(pair.answer, MAX_ANSWER),
+    // Les sources et les guides ne sont pas persistés côté Slack : on les
+    // déduit du texte de la réponse (citations "Source : [Titre](notion.so/...)").
+    notionPages: notionCitations(pair.answer),
+    guidesLoaded: [],
+    userReply: pairs[i + 1] ? truncate(pairs[i + 1].question, MAX_REPLY) : null,
+    feedback: null,
+  }));
+}
+
+async function fetchSlackThreads(since: string): Promise<ThreadRow[]> {
   const { data, error } = await db
     .from("slack_chat_threads")
     .select("id, user_id, messages, created_at, updated_at")
@@ -208,59 +263,12 @@ async function collectSlackTurns(since: string): Promise<RagTurn[]> {
     console.error("[rag-insights/collect] slack_chat_threads query failed:", error.message);
     return [];
   }
+  return (data ?? []) as ThreadRow[];
+}
 
-  const turns: RagTurn[] = [];
-  for (const row of (data ?? []) as ThreadRow[]) {
-    const messages = Array.isArray(row.messages) ? row.messages : [];
-
-    // Déroulé : question user -> TOUT le texte que l'assistant produit ensuite
-    // -> question user suivante (qui sert aussi de réaction au tour précédent).
-    // On concatène les blocs assistant : une réponse Slack commence souvent par
-    // un préambule ("Je vais chercher...") avant l'appel d'outil, et la vraie
-    // réponse n'arrive qu'après le tool_result. Ne garder que le premier bloc
-    // ferait juger un préambule à la place de la réponse.
-    const pairs: { question: string; answer: string }[] = [];
-    let pending: string | null = null;
-    let answer = "";
-    const flush = () => {
-      if (pending && answer.trim()) pairs.push({ question: pending, answer: answer.trim() });
-      pending = null;
-      answer = "";
-    };
-    for (const msg of messages) {
-      if (msg.role === "user") {
-        const text = userText(msg);
-        if (!text) continue; // tool_result : la réponse en cours continue
-        flush();
-        pending = text;
-        continue;
-      }
-      if (msg.role === "assistant" && pending) {
-        const text = assistantText(msg);
-        if (text) answer += (answer ? "\n" : "") + text;
-      }
-    }
-    flush();
-
-    pairs.forEach((pair, i) => {
-      turns.push({
-        source: "slack",
-        sourceId: row.id,
-        turnIndex: i,
-        userId: row.user_id,
-        askedAt: interpolatedDate(row, i, pairs.length),
-        question: truncate(pair.question, MAX_QUESTION),
-        answer: truncate(pair.answer, MAX_ANSWER),
-        // Les sources et les guides ne sont pas persistés côté Slack : on les
-        // déduit du texte de la réponse (citations "Source : [Titre](notion.so/...)").
-        notionPages: notionCitations(pair.answer),
-        guidesLoaded: [],
-        userReply: pairs[i + 1] ? truncate(pairs[i + 1].question, MAX_REPLY) : null,
-        feedback: null,
-      });
-    });
-  }
-  return turns;
+async function collectSlackTurns(since: string): Promise<RagTurn[]> {
+  const threads = await fetchSlackThreads(since);
+  return threads.flatMap(turnsFromThread);
 }
 
 /** Liens Notion cités en markdown dans une réponse Slack. */
@@ -279,6 +287,24 @@ function notionCitations(answer: string): RagNotionPage[] {
 
 // ── Entrée principale ────────────────────────────────────────────────────────
 
+const turnKey = (t: { source: string; sourceId: string; turnIndex: number }) =>
+  `${t.source}::${t.sourceId}::${t.turnIndex}`;
+
+/** Clés des tours déjà jugés sur la fenêtre. `null` si la requête échoue. */
+async function analyzedKeys(since: string): Promise<Set<string> | null> {
+  const { data, error } = await db
+    .from("rag_question_analyses")
+    .select("source, source_id, turn_index")
+    .gte("asked_at", since)
+    .limit(10_000);
+
+  if (error) {
+    console.error("[rag-insights/collect] existing analyses query failed:", error.message);
+    return null;
+  }
+  return new Set((data ?? []).map((r) => `${r.source}::${r.source_id}::${r.turn_index}`));
+}
+
 /**
  * Tours des `sinceDays` derniers jours, hors tours déjà analysés.
  * Triés du plus ancien au plus récent (l'analyse suit l'ordre chronologique).
@@ -290,22 +316,89 @@ export async function collectTurns(opts: { sinceDays: number }): Promise<RagTurn
   const all = [...web, ...slack];
   if (all.length === 0) return [];
 
-  const { data: known, error } = await db
-    .from("rag_question_analyses")
-    .select("source, source_id, turn_index")
-    .gte("asked_at", since)
-    .limit(10_000);
+  const seen = await analyzedKeys(since);
+  if (!seen) return [];
+
+  return all.filter((t) => !seen.has(turnKey(t))).sort((a, b) => a.askedAt.localeCompare(b.askedAt));
+}
+
+/**
+ * Même résultat que `collectTurns`, mais pensé pour être appelé souvent (la page
+ * admin poll ce flux) :
+ *   - côté web, on liste d'abord les ids de la fenêtre (requête légère) et on ne
+ *     charge l'historique complet QUE des jobs pas encore jugés. Recharger tous
+ *     les `input_messages` de la fenêtre coûte plusieurs secondes.
+ *   - `userReply` n'est pas renseigné : il ne sert qu'au juge, pas à l'affichage.
+ * Ne pas l'utiliser pour alimenter l'analyse LLM, qui a besoin de `userReply`.
+ */
+export async function collectPendingTurns(opts: { sinceDays: number }): Promise<RagTurn[]> {
+  const since = new Date(Date.now() - opts.sinceDays * 86_400_000).toISOString();
+
+  const [seen, jobIds, threads] = await Promise.all([
+    analyzedKeys(since),
+    listWebJobIds(since),
+    fetchSlackThreads(since),
+  ]);
+  if (!seen) return [];
+
+  const pendingJobIds = jobIds.filter(
+    (id) => !seen.has(turnKey({ source: "web", sourceId: id, turnIndex: 0 })),
+  );
+
+  const slack = threads.flatMap(turnsFromThread).filter((t) => !seen.has(turnKey(t)));
+  const web = await fetchWebTurnsByIds(pendingJobIds);
+
+  return [...web, ...slack].sort((a, b) => a.askedAt.localeCompare(b.askedAt));
+}
+
+/** Ids des tours web de la fenêtre, sans charger leur historique. */
+async function listWebJobIds(since: string): Promise<string[]> {
+  const { data, error } = await db
+    .from("chat_jobs")
+    .select("id")
+    .eq("status", "done")
+    .gte("created_at", since)
+    .order("created_at", { ascending: false })
+    .limit(2000);
 
   if (error) {
-    console.error("[rag-insights/collect] existing analyses query failed:", error.message);
+    console.error("[rag-insights/collect] chat_jobs id query failed:", error.message);
+    return [];
+  }
+  return (data ?? []).map((r) => r.id as string);
+}
+
+async function fetchWebTurnsByIds(ids: string[]): Promise<RagTurn[]> {
+  if (ids.length === 0) return [];
+
+  const { data, error } = await db
+    .from("chat_jobs")
+    .select("id, user_id, input_messages, final_text, sources, tool_steps, feedback, created_at")
+    .in("id", ids);
+
+  if (error) {
+    console.error("[rag-insights/collect] chat_jobs payload query failed:", error.message);
     return [];
   }
 
-  const seen = new Set(
-    (known ?? []).map((r) => `${r.source}::${r.source_id}::${r.turn_index}`),
-  );
-
-  return all
-    .filter((t) => !seen.has(`${t.source}::${t.sourceId}::${t.turnIndex}`))
-    .sort((a, b) => a.askedAt.localeCompare(b.askedAt));
+  const turns: RagTurn[] = [];
+  for (const job of (data ?? []) as JobRow[]) {
+    const question = lastUserQuestion(job);
+    const answer = (job.final_text ?? "").trim();
+    if (!question || !answer) continue;
+    turns.push({
+      source: "web",
+      sourceId: job.id,
+      turnIndex: 0,
+      userId: job.user_id,
+      askedAt: job.created_at,
+      question: truncate(question, MAX_QUESTION),
+      answer: truncate(answer, MAX_ANSWER),
+      notionPages: notionPagesOf(job.sources),
+      guidesLoaded: guidesOf(job.tool_steps),
+      userReply: null,
+      feedback: job.feedback === "up" || job.feedback === "down" ? job.feedback : null,
+    });
+  }
+  return turns;
 }
