@@ -13,6 +13,11 @@ import {
   fetchClaapMeetingContext,
 } from "@/lib/claap";
 import { sendManualDealAlert } from "@/lib/sales-coach/admin-alert";
+import {
+  confirmInternalMeeting,
+  needsInternalCheck,
+  type InternalCheckResult,
+} from "@/lib/sales-coach/internal-meeting";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -119,6 +124,32 @@ export async function POST(req: NextRequest) {
       participantEmails.length > 1 &&
       capturedExternals.length === 0;
 
+    // Interne certain : aucun deal ne peut le faire repasser en externe (cf.
+    // l'override plus bas), inutile de lancer le résolveur.
+    if (looksGenuinelyInternal) {
+      return NextResponse.json({ ok: true, ignored: "meeting_type_internal" });
+    }
+
+    // Barrière "meeting interne" (lib/sales-coach/internal-meeting.ts) : quand
+    // aucun externe n'est confirmé présent dans l'invite, un juge lit le
+    // transcript et ne répond "internal" que s'il en est certain. Lancé en
+    // parallèle du résolveur de deal pour ne pas allonger le webhook ; son
+    // verdict prime sur un deal résolu, car un point interne qui parle d'un
+    // client se fait accrocher à son deal par le matching sémantique.
+    const internalCheckP: Promise<InternalCheckResult | null> =
+      recorderEmail && transcriptUrl && needsInternalCheck(rec.meeting?.participants, recorderEmail)
+        ? confirmInternalMeeting({
+            recordingId: rec.id,
+            title: rec.title ?? null,
+            recorderEmail,
+            participants: rec.meeting?.participants,
+            transcriptUrl,
+          }).catch((e) => {
+            console.warn("[claap-webhook] internal-meeting check failed:", e);
+            return null;
+          })
+        : Promise.resolve(null);
+
     // Fallback: if Claap didn't link a (valid) deal, try to resolve via
     // participant emails (stage 1+2 inside the resolver), the title hint
     // (stage 3), and finally LLM semantic matching against the active deal
@@ -173,7 +204,7 @@ export async function POST(req: NextRequest) {
       // Erilia et ses trois interlocutrices, avec un deal ouvert à 20 k€.
       // L'appel n'a lieu que sur un échec complet : un appel Claap + un appel
       // LLM, tous deux hors du chemin nominal.
-      if (!dealId && !looksGenuinelyInternal) {
+      if (!dealId) {
         const meetingContext = await fetchClaapMeetingContext(rec.id).catch((e) => {
           console.warn("[claap-webhook] meeting context fetch failed:", e);
           return null;
@@ -208,7 +239,19 @@ export async function POST(req: NextRequest) {
     // meetings whose deal we had just proven. No deal at all → trust Claap and
     // drop; the recording stays reachable from the "Analyser un meeting passé"
     // modal.
-    if (meetingType === "internal" && dealId && !looksGenuinelyInternal) {
+    //
+    // Exception : le juge a confirmé un meeting interne. Il est alors traité
+    // comme tout meeting interne (aucune ligne, aucune alerte Slack, aucune
+    // analyse), même si un deal a été résolu entre-temps.
+    const internalCheck = await internalCheckP;
+    if (internalCheck?.internal) {
+      console.log(
+        `[claap-webhook] confirmed internal meeting for recording ${rec.id} (Claap type "${meetingType}"): ${internalCheck.reasoning}`,
+      );
+      return NextResponse.json({ ok: true, ignored: "internal_meeting_confirmed" });
+    }
+
+    if (meetingType === "internal" && dealId) {
       console.log(
         `[claap-webhook] overriding internal→external for recording ${rec.id} — deal ${dealId} resolved`,
       );

@@ -1,3 +1,4 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { sendSalesCoachSlack } from "./slack";
@@ -30,6 +31,16 @@ import {
   type Audience,
   type MeetingRecap,
 } from "./meeting-recap";
+import {
+  MAX_LANG_ATTEMPTS,
+  collectProse,
+  detectOutputLang,
+  findLangMismatch,
+  outputLangDirective,
+  outputLangName,
+  outputLangRetryReminder,
+  type OutputLang,
+} from "./language";
 import { scoreOneDeal } from "../deal-scoring";
 import { anthropicClient } from "@/lib/anthropic-client";
 
@@ -62,6 +73,64 @@ function renderPriorAnalyses(rows: PriorAnalysisRow[]): string {
     if (summary) lines.push(`  Résumé : ${summary}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Appel coaching (prospect ou client) avec deux garde-fous, retentés ensemble
+ * jusqu'à MAX_LANG_ATTEMPTS fois avant de passer l'analyse en erreur :
+ *  - forme : Haiku 4.5 renvoie parfois axes/meddic/bosche en string JSON
+ *    éclatée caractère par caractère (objet à clés numériques), irrécupérable ;
+ *  - langue : toute la prose doit être dans `outputLang` (voir language.ts).
+ * Le streaming garde la connexion TCP active pendant la génération.
+ */
+async function generateCoachingAnalysis<T extends AnySalesCoachAnalysis>(args: {
+  id: string;
+  userId: string | null;
+  model: string;
+  system: string;
+  tool: Anthropic.Tool;
+  prompt: string;
+  outputLang: OutputLang;
+  isShapeValid: (analysis: T) => boolean;
+  usageTag: string;
+  label: "prospect" | "client";
+}): Promise<T> {
+  const client = anthropicClient({ timeout: 600_000 });
+  let retryReminder = "";
+  let lastFailure: "shape" | "lang" = "shape";
+  for (let attempt = 1; attempt <= MAX_LANG_ATTEMPTS; attempt++) {
+    const msg = await client.messages.stream({
+      model: args.model,
+      max_tokens: 8000,
+      system: args.system,
+      messages: [{ role: "user", content: args.prompt + retryReminder }],
+      tools: [args.tool],
+      tool_choice: { type: "tool" as const, name: args.tool.name },
+    }).finalMessage();
+    logUsage(args.userId, args.model, msg.usage.input_tokens, msg.usage.output_tokens, args.usageTag);
+    const tb = msg.content.find((b) => b.type === "tool_use");
+    if (!tb || !("input" in tb)) throw new Error(`No tool_use block in ${args.label} coaching response`);
+    const repaired = repairAnalysis(tb.input as T);
+    if (!args.isShapeValid(repaired)) {
+      lastFailure = "shape";
+      console.warn(
+        `[sales-coach/analyze/${args.id}] malformed ${args.label} shape from ${args.model} (attempt ${attempt}/${MAX_LANG_ATTEMPTS}), retrying`,
+      );
+      continue;
+    }
+    const wrongLang = findLangMismatch(collectProse(repaired), args.outputLang);
+    if (!wrongLang) return repaired;
+    lastFailure = "lang";
+    console.warn(
+      `[sales-coach/analyze/${args.id}] ${args.label} analysis not in ${args.outputLang} (attempt ${attempt}/${MAX_LANG_ATTEMPTS}): "${wrongLang.slice(0, 120)}"`,
+    );
+    retryReminder = `\n\n${outputLangRetryReminder(args.outputLang)}`;
+  }
+  throw new Error(
+    lastFailure === "lang"
+      ? `Sales coach analysis kept coming back in the wrong language (expected ${outputLangName(args.outputLang)}) after ${MAX_LANG_ATTEMPTS} attempts. Re-run the analysis.`
+      : `Sales coach ${args.label} output malformed after ${MAX_LANG_ATTEMPTS} attempts (axes stringified by ${args.model}). Re-run the analysis.`,
+  );
 }
 
 export type RunAnalysisResult =
@@ -123,6 +192,11 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
     const transcriptForClaude = rawText.length > MAX_TRANSCRIPT_CHARS_FOR_CLAUDE
       ? rawText.slice(0, MAX_TRANSCRIPT_CHARS_FOR_CLAUDE)
       : rawText;
+
+    // Langue de sortie décidée UNE fois, ici, pour l'analyse ET le recap :
+    // les deux appels la reçoivent imposée et leur sortie est vérifiée.
+    const outputLang = detectOutputLang(rawText);
+    console.log(`[sales-coach/analyze/${id}] output language=${outputLang}`);
 
     let analyzeModel = DEFAULT_ANALYZE_MODEL;
     let recapModel: string | undefined;
@@ -321,37 +395,22 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
         ``,
         `## Transcription`,
         transcriptForClaude,
+        ``,
+        outputLangDirective(outputLang),
       ].filter(Boolean).join("\n");
 
-      // Streaming keeps the TCP connection active during generation — see
-      // earlier note. Same rationale for both calls below.
-      const client = anthropicClient({ timeout: 600_000 });
-      // Haiku 4.5 occasionally returns axes/meddic/bosche as a JSON string
-      // spread char-by-char into a numeric-keyed object — unrecoverable client-
-      // side. Validate shape and retry once before giving up.
-      const coachingStreamP = (async () => {
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          const msg = await client.messages.stream({
-            model: analyzeModel,
-            max_tokens: 8000,
-            system: SALES_COACH_SYSTEM_PROMPT,
-            messages: [{ role: "user", content: coachingPrompt }],
-            tools: [salesCoachTool],
-            tool_choice: { type: "tool" as const, name: "sales_coach_analysis" },
-          }).finalMessage();
-          logUsage(row.user_id, analyzeModel, msg.usage.input_tokens, msg.usage.output_tokens, "sales_coach_analyze");
-          const tb = msg.content.find((b) => b.type === "tool_use");
-          if (!tb || !("input" in tb)) throw new Error("No tool_use block in coaching response");
-          const repaired = repairAnalysis(tb.input as SalesCoachAnalysis);
-          if (isProspectAnalysisShapeValid(repaired)) return { message: msg, analysis: repaired };
-          console.warn(
-            `[sales-coach/analyze/${id}] malformed prospect shape from ${analyzeModel} (attempt ${attempt}/2) — retrying`,
-          );
-        }
-        throw new Error(
-          `Sales coach output malformed after retry (axes/meddic stringified by ${analyzeModel}). Re-run the analysis.`,
-        );
-      })();
+      const coachingP = generateCoachingAnalysis<SalesCoachAnalysis>({
+        id,
+        userId: row.user_id,
+        model: analyzeModel,
+        system: SALES_COACH_SYSTEM_PROMPT,
+        tool: salesCoachTool,
+        prompt: coachingPrompt,
+        outputLang,
+        isShapeValid: isProspectAnalysisShapeValid,
+        usageTag: "sales_coach_analyze",
+        label: "prospect",
+      });
 
       // Re-score the deal so the recap reflects the just-arrived meeting.
       // Runs in parallel with the coaching analysis; the recap is chained off
@@ -385,11 +444,12 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
           meetingStartedAt: row.meeting_started_at,
           userId: row.user_id,
           model: recapModel,
+          outputLang,
         }),
       );
 
-      const [coachingResult, recapResult] = await Promise.all([coachingStreamP, recapP]);
-      analysis = coachingResult.analysis;
+      const [coachingResult, recapResult] = await Promise.all([coachingP, recapP]);
+      analysis = coachingResult;
       scoreGlobal = computeGlobalScore(analysis);
       recap = recapResult.recap;
     } else {
@@ -406,32 +466,22 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
         ``,
         `## Transcription`,
         transcriptForClaude,
+        ``,
+        outputLangDirective(outputLang),
       ].filter(Boolean).join("\n");
 
-      const client = anthropicClient({ timeout: 600_000 });
-      const coachingStreamP = (async () => {
-        for (let attempt = 1; attempt <= 2; attempt++) {
-          const msg = await client.messages.stream({
-            model: analyzeModel,
-            max_tokens: 8000,
-            system: CLIENT_SALES_COACH_SYSTEM_PROMPT,
-            messages: [{ role: "user", content: clientPrompt }],
-            tools: [clientSalesCoachTool],
-            tool_choice: { type: "tool" as const, name: "sales_coach_client_analysis" },
-          }).finalMessage();
-          logUsage(row.user_id, analyzeModel, msg.usage.input_tokens, msg.usage.output_tokens, "sales_coach_analyze_client");
-          const tb = msg.content.find((b) => b.type === "tool_use");
-          if (!tb || !("input" in tb)) throw new Error("No tool_use block in client coaching response");
-          const repaired = repairAnalysis(tb.input as ClientSalesCoachAnalysis);
-          if (isClientAnalysisShapeValid(repaired)) return { message: msg, analysis: repaired };
-          console.warn(
-            `[sales-coach/analyze/${id}] malformed client shape from ${analyzeModel} (attempt ${attempt}/2) — retrying`,
-          );
-        }
-        throw new Error(
-          `Sales coach client output malformed after retry (axes stringified by ${analyzeModel}). Re-run the analysis.`,
-        );
-      })();
+      const coachingP = generateCoachingAnalysis<ClientSalesCoachAnalysis>({
+        id,
+        userId: row.user_id,
+        model: analyzeModel,
+        system: CLIENT_SALES_COACH_SYSTEM_PROMPT,
+        tool: clientSalesCoachTool,
+        prompt: clientPrompt,
+        outputLang,
+        isShapeValid: isClientAnalysisShapeValid,
+        usageTag: "sales_coach_analyze_client",
+        label: "client",
+      });
 
       const recapP = generateMeetingRecap({
         transcript: transcriptForClaude,
@@ -443,10 +493,11 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
         meetingStartedAt: row.meeting_started_at,
         userId: row.user_id,
         model: recapModel,
+        outputLang,
       });
 
-      const [coachingResult, recapResult] = await Promise.all([coachingStreamP, recapP]);
-      analysis = coachingResult.analysis;
+      const [coachingResult, recapResult] = await Promise.all([coachingP, recapP]);
+      analysis = coachingResult;
       scoreGlobal = computeGlobalScore(analysis);
       recap = recapResult.recap;
     }

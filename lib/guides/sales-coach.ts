@@ -19,7 +19,7 @@ Ton objectif : produire un debrief structuré, actionnable, honnête et factuel,
 
 ## Langue (NON NÉGOCIABLE)
 
-Produis TOUS les champs de texte libre dans la langue dominante du transcript. Ne traduis JAMAIS. Transcript en français -> tout en français. Transcript en anglais -> tout en anglais. Cette règle couvre \`summary\`, \`notes\`, \`evidence\`, \`explanation\`, \`recommendation\`, \`strengths\`, \`weaknesses\`, \`coaching_priorities\`, \`risks\`, \`meeting_kind_reasoning\`, ainsi que \`label\` et \`quote\` des \`key_moments\`. Les noms d'axes et de dimensions du schéma (Opening, Discovery, MEDDIC, BOSCHE...) ne changent pas ; seules TES valeurs suivent la langue du transcript.
+La langue de sortie est imposée à la fin du message utilisateur (section « LANGUE DE SORTIE » ou « OUTPUT LANGUAGE »). Elle s'applique à TOUS les champs de texte libre : \`summary\`, \`notes\`, \`explanation\`, \`recommendation\`, \`strengths\`, \`weaknesses\`, \`coaching_priorities\`, \`risks\`, \`meeting_kind_reasoning\`, \`label\` des \`key_moments\`. Elle prime sur la langue de ces instructions, du contexte HubSpot, de l'historique et des exemples. Seules exceptions : les citations verbatim (\`evidence\` quand c'est un extrait, \`quote\` des \`key_moments\`) restent telles que prononcées, et les noms d'axes et de dimensions du schéma (Opening, Discovery, MEDDIC, BOSCHE...) ne changent pas. Une réponse dans une autre langue est rejetée.
 
 Règles absolues :
 - Ne jamais inventer. Si une information n'est pas dans la transcription ou dans le contexte deal, ne la cite pas.
@@ -38,7 +38,7 @@ N'utilise JAMAIS le tiret long (\`—\`, em dash) dans aucun champ produit. Cett
 
 - \`strengths\` et \`weaknesses\` : chaque entrée est un fragment court, 6 à 15 mots. Verbe ou nom + objet précis. Bon : "Pas de challenge sur le budget". Mauvais : "Discovery faible sur le budget car le sales n'a pas creusé".
 - \`coaching_priorities\` : chaque action est UNE phrase de 15 à 25 mots. Format \`verbe à l'infinitif + objet précis + cible ou pourquoi\`. Une seule idée par bullet. Interdit : énumérations inline \`(1)... (2)...\`, deux actions empilées avec "et", justification post-bullet à rallonge.
-- \`summary\` : 2 à 3 phrases courtes, scannables en 10 secondes. Pas d'énumérations inline. Langage factuel et concret, pas de métaphores ni d'expressions imagées (interdit : "défendre l'ego", "porte entrouverte", "garder la main", "mettre les pieds dans le plat", etc.). Vérifie l'orthographe et l'accord des participes présents (ex : "clarifiant", pas "clarifiand"). Si tu ne peux pas dire la chose en français standard et concret, reformule.
+- \`summary\` : 2 à 3 phrases courtes, scannables en 10 secondes. Pas d'énumérations inline. Langage factuel et concret, pas de métaphores ni d'expressions imagées (interdit : "défendre l'ego", "porte entrouverte", "garder la main", "mettre les pieds dans le plat", etc.). Vérifie l'orthographe et l'accord des participes présents (ex : "clarifiant", pas "clarifiand"). Si tu ne peux pas dire la chose de façon standard et concrète dans la langue de sortie, reformule.
 
 ## Échelle de notation calibrée (à appliquer partout : axes coaching, MEDDIC, BOSCHE)
 
@@ -391,7 +391,7 @@ export const KEY_MOMENT_LABELS: Record<KeyMomentKind, string> = {
   engagement: "Engagement",
   objection: "Objection",
   pivot: "Pivot",
-  doubt: "Doute",
+  doubt: "Doubt",
   next_step: "Next step",
   concession: "Concession",
 };
@@ -879,12 +879,22 @@ export function isClientAnalysisShapeValid(analysis: Partial<ClientSalesCoachAna
 
 export const MEETING_KIND_LABELS: Record<MeetingKind, string> = {
   discovery_r1: "Discovery R1",
-  discovery_deeper: "Discovery approfondie",
-  demo: "Démo",
-  negotiation: "Négociation",
+  discovery_deeper: "Deep-dive discovery",
+  demo: "Demo",
+  negotiation: "Negotiation",
   closing: "Closing",
   follow_up: "Follow-up",
   kickoff: "Kickoff",
+  other: "Other",
+};
+
+// Variante française, réservée au debrief Slack d'un meeting en français
+// (l'UI est en anglais).
+export const MEETING_KIND_LABELS_FR: Record<MeetingKind, string> = {
+  ...MEETING_KIND_LABELS,
+  discovery_deeper: "Discovery approfondie",
+  demo: "Démo",
+  negotiation: "Négociation",
   other: "Autre",
 };
 
@@ -911,6 +921,13 @@ export const CLIENT_MEETING_KIND_LABELS: Record<ClientMeetingKind, string> = {
   qbr: "QBR",
   expansion_call: "Expansion call",
   escalation: "Escalation",
+  renewal_prep: "Renewal prep",
+  training: "Training",
+  other: "Other",
+};
+
+export const CLIENT_MEETING_KIND_LABELS_FR: Record<ClientMeetingKind, string> = {
+  ...CLIENT_MEETING_KIND_LABELS,
   renewal_prep: "Pré-renouvellement",
   training: "Formation",
   other: "Autre",
@@ -940,7 +957,7 @@ IMPORTANT : ce n'est PAS un meeting de qualification prospect. Ne cherche pas à
 
 ## Langue (NON NÉGOCIABLE)
 
-Produis TOUS les champs de texte libre dans la langue dominante du transcript. Ne traduis JAMAIS. Transcript en français -> tout en français. Transcript en anglais -> tout en anglais. Cette règle couvre \`summary\`, \`notes\`, \`evidence\`, \`explanation\`, \`recommendation\`, \`strengths\`, \`weaknesses\`, \`coaching_priorities\`, \`risks\`, \`customer_health.*\`, \`meeting_kind_reasoning\`, ainsi que \`label\` et \`quote\` des \`key_moments\`. Les noms d'axes et de dimensions du schéma (Opening, Discovery, Customer Health...) ne changent pas ; seules TES valeurs suivent la langue du transcript.
+La langue de sortie est imposée à la fin du message utilisateur (section « LANGUE DE SORTIE » ou « OUTPUT LANGUAGE »). Elle s'applique à TOUS les champs de texte libre : \`summary\`, \`notes\`, \`explanation\`, \`recommendation\`, \`strengths\`, \`weaknesses\`, \`coaching_priorities\`, \`risks\`, \`customer_health.*\`, \`meeting_kind_reasoning\`, \`label\` des \`key_moments\`. Elle prime sur la langue de ces instructions, du contexte HubSpot et des exemples. Seules exceptions : les citations verbatim (\`evidence\` quand c'est un extrait, \`quote\` des \`key_moments\`) restent telles que prononcées, et les noms d'axes et de dimensions du schéma (Opening, Discovery, Customer Health...) ne changent pas. Une réponse dans une autre langue est rejetée.
 
 Règles absolues :
 - Ne jamais inventer. Si une information n'est pas dans la transcription ou dans le contexte deal, ne la cite pas.
@@ -959,8 +976,8 @@ N'utilise JAMAIS le tiret long (\`—\`, em dash) dans aucun champ produit. Cett
 
 - \`strengths\` et \`weaknesses\` : chaque entrée est un fragment court, 6 à 15 mots. Verbe ou nom + objet précis. Bon : "Rappel ROI chiffré en 30s d'ouverture". Mauvais : "Value reinforcement faible car pas de chiffres d'usage cités sur les 3 derniers mois".
 - \`coaching_priorities\` : chaque action est UNE phrase de 15 à 25 mots. Format \`verbe à l'infinitif + objet précis + cible ou pourquoi\`. Une seule idée par bullet. Interdit : énumérations inline \`(1)... (2)...\`, deux actions empilées avec "et", justification post-bullet à rallonge.
-- \`summary\` : 2 à 3 phrases courtes, scannables en 10 secondes. Pas d'énumérations inline. Langage factuel et concret, pas de métaphores ni d'expressions imagées (interdit : "défendre l'ego", "porte entrouverte", "garder la main", "mettre les pieds dans le plat", etc.). Vérifie l'orthographe et l'accord des participes présents (ex : "clarifiant", pas "clarifiand"). Si tu ne peux pas dire la chose en français standard et concret, reformule.
-- \`customer_health.*\` : 1 à 3 phrases courtes par dimension, 8 à 20 mots chacune. Pas d'énumérations inline \`(1)... (2)... (3)...\`. Pas de sous-listes. Si rien d'observable, mettre exactement \`Pas observable dans ce meeting\`.
+- \`summary\` : 2 à 3 phrases courtes, scannables en 10 secondes. Pas d'énumérations inline. Langage factuel et concret, pas de métaphores ni d'expressions imagées (interdit : "défendre l'ego", "porte entrouverte", "garder la main", "mettre les pieds dans le plat", etc.). Vérifie l'orthographe et l'accord des participes présents (ex : "clarifiant", pas "clarifiand"). Si tu ne peux pas dire la chose de façon standard et concrète dans la langue de sortie, reformule.
+- \`customer_health.*\` : 1 à 3 phrases courtes par dimension, 8 à 20 mots chacune. Pas d'énumérations inline \`(1)... (2)... (3)...\`. Pas de sous-listes. Si rien d'observable, laisse la chaîne vide (l'interface affiche alors elle-même "Not observable in this meeting").
 
 ## Échelle de notation calibrée (appliquer à tous les axes)
 
@@ -1012,7 +1029,7 @@ Dans chaque palier, prends la borne haute si l'exécution est nette et fluide, l
 
 ## 2. Customer Health (TOUJOURS rempli, qualitatif uniquement)
 
-Pour chaque dimension, 1 à 3 phrases factuelles basées sur ce qui est observable dans le meeting. Pas de score. Pas de note chiffrée. Une lecture qualitative qui sert à comprendre l'état réel du compte. Si une dimension n'a aucune donnée observable, mets exactement "Pas observable dans ce meeting" - n'invente rien.
+Pour chaque dimension, 1 à 3 phrases factuelles basées sur ce qui est observable dans le meeting. Pas de score. Pas de note chiffrée. Une lecture qualitative qui sert à comprendre l'état réel du compte. Si une dimension n'a aucune donnée observable, laisse la chaîne vide - n'invente rien.
 
 - **relationship** : santé de la relation. Champion en place ? Multi-threading sur plusieurs stakeholders ? Confiance / chaleur dans les échanges ? Tensions ou distance ?
 - **adoption** : usage produit, engagement avec le programme. Le client utilise-t-il activement la plateforme ? Sessions coaching mentionnées ? Adhésion équipe ?
@@ -1046,7 +1063,7 @@ Utilise l'outil sales_coach_client_analysis pour retourner ton analyse.`;
 const customerHealthSchema = {
   type: "object" as const,
   properties: {
-    relationship: { type: "string", description: "1-3 phrases sur la santé de la relation (champion, multi-threading, confiance). 'Pas observable dans ce meeting' si aucun signal." },
+    relationship: { type: "string", description: "1-3 phrases sur la santé de la relation (champion, multi-threading, confiance). Chaîne vide si aucun signal." },
     adoption: { type: "string", description: "1-3 phrases sur l'usage produit / engagement avec le programme." },
     sentiment: { type: "string", description: "1-3 phrases sur la satisfaction implicite (positif/neutre/préoccupé)." },
     expansion_signals: { type: "string", description: "1-3 phrases sur les ouvertures d'expansion (autres équipes, nouveaux use cases)." },

@@ -6,12 +6,14 @@ import type {
 } from "@/lib/guides/sales-coach";
 import {
   CLIENT_MEETING_KIND_LABELS,
+  CLIENT_MEETING_KIND_LABELS_FR,
   MEETING_KIND_LABELS,
+  MEETING_KIND_LABELS_FR,
   extractStringArray,
   repairAnalysis,
 } from "@/lib/guides/sales-coach";
 import type { DealSnapshot } from "@/lib/hubspot";
-import { detectScriptLang } from "@/lib/video/lang";
+import { detectOutputLang, type OutputLang } from "./language";
 import type { Audience } from "./meeting-recap";
 import {
   dedupeRecipients,
@@ -31,6 +33,7 @@ import {
  */
 function formatAnalysisDebrief(args: {
   audience: Audience;
+  lang: OutputLang;
   dealName: string;
   dealStage: string | null;
   meetingTitle: string;
@@ -44,6 +47,7 @@ function formatAnalysisDebrief(args: {
 }): string {
   const {
     audience,
+    lang,
     dealName,
     dealStage,
     meetingTitle,
@@ -57,15 +61,11 @@ function formatAnalysisDebrief(args: {
   } = args;
   const isClient = audience === "client";
 
-  // Langue du debrief = langue du contenu généré (lui-même calé sur la langue
-  // du transcript via le system prompt). On localise donc les labels Slack pour
-  // qu'ils matchent le contenu : meeting FR -> labels FR, meeting EN -> labels EN.
+  // Labels Slack dans la langue du contenu (`lang`, décidée par l'appelant) :
+  // meeting FR -> labels FR, meeting EN -> labels EN.
   const strengthsRaw = extractStringArray(analysis.strengths);
   const weaknessesRaw = extractStringArray(analysis.weaknesses);
   const prioritiesRaw = extractStringArray(analysis.coaching_priorities);
-  const lang = detectScriptLang(
-    [analysis.summary ?? "", ...strengthsRaw, ...weaknessesRaw, ...prioritiesRaw].join(" "),
-  );
   const t = lang === "fr"
     ? {
         debrief: "DEBRIEF COACHING",
@@ -93,10 +93,11 @@ function formatAnalysisDebrief(args: {
   const date = meetingStartedAt
     ? new Date(meetingStartedAt).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })
     : "";
+  const kindLabels = isClient
+    ? (lang === "fr" ? CLIENT_MEETING_KIND_LABELS_FR : CLIENT_MEETING_KIND_LABELS)
+    : (lang === "fr" ? MEETING_KIND_LABELS_FR : MEETING_KIND_LABELS);
   const kindLabel = meetingKind
-    ? isClient
-      ? CLIENT_MEETING_KIND_LABELS[meetingKind as ClientMeetingKind]
-      : MEETING_KIND_LABELS[meetingKind as MeetingKind]
+    ? (kindLabels as Record<string, string>)[meetingKind] ?? null
     : null;
 
   const headerEmoji = isClient ? ":handshake:" : ":dart:";
@@ -166,7 +167,7 @@ export async function sendSalesCoachSlack(
 ): Promise<{ ok: boolean; error?: string }> {
   const { data: row } = await db
     .from("sales_coach_analyses")
-    .select("id, user_id, hubspot_deal_id, meeting_title, meeting_started_at, meeting_kind, audience, analysis, score_global, deal_snapshot, claap_recording_id, recorder_email")
+    .select("id, user_id, hubspot_deal_id, meeting_title, meeting_started_at, meeting_kind, audience, analysis, score_global, deal_snapshot, claap_recording_id, recorder_email, transcript_text")
     .eq("id", analysisId)
     .single();
 
@@ -222,8 +223,20 @@ export async function sendSalesCoachSlack(
 
   const rawAnalysis = repairAnalysis(row.analysis as AnySalesCoachAnalysis);
   const resolvedAudience: Audience = audience ?? "prospect";
+  // Même langue que celle imposée à la génération (recalculée sur le
+  // transcript) ; repli sur le contenu pour les lignes sans transcript stocké.
+  const lang = detectOutputLang(
+    (row.transcript_text as string | null) ||
+      [
+        rawAnalysis.summary ?? "",
+        ...extractStringArray(rawAnalysis.strengths),
+        ...extractStringArray(rawAnalysis.weaknesses),
+        ...extractStringArray(rawAnalysis.coaching_priorities),
+      ].join(" "),
+  );
   const body = formatAnalysisDebrief({
     audience: resolvedAudience,
+    lang,
     dealName,
     dealStage,
     meetingTitle: row.meeting_title ?? "Meeting",

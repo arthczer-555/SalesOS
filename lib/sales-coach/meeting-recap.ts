@@ -2,7 +2,6 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logUsage } from "../log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
-import { detectScriptLang } from "@/lib/video/lang";
 import type { DealSnapshot } from "../hubspot";
 import { renderDealContextForPrompt } from "../hubspot";
 import { extractTitleSearchHint } from "../claap";
@@ -15,6 +14,15 @@ import {
   resolveMeetingParticipantRecipients,
   type MeetingRecipient,
 } from "./slack-recipients";
+import {
+  MAX_LANG_ATTEMPTS,
+  detectOutputLang,
+  findLangMismatch,
+  outputLangDirective,
+  outputLangName,
+  outputLangRetryReminder,
+  type OutputLang,
+} from "./language";
 import { anthropicClient } from "@/lib/anthropic-client";
 
 const DEFAULT_RECAP_MODEL = "claude-haiku-4-5-20251001";
@@ -41,7 +49,7 @@ export const MEETING_RECAP_SYSTEM_PROMPT = `Tu es un analyste sales senior chez 
 
 Règles dures :
 - Réponds UNIQUEMENT via l'outil \`meeting_recap\`.
-- Langue : suis la langue dominante du transcript. Ne traduis JAMAIS. Si le transcript est en français, rends les 5 sections en français. Idem anglais. Les labels (Context, Need, etc.) sont injectés côté client - ne les répète pas dans tes valeurs.
+- Langue : la langue de sortie est imposée à la fin du message utilisateur (section « LANGUE DE SORTIE » ou « OUTPUT LANGUAGE »). Rédige les 5 sections dans cette langue, même si le transcript, le contexte HubSpot ou l'exemple ci-dessous sont dans une autre. Une réponse dans une autre langue est rejetée. Les labels (Context, Need, etc.) sont injectés côté client - ne les répète pas dans tes valeurs.
 - **Format STRICT de chaque section : 1 à 3 bullet points courts.** Un bullet = une ligne commençant par \`- \` (tiret + espace), MAX 15 mots, idéalement 8-12. Sépare chaque bullet par un VRAI saut de ligne (touche Entrée), JAMAIS par les caractères littéraux backslash-n. Aucune phrase composée, aucun paragraphe, aucun sous-bullet. Style télégraphique, dense, scannable en 5 secondes.
 - N'invente JAMAIS de chiffres, montants, noms, dates, industries, employés, localisations qui ne sont pas dans les sources fournies (transcript, deal HubSpot, société HubSpot, contacts HubSpot).
 - Si une section n'a vraiment rien d'utile à dire à partir des sources, **laisse-la complètement vide** (chaîne vide ""). Ne mets pas de phrase placeholder type "Aucun risque identifié" - préfère le vide. Mieux vaut un recap court et dense qu'un recap rempli de fluff.
@@ -102,7 +110,7 @@ Note les bullets : courts, factuels, scannables. Pas de "qui revient de Thaïlan
 
 export const meetingRecapTool: Anthropic.Tool = {
   name: "meeting_recap",
-  description: "Recap structuré post-meeting (5 sections) dans la langue du transcript.",
+  description: "Recap structuré post-meeting (5 sections) dans la langue de sortie imposée.",
   input_schema: {
     type: "object" as const,
     properties: {
@@ -216,6 +224,8 @@ export async function generateMeetingRecap(args: {
   meetingStartedAt: string | null;
   userId: string | null;
   model?: string;
+  /** Langue imposée, décidée une fois sur le transcript (voir language.ts). */
+  outputLang: OutputLang;
 }): Promise<{ recap: MeetingRecap; usage: { input: number; output: number } }> {
   const model = args.model || DEFAULT_RECAP_MODEL;
 
@@ -247,29 +257,52 @@ export async function generateMeetingRecap(args: {
     }
   }
 
-  sections.push("", `## Transcription du meeting`, args.transcript);
+  sections.push(
+    "",
+    `## Transcription du meeting`,
+    args.transcript,
+    "",
+    outputLangDirective(args.outputLang),
+  );
+  const prompt = sections.join("\n");
 
+  // Même garde-fou que l'analyse coaching (run-analysis.ts) : un recap dans
+  // une autre langue que celle imposée est régénéré, puis refusé. Mieux vaut
+  // une analyse en erreur (relançable) qu'un recap Slack dans la mauvaise
+  // langue.
   const client = anthropicClient({ timeout: 600_000 });
-  const stream = client.messages.stream({
-    model,
-    max_tokens: 4000,
-    system: MEETING_RECAP_SYSTEM_PROMPT,
-    messages: [{ role: "user", content: sections.join("\n") }],
-    tools: [meetingRecapTool],
-    tool_choice: { type: "tool" as const, name: "meeting_recap" },
-  });
-  const message = await stream.finalMessage();
+  let retryReminder = "";
+  for (let attempt = 1; attempt <= MAX_LANG_ATTEMPTS; attempt++) {
+    const message = await client.messages.stream({
+      model,
+      max_tokens: 4000,
+      system: MEETING_RECAP_SYSTEM_PROMPT,
+      messages: [{ role: "user", content: prompt + retryReminder }],
+      tools: [meetingRecapTool],
+      tool_choice: { type: "tool" as const, name: "meeting_recap" },
+    }).finalMessage();
 
-  logUsage(args.userId, model, message.usage.input_tokens, message.usage.output_tokens, "sales_coach_recap");
+    logUsage(args.userId, model, message.usage.input_tokens, message.usage.output_tokens, "sales_coach_recap");
 
-  const toolBlock = message.content.find((b) => b.type === "tool_use");
-  if (!toolBlock || !("input" in toolBlock)) throw new Error("No tool_use block in recap response");
+    const toolBlock = message.content.find((b) => b.type === "tool_use");
+    if (!toolBlock || !("input" in toolBlock)) throw new Error("No tool_use block in recap response");
 
-  const recap = repairRecap(toolBlock.input as Partial<MeetingRecap>);
-  return {
-    recap,
-    usage: { input: message.usage.input_tokens, output: message.usage.output_tokens },
-  };
+    const recap = repairRecap(toolBlock.input as Partial<MeetingRecap>);
+    const wrongLang = findLangMismatch(RECAP_FIELDS.map((k) => recap[k]), args.outputLang);
+    if (!wrongLang) {
+      return {
+        recap,
+        usage: { input: message.usage.input_tokens, output: message.usage.output_tokens },
+      };
+    }
+    console.warn(
+      `[meeting-recap] recap not in ${args.outputLang} (attempt ${attempt}/${MAX_LANG_ATTEMPTS}): "${wrongLang.slice(0, 120)}"`,
+    );
+    retryReminder = `\n\n${outputLangRetryReminder(args.outputLang)}`;
+  }
+  throw new Error(
+    `Meeting recap kept coming back in the wrong language (expected ${outputLangName(args.outputLang)}) after ${MAX_LANG_ATTEMPTS} attempts. Re-run the analysis.`,
+  );
 }
 
 /* ─────────────────────────────────────────────────────────────────────── */
@@ -387,7 +420,7 @@ export async function sendMeetingRecapSlack(
   const { data: row } = await db
     .from("sales_coach_analyses")
     .select(
-      "id, hubspot_deal_id, claap_recording_id, recorder_email, meeting_title, meeting_started_at, deal_snapshot, meeting_recap, audience, participants, meeting_recap_slack_sent_at",
+      "id, hubspot_deal_id, claap_recording_id, recorder_email, meeting_title, meeting_started_at, deal_snapshot, meeting_recap, audience, participants, meeting_recap_slack_sent_at, transcript_text",
     )
     .eq("id", analysisId)
     .single();
@@ -426,13 +459,16 @@ export async function sendMeetingRecapSlack(
 
   const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.URL || "").replace(/\/$/, "");
 
-  // Langue du recap = langue du contenu généré (calé sur le transcript via le
-  // system prompt). On localise titre + header forward + labels en conséquence.
+  // Titre, header forward et labels dans la langue du recap. Elle est
+  // recalculée sur le transcript, exactement comme à la génération (le recap
+  // a été validé dans cette langue) ; repli sur le contenu pour les lignes
+  // sans transcript stocké.
   const recap = row.meeting_recap as MeetingRecap;
-  const lang = detectScriptLang(
-    [recap.context, recap.need, recap.risks_competition, recap.opportunities, recap.next_steps]
-      .filter(Boolean)
-      .join(" "),
+  const lang = detectOutputLang(
+    (row.transcript_text as string | null) ||
+      [recap.context, recap.need, recap.risks_competition, recap.opportunities, recap.next_steps]
+        .filter(Boolean)
+        .join(" "),
   );
 
   const body = formatRecapMessage({

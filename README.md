@@ -160,6 +160,8 @@ Debriefs automatiques des meetings Claap. Liste filtrable par owner/deal/date, v
 - Analyse Claude : score global, scoring multi-dimensions, talk-ratio interne/externe
 - Actions : analyser un meeting passé, draft d'email de suivi, renvoi alerte Slack, résoudre le deal, réanalyser, backfill, recover-stuck (admin)
 - Webhook Claap déclenche l'analyse en arrière-plan (Netlify Function)
+- **Langue de sortie** ([lib/sales-coach/language.ts](lib/sales-coach/language.ts)) : décidée une seule fois en code sur le transcript (FR si le français domine, EN sinon, y compris pour un meeting en espagnol), imposée à l'analyse ET au recap, puis vérifiée sur la sortie. Une sortie dans une autre langue est régénérée (3 tentatives), puis l'analyse passe en `error` plutôt que de partir sur Slack dans la mauvaise langue. Les labels des DM Slack suivent la même langue. Avant (mesuré le 01/10/2026) : 44 analyses et 12 recaps sur 188 n'étaient pas dans la langue du meeting.
+- **Meetings internes** ([lib/sales-coach/internal-meeting.ts](lib/sales-coach/internal-meeting.ts)) : Claap classe "external" des meetings 100 % Coachello (ex. "Product-sales sync", 8 participants @coachello.io). Quand aucun externe n'est confirmé présent dans l'invite, un juge Claude lit le transcript et ne répond "internal" que s'il en est certain ; le meeting est alors ignoré comme un interne Claap (aucune ligne, aucune alerte "Claap meeting with no HubSpot deal", aucune analyse), même si un deal a été résolu. Il reste analysable depuis la modale "Analyze a past meeting". Le flag `attended` de Claap n'est pas fiable (des externes "absents" parlent) et n'est jamais une preuve ; un transcript de moins de 1000 caractères n'est jamais classé interne.
 
 ### Scoring (`/scoring`), Search (`/search`), Sequences (`/sequences`), Knowledge (`/knowledge`), Followup (`/followup`), Slack (`/slack`), Health (`/health`)
 Placeholders « Coming Soon ». Réservés pour fonctionnalités à venir.
@@ -513,6 +515,8 @@ lib/
     run-analysis.ts       # Orchestration analyse meeting Claap
     slack.ts              # Post résultats Slack
     talk-ratio.ts         # % parole interne vs externe
+    language.ts           # Langue de sortie imposée + vérifiée (analyse + recap)
+    internal-meeting.ts   # Juge "meeting interne" du webhook Claap
 
   design/
     tokens.ts             # Couleurs + spacing (miroir des CSS vars)
@@ -811,6 +815,8 @@ Voir section 11 pour les détails.
 - **[sales-coach/run-analysis.ts](lib/sales-coach/run-analysis.ts)** — Orchestre l'analyse d'un meeting Claap.
 - **[sales-coach/slack.ts](lib/sales-coach/slack.ts)** — Post des résultats sur Slack.
 - **[sales-coach/talk-ratio.ts](lib/sales-coach/talk-ratio.ts)** — % de parole interne vs externe.
+- **[sales-coach/language.ts](lib/sales-coach/language.ts)** - Langue de sortie décidée sur le transcript, imposée et vérifiée.
+- **[sales-coach/internal-meeting.ts](lib/sales-coach/internal-meeting.ts)** - Juge strict "meeting interne" (webhook Claap).
 
 ### Design & hooks
 - **[design/tokens.ts](lib/design/tokens.ts)** — Palette + spacing (miroir CSS vars).
