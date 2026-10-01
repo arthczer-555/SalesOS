@@ -304,7 +304,7 @@ function formatRecapMessage(args: {
         risks: isClient ? "Risques" : "Risques / Concurrence",
         opportunities: "Opportunités",
         nextSteps: "Prochaines étapes (pour moi)",
-        openDeal: "Ouvrir le deal dans SalesOS →",
+        openDeal: "Ouvrir le deal dans CoachelloHQ →",
       }
     : {
         meetingOn: "Meeting on",
@@ -317,7 +317,7 @@ function formatRecapMessage(args: {
         risks: isClient ? "Risks" : "Risks / Competition",
         opportunities: "Opportunities",
         nextSteps: "Next Steps (for me)",
-        openDeal: "Open deal in SalesOS →",
+        openDeal: "Open deal in CoachelloHQ →",
       };
 
   const headerParts: string[] = [`:office: *${companyName}*`];

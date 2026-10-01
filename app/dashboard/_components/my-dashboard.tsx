@@ -1,6 +1,6 @@
 "use client";
 
-// Page d'accueil de SalesOS. Un seul écran, trois profils qui se cumulent :
+// Page d'accueil de CoachelloHQ. Un seul écran, trois profils qui se cumulent :
 //   - tout le monde     : bonjour + pouls de l'entreprise
 //   - qui porte un rôle : ses objectifs New / Renew / Renew CSM + son activité
 //   - admin             : la vue globale de l'équipe

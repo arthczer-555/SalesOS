@@ -87,7 +87,7 @@ function norm(v: unknown): string {
 }
 
 // Clé rep = prénom normalisé (le Sheet utilise les prénoms : "Baptiste",
-// "Mehdi"…). On matche donc sur le 1er token du nom SalesOS.
+// "Mehdi"…). On matche donc sur le 1er token du nom CoachelloHQ.
 export function repKeyFromName(name: string | null | undefined): string {
   const first = norm(name).split(" ")[0] ?? "";
   return first;

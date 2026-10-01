@@ -1,5 +1,5 @@
 /**
- * Outil KPIs finance agrégés de CoachelloGPT. Complète get_billing_revenue
+ * Outil KPIs finance agrégés de CoachelloAI. Complète get_billing_revenue
  * (par client) : ici, les indicateurs au niveau société (facturé vs target,
  * renew/new, trimestres, churn, panier moyen, LTV, revenue par type). Lu en
  * temps réel depuis le sheet revenue (onglets Dashboard + Revenue par Trimestre).

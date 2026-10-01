@@ -6,7 +6,7 @@ import { runRagInsightsRefresh } from "@/lib/rag-insights/run";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// POST /api/admin/rag/refresh — relance l'analyse des tours de CoachelloGPT.
+// POST /api/admin/rag/refresh — relance l'analyse des tours de CoachelloAI.
 //
 // En prod (Netlify) : POST vers la background function (l'analyse LLM dépasse
 // largement les ~26s d'une route sync). En local : run inline best-effort.

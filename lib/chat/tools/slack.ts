@@ -1,5 +1,5 @@
 /**
- * Outils Slack de CoachelloGPT (extraits de l'ancien lib/chat/core.ts).
+ * Outils Slack de CoachelloAI (extraits de l'ancien lib/chat/core.ts).
  */
 
 import type Anthropic from "@anthropic-ai/sdk";

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-// `/` est la porte d'entrée de SalesOS : on y arrive après connexion, depuis un
+// `/` est la porte d'entrée de CoachelloHQ : on y arrive après connexion, depuis un
 // signet, ou par les `redirect("/")` des pages admin refusées à un non-admin.
 // Elle ne rend rien et envoie vers la page d'accueil du moment, aujourd'hui le
 // dashboard personnel. Garder cette indirection évite de retoucher tous les

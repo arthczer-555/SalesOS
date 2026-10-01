@@ -1,4 +1,4 @@
--- Mémoire conversationnelle de CoachelloGPT dans Slack
+-- Mémoire conversationnelle de CoachelloAI dans Slack
 -- ────────────────────────────────────────────────────────────────────────
 -- Une row = une conversation Slack (DM ou thread sur mention).
 -- Clé d'unicité : (channel_id, thread_ts). Pour les DMs sans thread, on

@@ -1,10 +1,10 @@
-# SalesOS — conventions du projet
+# CoachelloHQ (ex-SalesOS) - conventions du projet
 
 Précise et surcharge les règles communes de `../CLAUDE.md`.
 
 ## Langue
 
-- **Le produit est en anglais.** Tout ce qu'un utilisateur lit dans SalesOS :
+- **Le produit est en anglais.** Tout ce qu'un utilisateur lit dans CoachelloHQ :
   libellés d'UI, titres, boutons, colonnes de tableau, messages d'erreur, états
   vides, notes explicatives, textes des emails et des messages Slack envoyés par
   l'app. Sans exception, y compris sur les écrans internes et admin.

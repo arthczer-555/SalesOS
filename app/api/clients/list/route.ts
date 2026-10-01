@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 // GET /api/clients/list?owner=<email|all>
 //
-// Liste tous les clients (closed-won) connus de SalesOS. Par défaut on filtre
+// Liste tous les clients (closed-won) connus de CoachelloHQ. Par défaut on filtre
 // sur les clients "qui me concernent" : owner du deal OU AM/CS assigné lors du
 // handover. Pass `owner=all` pour voir tout. La page UI utilise un toggle
 // "Mes clients / Tout le monde" en s'appuyant sur ça.

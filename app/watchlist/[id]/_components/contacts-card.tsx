@@ -327,7 +327,7 @@ export function ContactsCard({
                       )}
                       {c.email && (
                         <span
-                          title={`${countByEmail(c.email)} email${countByEmail(c.email) > 1 ? "s" : ""} sent from SalesOS to this contact`}
+                          title={`${countByEmail(c.email)} email${countByEmail(c.email) > 1 ? "s" : ""} sent from CoachelloHQ to this contact`}
                           style={{
                             display: "inline-flex",
                             alignItems: "center",
@@ -518,7 +518,7 @@ export function ContactsCard({
                     <button
                       type="button"
                       onClick={() => setHistoryTarget({ name, email: c.email as string, contactId: c.id })}
-                      title="Conversation history (SalesOS + HubSpot + Gmail)"
+                      title="Conversation history (CoachelloHQ + HubSpot + Gmail)"
                       style={iconBtn()}
                     >
                       <History size={13} />

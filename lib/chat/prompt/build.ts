@@ -1,7 +1,7 @@
 /**
- * Assemblage du system prompt de CoachelloGPT, architecture "manifest" :
+ * Assemblage du system prompt de CoachelloAI, architecture "manifest" :
  *
- *  Bloc 1 (STABLE, prompt caching) : socle (Coachello.RAG/salesos/socle.md) +
+ *  Bloc 1 (STABLE, prompt caching) : socle (Coachello.RAG/coachellohq/socle.md) +
  *    catalogue des packs auto-généré depuis leurs frontmatters.
  *  Bloc 2 (dynamique, hors cache) : utilisateur connecté, équipe HubSpot
  *    (cachée 1h et triée pour ne pas invalider le cache à chaque appel),

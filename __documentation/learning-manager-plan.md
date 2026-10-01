@@ -1,4 +1,4 @@
-# Plan - Learning Manager dans SalesOS
+# Plan - Learning Manager dans CoachelloHQ
 
 ## Contexte
 
@@ -10,8 +10,8 @@ Outcome : un AE/CSM/L&D donne du contexte en 2 minutes, répond à quelques ques
 
 ### Deux clarifications importantes (à acter)
 
-1. **"Brancher mon abonnement Claude / avoir un vrai terminal sur SalesOS web" : non.** Un abonnement Claude.ai (Pro/Max) ou Claude Code ne s'expose pas comme API embarquable dans une app web tierce. Ce qui fait tourner CoachelloGPT aujourd'hui c'est l'**API Anthropic** (`@anthropic-ai/sdk`, facturée au token, clés chiffrées dans `user_keys`) - c'est la bonne et seule approche. Le "terminal" sera donc **purement cosmétique** (UI monospace, style invite de commande, chat multi-tours). Pas de shell réel ni de Claude Code dans le navigateur (ni faisable, ni souhaitable pour un SaaS interne).
-2. **Intégration à CoachelloGPT : oui, mais via réutilisation de l'infra, pas de fusion.** On garde une page `/learning` dédiée qui **réutilise la boucle agentique existante** (`runChat`) + le pattern background-job + polling. On peut plus tard exposer un raccourci depuis CoachelloGPT.
+1. **"Brancher mon abonnement Claude / avoir un vrai terminal sur CoachelloHQ web" : non.** Un abonnement Claude.ai (Pro/Max) ou Claude Code ne s'expose pas comme API embarquable dans une app web tierce. Ce qui fait tourner CoachelloAI aujourd'hui c'est l'**API Anthropic** (`@anthropic-ai/sdk`, facturée au token, clés chiffrées dans `user_keys`) - c'est la bonne et seule approche. Le "terminal" sera donc **purement cosmétique** (UI monospace, style invite de commande, chat multi-tours). Pas de shell réel ni de Claude Code dans le navigateur (ni faisable, ni souhaitable pour un SaaS interne).
+2. **Intégration à CoachelloAI : oui, mais via réutilisation de l'infra, pas de fusion.** On garde une page `/learning` dédiée qui **réutilise la boucle agentique existante** (`runChat`) + le pattern background-job + polling. On peut plus tard exposer un raccourci depuis CoachelloAI.
 
 ### Décisions de cadrage (validées)
 
@@ -23,7 +23,7 @@ Outcome : un AE/CSM/L&D donne du contexte en 2 minutes, répond à quelques ques
 
 ## Le "skill" = guide + base de connaissances + tools + renderers
 
-Il n'y a pas de notion de "skill" magique dans le codebase : un comportement spécialisé = **(1) un system prompt dédié + (2) une base de connaissances + (3) des outils (tool_use) + (4) des formats de sortie**. Le "skill Learning Manager" est donc la combinaison de ces 4 briques, branchée sur la même boucle agentique que CoachelloGPT.
+Il n'y a pas de notion de "skill" magique dans le codebase : un comportement spécialisé = **(1) un system prompt dédié + (2) une base de connaissances + (3) des outils (tool_use) + (4) des formats de sortie**. Le "skill Learning Manager" est donc la combinaison de ces 4 briques, branchée sur la même boucle agentique que CoachelloAI.
 
 ### 1. Base de connaissances `learning/` (dossier repo, versionné git)
 
@@ -173,7 +173,7 @@ Aucun upload n'existe. Pour la v1, le plus simple et robuste :
 
 - **Phase 1 (MVP)** : page + intake + auto-pull HubSpot/Claap + chat cadrage + KB `roleplay.md` + `emit_deliverable` roleplay + polling. (Sans upload, sans e-learning.)
 - **Phase 2** : upload fichiers (Storage + parsing pdf/docx) + livrable e-learning.
-- **Phase 3** : multi-programmes par session, historique des sessions, raccourci depuis CoachelloGPT.
+- **Phase 3** : multi-programmes par session, historique des sessions, raccourci depuis CoachelloAI.
 
 ---
 

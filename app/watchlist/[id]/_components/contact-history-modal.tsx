@@ -16,7 +16,7 @@ const SOURCE_LABEL: Record<string, string> = {
 };
 
 /**
- * Historique combine d'un contact : emails envoyes depuis SalesOS (notre log),
+ * Historique combine d'un contact : emails envoyes depuis CoachelloHQ (notre log),
  * toute l'activite HubSpot (emails in/out, calls, meetings, notes), puis le
  * fil Gmail (replies inclus).
  */
@@ -105,13 +105,13 @@ export function ContactHistoryModal({
         </header>
 
         <div style={{ flex: 1, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 16 }}>
-          {/* Sent from SalesOS */}
+          {/* Sent from CoachelloHQ */}
           <section>
-            <SectionLabel>Sent from SalesOS{sent.length > 0 ? ` · ${sent.length}` : ""}</SectionLabel>
+            <SectionLabel>Sent from CoachelloHQ{sent.length > 0 ? ` · ${sent.length}` : ""}</SectionLabel>
             {sentLoading && sent.length === 0 ? (
               <Spinner />
             ) : sent.length === 0 ? (
-              <p style={muted}>No emails sent from SalesOS to this contact yet.</p>
+              <p style={muted}>No emails sent from CoachelloHQ to this contact yet.</p>
             ) : (
               <ul style={list}>
                 {sent.map((e) => (

@@ -51,7 +51,7 @@ export async function notifyHandoverAmCs(
     `:tada: *${row.company_name} is now a client — closed won!*`,
     ``,
     `You're part of the handover for this account (AM / CS). The full closed-won`,
-    `context is ready in SalesOS: deal recap, coach brief, health score, key`,
+    `context is ready in CoachelloHQ: deal recap, coach brief, health score, key`,
     `contacts and program scope.`,
     ``,
     `:point_right: <${ficheUrl}|Open the client fiche>`,

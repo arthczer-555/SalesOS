@@ -1,5 +1,5 @@
 /**
- * Orchestration de CoachelloGPT, architecture "manifest" (remplace le runChat
+ * Orchestration de CoachelloAI, architecture "manifest" (remplace le runChat
  * monolithique de l'ancien core.ts, même signature publique) :
  *
  *  1. Clé Claude du user (table user_keys chiffrée, fallback .env en dev)
@@ -54,7 +54,7 @@ export async function runChat(args: {
   onEvent?: (event: ChatEvent) => void;
   /**
    * Nom du canal Slack d'où vient la question (sans le `#`). Permet à
-   * CoachelloGPT de cadrer le périmètre compte (ex: question posée dans
+   * CoachelloAI de cadrer le périmètre compte (ex: question posée dans
    * #engie → demander si on cherche seulement sur Engie).
    */
   channelName?: string;

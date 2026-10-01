@@ -6,7 +6,7 @@ interface CountsResponse {
 }
 
 /**
- * Récupère le nombre d'emails envoyés depuis SalesOS par contact pour afficher
+ * Récupère le nombre d'emails envoyés depuis CoachelloHQ par contact pour afficher
  * un badge "X échanges" dans les UIs de sélection (radar, mass-prospection setup,
  * prospecting search).
  *

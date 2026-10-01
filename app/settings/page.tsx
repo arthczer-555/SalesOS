@@ -70,7 +70,7 @@ export default async function SettingsPage() {
           Settings
         </h1>
         <p className="text-sm mt-1" style={{ color: "#888" }}>
-          Manage your integrations and your access to SalesOS.
+          Manage your integrations and your access to CoachelloHQ.
         </p>
       </div>
 
@@ -113,7 +113,7 @@ export default async function SettingsPage() {
         {/* Google Drive */}
         <IntegrationCard
           title="Google Drive"
-          description="Shared Drive access to search and read documents from CoachelloGPT."
+          description="Shared Drive access to search and read documents from CoachelloAI."
           status={
             <span
               className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full font-medium"
@@ -191,7 +191,7 @@ export default async function SettingsPage() {
           initialUserInstructions={guides?.user_prompt ?? ""}
           endpoint="/api/settings/bot-guide"
           title="Bot guide"
-          description="System prompt for the CoachelloGPT chat. The admin guide is fixed, add your instructions on top."
+          description="System prompt for the CoachelloAI chat. The admin guide is fixed, add your instructions on top."
         />
         <GuideEditor
           initialGuide={guides?.prospection_guide ?? null}

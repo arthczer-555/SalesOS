@@ -1,5 +1,5 @@
 /**
- * SalesOS Design System tokens — TS export.
+ * CoachelloHQ Design System tokens — TS export.
  * Mirror of CSS variables in app/globals.css for components that prefer JS access.
  */
 

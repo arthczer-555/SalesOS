@@ -732,7 +732,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           const dmChannel = dm.channel as string | undefined;
           if (dm.ok && dmChannel) {
             const summary = [
-              `:white_check_mark: Lead finalisé via SalesOS (phase test)`,
+              `:white_check_mark: Lead finalisé via CoachelloHQ (phase test)`,
               `• Deal : ${dealUrl ? `<${dealUrl}|${dealName}>` : dealName}`,
               `• Owner attribué : ${ownerDisplayName ?? ownerId}`,
               `• Company : ${companyName} (id \`${companyId}\`)`,

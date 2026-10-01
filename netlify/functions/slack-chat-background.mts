@@ -6,7 +6,7 @@ import { toSlackMrkdwn } from "../../lib/slack/mrkdwn";
 import { slackToolLabel } from "../../lib/chat/tool-labels";
 
 const UNRECOGNIZED_TEXT =
-  "Sorry, I don't recognize your Slack account. Ask Arthur to set you up in SalesOS.";
+  "Sorry, I don't recognize your Slack account. Ask Arthur to set you up in CoachelloHQ.";
 
 /** Premier feedback posté avant tout appel d'outil, et repli du rendu d'avancement. */
 const THINKING_TEXT = "🤔 Thinking…";
@@ -107,7 +107,7 @@ export default async (req: Request) => {
     return;
   }
 
-  // ── 1) Map Slack user → SalesOS user (sinon refus poli) ───────────────────
+  // ── 1) Map Slack user → CoachelloHQ user (sinon refus poli) ───────────────────
   const user = await resolveSlackUser(slackUserId);
   if (!user) {
     if (!(await refusalAlreadyShown(channel))) {
@@ -135,7 +135,7 @@ export default async (req: Request) => {
   }
 
   // ── 3) Charger l'historique du thread (si existant) + append message user ─
-  // En parallèle, résoudre le nom du canal pour que CoachelloGPT déduise le
+  // En parallèle, résoudre le nom du canal pour que CoachelloAI déduise le
   // client par défaut (ex: question dans #engie → compte Engie). null en DM.
   const [history, channelName] = await Promise.all([
     loadThreadMessages({ channel, threadTs }),

@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 const BG_FN = "chat-background";
 
 /**
- * Démarre une job de chat (CoachelloGPT) et délègue l'agentic loop à une
+ * Démarre une job de chat (CoachelloAI) et délègue l'agentic loop à une
  * Background Function Netlify (jusqu'à 15 min), au lieu de streamer en SSE depuis
  * cette route sync (tuée à ~26s par Netlify, d'où les "Connection error" et les
  * réponses coupées). Le navigateur récupère `jobId` puis poll GET /api/chat/[jobId].

@@ -9,7 +9,7 @@ interface Props {
 
 /**
  * Badge "X échanges" affiché à côté d'un contact pour indiquer combien
- * d'emails SalesOS lui ont déjà été envoyés. Masqué si count = 0.
+ * d'emails CoachelloHQ lui ont déjà été envoyés. Masqué si count = 0.
  */
 export function ExchangesBadge({ count, size = "xs", title }: Props) {
   if (count <= 0) return null;
@@ -18,7 +18,7 @@ export function ExchangesBadge({ count, size = "xs", title }: Props) {
   const iconSize = size === "xs" ? 9 : 10;
   return (
     <span
-      title={title ?? `${count} email${count > 1 ? "s" : ""} sent from SalesOS`}
+      title={title ?? `${count} email${count > 1 ? "s" : ""} sent from CoachelloHQ`}
       style={{
         display: "inline-flex",
         alignItems: "center",

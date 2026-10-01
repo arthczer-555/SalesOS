@@ -1,5 +1,5 @@
 /**
- * Outil facturation/revenue de CoachelloGPT (extrait de l'ancien lib/chat/core.ts).
+ * Outil facturation/revenue de CoachelloAI (extrait de l'ancien lib/chat/core.ts).
  * La règle "source de vérité = sheet revenue, jamais HubSpot" vit ICI, dans la
  * description, lue au moment exact où le modèle choisit son outil.
  */

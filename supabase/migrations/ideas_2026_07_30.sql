@@ -1,4 +1,4 @@
--- Boîte à idées : ce que l'équipe voudrait voir dans SalesOS.
+-- Boîte à idées : ce que l'équipe voudrait voir dans CoachelloHQ.
 --
 -- Volontairement minimal — un auteur, un texte, une date. Pas de statut ni de
 -- vote : le tri se fait à la lecture dans /admin/ideas, et une colonne de statut

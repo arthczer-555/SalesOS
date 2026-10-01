@@ -1,6 +1,6 @@
 /**
  * Types partagés de RAG Insights (page admin /admin/rag).
- * Un "tour" = une question posée à CoachelloGPT et la réponse qu'il a donnée,
+ * Un "tour" = une question posée à CoachelloAI et la réponse qu'il a donnée,
  * quelle que soit la surface (chat web ou Slack).
  */
 

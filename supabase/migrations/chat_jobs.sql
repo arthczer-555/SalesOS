@@ -1,4 +1,4 @@
--- Jobs du chat web (CoachelloGPT). Sort l'agentic loop du chemin sync Netlify
+-- Jobs du chat web (CoachelloAI). Sort l'agentic loop du chemin sync Netlify
 -- (~26s) vers une Background Function (jusqu'à 15 min). Le navigateur crée une
 -- job via POST /api/chat, puis poll GET /api/chat/[jobId] toutes les ~1s pour
 -- afficher la progression (texte streamé, étapes outils, coût) jusqu'à done/error.

@@ -156,7 +156,7 @@ export async function buildGapReport(args: {
   const model = await getModelPreference("rag_gaps", FALLBACK_MODEL);
   const [registry, tree] = await Promise.all([registryContext(), notionTreeContext()]);
 
-  const system = `You audit the Notion knowledge base behind CoachelloGPT, the internal assistant of Coachello (B2B human coaching programs).
+  const system = `You audit the Notion knowledge base behind CoachelloAI, the internal assistant of Coachello (B2B human coaching programs).
 
 You receive questions the assistant failed to answer well, plus the current structure of the knowledge base. Your job is to tell the team what to write, not to answer the questions.
 

@@ -1,5 +1,5 @@
 /**
- * One-off : lance le vrai run RAG Insights (collecte des tours de CoachelloGPT,
+ * One-off : lance le vrai run RAG Insights (collecte des tours de CoachelloAI,
  * jugement Claude, rapport de gaps Notion) et, en option, envoie le recap Slack.
  *
  * Mode test (RAG_INSIGHTS_SLACK_MODE non défini) : DM à Arthur uniquement.

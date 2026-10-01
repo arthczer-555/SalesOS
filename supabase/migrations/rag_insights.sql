@@ -1,7 +1,7 @@
 -- ────────────────────────────────────────────────────────────────────────
 -- RAG Insights (page admin /admin/rag)
 --
--- Observabilité de CoachelloGPT : qu'est-ce qu'on lui demande, est-ce qu'il
+-- Observabilité de CoachelloAI : qu'est-ce qu'on lui demande, est-ce qu'il
 -- répond bien, et où la base Notion est trouée.
 --
 -- Les traces existent déjà (chat_jobs pour le web, slack_chat_threads pour

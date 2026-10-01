@@ -2,7 +2,7 @@
 
 ## Context
 
-Créer une nouvelle page `/slack-agents` où **chaque utilisateur peut créer son propre agent Slack personnalisé** : un petit bot programmable qui, selon un horaire défini, exécute un prompt ayant accès à *toutes* les données de SalesOS (deals, briefing, HubSpot, Gmail, Slack, market, web), puis poste le résultat sur un canal Slack ou en DM.
+Créer une nouvelle page `/slack-agents` où **chaque utilisateur peut créer son propre agent Slack personnalisé** : un petit bot programmable qui, selon un horaire défini, exécute un prompt ayant accès à *toutes* les données de CoachelloHQ (deals, briefing, HubSpot, Gmail, Slack, market, web), puis poste le résultat sur un canal Slack ou en DM.
 
 Flux attendu :
 1. L'utilisateur décrit en langage naturel ce que son agent doit faire (« Tous les jours à 9h, envoie-moi dans `#sales-daily` un résumé des deals les plus chauds et les risques détectés »).
@@ -229,7 +229,7 @@ Placée après `Sales Coach` dans le nav array.
 
 Meta-prompt à envoyer à Claude (sonnet 4.6, tool_use forcé pour JSON déterministe) :
 
-> Tu es un concepteur d'agents Slack pour SalesOS. L'utilisateur a décrit ce qu'il veut :
+> Tu es un concepteur d'agents Slack pour CoachelloHQ. L'utilisateur a décrit ce qu'il veut :
 > « {description} »
 >
 > L'agent postera sur **{target_label}** et a accès aux outils : {tools_enabled}.

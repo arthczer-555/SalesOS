@@ -7,13 +7,13 @@ import { isThreadTracked } from "@/lib/slack/chat-thread";
 export const dynamic = "force-dynamic";
 
 /**
- * Endpoint Slack Events API pour SalesOS / CoachelloGPT.
+ * Endpoint Slack Events API pour CoachelloHQ / CoachelloAI.
  *
  * Reçoit tous les events que l'app souscrit côté api.slack.com :
  *  - `url_verification` : challenge initial pour valider l'URL.
  *  - `app_home_opened`  : publie la vue Home Tab personnalisée.
- *  - `app_mention`      : @SalesOS dans un canal → déclenche CoachelloGPT.
- *  - `message.im`       : DM direct au bot → déclenche CoachelloGPT.
+ *  - `app_mention`      : @CoachelloAI dans un canal → déclenche CoachelloAI.
+ *  - `message.im`       : DM direct au bot → déclenche CoachelloAI.
  *
  * Contraintes Slack :
  *  - ACK 200 en moins de 3s sinon retry automatique.

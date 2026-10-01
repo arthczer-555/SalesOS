@@ -1,5 +1,5 @@
 /**
- * Boucle agentique de CoachelloGPT (extraite de l'ancien lib/chat/core.ts) :
+ * Boucle agentique de CoachelloAI (extraite de l'ancien lib/chat/core.ts) :
  * stream Anthropic + exécution des tool calls + pruning + cost warning.
  *
  * Nouveautés vs l'ancienne version :
@@ -145,7 +145,7 @@ export async function runLoop(args: {
     // See with Gaspard." dans la bulle + DM Slack à Gaspard/Arthur.
     const message = await guardCredit(() => apiStream.finalMessage(), {
       provider: "Claude (Anthropic)",
-      context: "CoachelloGPT chat",
+      context: "CoachelloAI chat",
     });
     totalInputTokens += message.usage.input_tokens;
     totalOutputTokens += message.usage.output_tokens;

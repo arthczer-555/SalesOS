@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 
   const client = anthropicClient({ apiKey: claudeApiKey });
 
-  const systemPrompt = `Tu es un assistant commercial expert intégré à SalesOS. L'utilisateur te pose une question à propos d'un deal ou d'un meeting dont tu as toutes les données ci-dessous.
+  const systemPrompt = `Tu es un assistant commercial expert intégré à CoachelloHQ. L'utilisateur te pose une question à propos d'un deal ou d'un meeting dont tu as toutes les données ci-dessous.
 
 DONNÉES CONTEXTUELLES :
 ${typeof context === "string" ? context : JSON.stringify(context, null, 2)}

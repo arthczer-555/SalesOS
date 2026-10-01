@@ -54,7 +54,7 @@ export function GmailConnect({ initialConnected }: { initialConnected: boolean }
           <a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener noreferrer" style={{ color: "#f01563" }}>
             myaccount.google.com/permissions
           </a>
-          , revoke SalesOS access, then reconnect.
+          , revoke CoachelloHQ access, then reconnect.
         </p>
         <button
           onClick={connect}

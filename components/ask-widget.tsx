@@ -106,7 +106,7 @@ export function AskWidget() {
                 Any question?
               </p>
               <p className="text-[11px]" style={{ color: COLORS.ink3 }}>
-                Answered in CoachelloGPT
+                Answered in CoachelloAI
               </p>
             </div>
             <button onClick={() => setOpen(false)} aria-label="Close" style={{ color: COLORS.ink3 }}>
@@ -299,7 +299,7 @@ function AskSpotlight({ onClose }: { onClose: () => void }) {
       onMouseDown={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Ask CoachelloGPT"
+      aria-label="Ask CoachelloAI"
     >
       <div
         className="askbar-panel w-full max-w-[600px] rounded-3xl border overflow-hidden"
@@ -360,7 +360,7 @@ function AskSpotlight({ onClose }: { onClose: () => void }) {
           className="px-5 py-2.5 text-[11px] flex items-center justify-between border-t"
           style={{ borderColor: COLORS.line, background: COLORS.bgSoft, color: COLORS.ink4 }}
         >
-          <span>Answered in CoachelloGPT</span>
+          <span>Answered in CoachelloAI</span>
           <span>↑↓ to browse · Enter to ask · Esc to close</span>
         </div>
       </div>

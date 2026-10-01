@@ -1,5 +1,5 @@
 /**
- * Outils Google Drive de CoachelloGPT (extraits de l'ancien lib/chat/core.ts).
+ * Outils Google Drive de CoachelloAI (extraits de l'ancien lib/chat/core.ts).
  * Les fichiers lus sont émis comme sources (ctx.onSource) pour l'UI.
  */
 

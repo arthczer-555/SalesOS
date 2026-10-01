@@ -1,6 +1,6 @@
 import { runRagInsightsRefresh } from "../../lib/rag-insights/run";
 
-// Background function : collecte les tours de CoachelloGPT, les fait juger par
+// Background function : collecte les tours de CoachelloAI, les fait juger par
 // Claude, construit le rapport de gaps Notion et (option) envoie le recap Slack.
 // Déclenchée soit par la route admin (x-internal-secret), soit par le cron hebdo
 // rag-insights-scheduled (Bearer CRON_SECRET).

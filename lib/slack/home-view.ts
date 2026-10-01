@@ -1,7 +1,7 @@
 import type { SlackBlock } from "./api";
 
 /**
- * Vue Block Kit affichée dans l'onglet "Accueil" de l'app SalesOS sur Slack.
+ * Vue Block Kit affichée dans l'onglet "Accueil" de l'app CoachelloAI sur Slack.
  * Publiée à chaque event `app_home_opened` via /views.publish.
  *
  * On reste sobre : un header personnalisé, une explication, et 3 actions
@@ -26,7 +26,7 @@ export function buildHomeView(args: {
         text: {
           type: "mrkdwn",
           text:
-            "I'm *CoachelloGPT*, your sales assistant connected to HubSpot, Gmail, Drive, LinkedIn and Slack.\n" +
+            "I'm *CoachelloAI*, the Coachello assistant for sales, account management, marketing and ops, connected to HubSpot, Gmail, Drive, LinkedIn and Slack.\n" +
             "Ask me anything in the *Chat* tab and I'll answer with the context of your deals and your team.",
         },
       },
@@ -52,7 +52,7 @@ export function buildHomeView(args: {
         elements: [
           {
             type: "mrkdwn",
-            text: "Type your question in the *Chat* tab above, or mention *@SalesOS* in any channel.",
+            text: "Type your question in the *Chat* tab above, or mention *@CoachelloAI* in any channel.",
           },
         ],
       },

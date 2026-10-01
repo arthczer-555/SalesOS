@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 
 /**
- * Helpers de persistance pour la mémoire conversationnelle CoachelloGPT
+ * Helpers de persistance pour la mémoire conversationnelle CoachelloAI
  * dans Slack. Une "thread" = un thread Slack (mentions canal) OU toute la
  * DM (cas IM, thread_ts = "").
  */
@@ -23,7 +23,7 @@ export async function loadThreadMessages(key: SlackThreadKey): Promise<Anthropic
 }
 
 /**
- * Vérifie si un thread est déjà tracké par CoachelloGPT. Utilisé par le
+ * Vérifie si un thread est déjà tracké par CoachelloAI. Utilisé par le
  * handler `message.channels` pour ne répondre QUE dans les threads où le
  * bot a déjà été invoqué (sinon il répondrait à tous les messages des
  * canaux où il est membre).

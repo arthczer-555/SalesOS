@@ -7,7 +7,7 @@ import type { Message } from "@/app/_components/chat-message";
 
 export const dynamic = "force-dynamic";
 
-// URL d'une conversation CoachelloGPT. Partager = envoyer ce lien, il n'y a
+// URL d'une conversation CoachelloAI. Partager = envoyer ce lien, il n'y a
 // rien à activer.
 // - L'auteur retombe sur le chat complet, conversation chargée, et continue à écrire.
 // - Un autre membre l'ouvre en lecture seule.

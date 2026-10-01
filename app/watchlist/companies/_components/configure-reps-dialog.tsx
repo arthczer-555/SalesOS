@@ -141,7 +141,7 @@ export function ConfigureRepsDialog({
             <Plus size={13} /> Add
           </button>
 
-          {/* Seed depuis les utilisateurs SalesOS */}
+          {/* Seed depuis les utilisateurs CoachelloHQ */}
           {users.length > 0 && (
             <select
               value=""
@@ -151,7 +151,7 @@ export function ConfigureRepsDialog({
               }}
               style={{ ...inputStyle(210), marginLeft: "auto", cursor: "pointer" }}
             >
-              <option value="">+ From a SalesOS user…</option>
+              <option value="">+ From a CoachelloHQ user…</option>
               {users.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}

@@ -14,7 +14,7 @@ const geist = Geist({ subsets: ["latin"] });
 const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-chats" });
 
 export const metadata: Metadata = {
-  title: "SalesOS",
+  title: "CoachelloHQ",
   description: "AI-powered sales intelligence platform",
   icons: { icon: "/icon.png" },
 };

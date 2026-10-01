@@ -130,7 +130,7 @@ function renderRecap(args: {
 
 // ─── Contexte seedé pour la Q&A en thread ─────────────────────────────────────
 // Message user synthétique injecté dans slack_chat_threads : il donne à
-// CoachelloGPT le dataset complet des deals scorés pour répondre directement
+// CoachelloAI le dataset complet des deals scorés pour répondre directement
 // aux questions simples (score, bucket, raisonnement) sans appel tool. Pour
 // creuser, il a toujours ses tools HubSpot (get_deal_activity, search_deals…).
 function renderSeedContext(args: {

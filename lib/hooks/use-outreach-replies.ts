@@ -6,7 +6,7 @@ interface RepliesResponse {
 
 /**
  * Indique, par contact, si une réponse a été reçue (message Gmail venant de
- * l'adresse après le premier envoi SalesOS). Sert à afficher un check vert à
+ * l'adresse après le premier envoi CoachelloHQ). Sert à afficher un check vert à
  * côté du compteur d'emails envoyés.
  *
  * Même pattern que useOutreachCounts : clé stable + debounce (500ms, la

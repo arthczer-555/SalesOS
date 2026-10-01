@@ -35,7 +35,7 @@ function normalizeToolSteps(raw: unknown): ToolStep[] {
   );
 }
 
-// Le chat CoachelloGPT. Monté par `/` (nouveau chat) et par `/c/<id>` (une
+// Le chat CoachelloAI. Monté par `/` (nouveau chat) et par `/c/<id>` (une
 // conversation précise, quand on en est l'auteur). L'URL suit la conversation
 // ouverte via history.replaceState : on garde le state du chat intact (pas de
 // navigation Next), tout en rendant chaque conversation adressable/partageable.

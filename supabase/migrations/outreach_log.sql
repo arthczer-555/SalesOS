@@ -1,4 +1,4 @@
--- Outreach log : trace tous les emails envoyés depuis SalesOS (prospection 1-to-1 + mass-prospection).
+-- Outreach log : trace tous les emails envoyés depuis CoachelloHQ (prospection 1-to-1 + mass-prospection).
 -- Permet d'afficher un badge "X échanges" à côté de chaque contact dans les UIs de sélection
 -- (radar, mass-prospection setup, prospecting search).
 

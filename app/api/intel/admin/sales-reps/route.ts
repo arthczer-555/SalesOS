@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   const source = req.nextUrl.searchParams.get("source");
 
   if (source === "users") {
-    // Utilisateurs SalesOS (pour ajouter un sales au roster depuis l'app).
+    // Utilisateurs CoachelloHQ (pour ajouter un sales au roster depuis l'app).
     const { data, error } = await db
       .from("users")
       .select("id, name, email, hubspot_owner_id")

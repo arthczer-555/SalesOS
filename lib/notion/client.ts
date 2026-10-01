@@ -3,7 +3,7 @@
  * helpers HubSpot/Slack de lib/chat). Pas de SDK : on n'utilise que 4 endpoints.
  *
  * IMPORTANT (décision produit, cf. __documentation/coachello-gpt-rag-plan.md) :
- * le chat SalesOS n'écrit JAMAIS dans Notion. Ce module n'expose donc aucune
+ * le chat CoachelloHQ n'écrit JAMAIS dans Notion. Ce module n'expose donc aucune
  * méthode d'écriture. L'écriture (mode ÉCRITURE) se fait en local via le repo
  * Coachello.RAG ; seule exception future : le runner DAILY MAJ (phase 2).
  *

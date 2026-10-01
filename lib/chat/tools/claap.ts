@@ -1,5 +1,5 @@
 /**
- * Outils Claap (meetings/calls enregistrés) de CoachelloGPT (extraits de core.ts).
+ * Outils Claap (meetings/calls enregistrés) de CoachelloAI (extraits de core.ts).
  * Les meetings dont le transcript est lu sont émis comme sources pour l'UI.
  */
 

@@ -1,5 +1,5 @@
 /**
- * Wrapper minimal autour de l'API Slack pour CoachelloGPT dans Slack.
+ * Wrapper minimal autour de l'API Slack pour CoachelloAI dans Slack.
  * On garde ce module fin et générique. Les helpers métier (briefings,
  * sales-coach…) gardent leurs propres wrappers dans leurs dossiers respectifs.
  */

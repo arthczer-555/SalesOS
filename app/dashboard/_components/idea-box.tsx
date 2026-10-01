@@ -68,7 +68,7 @@ export function IdeaBox() {
       >
         <Lightbulb size={15} style={{ color: COLORS.brand }} />
         <span className="text-[13px] font-medium" style={{ color: COLORS.ink1 }}>
-          Got an idea for SalesOS?
+          Got an idea for CoachelloHQ?
         </span>
         <span className="text-[12px] ml-auto shrink-0" style={{ color: COLORS.ink4 }}>
           Drop it here →
@@ -114,7 +114,7 @@ export function IdeaBox() {
                 }
               }}
               rows={3}
-              placeholder="What would you like SalesOS to do?"
+              placeholder="What would you like CoachelloHQ to do?"
               className="flex-1 resize-none text-[13px] outline-none bg-transparent"
               style={{ color: COLORS.ink0 }}
             />

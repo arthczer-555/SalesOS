@@ -1,5 +1,5 @@
 /**
- * Outil recherche web (Tavily) de CoachelloGPT (extrait de l'ancien core.ts).
+ * Outil recherche web (Tavily) de CoachelloAI (extrait de l'ancien core.ts).
  */
 
 import type Anthropic from "@anthropic-ai/sdk";

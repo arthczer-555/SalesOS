@@ -87,7 +87,7 @@ function scoreFromSignals(s: SignalContext): { score: number; drivers: string[] 
       drivers.push(`${daysSinceLastContact}d of silence on the account`);
     } else {
       score -= 25;
-      drivers.push(`Prolonged silence (${daysSinceLastContact}d) — high risk`);
+      drivers.push(`Prolonged silence (${daysSinceLastContact}d), high risk`);
     }
   } else {
     score -= 15;
@@ -97,7 +97,7 @@ function scoreFromSignals(s: SignalContext): { score: number; drivers: string[] 
   // ── Meetings dans les 90 derniers jours
   if (s.meetingsLast90 >= 3) {
     score += 15;
-    drivers.push(`${s.meetingsLast90} meetings in 90d — sustained engagement`);
+    drivers.push(`${s.meetingsLast90} meetings in 90d, sustained engagement`);
   } else if (s.meetingsLast90 === 2) {
     score += 5;
   } else if (s.meetingsLast90 === 1) {
@@ -119,7 +119,7 @@ function scoreFromSignals(s: SignalContext): { score: number; drivers: string[] 
   // ── Couverture contacts (champion fragile = peu de contacts mappés)
   if (s.contactsCount === 0) {
     score -= 5;
-    drivers.push("No associated HubSpot contact — limited visibility");
+    drivers.push("No associated HubSpot contact, limited visibility");
   } else if (s.contactsCount >= 3) {
     score += 5;
   }
@@ -176,7 +176,7 @@ export function computeInsights(ctx: ClientEnrichmentContext, health: Health): I
     if (daysSinceLastContact !== null && daysSinceLastContact > 60) {
       actions.push({
         title: "Re-engage immediately",
-        rationale: `${daysSinceLastContact}d of silence — high churn risk.`,
+        rationale: `${daysSinceLastContact}d of silence, high churn risk.`,
         priority: "high",
       });
     }
@@ -200,7 +200,7 @@ export function computeInsights(ctx: ClientEnrichmentContext, health: Health): I
     if (s.meetingsLast90 < 2) {
       actions.push({
         title: "Schedule a feedback session",
-        rationale: "Exchange cadence is dropping — capture how they feel.",
+        rationale: "Exchange cadence is dropping, capture how they feel.",
         priority: "medium",
       });
     }
@@ -209,7 +209,7 @@ export function computeInsights(ctx: ClientEnrichmentContext, health: Health): I
   if (s.contactsCount <= 1) {
     actions.push({
       title: "Identify a backup sponsor",
-      rationale: "Only one contact mapped in HubSpot — fragile champion.",
+      rationale: "Only one contact mapped in HubSpot, fragile champion.",
       priority: "medium",
     });
   }
@@ -217,7 +217,7 @@ export function computeInsights(ctx: ClientEnrichmentContext, health: Health): I
   if (s.meetingsLast90 >= 3 && health.label === "green") {
     actions.push({
       title: "Document the winning pattern",
-      rationale: `${s.meetingsLast90} meetings in 90d on a healthy account — best practice worth formalizing.`,
+      rationale: `${s.meetingsLast90} meetings in 90d on a healthy account, best practice worth formalizing.`,
       priority: "low",
     });
   }

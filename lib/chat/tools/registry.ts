@@ -1,5 +1,5 @@
 /**
- * Registre des outils de CoachelloGPT : fusionne les modules par famille en un
+ * Registre des outils de CoachelloAI : fusionne les modules par famille en un
  * tableau de définitions (ordre déterministe et stable, important pour le
  * prompt caching) + un dispatcher d'exécution.
  *

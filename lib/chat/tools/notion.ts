@@ -1,5 +1,5 @@
 /**
- * Outils Notion de CoachelloGPT : LECTURE SEULE, par décision produit
+ * Outils Notion de CoachelloAI : LECTURE SEULE, par décision produit
  * (cf. __documentation/coachello-gpt-rag-plan.md §6.3). Aucun outil d'écriture
  * n'existe ici et aucun ne doit y être ajouté : le mode ÉCRITURE se fait en
  * local via le repo Coachello.RAG.

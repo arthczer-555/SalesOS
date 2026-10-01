@@ -1,5 +1,5 @@
 /**
- * Outils LinkedIn (Bright Data) de CoachelloGPT (extraits de l'ancien core.ts).
+ * Outils LinkedIn (Bright Data) de CoachelloAI (extraits de l'ancien core.ts).
  * Scrapes best-effort : quelques secondes, coûteux, uniquement quand la question
  * le justifie (cf. descriptions).
  */

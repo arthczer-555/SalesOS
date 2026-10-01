@@ -1,6 +1,6 @@
 # Plan : Dashboard "AE Sales Activity" (page admin)
 
-> Reproduction de `__documentation/ae-dashboard.html` en page admin native SalesOS.
+> Reproduction de `__documentation/ae-dashboard.html` en page admin native CoachelloHQ.
 > Statut : plan validé, prêt à build. Dernière MAJ du plan : 2026-07-20.
 
 ## 1. Objectif

@@ -7,7 +7,7 @@ import { renderClientContextForPrompt, type ClientEnrichmentContext } from "./co
 import type { DealRecap } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
 
-// Recap "comment ce deal a été signé" - style Coachello-GPT.
+// Recap "comment ce deal a été signé" - style CoachelloAI.
 // Format structuré pour pouvoir réutiliser la timeline dans une fiche CS,
 // dans un mail handover, ou dans un canal Slack. Stocké dans clients.deal_recap.
 

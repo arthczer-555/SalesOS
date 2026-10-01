@@ -11,8 +11,8 @@ const tools = [
     icon: "✉️",
   },
   {
-    name: "SalesOS",
-    description: "AI-augmented sales intelligence platform",
+    name: "CoachelloHQ",
+    description: "Internal platform for revenue, growth and ops, with the CoachelloAI assistant",
     url: "https://coachello-sales.netlify.app/",
     domain: "coachello-sales.netlify.app",
     icon: "🎯",

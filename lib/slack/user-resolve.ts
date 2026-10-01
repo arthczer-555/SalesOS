@@ -29,7 +29,7 @@ async function matchSingle(
 }
 
 /**
- * Résout un Slack user_id vers un DbUser SalesOS.
+ * Résout un Slack user_id vers un DbUser CoachelloHQ.
  *
  *  0. Cache : si `users.slack_user_id` correspond déjà, on renvoie directement
  *     SANS appeler Slack `users.info`. C'est le chemin nominal une fois le user

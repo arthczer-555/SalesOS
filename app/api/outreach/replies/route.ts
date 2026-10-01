@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 // Renvoie : { repliedByEmail: { [email_lower]: true } }
 //
 // Un contact a "répondu" s'il existe au moins un message Gmail venant de son
-// adresse APRES le premier envoi SalesOS (outreach_log). On ne vérifie que les
+// adresse APRES le premier envoi CoachelloHQ (outreach_log). On ne vérifie que les
 // adresses déjà contactées (le badge n'a de sens qu'avec un compteur > 0), donc
 // au plus un appel Gmail messages.list par adresse contactée.
 // Scoped par user : ses envois, son Gmail.

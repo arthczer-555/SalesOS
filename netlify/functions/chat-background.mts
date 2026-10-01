@@ -1,7 +1,7 @@
 import type { Context } from "@netlify/functions";
 import { runChatJob } from "../../lib/chat/run-job";
 
-// Background Function : agentic loop du chat web (CoachelloGPT). Sorti du chemin
+// Background Function : agentic loop du chat web (CoachelloAI). Sorti du chemin
 // sync car la boucle HubSpot/Slack/Drive/Claap dépasse souvent les ~26s d'une
 // fonction sync Netlify (background = jusqu'à 15 min). Écrit la progression dans
 // chat_jobs, que le navigateur lit par polling.

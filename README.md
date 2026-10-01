@@ -1,6 +1,10 @@
-# SalesOS — Coachello Sales Intelligence
+# CoachelloHQ - plateforme interne revenue, growth & ops de Coachello
 
-Plateforme interne de l'équipe commerciale et marketing de Coachello. Connectée à HubSpot, Slack, Gmail, Google Calendar, Google Drive, Google Analytics 4, Google Search Console, WordPress, Claap, Tavily, Bright Data et le web. Propulsée par Claude (Anthropic) pour l'IA.
+**Catégorie : Pro** (Coachello)
+
+Plateforme interne de Coachello pour le sales, l'account management, le marketing et les ops, avec l'agent IA **CoachelloAI** (web + Slack). Connectée à HubSpot, Slack, Gmail, Google Calendar, Google Drive, Google Analytics 4, Google Search Console, WordPress, Claap, Tavily, Bright Data et le web. Propulsée par Claude (Anthropic) pour l'IA.
+
+> **Renommage (2026-10-01)** : SalesOS est devenu **CoachelloHQ** (l'app) et CoachelloGPT est devenu **CoachelloAI** (l'agent, web et bot Slack `@CoachelloAI`), pour couvrir tout le cycle revenue (sales, AM, marketing, ops). Seuls le repo GitHub (et donc le dossier local du clone), le domaine `coachello-sales.netlify.app` et la zone Bright Data `salesos_serp` (identifiant côté Bright Data, voir [lib/brightdata/serp.ts](lib/brightdata/serp.ts)) gardent l'ancien nom.
 
 > **Document de passation** — Décrit l'intégralité du projet : modules, architecture, base de données, intégrations externes, cron jobs, et comment modifier chaque partie.
 
@@ -29,16 +33,16 @@ Plateforme interne de l'équipe commerciale et marketing de Coachello. Connecté
 
 ## 1. Modules & fonctionnalités
 
-### CoachelloGPT — Agent IA (`/chat`)
+### CoachelloAI — Agent IA (`/chat`)
 Agent conversationnel unique, architecture **"manifest"** (2026-07-21, plan : [__documentation/coachello-gpt-rag-plan.md](__documentation/coachello-gpt-rag-plan.md)) : un socle court + un catalogue de guides, et l'agent charge lui-même les guides détaillés via l'outil `load_guide` selon la question. Deux fonctionnements, croisables dans une même réponse :
-- **Sales** : HubSpot (contacts, deals, entreprises), **fiches clients SalesOS** (table `clients` : programme, contacts, objectifs, points de vigilance, santé), Slack, Gmail, Google Drive, sheet revenue (source de vérité CA), LinkedIn (Bright Data), Claap (meetings + transcripts), web (Tavily)
+- **Sales** : HubSpot (contacts, deals, entreprises), **fiches clients CoachelloHQ** (table `clients` : programme, contacts, objectifs, points de vigilance, santé), Slack, Gmail, Google Drive, sheet revenue (source de vérité CA), LinkedIn (Bright Data), Claap (meetings + transcripts), web (Tavily)
 - **Connaissance Coachello** : base Notion `🧭 DATABASE` (programmes, pricing, pédagogie, positionnement, finance) en **lecture seule stricte** ; l'écriture Notion reste locale (repo `Coachello.RAG`)
 
-Le cerveau (socle + packs sales + guide Notion) vit dans le repo GitHub privé `Coachello.RAG` (`salesos/socle.md`, `salesos/packs/*.md`, `AGENT_GUIDE.md`), fetché avec cache 5 min + snapshot DB de secours ([lib/chat/rag/guide-loader.ts](lib/chat/rag/guide-loader.ts)). **Pièces jointes** : PDF/images (natifs Claude), xlsx, docx, csv, txt, md (upload via trombone, table `chat_attachments`). **Sources consultées** (pages Notion, meetings Claap, fichiers Drive...) émises en temps réel vers le front (colonne `chat_jobs.sources`). Prompt caching Anthropic (socle + tools + historique). Historique conversations en DB, instructions perso par utilisateur via `/prompt`, modèle configurable (défaut : Sonnet). **Une URL par conversation** : `/c/<id>` (bookmarkable, résiste au refresh, l'URL suit la conversation ouverte via `history.replaceState`). Partager = envoyer ce lien, il n'y a rien à activer : l'auteur y retrouve son chat complet et continue d'écrire, un autre membre l'ouvre en **lecture seule**. Le lien **exige une session SalesOS** (middleware Clerk) : lisible par tout collègue connecté, par personne d'autre, et son contenu est live.
+Le cerveau (socle + packs sales + guide Notion) vit dans le repo GitHub privé `Coachello.RAG` (`coachellohq/socle.md`, `coachellohq/packs/*.md`, `AGENT_GUIDE.md`), fetché avec cache 5 min + snapshot DB de secours ([lib/chat/rag/guide-loader.ts](lib/chat/rag/guide-loader.ts)). **Pièces jointes** : PDF/images (natifs Claude), xlsx, docx, csv, txt, md (upload via trombone, table `chat_attachments`). **Sources consultées** (pages Notion, meetings Claap, fichiers Drive...) émises en temps réel vers le front (colonne `chat_jobs.sources`). Prompt caching Anthropic (socle + tools + historique). Historique conversations en DB, instructions perso par utilisateur via `/prompt`, modèle configurable (défaut : Sonnet). **Une URL par conversation** : `/c/<id>` (bookmarkable, résiste au refresh, l'URL suit la conversation ouverte via `history.replaceState`). Partager = envoyer ce lien, il n'y a rien à activer : l'auteur y retrouve son chat complet et continue d'écrire, un autre membre l'ouvre en **lecture seule**. Le lien **exige une session CoachelloHQ** (middleware Clerk) : lisible par tout collègue connecté, par personne d'autre, et son contenu est live.
 
 **Fiche client** : `search_clients` / `get_client` ([lib/chat/tools/clients.ts](lib/chat/tools/clients.ts)) lisent la table `clients` en lecture seule, la même donnée que l'onglet [Clients](app/clients/). Sur un compte signé, la fiche agrège déjà HubSpot + meetings Claap + sheet revenue : une question de **détail** ("le contact RH chez X", "la date de kickoff") se répond en **un seul appel, sans croiser ni charger de guide**. Les 6 sections du brief sont adressables une par une (`general_info`, `program_scope`, `goals`, `org`, `history`, `planning`) pour ne pas payer 4 k tokens sur une question factuelle. **Couverture partielle assumée** : la table ne contient que les deals signés depuis la mise en place de la feature, donc l'absence de fiche ne prouve rien et l'agent bascule sur HubSpot / sheet revenue / Claap / Slack. Quand une fiche manque ou n'est pas enrichie (meetings Claap à confirmer), le résultat porte un `warning` que l'agent relaie à l'utilisateur avec l'action à faire.
 
-**Couverture Notion** : sur une question de type "comment on fait X / guide-moi", l'agent ouvre **toutes** les pages plausibles du registre en une fois (procédure + écran de l'outil + qui-fait-quoi), pas seulement la première qui matche. Règle §3.0 du cerveau (`AGENT_GUIDE.md`), rappelée dans l'adapter SalesOS ([lib/chat/rag/guide-loader.ts](lib/chat/rag/guide-loader.ts)) et dans la description de `notion_fetch` ; rendue abordable par l'**exécution parallèle des tool calls** d'un même tour ([lib/chat/loop.ts](lib/chat/loop.ts)) : ouvrir 4 pages coûte le temps d'une.
+**Couverture Notion** : sur une question de type "comment on fait X / guide-moi", l'agent ouvre **toutes** les pages plausibles du registre en une fois (procédure + écran de l'outil + qui-fait-quoi), pas seulement la première qui matche. Règle §3.0 du cerveau (`AGENT_GUIDE.md`), rappelée dans l'adapter CoachelloHQ ([lib/chat/rag/guide-loader.ts](lib/chat/rag/guide-loader.ts)) et dans la description de `notion_fetch` ; rendue abordable par l'**exécution parallèle des tool calls** d'un même tour ([lib/chat/loop.ts](lib/chat/loop.ts)) : ouvrir 4 pages coûte le temps d'une.
 
 Code : [lib/chat/run-agent.ts](lib/chat/run-agent.ts) (orchestration), [lib/chat/loop.ts](lib/chat/loop.ts) (boucle agentique, tool calls parallèles + filet d'auto-injection Notion), [lib/chat/tools/](lib/chat/tools/) (outils par famille, règles d'usage dans les descriptions), [lib/chat/prompt/build.ts](lib/chat/prompt/build.ts), [lib/notion/](lib/notion/) (client lecture seule). `lib/chat/core.ts` n'est plus qu'un shim de re-export.
 
@@ -161,7 +165,7 @@ Debriefs automatiques des meetings Claap. Liste filtrable par owner/deal/date, v
 Placeholders « Coming Soon ». Réservés pour fonctionnalités à venir.
 
 ### Pokedex (`/pokedex`)
-Répertoire interne Coachello : grille de cartes vers les outils de la plateforme (Mail Agent, SalesOS, Onboarding Checklist, Super Admin, Ticket Mafia) avec descriptions et liens externes.
+Répertoire interne Coachello : grille de cartes vers les outils de la plateforme (Mail Agent, CoachelloHQ, Onboarding Checklist, Super Admin, Ticket Mafia) avec descriptions et liens externes.
 
 ### Settings (`/settings`)
 - Statut des intégrations (Claude, Gmail, Google Calendar, HubSpot, Slack, GA4, Search Console, Drive)
@@ -184,11 +188,11 @@ Un seul écran, **trois couches qui se cumulent** selon le profil (un Head of Sa
 - **Aucun pipeline de données propre** : tout relit le snapshot `ae_activity_snapshots` déjà calculé. Seul le pipeline ouvert fait une requête HubSpot dédiée.
 - **Fraîcheur (stale-while-revalidate)** : un snapshot rep, ce sont plusieurs milliers de records HubSpot paginés, soit ~1 min de calcul, donc bien plus que le timeout d'une route. Le vrai temps réel est hors de portée et n'est pas recherché. À la place : cron **quotidien** (6h UTC) comme filet pour qui ne se connecte pas et pour la vue manager, qui ne déclenche aucun recalcul de son côté, et si le snapshot de l'utilisateur dépasse **3 h**, l'ouverture du dashboard déclenche le recalcul **de son seul rep** en tâche de fond ([app/api/me/dashboard/refresh/route.ts](app/api/me/dashboard/refresh/route.ts) → `runAeActivityRefresh({ ownerIds })`). La page s'affiche immédiatement avec le cache, indique « Refreshing now… », puis repolle jusqu'à ce que `refreshed_at` bouge (abandon au bout de ~3 min). La garde des 3 h est côté serveur : sans elle, chaque rechargement de page relancerait un fetch HubSpot complet.
 - ⚠ Convention de somme : le **total entreprise = New + Renew (AM)**. Le flux CSM porte le *même* revenu que le Renew vu côté delivery — l'additionner le compterait deux fois. C'est la convention du Sheet lui-même (1 644 363 € = 780 752 € de New + 863 611 € de Renew).
-- **Boîte à idées** ([app/dashboard/_components/idea-box.tsx](app/dashboard/_components/idea-box.tsx)) : en tête de page, une ligne repliée « Got an idea for SalesOS? » qui se déplie en champ libre. Repliée par défaut à dessein — elle s'adresse à tout le monde tous les jours alors qu'on y écrit une fois par mois, un formulaire déployé en permanence repousserait les chiffres sous la ligne de flottaison. Écrit dans `ideas` ([app/api/ideas/route.ts](app/api/ideas/route.ts)), relu par les admins dans `/admin/ideas`. L'auteur est toujours enregistré : une idée sans nom ne se creuse pas. Chaque dépôt part aussi en **DM Slack privé** ([lib/ideas/notify.ts](lib/ideas/notify.ts)) — destinataire `IDEAS_NOTIFY_SLACK_USER`, à défaut Arthur. Envoi best-effort : l'idée est déjà en base quand le DM part, un Slack en échec est loggé mais ne fait pas échouer le dépôt.
+- **Boîte à idées** ([app/dashboard/_components/idea-box.tsx](app/dashboard/_components/idea-box.tsx)) : en tête de page, une ligne repliée « Got an idea for CoachelloHQ? » qui se déplie en champ libre. Repliée par défaut à dessein — elle s'adresse à tout le monde tous les jours alors qu'on y écrit une fois par mois, un formulaire déployé en permanence repousserait les chiffres sous la ligne de flottaison. Écrit dans `ideas` ([app/api/ideas/route.ts](app/api/ideas/route.ts)), relu par les admins dans `/admin/ideas`. L'auteur est toujours enregistré : une idée sans nom ne se creuse pas. Chaque dépôt part aussi en **DM Slack privé** ([lib/ideas/notify.ts](lib/ideas/notify.ts)) — destinataire `IDEAS_NOTIFY_SLACK_USER`, à défaut Arthur. Envoi best-effort : l'idée est déjà en base quand le DM part, un Slack en échec est loggé mais ne fait pas échouer le dépôt.
 - **« Voir comme »** : [`/dashboard/demo`](app/dashboard/demo/page.tsx), réservée aux admins, affiche le dashboard **réel** de n'importe quel collaborateur avec ses vrais chiffres, via un sélecteur d'utilisateur ([app/api/admin/user-dashboard/route.ts](app/api/admin/user-dashboard/route.ts)). La construction du dashboard est partagée avec `/api/me/dashboard` ([lib/dashboard/me.ts](lib/dashboard/me.ts)) et les blocs sont importés depuis `/dashboard` : ce qui s'y affiche est littéralement ce que voit la personne, sinon la vue mentirait. Lecture seule.
 
 ### Pastille « Any question ? »
-[components/ask-widget.tsx](components/ask-widget.tsx), montée dans le layout, donc présente sur toutes les pages sauf le chat lui-même et `/sign-in`. Elle ne répond pas sur place : la question part vers `/chat?q=…` et CoachelloGPT l'envoie automatiquement au montage ([app/chat/page.tsx](app/chat/page.tsx) → `ChatWorkspace initialPrompt`). Dupliquer le moteur de conversation dans une popup aurait signifié maintenir deux chats.
+[components/ask-widget.tsx](components/ask-widget.tsx), montée dans le layout, donc présente sur toutes les pages sauf le chat lui-même et `/sign-in`. Elle ne répond pas sur place : la question part vers `/chat?q=…` et CoachelloAI l'envoie automatiquement au montage ([app/chat/page.tsx](app/chat/page.tsx) → `ChatWorkspace initialPrompt`). Dupliquer le moteur de conversation dans une popup aurait signifié maintenir deux chats.
 
 ### Admin (`/admin`) — réservé aux `users.is_admin = true`
 - **Gestion des utilisateurs** : liste des inscrits, assignation des clés API Claude, suivi tokens + coût (mensuel + total), toggle **Sales** et **rôles sales cumulables (AE / AM / CSM)** par utilisateur.
@@ -209,7 +213,7 @@ Un seul écran, **trois couches qui se cumulent** selon le profil (un Head of Sa
   - **Emails = tous les sortants** (`hs_email_direction != INCOMING_EMAIL` filtré côté HubSpot), hors artefacts de calendrier (`Accepted:`, `Refused:`…). La card « Prospecting emails » n'affiche que la part cold ; le reste est indiqué en sous-texte.
   - **Meetings bookés = Slack `#new-meetings`** (1 message top-level d'un humain = 1 meeting), source de vérité des disco bookées ; HubSpot date les meetings à leur tenue et rate ceux qui ne sont pas logués. Repli automatique sur HubSpot si le canal Slack n'est pas configuré.
 - **Deal Review** (`/admin/ae-activity?tab=deals`, second onglet de la page AE Sales Activity) : revue de pipeline **deal par deal**, vue globale et par AE. Une ligne par deal ouvert du pipeline sales avec la note IA `/100` (cache `deal_scores`), le montant, l'étape, les **touch points** (`num_contacted_notes` : calls, emails, meetings, LinkedIn, SMS loggés dans HubSpot) et leur **écart à la médiane de l'étape**, les meetings Claap analysés + note moyenne, la fraîcheur (jours dans l'étape · jours depuis le dernier contact) et des alertes (jamais touché, stalled, 0 contact). Bande **par AE** : pipeline, médiane de touch points, stalled, sans contact >14j, sans prochaine étape, win rate, cycle médian et *touches to close*. Clic sur une ligne → panneau de détail existant de `/deals?dealId=<id>`, rien n'est redupliqué. Fetch **live** HubSpot (~2s, pas de snapshot ni de cron), nurture masqué par défaut avec un toggle. Garde-fous assumés : une médiane d'étape n'est publiée qu'à partir de 5 deals ouverts, un win rate qu'à partir de 5 deals clos, un cycle qu'à partir de 3 gagnés. Win rate restreint au pipeline sales (les renouvellements Customer Success sont exclus, contrairement à AE Sales Activity). Code : [lib/deal-review/](lib/deal-review/), contrôle des chiffres : `npx tsx scripts/check-deal-review.ts`.
-- **RAG Insights** (`/admin/rag`) : observabilité de CoachelloGPT. Répertorie **toutes** les questions posées à l'agent (chat web `chat_jobs` + Slack `slack_chat_threads`, relus rétroactivement, aucune instrumentation ajoutée au chat), les catégorise (10 catégories fermées), flagge `knowledge` (Notion) vs `sales` (CRM), et estime la **satisfaction 0-100** par tour. Deux signaux : le 👍/👎 explicite posé sous la réponse dans le chat (`chat_jobs.feedback`, prioritaire) et un juge Claude qui regarde la cohérence, la présence de sources et la **réaction du user au tour suivant** (reformulation, "non", correction). Onglet **Notion gaps** : Claude croise les questions ratées avec le registre du pack `notion_knowledge` et l'arbre live 🧭 DATABASE pour sortir les trous, les pages à enrichir et les pages à créer. Cache Supabase (`rag_question_analyses`, un tour n'est jamais réanalysé), refresh hebdo (cron lundi 7h UTC) + boutons manuels "Refresh analysis" et "Send Slack recap". **Onglet Questions en live** : la page poll `/api/admin/rag/live` toutes les 15 s et affiche les questions **avant** tout passage du juge, avec leur état (`Answering…` pour un job chat en cours, `Awaiting analysis` pour une réponse pas encore notée) ; elles sont reconstruites à la volée depuis `chat_jobs` / `slack_chat_threads` ([lib/rag-insights/live.ts](lib/rag-insights/live.ts)), sans écriture ni appel LLM, et prennent leur verdict au prochain run. Recap Slack hebdo : DM Arthur en test, Arthur + `RAG_INSIGHTS_RECIPIENTS` en prod. Code : [lib/rag-insights/](lib/rag-insights/).
+- **RAG Insights** (`/admin/rag`) : observabilité de CoachelloAI. Répertorie **toutes** les questions posées à l'agent (chat web `chat_jobs` + Slack `slack_chat_threads`, relus rétroactivement, aucune instrumentation ajoutée au chat), les catégorise (10 catégories fermées), flagge `knowledge` (Notion) vs `sales` (CRM), et estime la **satisfaction 0-100** par tour. Deux signaux : le 👍/👎 explicite posé sous la réponse dans le chat (`chat_jobs.feedback`, prioritaire) et un juge Claude qui regarde la cohérence, la présence de sources et la **réaction du user au tour suivant** (reformulation, "non", correction). Onglet **Notion gaps** : Claude croise les questions ratées avec le registre du pack `notion_knowledge` et l'arbre live 🧭 DATABASE pour sortir les trous, les pages à enrichir et les pages à créer. Cache Supabase (`rag_question_analyses`, un tour n'est jamais réanalysé), refresh hebdo (cron lundi 7h UTC) + boutons manuels "Refresh analysis" et "Send Slack recap". **Onglet Questions en live** : la page poll `/api/admin/rag/live` toutes les 15 s et affiche les questions **avant** tout passage du juge, avec leur état (`Answering…` pour un job chat en cours, `Awaiting analysis` pour une réponse pas encore notée) ; elles sont reconstruites à la volée depuis `chat_jobs` / `slack_chat_threads` ([lib/rag-insights/live.ts](lib/rag-insights/live.ts)), sans écriture ni appel LLM, et prennent leur verdict au prochain run. Recap Slack hebdo : DM Arthur en test, Arthur + `RAG_INSIGHTS_RECIPIENTS` en prod. Code : [lib/rag-insights/](lib/rag-insights/).
 
 ---
 
@@ -281,7 +285,7 @@ Un seul écran, **trois couches qui se cumulent** selon le profil (un Head of Sa
 - **Auth** : `CLAAP_API_TOKEN` + `CLAAP_WEBHOOK_SECRET`
 - **Webhook** : `/api/webhooks/claap` → crée une row `sales_coach_analyses`, fan-out analyse coaching (prospects) + recap structuré (clients & prospects)
 - **Routing Slack du recap** : `SLACK_MODE` (`test`=DM à `CLAAP_NOTE_SLACK_TEST_USER`, défaut Arthur Czernichow ; `prod`=DM aux participants Coachello du meeting, qui forwardent ensuite dans `#12-everything-clients` ou `#11-everything-prospects` selon audience)
-- **Détection Client vs Prospect** : closed-won OU pipeline label `Customer Success` → client (1 seul message Slack, recap sans lien SalesOS) ; sinon prospect (2 messages : analyse coaching DM + recap)
+- **Détection Client vs Prospect** : closed-won OU pipeline label `Customer Success` → client (1 seul message Slack, recap sans lien CoachelloHQ) ; sinon prospect (2 messages : analyse coaching DM + recap)
 - **Code** : [lib/claap.ts](lib/claap.ts), [lib/sales-coach/run-analysis.ts](lib/sales-coach/run-analysis.ts), [lib/sales-coach/meeting-recap.ts](lib/sales-coach/meeting-recap.ts), [lib/sales-coach/slack.ts](lib/sales-coach/slack.ts)
 
 ### WordPress
@@ -393,7 +397,7 @@ CREDIT_ALERT_RECIPIENTS=              # (optionnel) emails DM Slack en cas de cr
 
 ```
 app/
-  page.tsx                          # CoachelloGPT (nouveau chat) -> ChatWorkspace
+  page.tsx                          # CoachelloAI (nouveau chat) -> ChatWorkspace
   c/[id]/page.tsx                   # Une conversation : chat complet (auteur) ou lecture seule (partagée)
   layout.tsx                        # Layout global (Clerk + sidebar + SWR provider)
   error.tsx / not-found.tsx
@@ -500,7 +504,7 @@ lib/
   default-guide.ts        # Réexport (compat)
 
   guides/
-    bot.ts                # DEFAULT_BOT_GUIDE — prompt CoachelloGPT
+    bot.ts                # DEFAULT_BOT_GUIDE — prompt CoachelloAI
     briefing.ts           # Guide briefing meeting
     prospection.ts        # Guide prospection (5 règles B2B)
     sales-coach.ts        # Guide sales coach (scoring meetings)
@@ -543,7 +547,7 @@ Voir section 1 pour la description fonctionnelle de chaque module. Cette section
 
 | Page | Fichier | Pour modifier |
 |------|---------|---------------|
-| `/chat` et `/c/[id]` CoachelloGPT | [app/_components/chat-workspace.tsx](app/_components/chat-workspace.tsx) | Outils : [app/api/chat/route.ts](app/api/chat/route.ts) — Prompt : [lib/guides/bot.ts](lib/guides/bot.ts) · Vue partagée : [app/c/[id]/page.tsx](app/c/[id]/page.tsx) |
+| `/chat` et `/c/[id]` CoachelloAI | [app/_components/chat-workspace.tsx](app/_components/chat-workspace.tsx) | Outils : [app/api/chat/route.ts](app/api/chat/route.ts) — Prompt : [lib/guides/bot.ts](lib/guides/bot.ts) · Vue partagée : [app/c/[id]/page.tsx](app/c/[id]/page.tsx) |
 | `/briefing` | [app/briefing/page.tsx](app/briefing/page.tsx) | Collecte : [app/api/briefing/gather/route.ts](app/api/briefing/gather/route.ts) — Synthèse : [app/api/briefing/synthesize/route.ts](app/api/briefing/synthesize/route.ts) — Guide : [lib/guides/briefing.ts](lib/guides/briefing.ts) |
 | `/deals` | [app/deals/page.tsx](app/deals/page.tsx) | Scoring : [app/api/deals/score/route.ts](app/api/deals/score/route.ts) — Analyse : [app/api/deals/analyze/route.ts](app/api/deals/analyze/route.ts) — Algo : [lib/deal-scoring.ts](lib/deal-scoring.ts) |
 | `/prospecting` | [app/prospecting/page.tsx](app/prospecting/page.tsx) | Recherche : [app/api/prospection/search/route.ts](app/api/prospection/search/route.ts) — Génération : [app/api/prospection/generate/route.ts](app/api/prospection/generate/route.ts) — Guide : [lib/guides/prospection.ts](lib/guides/prospection.ts) |
@@ -787,7 +791,7 @@ Voir section 11 pour les détails.
 - **lib/deal-review/** - Revue de pipeline deal par deal (page `/admin/deal-review`) :
   - `types.ts` : contrat `DealReviewResponse` (lignes de deal, repères par étape, agrégats par AE) + les seuils d'échantillon (`MIN_STAGE_SAMPLE`, `MIN_CLOSED_SAMPLE`, `MIN_WON_SAMPLE`).
   - `build.ts` : `buildDealReview()` — deals ouverts (paginés via `hubspotSearchAll`) + deals clos de la période + owners + scores IA (`deal_scores`) + meetings Claap (`sales_coach_analyses`), puis médianes par étape et agrégats par owner. Chaque source est best-effort et pousse un warning au lieu de casser la page. Réutilise `fetchSalesPipeline()` de [lib/ae-activity/fetch-hubspot.ts](lib/ae-activity/fetch-hubspot.ts) et `listSalesReps()` de [lib/ae-activity/reps.ts](lib/ae-activity/reps.ts).
-- **lib/rag-insights/** - Observabilité de CoachelloGPT (page `/admin/rag`) :
+- **lib/rag-insights/** - Observabilité de CoachelloAI (page `/admin/rag`) :
   - `collect.ts` : reconstruit les tours (question, réponse, pages Notion lues, guides chargés, réaction du user au tour suivant) depuis `chat_jobs` (web) et `slack_chat_threads` (Slack). Exclut les tours déjà analysés. `collectPendingTurns()` est la variante pour le polling : elle ne charge l'historique complet que des tours pas encore jugés (sinon ~5 s par appel) et laisse `userReply` vide, qui ne sert qu'au juge.
   - `live.ts` : les questions telles qu'elles arrivent, avant analyse (`answering` = job chat en cours, `analyzing` = réponse en attente du juge). Lecture seule, aucun LLM : c'est ce que l'onglet Questions poll.
   - `analyze.ts` : juge Claude par lots (catégorie, knowledge vs sales, verdict, satisfaction, `answer_summary`, `issue`, `gap_summary`). `syncExplicitFeedback()` réaligne les scores quand un 👍/👎 arrive après l'analyse.
@@ -1141,7 +1145,7 @@ CREATE TABLE prospect_signals (
 ### Outreach log
 
 ```sql
--- Trace tous les emails envoyés depuis SalesOS (prospection 1-to-1 + mass-prospection).
+-- Trace tous les emails envoyés depuis CoachelloHQ (prospection 1-to-1 + mass-prospection).
 -- Alimente le badge "X échanges" dans les UIs de sélection (radar, mass-prospection, prospecting).
 CREATE TABLE outreach_log (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1214,7 +1218,7 @@ Implémentées en tant que **Netlify Scheduled / Background Functions** dans [ne
 | `sales-coach-recover-stuck-scheduled.mts` | `*/10 * * * *` (toutes les 10 min) | `POST /api/sales-coach/recover-stuck` | `X-Cron-Secret` | Récupère les analyses Claap bloquées en `analyzing` depuis trop longtemps. |
 | `clients-monthly-refresh-scheduled.mts` | `0 3 1 * *` (1er du mois, 3h UTC) | refresh incrémental des clients | `X-Cron-Secret` | Re-enrichit les fiches clients sur les nouvelles activités du mois. |
 | `ae-activity-refresh-scheduled.mts` | `0 6 * * *` (tous les jours 6h UTC) | `POST /.netlify/functions/ae-activity-refresh-background` | `Bearer CRON_SECRET` | Recalcule le dashboard **AE Sales Activity** (activité HubSpot + revenu Sheet + Claap + Slack + note Claap mensuelle) pour tous les reps sales. **Aucun appel LLM** : tout est recalculé à chaque passage depuis les sources. Aussi déclenchable via le bouton "Refresh" (`X-Internal-Secret`), ou pour **un seul rep** via `{ ownerIds: [...] }` depuis `/api/me/dashboard/refresh`. |
-| `rag-insights-scheduled.mts` | `0 7 * * 1` (tous les lundis 7h UTC) | `POST /.netlify/functions/rag-insights-background` | `Bearer CRON_SECRET` | Analyse les nouveaux tours de CoachelloGPT (**RAG Insights**), reconstruit le rapport de trous Notion et envoie le **recap Slack hebdo** (DM Arthur en test, + `RAG_INSIGHTS_RECIPIENTS` en prod). Aussi déclenchable via les boutons "Refresh analysis" / "Send Slack recap" de `/admin/rag` (`X-Internal-Secret`). |
+| `rag-insights-scheduled.mts` | `0 7 * * 1` (tous les lundis 7h UTC) | `POST /.netlify/functions/rag-insights-background` | `Bearer CRON_SECRET` | Analyse les nouveaux tours de CoachelloAI (**RAG Insights**), reconstruit le rapport de trous Notion et envoie le **recap Slack hebdo** (DM Arthur en test, + `RAG_INSIGHTS_RECIPIENTS` en prod). Aussi déclenchable via les boutons "Refresh analysis" / "Send Slack recap" de `/admin/rag` (`X-Internal-Secret`). |
 | `signals-sweep-scheduled.mts` | `0 5 * * *` (tous les jours 5h UTC) | `POST /.netlify/functions/signals-sweep-background` | `Bearer CRON_SECRET` | Sweep **Signals** : scan marché global, scoring Claude, dédup, recherche d'un lead joignable, insert des 10 meilleurs, rétention 14 j. |
 | `marketing-posts-scrape-scheduled.mts` | `0 6 * * 1` (tous les lundis 6h UTC) | `POST /.netlify/functions/marketing-posts-scrape-background` | `Bearer CRON_SECRET` | Scrape les posts LinkedIn des sources `LINKEDIN_OWN_POST_SOURCES` (dataset Bright Data, poll 6 min). |
 
@@ -1395,11 +1399,11 @@ git push origin main
 
 ## 15. Ajouter un utilisateur
 
-Onboarder un nouveau membre se fait en 2 temps : créer son compte côté Clerk (authentification), puis lui assigner une clé API Claude depuis l'admin SalesOS.
+Onboarder un nouveau membre se fait en 2 temps : créer son compte côté Clerk (authentification), puis lui assigner une clé API Claude depuis l'admin CoachelloHQ.
 
 ### 1. Créer le compte sur Clerk
 1. Se connecter au [dashboard Clerk](https://dashboard.clerk.com) avec le compte `gaspard@coachello.io`.
-2. Sélectionner l'application SalesOS, puis ouvrir l'onglet **Users**.
+2. Sélectionner l'application CoachelloHQ (encore nommée CoachelloHQ dans Clerk tant qu'elle n'a pas été renommée), puis ouvrir l'onglet **Users**.
 3. Cliquer sur **Add user**, renseigner l'email du nouvel utilisateur et valider.
 
 L'authentification se fait via Google OAuth uniquement. Au tout premier login, `getAuthenticatedUser()` ([lib/auth.ts](lib/auth.ts)) crée automatiquement la row dans la table `users` et tente de résoudre `hubspot_owner_id` + `slack_user_id` + `slack_display_name` à partir de l'email (voir l'onboarding, section 9).
@@ -1408,7 +1412,7 @@ L'authentification se fait via Google OAuth uniquement. Au tout premier login, `
 Tant que l'utilisateur n'a pas sa propre clé, les features IA retombent sur le fallback global `ANTHROPIC_API_KEY` (ou échouent s'il n'est pas défini). Étapes :
 
 1. Créer une clé API sur la [console Anthropic](https://console.anthropic.com) (**API Keys** > **Create Key**).
-2. Dans SalesOS, aller sur `/admin` > **Gestion des utilisateurs**. L'utilisateur doit déjà apparaître dans la liste (donc s'être connecté au moins une fois pour que sa row soit créée).
+2. Dans CoachelloHQ, aller sur `/admin` > **Gestion des utilisateurs**. L'utilisateur doit déjà apparaître dans la liste (donc s'être connecté au moins une fois pour que sa row soit créée).
 3. Coller la clé `sk-ant-...` dans le champ dédié et valider. Elle est chiffrée (AES-256-GCM) en DB via `/api/admin/set-key`.
 
 > (optionnel) Cocher le toggle **Sales** sur l'utilisateur s'il doit recevoir le deal digest par AE sur Slack (`users.is_sales`, défaut `false`). Les droits admin (`users.is_admin`) se règlent directement en DB.
@@ -1425,7 +1429,7 @@ Via `/settings` → Préférences de modèle, ou directement dans `guide_default
 2. L'enregistrer **en fin** de `MODULES` dans [lib/chat/tools/registry.ts](lib/chat/tools/registry.ts) : l'ordre conditionne le préfixe caché Anthropic, insérer au milieu invalide le cache de tous les utilisateurs.
 3. Label : une seule entrée `{ emoji, label }` dans [lib/chat/tool-labels.ts](lib/chat/tool-labels.ts), en anglais et sans ponctuation finale. `chatToolLabel` (web) ajoute l'ellipse, `slackToolLabel` (Slack) préfixe l'emoji. Les deux surfaces affichent donc le même libellé.
 4. Si l'outil émet une source (`ctx.onSource`) d'un nouveau `kind` : élargir `ChatSource` ([lib/chat/tools/types.ts](lib/chat/tools/types.ts)), puis `logoKeyForTool` / `logoKeyForSourceKind` ([app/_components/tool-logo.tsx](app/_components/tool-logo.tsx)) et `SOURCE_KIND_LABELS` ([app/_components/chat-message.tsx](app/_components/chat-message.tsx)).
-5. Arbitrage entre outils (quand privilégier celui-ci plutôt qu'un autre) : dans les descriptions d'abord, et si l'enjeu le mérite dans `salesos/socle.md` du repo `Coachello.RAG` (à pousser pour prendre effet, cache 5 min).
+5. Arbitrage entre outils (quand privilégier celui-ci plutôt qu'un autre) : dans les descriptions d'abord, et si l'enjeu le mérite dans `coachellohq/socle.md` du repo `Coachello.RAG` (à pousser pour prendre effet, cache 5 min).
 
 ### Rendre une feature IA pilotable depuis l'admin (modèle Claude)
 1. Ajouter la feature dans `FEATURES` de [app/admin/_components/model-preferences-admin.tsx](app/admin/_components/model-preferences-admin.tsx) (clé + label + `defaultModel`)
@@ -1471,4 +1475,4 @@ Via `/settings` → Préférences de modèle, ou directement dans `guide_default
 
 > **Note navigation** : La page `/watchlist` existe et est fonctionnelle (comptes + onglet Lists) mais son entrée est commentée dans [components/sidebar.tsx](components/sidebar.tsx) ; on y accède via le lien « Créer une liste » de Mass Prospection (`/lists` y redirige). Les pages `/intel`, `/enrichment` et `/linkedin-test` ont été supprimées (refonte intel/linkedin/radar), de même que la table `market_signals`.
 
-*Coachello · SalesOS · Interne · Confidentiel · Juin 2026*
+*Coachello · CoachelloHQ · Interne · Confidentiel · Juin 2026*

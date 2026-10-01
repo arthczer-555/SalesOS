@@ -182,7 +182,7 @@ export const SECTION_DEFINITIONS: ReadonlyArray<{
   },
 ] as const;
 
-// ── Deal recap (généré plus tard, structuré façon Coachello-GPT) ─────────
+// ── Deal recap (généré plus tard, structuré façon CoachelloAI) ─────────
 export type DealRecap = {
   generated_at: string;
   timeline?: Array<{ when?: string; title: string; description: string; source?: ClientFieldSource | null }>;

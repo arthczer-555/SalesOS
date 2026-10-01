@@ -36,7 +36,7 @@ type NavEntry = { href: string; label: string; icon: LucideIcon; match?: string[
 
 const nav: NavEntry[] = [
   { href: "/dashboard", label: "My dashboard", icon: LayoutDashboard },
-  { href: "/chat", label: "CoachelloGPT", icon: Sparkles },
+  { href: "/chat", label: "CoachelloAI", icon: Sparkles },
   { href: "/briefing", label: "Briefing", icon: CalendarDays },
   { href: "/deals", label: "Deals", icon: Briefcase },
   { href: "/sales-coach", label: "Sales Coach", icon: GraduationCap },
@@ -158,21 +158,21 @@ function SidebarBody({
           padding: collapsed ? "16px 8px" : "20px 16px",
         }}
       >
-        <div className="flex items-center gap-2.5 min-w-0">
+        <div className="flex items-center gap-2 min-w-0">
           <Image
             src="/logo.png"
             alt="Coachello"
-            width={32}
-            height={32}
+            width={28}
+            height={28}
             className="rounded-lg shrink-0"
             quality={80}
           />
           {!collapsed && (
             <span
-              className="font-bold text-xl tracking-tight truncate"
+              className="font-bold text-base tracking-tight truncate"
               style={{ color: "#111" }}
             >
-              Sales<span style={{ color: "#f01563" }}>OS</span>
+              Coachello<span style={{ color: "#f01563" }}>HQ</span>
             </span>
           )}
         </div>

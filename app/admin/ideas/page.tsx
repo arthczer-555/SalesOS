@@ -26,7 +26,7 @@ export default async function AdminIdeasPage() {
         <div>
           <h1 className="text-xl font-semibold" style={{ color: "#111" }}>Idea box</h1>
           <p className="text-xs mt-1" style={{ color: "#888" }}>
-            What the team would like SalesOS to do, submitted from their dashboard.
+            What the team would like CoachelloHQ to do, submitted from their dashboard.
           </p>
         </div>
         <a

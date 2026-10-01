@@ -1,11 +1,11 @@
-# Prompt à donner à Claude (design) : mock-up du nouveau chat CoachelloGPT
+# Prompt à donner à Claude (design) : mock-up du nouveau chat CoachelloAI
 
 > Copier-coller tel quel. C'est un brief de MOCK-UP visuel uniquement : aucune donnée
-> réelle, aucun branchement. Le câblage sera fait ensuite dans SalesOS.
+> réelle, aucun branchement. Le câblage sera fait ensuite dans CoachelloHQ.
 
 ---
 
-Je veux que tu me crées un mock-up complet (HTML/CSS ou React, données factices, aucun backend) pour la refonte de l'interface d'un chat IA interne, "CoachelloGPT". C'est l'assistant de l'équipe commerciale de Coachello (startup de coaching professionnel humain + IA). Il est connecté à HubSpot, Slack, Gmail, Google Drive, LinkedIn, Claap (enregistrements de meetings), au web, et à la base de connaissance interne Coachello dans Notion (programmes, pricing, pédagogie, cas clients, RFP). L'agent peut aussi recevoir des documents (cahiers des charges, RFP) et charge des "guides" internes selon la question.
+Je veux que tu me crées un mock-up complet (HTML/CSS ou React, données factices, aucun backend) pour la refonte de l'interface d'un chat IA interne, "CoachelloAI". C'est l'assistant de l'équipe commerciale de Coachello (startup de coaching professionnel humain + IA). Il est connecté à HubSpot, Slack, Gmail, Google Drive, LinkedIn, Claap (enregistrements de meetings), au web, et à la base de connaissance interne Coachello dans Notion (programmes, pricing, pédagogie, cas clients, RFP). L'agent peut aussi recevoir des documents (cahiers des charges, RFP) et charge des "guides" internes selon la question.
 
 Direction artistique : moderne, épuré mais pop et flashy, qui donne ENVIE de poser une question. Couleur de marque : rose #f01563. Fond clair. Typographie soignée, coins arrondis, micro-animations discrètes (hover, apparition des éléments). Desktop d'abord, mais responsive.
 

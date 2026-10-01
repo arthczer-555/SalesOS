@@ -67,8 +67,8 @@ function filterByDays<T extends { created_at: string }>(items: T[], days: number
 }
 
 const FEATURE_DESCRIPTIONS: Record<string, string> = {
-  chat:                    "CoachelloGPT tab - every message sent to the bot",
-  conversations:           "CoachelloGPT tab - automatic conversation title generation (first message only)",
+  chat:                    "CoachelloAI tab - every message sent to the bot",
+  conversations:           "CoachelloAI tab - automatic conversation title generation (first message only)",
   briefing:                "Briefing tab - pre-meeting summary (HubSpot context + calendar)",
   prospection_search:      "Prospecting tab - AI prospect search (natural language)",
   prospection_generate:    "Prospecting tab - prospecting email generation",

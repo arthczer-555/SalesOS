@@ -1,5 +1,5 @@
 ================================================================================
-                     SALESOS — FEUILLE DE ROUTE Q2 2026
+                     COACHELLOHQ — FEUILLE DE ROUTE Q2 2026
                            (Avril -> Juin)
 ================================================================================
 
@@ -21,7 +21,7 @@ Changements a fort ROI qui ameliorent immediatement ce qui existe deja.
     - Changements : switch frontend + parametre dans /api/chat
 
 [ ] 2. Refonte du scoring deals (~5-7 jours)
-    Coeur de la valeur de SalesOS.
+    Coeur de la valeur de CoachelloHQ.
     - Baisser le score budget quand le budget n'est pas fixe/valide
       (pas juste "mentionne")
     - Ajouter une 7eme dimension "Competition"
@@ -55,7 +55,7 @@ PHASE 2 — MEETING COACH & DONNEES (Mai, ~4 semaines)
 La feature la plus impactante, plus le branchement de donnees manquantes.
 
 [ ] 5. Page "Meeting Coach" (~2 semaines)
-    LE differenciateur de SalesOS.
+    LE differenciateur de CoachelloHQ.
     Architecture :
     - Input : lien Claap (ou transcript colle) + type de meeting
       -> Types : disco, follow-up, closing, QBR
@@ -230,8 +230,8 @@ NOTES
 ================================================================================
 
 - Le scoring et le Meeting Coach sont les deux features qui differencient
-  le plus SalesOS d'un simple CRM
-- Le scoring bien fait = l'equipe ouvre SalesOS tous les jours
+  le plus CoachelloHQ d'un simple CRM
+- Le scoring bien fait = l'equipe ouvre CoachelloHQ tous les jours
 - Le Meeting Coach = transforme l'outil en vrai coach commercial
 - Le rapport hebdo Slack cree un rendez-vous recurrent avec l'outil
   pour toute l'equipe (peu d'effort, gros impact)

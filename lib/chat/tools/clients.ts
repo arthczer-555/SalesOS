@@ -1,6 +1,6 @@
 /**
- * Outils "fiche client" de CoachelloGPT : lecture seule de la table `clients`
- * (Supabase), exactement la donnée que sert l'onglet Clients de SalesOS.
+ * Outils "fiche client" de CoachelloAI : lecture seule de la table `clients`
+ * (Supabase), exactement la donnée que sert l'onglet Clients de CoachelloHQ.
  *
  * Une fiche client agrège déjà HubSpot + les meetings Claap analysés + le sheet
  * revenue : c'est donc la source la PLUS riche sur un compte signé, et une
@@ -200,7 +200,7 @@ async function notFound(company: string): Promise<string> {
   return JSON.stringify({
     matched: false,
     message: `Aucune fiche client pour "${company}". ATTENTION : cela ne veut PAS dire que ce compte est inconnu de Coachello. La table clients ne couvre que les deals signés depuis la mise en place de la fiche client, beaucoup de clients historiques n'y figurent pas. Enchaîne MAINTENANT sur tes autres outils, dans le même tour si possible : search_deals / get_companies (HubSpot), get_billing_revenue (le sheet revenue liste tous les clients facturés, y compris ceux absents d'ici), search_claap_meetings, search_slack. Ne réponds jamais "je n'ai pas d'information sur ce client" sur la seule base de cet échec.`,
-    warning: `⚠️ ${company} n'a pas de fiche client dans SalesOS. Si c'est bien un client signé, il doit être IMPORTÉ dans la table clients pour que son contexte (programme, contacts, objectifs, santé) soit disponible ici.`,
+    warning: `⚠️ ${company} n'a pas de fiche client dans CoachelloHQ. Si c'est bien un client signé, il doit être IMPORTÉ dans la table clients pour que son contexte (programme, contacts, objectifs, santé) soit disponible ici.`,
     action_required: "Aller sur /clients et importer le compte (bouton d'import des deals closed-won), puis confirmer ses meetings Claap pour lancer l'enrichissement.",
     tell_the_user:
       "DIS-LE À L'UTILISATEUR, explicitement, à la fin de ta réponse : c'est une action concrète de sa part qui manque. Mais réponds d'abord à sa question avec tes autres outils : l'absence de fiche n'est pas une absence d'information.",
@@ -215,7 +215,7 @@ const defs: Anthropic.Tool[] = [
   {
     name: "search_clients",
     description:
-      "Liste les clients ayant une FICHE CLIENT dans SalesOS (table clients, un compte par deal closed-won). Utilise-le pour toute question de portefeuille : 'mes clients', 'les comptes en risque', 'qui gère X', 'les derniers clients signés'. Renvoie par compte : société, owner du deal, AM et CS assignés, date de signature, montant, santé (score + label vert/jaune/rouge) et CA total facturé. Passe 'mine_only' pour ne garder que les comptes de l'utilisateur connecté (owner, AM ou CS). Passe 'query' pour cibler une société (matching flou : 'Adyen' matche 'ADYEN N.V.'). " +
+      "Liste les clients ayant une FICHE CLIENT dans CoachelloHQ (table clients, un compte par deal closed-won). Utilise-le pour toute question de portefeuille : 'mes clients', 'les comptes en risque', 'qui gère X', 'les derniers clients signés'. Renvoie par compte : société, owner du deal, AM et CS assignés, date de signature, montant, santé (score + label vert/jaune/rouge) et CA total facturé. Passe 'mine_only' pour ne garder que les comptes de l'utilisateur connecté (owner, AM ou CS). Passe 'query' pour cibler une société (matching flou : 'Adyen' matche 'ADYEN N.V.'). " +
       "COUVERTURE PARTIELLE, à ne jamais oublier : cette table ne contient que les deals signés depuis la mise en place de la fiche client. De nombreux clients historiques n'y sont PAS. L'absence d'un compte ici ne prouve rien : enchaîne sur HubSpot (search_deals, get_companies) et sur get_billing_revenue, dont le sheet liste tous les clients facturés. Pour un total de clients ou un classement, c'est le sheet revenue qui fait foi, pas cette table. " +
       "Si le résultat contient un champ commençant par 'warning' (fiches dont les meetings Claap restent à confirmer, ou jamais enrichies), relaie-le à l'utilisateur : leur contexte est vide tant qu'il n'a pas fait l'action.",
     input_schema: {
@@ -232,7 +232,7 @@ const defs: Anthropic.Tool[] = [
   {
     name: "get_client",
     description:
-      "Fiche client SalesOS : LA source de vérité sur l'état d'un compte signé, quand elle existe. Elle agrège déjà HubSpot, les meetings Claap analysés et le sheet revenue. " +
+      "Fiche client CoachelloHQ : LA source de vérité sur l'état d'un compte signé, quand elle existe. Elle agrège déjà HubSpot, les meetings Claap analysés et le sheet revenue. " +
       "RÉFLEXE : dès qu'une question nomme un client Coachello, commence par ici. " +
       "QUESTION DE DÉTAIL = CET OUTIL SEUL. 'Qui est le contact RH chez X', 'quel est le programme de X', 'la date de kickoff de X', 'qui est l'AM sur X' : UN appel, tu réponds, tu n'ouvres RIEN d'autre. N'appelle pas HubSpot, Claap, le sheet revenue ni Notion 'pour compléter'. Ne croise que pour une question d'ANALYSE (point de compte, QBR, risque de churn, upsell). " +
       "CIBLE LA BONNE SECTION en un seul appel, via 'sections' : general_info = les contacts (signataire, RH principal, RH opérationnel, facturation, IT), parties prenantes, langues, zones. program_scope = type de coaching, nom du programme, population, nb de coachés, cohortes, offres. goals = objectifs business/RH, KPIs, attentes. org = intégration IT (SSO, HRIS, Slack), documents, contraintes. history = relation commerciale, initiatives RH parallèles, POINTS DE VIGILANCE. planning = date de KICKOFF, suivi CS attendu, engagements pris par le sales. Plus : health, deal_recap (comment le deal s'est signé, objections, promesses), insights, news, coach_brief, checklist (onboarding), meetings. Utilise 'fields' pour charger les 6 sections d'un coup, seulement si la question est large. " +
@@ -314,7 +314,7 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
     .map((r) => r.company_name);
 
   return JSON.stringify({
-    source: "table clients SalesOS (fiches clients)",
+    source: "table clients CoachelloHQ (fiches clients)",
     coverage_note:
       "Liste des clients AYANT UNE FICHE, pas la liste des clients Coachello. Ne présente jamais ce total comme le nombre de clients de l'entreprise : pour un décompte ou un classement, c'est get_billing_revenue (sheet revenue) qui fait foi.",
     count: rows.length,
@@ -388,7 +388,7 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
   // Identité + handover + poids financier : toujours là, c'est le minimum
   // vital pour situer le compte, et ça pèse quelques lignes.
   const out: Record<string, unknown> = {
-    source: "fiche client SalesOS",
+    source: "fiche client CoachelloHQ",
     client_id: row.id,
     company: row.company_name,
     url: `/clients/${row.id}`,
@@ -413,7 +413,7 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
   };
 
   // Fiche pas encore enrichie : la donnée ci-dessous est vide ou partielle, et
-  // il y a une action humaine à faire dans SalesOS. On la remonte pour que
+  // il y a une action humaine à faire dans CoachelloHQ. On la remonte pour que
   // l'agent la RELAIE à l'utilisateur au lieu de répondre "je ne trouve rien".
   if (row.enrichment_status !== "done") {
     const warnings: Record<string, string> = {

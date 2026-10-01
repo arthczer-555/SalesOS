@@ -759,7 +759,7 @@ export function RagDashboard() {
             </span>
           </div>
           <p className="text-[13px] mt-0.5" style={{ color: COLORS.ink3 }}>
-            What the team asks CoachelloGPT, how well it answers, and where the Notion base is
+            What the team asks CoachelloAI, how well it answers, and where the Notion base is
             missing content. Web chat and Slack.
           </p>
         </div>

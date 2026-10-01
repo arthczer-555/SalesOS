@@ -1,5 +1,5 @@
 /**
- * Outils Gmail de CoachelloGPT (extraits de l'ancien lib/chat/core.ts).
+ * Outils Gmail de CoachelloAI (extraits de l'ancien lib/chat/core.ts).
  * Boîte de l'utilisateur connecté (OAuth par user, table user_integrations).
  */
 

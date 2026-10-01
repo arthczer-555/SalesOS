@@ -1,5 +1,5 @@
 /**
- * Outils HubSpot de CoachelloGPT (extraits de l'ancien lib/chat/core.ts).
+ * Outils HubSpot de CoachelloAI (extraits de l'ancien lib/chat/core.ts).
  * Les règles d'usage vivent dans les DESCRIPTIONS des outils : elles sont lues
  * par le modèle au moment exact où il choisit un outil (et cachées avec le
  * préfixe), au lieu d'être noyées dans un guide monolithique.

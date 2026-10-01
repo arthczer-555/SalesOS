@@ -42,7 +42,7 @@ export async function notifyOwnerOfEnrichedClient(
   const body = [
     `:tada: *${row.company_name} is now a client!*`,
     ``,
-    `The full context for this account has just been enriched in SalesOS:`,
+    `The full context for this account has just been enriched in CoachelloHQ:`,
     `deal recap, coach brief, health score and all the key fields.`,
     ``,
     `Here is all the context, go check it out and add the missing information:`,

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 // Body : { emails?: string[], hubspot_ids?: string[] }
 // Renvoie : { byEmail: { [email_lower]: number }, byHubspotId: { [id]: number } }
 //
-// Compte uniquement les envois SalesOS (table outreach_log).
+// Compte uniquement les envois CoachelloHQ (table outreach_log).
 // La requête est scoped par user_id pour ne jamais fuiter des envois d'autres users.
 export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();

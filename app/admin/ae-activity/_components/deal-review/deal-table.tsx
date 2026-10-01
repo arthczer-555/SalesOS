@@ -39,7 +39,7 @@ function columns(showOwner: boolean): Column[] {
     ...(showOwner ? [{ key: "ownerName" as SortKey, label: "AE", align: "left" as const, width: 92 }] : []),
     { key: "stageOrder", label: "Stage", align: "left", width: 176 },
     { key: "amount", label: "Amount", align: "right", width: 88, title: "HubSpot amount, empty on part of the pipeline" },
-    { key: "score", label: "Score", align: "right", width: 92, title: "AI score /100 (SalesOS)" },
+    { key: "score", label: "Score", align: "right", width: 92, title: "AI score /100 (CoachelloHQ)" },
     {
       key: "touchPoints",
       label: "Touch pts",

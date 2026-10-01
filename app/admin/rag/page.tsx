@@ -5,7 +5,7 @@ import { RagDashboard } from "./_components/rag-dashboard";
 
 export const dynamic = "force-dynamic";
 
-// Page admin "RAG Insights" — ce qu'on demande à CoachelloGPT, comment il s'en
+// Page admin "RAG Insights" — ce qu'on demande à CoachelloAI, comment il s'en
 // sort, et où la base Notion est trouée. Réservée aux admins (users.is_admin).
 // Les données viennent de rag_question_analyses / rag_gap_reports via
 // /api/admin/rag, alimentées par lib/rag-insights/run.ts.

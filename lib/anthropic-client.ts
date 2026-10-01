@@ -1,5 +1,5 @@
 /**
- * Fabrique du client Anthropic utilisée PARTOUT dans SalesOS à la place de
+ * Fabrique du client Anthropic utilisée PARTOUT dans CoachelloHQ à la place de
  * `new Anthropic(...)`.
  *
  * Seule différence avec le constructeur du SDK : un `fetch` qui repère les

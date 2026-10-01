@@ -40,7 +40,7 @@ export type HubspotPreviewCompany = {
 };
 
 // MIME custom du payload de drag (liste d'ids de companies).
-export const DND_MIME = "application/x-salesos-companies";
+export const DND_MIME = "application/x-coachellohq-companies";
 
 // Clé spéciale pour la zone "Non attribué" (owner null).
 export const UNASSIGNED_KEY = "__unassigned__";

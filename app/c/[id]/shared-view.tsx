@@ -77,7 +77,7 @@ export function SharedConversationView({
             textDecoration: "none",
           }}
         >
-          Open CoachelloGPT
+          Open CoachelloAI
           <ArrowRight size={13} />
         </Link>
       </div>

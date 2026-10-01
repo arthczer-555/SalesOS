@@ -1,15 +1,15 @@
-# Plan : page Clients dans SalesOS
+# Plan : page Clients dans CoachelloHQ
 
 > Status : draft, à valider avant implémentation.
 > Auteur : Claude, 2026-05-21.
 
 ## 1. Objectif
 
-Ajouter une nouvelle section **Clients** dans SalesOS qui ouvre le cycle "post closed-won" :
+Ajouter une nouvelle section **Clients** dans CoachelloHQ qui ouvre le cycle "post closed-won" :
 
-1. Quand un deal HubSpot passe en `closedwon`, un webhook crée automatiquement un client dans SalesOS.
+1. Quand un deal HubSpot passe en `closedwon`, un webhook crée automatiquement un client dans CoachelloHQ.
 2. Une analyse IA lit tout l'historique HubSpot (mails, notes, engagements, meetings) + les transcripts Claap associés et remplit les fiches structurées (sections ci-dessous).
-3. Sur chaque fiche client : recap IA du deal façon Coachello-GPT, health score, actions/insights mensuels (cron), news entreprise.
+3. Sur chaque fiche client : recap IA du deal façon CoachelloAI, health score, actions/insights mensuels (cron), news entreprise.
 
 C'est la suite logique de `/deals` (avant signature) et `/sales-coach` (par meeting) : `/clients` = vie du compte après signature, côté CS/handover.
 
@@ -138,7 +138,7 @@ Pipeline en 5 étapes parallèles autant que possible (cf [[project_hosting_netl
       ("source": "hubspot:email:<id>" ou "claap:<rec_id>" ou "inferred")
     - fields manquants → laisser vide avec confidence=0 plutôt que halluciner
 
-[4] Appel Claude (recap deal style Coachello-GPT)
+[4] Appel Claude (recap deal style CoachelloAI)
     - même contexte
     - output structuré : timeline (3-5 moments clés), comment le deal a été closé,
       objections rencontrées, leviers déclencheurs, promesses sales, risques onboarding
@@ -281,7 +281,7 @@ Estimation grossière : 2 sprints sérieux (10-12 jours dev focus) en visant les
 1. **Diff visuel mensuel** : sur la fiche, encart "Ce qui a changé ce mois-ci" généré à partir du `health_history` + diff IA entre snapshots. Le CS voit en 10 sec ce qui bouge.
 2. **Slack digest hebdo CS** : tous les lundis matin, post Slack par owner avec top 3 clients en alerte. Réutilise `lib/slack-leads.ts`.
 3. **Engagements sales = check-list contractuelle** : section "engagements sales" devient des items cochables, et un check IA mensuel vérifie automatiquement si chaque promesse a été tenue (analyse les meetings + emails post-closed).
-4. **Ask Claude scoped sur le client** : un input style CoachelloGPT en haut de la fiche, contexte injecté = tout le client + deal + meetings. "Quand a-t-on parlé budget formation 2027 ?" → réponse avec citation.
+4. **Ask Claude scoped sur le client** : un input style CoachelloAI en haut de la fiche, contexte injecté = tout le client + deal + meetings. "Quand a-t-on parlé budget formation 2027 ?" → réponse avec citation.
 
 ### 📈 High impact, medium effort
 

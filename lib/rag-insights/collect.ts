@@ -1,5 +1,5 @@
 /**
- * Collecte des tours de conversation de CoachelloGPT pour RAG Insights.
+ * Collecte des tours de conversation de CoachelloAI pour RAG Insights.
  *
  * Aucune instrumentation nouvelle du chat : tout est déjà persisté, donc
  * l'historique est analysable rétroactivement.

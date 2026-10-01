@@ -1,4 +1,4 @@
-// Libellés des outils affichés à l'utilisateur pendant que CoachelloGPT
+// Libellés des outils affichés à l'utilisateur pendant que CoachelloAI
 // travaille. Source de vérité unique pour les deux surfaces :
 //  - chat web  : `chatToolLabel` (lib/chat/run-job.ts écrit les étapes dans
 //                chat_jobs.tool_steps, app/_components/chat-workspace.tsx rend)

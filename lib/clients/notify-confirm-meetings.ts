@@ -51,7 +51,7 @@ export async function notifyOwnerToConfirmMeetings(
   const body = [
     `:mag: *${row.company_name} - confirm the meetings before we analyze the account*`,
     ``,
-    `We're about to build the full SalesOS context for ${row.company_name}. ${meetingsLine}`,
+    `We're about to build the full CoachelloHQ context for ${row.company_name}. ${meetingsLine}`,
     `Please confirm they are all there (and add any we missed), then the analysis will start automatically.`,
     ``,
     `:point_right: <${ficheUrl}|Review and confirm the meetings>`,

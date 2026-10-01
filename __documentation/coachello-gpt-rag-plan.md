@@ -1,21 +1,21 @@
-# CoachelloGPT v2 : agent unique "manifest" + deux fonctionnements (Sales / Connaissance RAG)
+# CoachelloAI v2 : agent unique "manifest" + deux fonctionnements (Sales / Connaissance RAG)
 
 > Plan d'architecture. Statut : validé, architecture **manifest** retenue le 2026-07-21
 > (remplace la version "routeur en amont" du 2026-07-20, écartée après comparatif).
 > **Contrainte structurante non négociable : le mode ÉCRITURE conversationnel (l'utilisateur
-> modifie la base Notion en discutant avec l'agent) N'EXISTE PAS dans SalesOS. Il reste
+> modifie la base Notion en discutant avec l'agent) N'EXISTE PAS dans CoachelloHQ. Il reste
 > uniquement en local (Claude Code + `modes/WRITE.md` du repo `Coachello.RAG`). Le chat
-> SalesOS est donc en lecture seule sur Notion. UNE SEULE exception, encadrée : le flux
+> CoachelloHQ est donc en lecture seule sur Notion. UNE SEULE exception, encadrée : le flux
 > DAILY MAJ serveur peut écrire dans Notion, après validation explicite du validateur dans
 > le fil Slack de briefing (§6.4).**
 > Rappel : tout le cerveau de l'agent (AGENT_GUIDE.md, modes/, socle et packs sales) vit
-> dans le repo séparé `Coachello.RAG`, édité en local ; SalesOS ne fait que le fetcher.
+> dans le repo séparé `Coachello.RAG`, édité en local ; CoachelloHQ ne fait que le fetcher.
 
 ---
 
 ## 1. Objectif
 
-CoachelloGPT devient un agent unique avec **deux fonctionnements** :
+CoachelloAI devient un agent unique avec **deux fonctionnements** :
 
 | Fonctionnement | Périmètre | Sources | Existant ? |
 |---|---|---|---|
@@ -36,8 +36,8 @@ Principes directeurs :
    l'agent charge plusieurs packs en parallèle et croise (pricing Notion + deal HubSpot +
    meetings Claap).
 4. **Le repo `Coachello.RAG` est la source de vérité de TOUT le cerveau** (packs sales
-   inclus), édité en local, fetché par SalesOS. SalesOS ne l'édite jamais.
-5. **Pas de mode ÉCRITURE dans le chat.** Le chat SalesOS (web et Slack) est en lecture
+   inclus), édité en local, fetché par CoachelloHQ. CoachelloHQ ne l'édite jamais.
+5. **Pas de mode ÉCRITURE dans le chat.** Le chat CoachelloHQ (web et Slack) est en lecture
    seule sur Notion : aucun outil d'écriture dans son registre d'outils, jamais. L'écriture
    conversationnelle (barrière pré-écriture, propagation du registre, ingestion) reste
    locale via `modes/WRITE.md`. Seul le flux DAILY MAJ serveur écrit, dans un périmètre
@@ -130,7 +130,7 @@ Le monolithe `DEFAULT_BOT_GUIDE` (263 lignes) disparaît. À la place :
 
 | Élément | Contenu | Où il vit |
 |---|---|---|
-| `socle.md` | Identité, langue, citations, règles d'or, catalogue | Repo `Coachello.RAG`, dossier `salesos/` |
+| `socle.md` | Identité, langue, citations, règles d'or, catalogue | Repo `Coachello.RAG`, dossier `coachellohq/` |
 | `packs/proposals.md` | Construire une offre : pricing Notion + deal + cas clients + exemples de propositions | idem |
 | `packs/pipeline.md` | Méthodo deals (get_deals 1x, max 10 get_deal_activity, stages, owners) | idem |
 | `packs/client-360.md` | Vue client : HubSpot + Claap + billing + canal Slack dédié | idem |
@@ -194,12 +194,12 @@ Côté repo `Coachello.RAG` (édité en local, comme aujourd'hui) :
 
 ```
 Coachello.RAG/
-├── AGENT_GUIDE.md        # inchangé : le pack notion_knowledge servi à SalesOS
+├── AGENT_GUIDE.md        # inchangé : le pack notion_knowledge servi à CoachelloHQ
 ├── modes/                # READ / WRITE / DAILY_MAJ : vivent UNIQUEMENT dans ce repo.
-│                         # WRITE.md et DAILY_MAJ.md ne sont fetchés par SalesOS que
+│                         # WRITE.md et DAILY_MAJ.md ne sont fetchés par CoachelloHQ que
 │                         # pendant le flux DAILY MAJ serveur (barrière avant écriture),
 │                         # jamais servis au chat
-└── salesos/              # nouveau : le cerveau sales servi à SalesOS
+└── coachellohq/              # nouveau : le cerveau sales servi à CoachelloHQ
     ├── socle.md
     └── packs/
         ├── proposals.md, pipeline.md, client-360.md, prospection.md, meeting-prep.md
@@ -237,8 +237,8 @@ Coachello.RAG/
 - Le mode ÉCRITURE (je discute avec l'agent et je modifie la base : barrière
   pré-écriture, propagation registre + routage + hub, trame de page, ingestion de docs)
   reste exactement ce qu'il est : local, Claude Code, `modes/WRITE.md` dans le repo
-  `Coachello.RAG`. Cet outil n'est pas donné à SalesOS.
-- Si un utilisateur demande une modification de la base à CoachelloGPT, l'agent répond
+  `Coachello.RAG`. Cet outil n'est pas donné à CoachelloHQ.
+- Si un utilisateur demande une modification de la base à CoachelloAI, l'agent répond
   que l'édition se fait en local et récapitule proprement quoi ajouter et où (page cible
   du registre), pour transmission. Cette consigne vit dans le pack notion_knowledge.
 - Le registre et le guide ne sont donc édités que par le flux local existant. Zéro
@@ -302,10 +302,10 @@ seulement quand ils servent.
 | Point | Décision | Pourquoi |
 |---|---|---|
 | Architecture | Agent unique manifest + `load_guide`, PAS de routeur en amont | C'est le pattern du RAG local déjà validé ; meilleur sur les questions mixtes (cas central) ; pas de misroute ; code plus simple ; migration inverse possible (ajouter un routeur plus tard est facile, le retirer jette du code) |
-| Écriture Notion | **Le chat SalesOS n'écrit jamais** (aucun outil d'écriture dans son registre). Le mode ÉCRITURE conversationnel reste local (Claude Code + WRITE.md, repo `Coachello.RAG`). Seule exception : le runner DAILY MAJ écrit après feu vert Slack, périmètre borné au contenu de pages existantes | Décision utilisateur ferme (2026-07-21). Le registre reste édité uniquement en local, pas de conflit de source de vérité |
+| Écriture Notion | **Le chat CoachelloHQ n'écrit jamais** (aucun outil d'écriture dans son registre). Le mode ÉCRITURE conversationnel reste local (Claude Code + WRITE.md, repo `Coachello.RAG`). Seule exception : le runner DAILY MAJ écrit après feu vert Slack, périmètre borné au contenu de pages existantes | Décision utilisateur ferme (2026-07-21). Le registre reste édité uniquement en local, pas de conflit de source de vérité |
 | Modèle principal | `chat` -> Sonnet (`claude-sonnet-4-6`), recommandé fortement | L'agent porte la décision de charger les bons guides ; critère de retour arrière en §11 |
 | Auth Notion | Intégration interne unique, `NOTION_TOKEN`, partagée sur `🧭 DATABASE` seulement (droits d'écriture pour le seul flux DAILY MAJ, verrou dans le code) | Cohérent avec HubSpot/Slack/Claap partagés ; le partage Notion borne le périmètre |
-| Packs sales | Versionnés dans `Coachello.RAG/salesos/`, édités en local, fetchés par SalesOS | Une seule source de vérité pour tout le cerveau, un seul workflow d'édition |
+| Packs sales | Versionnés dans `Coachello.RAG/coachellohq/`, édités en local, fetchés par CoachelloHQ | Une seule source de vérité pour tout le cerveau, un seul workflow d'édition |
 | Fraîcheur du cerveau | Fetch GitHub + cache 5 min + snapshot DB de secours | Simple, quasi temps réel, résilient |
 | DAILY MAJ | Tout se fait en serveur : collecte + briefing DM Slack + validation dans le fil + écriture après feu vert (contenu de pages existantes seulement) ; le structurel (créations/déplacements) est remis au local dans le récap | Préserve le contrat briefing/feu vert ; le validateur reste dans Slack ; le registre reste édité en local |
 | Citations non-Notion | Format unifié dans le socle | Trou connu du guide local (§4 ne couvre que Notion) comblé |
@@ -321,7 +321,7 @@ seulement quand ils servent.
    sur `🧭 DATABASE`, `NOTION_TOKEN` en env local + Netlify prod (vérifier la prod,
    précédent BrightData). Dépendance `@notionhq/client`.
 2. `lib/chat/rag/guide-loader.ts` + migration `rag_guide_snapshot` + `GITHUB_TOKEN`.
-3. Côté repo `Coachello.RAG` : créer `salesos/socle.md` + `salesos/packs/*.md`
+3. Côté repo `Coachello.RAG` : créer `coachellohq/socle.md` + `coachellohq/packs/*.md`
    (réécriture du monolithe en packs, frontmatter description + triggers).
 4. Éclater `core.ts` -> `tools/` (extraction mécanique) + `registry.ts` + descriptions
    enrichies des règles d'usage. Retirer toute trace d'écriture Notion (il n'y en a
@@ -338,7 +338,7 @@ seulement quand ils servent.
    demande d'écriture (refus propre + récap pour le local), oubli de guide simulé
    (filet d'auto-injection), GitHub down simulé (snapshot), web + Slack, cache
    (cache_read non nul sur 2 requêtes identiques).
-10. Mettre à jour `MIGRATION_SALESOS.md` (statut) et le routage §3 d'AGENT_GUIDE.md
+10. Mettre à jour `MIGRATION_COACHELLOHQ.md` (statut) et le routage §3 d'AGENT_GUIDE.md
     (question client -> Sales).
 
 ### Phase 2 : DAILY MAJ (collecte + briefing + validation Slack + écriture serveur)

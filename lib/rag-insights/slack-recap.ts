@@ -81,7 +81,7 @@ export function renderRecap(args: {
 
   lines.push(`*RAG Insights - week of ${fmtDay(periodStart)}-${fmtDay(periodEnd)}*`);
   lines.push("");
-  lines.push(`*${stats.total} questions* asked to CoachelloGPT (${stats.web} web, ${stats.slack} Slack)`);
+  lines.push(`*${stats.total} questions* asked to CoachelloAI (${stats.web} web, ${stats.slack} Slack)`);
   lines.push(
     `- ${stats.knowledge} knowledge questions (Notion), ${stats.total - stats.knowledge} sales (CRM/deals)`,
   );
@@ -117,7 +117,7 @@ export function renderRecap(args: {
       lines.push("");
     }
     if (downs.length > MAX_THUMBS_DOWN) {
-      lines.push(`_+${downs.length - MAX_THUMBS_DOWN} more in SalesOS_`);
+      lines.push(`_+${downs.length - MAX_THUMBS_DOWN} more in CoachelloHQ_`);
     }
   }
 
@@ -164,7 +164,7 @@ export function renderRecap(args: {
 
   if (appUrl) {
     lines.push("");
-    lines.push(`<${appUrl}/admin/rag|See the full breakdown in SalesOS>`);
+    lines.push(`<${appUrl}/admin/rag|See the full breakdown in CoachelloHQ>`);
   }
 
   return lines.join("\n");

@@ -109,7 +109,7 @@ function renderAlert(args: { provider: CreditProvider; context?: string; detail:
   const lines = [
     `:rotating_light: *Insufficient credit — ${args.provider}*`,
     args.context ? `Where: ${args.context}` : null,
-    "SalesOS shows users _\"Insufficient credit. See with Gaspard.\"_ until the balance is topped up.",
+    "CoachelloHQ shows users _\"Insufficient credit. See with Gaspard.\"_ until the balance is topped up.",
     "",
     `> ${args.detail.replace(/\s*\n+\s*/g, " ").slice(0, 500)}`,
   ];
@@ -124,7 +124,7 @@ export async function reportInsufficientCredit(args: {
   provider?: CreditProvider;
   /** Message brut du fournisseur (loggué + cité dans le DM). */
   detail: string;
-  /** Où ça a cassé, ex. "CoachelloGPT chat", "cron deal scoring". */
+  /** Où ça a cassé, ex. "CoachelloAI chat", "cron deal scoring". */
   context?: string;
   /** Ignore la garde 24h — réservé aux tests manuels (scripts/test-credit-alert.ts). */
   force?: boolean;

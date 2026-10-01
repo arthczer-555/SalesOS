@@ -1,8 +1,8 @@
 /**
- * Charge le "cerveau" de CoachelloGPT depuis le repo GitHub privé Coachello.RAG
+ * Charge le "cerveau" de CoachelloAI depuis le repo GitHub privé Coachello.RAG
  * (source de vérité, éditée en local) :
- *  - salesos/socle.md            -> socle du system prompt (toujours chargé)
- *  - salesos/packs/*.md          -> packs thématiques servis par load_guide
+ *  - coachellohq/socle.md            -> socle du system prompt (toujours chargé)
+ *  - coachellohq/packs/*.md          -> packs thématiques servis par load_guide
  *  - AGENT_GUIDE.md              -> pack "notion_knowledge" (registre + navigation)
  *
  * Cache à deux étages :
@@ -105,17 +105,17 @@ async function loadSnapshot(): Promise<Record<string, string> | null> {
 
 /**
  * AGENT_GUIDE.md est écrit pour l'agent LOCAL (Claude Code + connecteurs MCP).
- * Ce préambule adapte son contrat à l'environnement CoachelloGPT (serveur),
+ * Ce préambule adapte son contrat à l'environnement CoachelloAI (serveur),
  * sinon plusieurs instructions seraient inapplicables ou contradictoires.
  */
-const NOTION_KNOWLEDGE_ADAPTER = `ADAPTATION SALESOS (prime sur le guide ci-dessous en cas de conflit) :
+const NOTION_KNOWLEDGE_ADAPTER = `ADAPTATION COACHELLOHQ (prime sur le guide ci-dessous en cas de conflit) :
 - Outils : "notion-fetch" = ton outil notion_fetch, "notion-search" = notion_search. Les autres outils cités (notion-create-pages, notion-update-page, connecteurs Slack/HubSpot MCP...) n'existent pas ici.
 - Ignore les instructions "lis modes/READ.md / WRITE.md / DAILY_MAJ.md" : ces fichiers ne sont pas accessibles ici. Le mode LECTURE est résumé ainsi : classe la question via le routage, applique la RÈGLE DE COUVERTURE ci-dessous, localise par notion_fetch sur les IDs du registre (descente par re-fetch), notion_search scopé seulement si une page reste introuvable, lis chaque page en entier, réponds avec leur seul contenu en citant chaque page.
 - RÈGLE DE COUVERTURE (prime sur toute consigne de parcimonie du guide) : avant de fetcher, balaye le registre §2 EN ENTIER et retiens TOUTES les pages plausibles pour la question, pas seulement la première qui matche. Puis fetch-les TOUTES EN PARALLÈLE dans le même tour (plusieurs notion_fetch dans une seule réponse : ils s'exécutent simultanément, ça ne coûte pas plus de temps qu'un seul). Une page ouverte pour rien coûte moins cher qu'une réponse incomplète que l'utilisateur doit relancer. Ne fetch page par page sur plusieurs tours que si l'ID de la suivante n'était pas connu avant de lire la première.
 - Combien de pages : une question ponctuelle (un chiffre, une définition) = 1 page suffit. Une question "comment on fait X" / "guide-moi" / "il manque quoi" = 2 à 5 pages, systématiquement. Une tâche opérationnelle dans un outil déclenche AU MINIMUM : la page procédure/runbook (la séquence, l'ordre, les champs), la ou les pages écran de l'outil concerné, et la page qui-fait-quoi si un partage de rôles est en jeu.
 - Tu es en LECTURE SEULE sur Notion : les modes ÉCRITURE et DAILY MAJ ne sont pas disponibles ici (ils se font en local). Demande d'écriture → explique-le et fournis un récap (quoi ajouter, page cible du registre).
 - La règle "pas de web, pas d'autres sources" du guide vaut UNIQUEMENT pour répondre sur le contenu de la base Notion : tes autres outils (HubSpot, Claap, web...) restent gouvernés par le socle et les autres guides, et les questions mixtes doivent croiser les sources.
-- Question sur un client/compte : ce sont tes outils Sales qui font foi, pas Notion, et en premier get_client (fiche client SalesOS : contexte, programme, population, contacts, AM/CS, objectifs, points de vigilance, santé) puis HubSpot, Claap et le sheet revenue. Les pages clients de la base Notion sont des USE CASES et des références commerciales (ce qu'on raconte d'un client en avant-vente), jamais l'état opérationnel d'un compte : ne les utilise pas pour répondre "où on en est avec X" ou "qui est le contact RH chez X".
+- Question sur un client/compte : ce sont tes outils Sales qui font foi, pas Notion, et en premier get_client (fiche client CoachelloHQ : contexte, programme, population, contacts, AM/CS, objectifs, points de vigilance, santé) puis HubSpot, Claap et le sheet revenue. Les pages clients de la base Notion sont des USE CASES et des références commerciales (ce qu'on raconte d'un client en avant-vente), jamais l'état opérationnel d'un compte : ne les utilise pas pour répondre "où on en est avec X" ou "qui est le contact RH chez X".
 
 `;
 
@@ -124,8 +124,8 @@ function buildBundle(files: Record<string, string>, stale: boolean): GuideBundle
 
   // Tri par path : l'ordre du catalogue (bloc système caché) doit être stable.
   for (const [path, raw] of Object.entries(files).sort(([a], [b]) => a.localeCompare(b))) {
-    if (!path.startsWith("salesos/packs/")) continue;
-    const slug = path.slice("salesos/packs/".length).replace(/\.md$/, "");
+    if (!path.startsWith("coachellohq/packs/")) continue;
+    const slug = path.slice("coachellohq/packs/".length).replace(/\.md$/, "");
     const { meta, body } = parseFrontmatter(raw);
     packs.set(slug, {
       name: meta.name ?? slug,
@@ -147,7 +147,7 @@ function buildBundle(files: Record<string, string>, stale: boolean): GuideBundle
   }
 
   return {
-    socle: files["salesos/socle.md"] ? parseFrontmatter(files["salesos/socle.md"]).body : "",
+    socle: files["coachellohq/socle.md"] ? parseFrontmatter(files["coachellohq/socle.md"]).body : "",
     packs,
     stale,
     fetchedAt: Date.now(),
@@ -156,8 +156,8 @@ function buildBundle(files: Record<string, string>, stale: boolean): GuideBundle
 
 async function fetchBundle(): Promise<GuideBundle> {
   try {
-    const packFiles = await githubListDir("salesos/packs");
-    const paths = ["salesos/socle.md", "AGENT_GUIDE.md", ...packFiles.map((f) => `salesos/packs/${f}`)];
+    const packFiles = await githubListDir("coachellohq/packs");
+    const paths = ["coachellohq/socle.md", "AGENT_GUIDE.md", ...packFiles.map((f) => `coachellohq/packs/${f}`)];
     const contents = await Promise.all(paths.map((p) => githubFetch(p)));
     const files = Object.fromEntries(paths.map((p, i) => [p, contents[i]]));
     void saveSnapshot(files);

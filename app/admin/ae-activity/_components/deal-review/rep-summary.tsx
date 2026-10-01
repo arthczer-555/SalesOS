@@ -105,7 +105,7 @@ export function RepSummaryTable({
                         </span>
                         {!r.isSalesUser && (
                           <span
-                            title="Deal owner not flagged as Sales in SalesOS: not comparable to the AEs"
+                            title="Deal owner not flagged as Sales in CoachelloHQ: not comparable to the AEs"
                             style={{
                               fontSize: 10,
                               fontWeight: 600,

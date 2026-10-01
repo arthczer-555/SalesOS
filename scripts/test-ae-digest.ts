@@ -1,5 +1,5 @@
 /**
- * One-off : déclenche le vrai digest "deal review" par AE via le BOT SalesOS
+ * One-off : déclenche le vrai digest "deal review" par AE via le BOT CoachelloAI
  * (buildAndSendAeDigests), avec les VRAIS scores depuis deal_scores.
  * Mode test (DEALS_AE_DIGEST_MODE=test) : tous les DM partent chez Arthur.
  *
@@ -28,7 +28,7 @@ async function main() {
   const preexisting = new Set((before ?? []).map((r: { id: number | string }) => r.id));
   console.log(`[test-ae-digest] lignes pré-existantes pour ${runDate} : ${preexisting.size}`);
 
-  // Vrai chemin de l'app : envoi par le bot SalesOS.
+  // Vrai chemin de l'app : envoi par le bot CoachelloAI.
   const result = await buildAndSendAeDigests();
   console.log(`[test-ae-digest] résultat:`, JSON.stringify(result));
 

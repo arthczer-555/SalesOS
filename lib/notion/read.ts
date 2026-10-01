@@ -1,5 +1,5 @@
 /**
- * Lecture Notion -> markdown pour le contexte de CoachelloGPT.
+ * Lecture Notion -> markdown pour le contexte de CoachelloAI.
  *
  * Trois primitives, alignées sur la procédure du mode LECTURE du repo
  * Coachello.RAG : fetchPageAsMarkdown (navigation déterministe par ID, méthode
