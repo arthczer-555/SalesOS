@@ -20,6 +20,7 @@ import { webTools } from "./web";
 import { notionTools } from "./notion";
 import { loadGuideTools } from "./load-guide";
 import { clientsTools } from "./clients";
+import { invoicesTools } from "./invoices";
 import type { ToolContext, ToolHandler } from "./types";
 
 // Ordre stable : ne pas réordonner sans raison (chaque changement d'ordre
@@ -39,6 +40,7 @@ const MODULES = [
   // Ajouté en fin : tout nouveau module se met ICI, pour ne pas décaler les
   // définitions déjà cachées côté Anthropic.
   clientsTools,
+  invoicesTools,
 ];
 
 export const TOOLS: Anthropic.Tool[] = MODULES.flatMap((m) => m.defs);

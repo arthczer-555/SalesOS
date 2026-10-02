@@ -12,6 +12,7 @@ const TOOL_LABELS: Record<string, { emoji: string; label: string }> = {
   notion_search: { emoji: "📚", label: "Searching Coachello knowledge base" },
   get_billing_revenue: { emoji: "💶", label: "Reading revenue sheet" },
   get_revenue_kpis: { emoji: "📈", label: "Reading revenue KPIs" },
+  get_invoices: { emoji: "🧾", label: "Reading invoices" },
   search_clients: { emoji: "🤝", label: "Searching client accounts" },
   get_client: { emoji: "🤝", label: "Reading client file" },
   search_contacts: { emoji: "📇", label: "Searching HubSpot contacts" },
