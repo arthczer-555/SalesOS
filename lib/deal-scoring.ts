@@ -4,6 +4,7 @@ import { db } from "./db";
 import { logUsage } from "./log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { noExtendedThinking, textOf } from "@/lib/models/compat";
 
 export const DEFAULT_SCORE_MODEL = "claude-haiku-4-5-20251001";
 
@@ -646,11 +647,12 @@ ${NO_EM_DASH_RULE}`;
       ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
       : systemPrompt,
     messages: [{ role: "user", content: context }],
+    ...noExtendedThinking(claudeModel),
   });
 
   logUsage(userId, claudeModel, message.usage.input_tokens, message.usage.output_tokens, "deals_score");
 
-  const raw = message.content[0].type === "text" ? message.content[0].text : "";
+  const raw = textOf(message.content);
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("Réponse IA invalide");
 

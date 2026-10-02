@@ -5,6 +5,7 @@ import { decrypt } from "@/lib/crypto";
 import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { noExtendedThinking } from "@/lib/models/compat";
 
 export const maxDuration = 120;
 
@@ -94,6 +95,7 @@ RÈGLES :
           max_tokens: 2048,
           system: systemPrompt,
           messages: [{ role: "user", content: question }],
+          ...noExtendedThinking(model),
         });
 
         apiStream.on("text", (delta) => send({ type: "text", text: delta }));

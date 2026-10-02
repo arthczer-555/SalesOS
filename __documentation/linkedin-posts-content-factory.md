@@ -44,7 +44,7 @@ Ces deux fonctions ne lèvent jamais (best-effort), comme le reste du module Bri
 2. **Étape inspiration** : `fetchLinkedInTrends([rec.topic, "coaching", ...])` → récupère 5-10 vrais posts/articles LinkedIn (titre + snippet + url). Ce sont les références "ce qui marche". Best-effort : si vide, on continue sans (prompt le précise).
 3. Construire le prompt partagé : voix de marque Coachello (B2B leadership coaching), **bonnes pratiques LinkedIn déduites des vrais posts récupérés** (hook en 1re ligne, phrases courtes, aération/sauts de ligne, 1 CTA, 3-5 hashtags, pas de lien externe dans le corps, 1200-1800 caractères), et **consigne de 2 posts d'angles distincts**.
 4. Outil Claude `write_linkedin_posts` (`tool_choice` forcé) renvoyant `{ posts: [{angle, hook, body, hashtags}, {...}] }` où `body` est généré **en FR et EN** (posts bilingues comme les articles, langue native non traduite).
-5. `getModelPreference("marketing", "claude-sonnet-4-6")`, `logUsage(..., "marketing_linkedin_generate")`, gestion `max_tokens`/`tool_use` identique à generate-article.ts.
+5. `getModelPreference("marketing", "claude-sonnet-5-5")`, `logUsage(..., "marketing_linkedin_generate")`, gestion `max_tokens`/`tool_use` identique à generate-article.ts.
 6. `deleteDraftsForRec` + `saveDraft` + statut `"approved"` ; sur erreur, revert `"approved"` (même filet que L414-418).
 
 ### 4. Route API — `app/api/marketing/linkedin-content/route.ts` (nouveau, miroir de [app/api/marketing/content/route.ts](../app/api/marketing/content/route.ts))

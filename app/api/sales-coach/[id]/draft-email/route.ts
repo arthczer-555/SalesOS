@@ -7,6 +7,7 @@ import { repairAnalysis, type SalesCoachAnalysis } from "@/lib/guides/sales-coac
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import type { DealSnapshot } from "@/lib/hubspot";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -126,13 +127,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   ].filter(Boolean).join("\n");
 
   const client = anthropicClient({ timeout: 60_000 });
-  const message = await client.messages.create({
+  const message = await client.messages.create(withForcedTool({
     model,
     max_tokens: 1500,
     messages: [{ role: "user", content: userPrompt }],
     tools: [draftTool],
-    tool_choice: { type: "tool" as const, name: "email_draft" },
-  });
+  }, "email_draft"));
 
   logUsage(
     user.id,

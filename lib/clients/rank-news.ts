@@ -5,6 +5,7 @@ import { getModelPreference } from "../models/get-model-preference";
 import { NO_EM_DASH_RULE_EN } from "@/lib/no-em-dash";
 import type { NewsCategory, NewsImportance, NewsItem } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "../models/compat";
 
 // Tri des news par Claude Haiku, avec le regard d'un AM/CS qui gère un compte
 // CLIENT (pas d'un commercial qui prospecte). Tavily + Google News renvoient
@@ -116,13 +117,12 @@ ${NO_EM_DASH_RULE_EN}`;
     const client = anthropicClient({ timeout: 120_000 });
     const msg = await withAnthropicRetry(
       () =>
-        client.messages.create({
+        client.messages.create(withForcedTool({
           model,
           max_tokens: 2000,
           messages: [{ role: "user", content: prompt }],
           tools: [RANK_NEWS_TOOL],
-          tool_choice: { type: "tool" as const, name: "rank_news" },
-        }),
+        }, "rank_news")),
       { label: `clients/rank-news` },
     );
     logUsage(opts.userId ?? null, model, msg.usage.input_tokens, msg.usage.output_tokens, opts.feature ?? "clients_news_rank");

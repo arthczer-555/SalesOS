@@ -6,6 +6,7 @@ import type { ClientEnrichmentContext } from "./context";
 import { meetingLink } from "./health";
 import type { Health, HealthTone } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { noExtendedThinking, withForcedTool } from "../models/compat";
 
 // Phrase d'explication du health score, ancrée surtout sur les derniers
 // échanges. Le scoring (health.ts) ne regarde que la récence/volume des
@@ -66,6 +67,7 @@ ${NO_EM_DASH_RULE}`;
         model,
         max_tokens: 200,
         messages: [{ role: "user", content: prompt }],
+        ...noExtendedThinking(model),
       }),
     { label: "clients/health-summary" },
   );
@@ -144,13 +146,12 @@ ${NO_EM_DASH_RULE}`;
   const client = anthropicClient({ timeout: 120_000 });
   const msg = await withAnthropicRetry(
     () =>
-      client.messages.create({
+      client.messages.create(withForcedTool({
         model,
         max_tokens: 300,
         messages: [{ role: "user", content: prompt }],
         tools: [TONE_TOOL],
-        tool_choice: { type: "tool" as const, name: TONE_TOOL.name },
-      }),
+      }, TONE_TOOL.name)),
     { label: "clients/health-tone" },
   );
   logUsage(userId, model, msg.usage.input_tokens, msg.usage.output_tokens, "clients_health_tone");

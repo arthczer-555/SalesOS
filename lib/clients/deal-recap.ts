@@ -6,6 +6,7 @@ import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { renderClientContextForPrompt, type ClientEnrichmentContext } from "./context";
 import type { DealRecap } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "../models/compat";
 
 // Recap "comment ce deal a été signé" - style CoachelloAI.
 // Format structuré pour pouvoir réutiliser la timeline dans une fiche CS,
@@ -133,14 +134,13 @@ export async function generateDealRecap(
   const client = anthropicClient({ timeout: 600_000 });
   const msg = await withAnthropicRetry(
     () =>
-      client.messages.create({
+      client.messages.create(withForcedTool({
         model,
         max_tokens: 4000,
         system: DEAL_RECAP_SYSTEM_PROMPT,
         messages: [{ role: "user", content: prompt }],
         tools: [DEAL_RECAP_TOOL],
-        tool_choice: { type: "tool" as const, name: "deal_recap" },
-      }),
+      }, "deal_recap")),
     { label: "clients/deal-recap" },
   );
 

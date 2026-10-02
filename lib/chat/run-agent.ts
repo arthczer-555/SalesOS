@@ -27,7 +27,7 @@ import { anthropicClient } from "@/lib/anthropic-client";
 // Sonnet par défaut : l'agent porte lui-même la décision de charger les bons
 // guides (pattern manifest), ce qui demande mieux que Haiku. Surchargeable par
 // l'admin via /admin > Modèles IA (clé "chat").
-const DEFAULT_CHAT_MODEL = "claude-sonnet-4-6";
+const DEFAULT_CHAT_MODEL = "claude-sonnet-5-5";
 
 /**
  * Texte de la dernière question de l'utilisateur (ignore les documents joints

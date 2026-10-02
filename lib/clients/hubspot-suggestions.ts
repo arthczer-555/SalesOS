@@ -10,6 +10,7 @@ import {
   type HubspotFieldSuggestions,
 } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
 // Haiku : on genere jusqu'a ~30 suggestions de champs en un appel. Sonnet est
 // trop lent ici (~30s pour tout le batch) et depasse le timeout des fonctions
@@ -91,7 +92,7 @@ Appelle l'outil hubspot_field_suggestions. Pour chaque champ vide, propose une v
   const client = anthropicClient({ timeout: 120_000 });
   const msg = await withAnthropicRetry(
     () =>
-      client.messages.create({
+      client.messages.create(withForcedTool({
         model,
         // ~30 champs possibles, chacun property+suggestion+rationale. A 1200 le
         // tool_use etait tronque (stop_reason=max_tokens) -> fields vides. 4000
@@ -99,8 +100,7 @@ Appelle l'outil hubspot_field_suggestions. Pour chaque champ vide, propose une v
         max_tokens: 4000,
         messages: [{ role: "user", content: prompt }],
         tools: [TOOL],
-        tool_choice: { type: "tool" as const, name: "hubspot_field_suggestions" },
-      }),
+      }, "hubspot_field_suggestions")),
     { label: "clients/hubspot-suggestions" },
   );
 

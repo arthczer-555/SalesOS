@@ -68,7 +68,8 @@ export default async function AdminPage() {
   const PRICING: Record<string, { input: number; output: number }> = {
     "claude-haiku-4-5":  { input: 1, output: 5  },
     "claude-haiku-4-5-20251001": { input: 1, output: 5  },
-    "claude-sonnet-4-6": { input: 3, output: 15 },
+    "claude-sonnet-4-6": { input: 3, output: 15 }, // logs historiques
+    "claude-sonnet-5-5": { input: 2, output: 10 },
     "claude-opus-4-6":   { input: 5, output: 25 },
     "claude-opus-4-8":   { input: 5, output: 25 },
   };

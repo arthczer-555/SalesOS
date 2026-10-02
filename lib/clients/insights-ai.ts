@@ -16,6 +16,7 @@ import type {
   News,
 } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "../models/compat";
 
 // Génération IA des "Next actions" (onglet Key insights) + des highlights de
 // "What's new". Le scoring (health.ts) reste par règles ; ici on lit ce qui
@@ -28,7 +29,7 @@ import { anthropicClient } from "@/lib/anthropic-client";
 // semaine à l'autre. Best-effort : null en cas d'échec, l'appelant retombe sur
 // computeInsights (règles).
 
-const INSIGHTS_MODEL = "claude-sonnet-4-6";
+const INSIGHTS_MODEL = "claude-sonnet-5-5";
 const RECENT_DAYS = 45;
 const DONE_RETENTION_DAYS = 30;
 const DAY = 24 * 60 * 60 * 1000;
@@ -274,13 +275,12 @@ ${NO_EM_DASH_RULE_EN}`;
   const client = anthropicClient({ timeout: 120_000 });
   const msg = await withAnthropicRetry(
     () =>
-      client.messages.create({
+      client.messages.create(withForcedTool({
         model,
         max_tokens: 1500,
         messages: [{ role: "user", content: prompt }],
         tools: [CLIENT_INSIGHTS_TOOL],
-        tool_choice: { type: "tool" as const, name: "client_insights" },
-      }),
+      }, "client_insights")),
     { label: "clients/insights" },
   );
 

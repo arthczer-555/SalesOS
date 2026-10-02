@@ -7,6 +7,7 @@ import { VIDEO_SCRIPT_GUIDE } from "@/lib/guides/video-script";
 import { stripEmDashes } from "@/lib/no-em-dash";
 import { lookupClientByName, loadClientContextById } from "@/lib/clients/video-context";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { noExtendedThinking } from "@/lib/models/compat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -14,9 +15,9 @@ export const maxDuration = 60;
 async function defaultModel(): Promise<string> {
   const { data } = await db.from("guide_defaults").select("content").eq("key", "model_preferences").single();
   try {
-    return (JSON.parse(data?.content ?? "{}") as Record<string, string>).deals_email ?? "claude-sonnet-4-6";
+    return (JSON.parse(data?.content ?? "{}") as Record<string, string>).deals_email ?? "claude-sonnet-5-5";
   } catch {
-    return "claude-sonnet-4-6";
+    return "claude-sonnet-5-5";
   }
 }
 
@@ -78,6 +79,7 @@ export async function POST(req: NextRequest) {
       max_tokens: 1024,
       system: VIDEO_SCRIPT_GUIDE,
       messages: [{ role: "user", content: userPrompt }],
+      ...noExtendedThinking(model),
     });
     logUsage(user.id, model, message.usage.input_tokens, message.usage.output_tokens, "video_script");
     const script = extractText(message.content);
@@ -95,6 +97,7 @@ export async function POST(req: NextRequest) {
       system: VIDEO_SCRIPT_GUIDE,
       tools: [CLIENT_TOOL],
       messages,
+      ...noExtendedThinking(model),
     });
     logUsage(user.id, model, message.usage.input_tokens, message.usage.output_tokens, "video_script");
 

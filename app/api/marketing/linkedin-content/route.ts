@@ -14,6 +14,7 @@ import type {
   LinkedInPostRecommendation,
 } from "@/lib/marketing-types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -426,13 +427,12 @@ Call \`propose_linkedin_posts\`.`;
 
   const model = await getModelPreference("marketing", ANALYSIS_MODEL);
   const client = anthropicClient();
-  const message = await client.messages.create({
+  const message = await client.messages.create(withForcedTool({
     model,
     max_tokens: isThemed ? 3500 : 2000,
     tools: [analysisTool],
-    tool_choice: { type: "tool", name: "propose_linkedin_posts" },
     messages: [{ role: "user", content: prompt }],
-  });
+  }, "propose_linkedin_posts"));
 
   logUsage(userId, model, message.usage.input_tokens, message.usage.output_tokens, "marketing_linkedin_analyze");
 

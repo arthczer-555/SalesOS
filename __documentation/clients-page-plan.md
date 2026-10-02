@@ -131,7 +131,7 @@ Pipeline en 5 étapes parallèles autant que possible (cf [[project_hosting_netl
     - récupérer les transcripts (text) + analyses MEDDIC déjà faites
     - filtrer "external" uniquement
 
-[3] Appel Claude (Sonnet 4.6, tool use structuré)
+[3] Appel Claude (Sonnet 5.5, tool use structuré)
     - input : tout le contexte (1+2) concaténé en markdown
     - output : tool `client_fields` avec exactement les 6 sections + value/confidence/source par field
     - prompt impose de citer la source pour chaque field rempli
@@ -300,7 +300,7 @@ Estimation grossière : 2 sprints sérieux (10-12 jours dev focus) en visant les
 ### 🛠 Fondations à prévoir tôt
 
 - Versioning des prompts (déjà fait pour d'autres modules ?), pour A/B les extractions.
-- Coût IA : 1 client = ~ 50k tokens en input (deal history + transcripts) × Sonnet 4.6. Estimer avec un échantillon avant de cron-iser massivement.
+- Coût IA : 1 client = ~ 50k tokens en input (deal history + transcripts) × Sonnet 5.5. Estimer avec un échantillon avant de cron-iser massivement.
 - Cache des recap (ne pas refaire l'IA tant que ni le deal ni les meetings ne changent → hash content).
 
 ## 10. Risques / points ouverts
@@ -308,5 +308,5 @@ Estimation grossière : 2 sprints sérieux (10-12 jours dev focus) en visant les
 - **Idempotence webhook** : HubSpot peut renvoyer plusieurs fois le closedwon. Couvert par `UNIQUE(hubspot_deal_id)`.
 - **Champs vides** : la plupart des fields ne sont pas dans HubSpot, donc l'IA va beaucoup deviner. Bien afficher la confidence pour éviter qu'un CS prenne ça pour parole d'évangile.
 - **Données sensibles** : certains fields touchent la RH côté client. Vérifier que la rétention Supabase est OK avec le DPA Coachello.
-- **Modèle Claude** : ne pas mettre Haiku, on perd trop en qualité d'extraction structurée. Sonnet 4.6 par défaut, possibilité de passer Opus 4.7 pour le recap deal si la qualité ne suit pas.
+- **Modèle Claude** : ne pas mettre Haiku, on perd trop en qualité d'extraction structurée. Sonnet 5.5 par défaut, possibilité de passer Opus 4.7 pour le recap deal si la qualité ne suit pas.
 - **À valider avec toi** : la liste exacte des fields (j'ai gardé tes intitulés, en kebab-case côté code) + ordre des sections dans l'UI + qui peut éditer (tout le monde ? seulement owner + admin ?).

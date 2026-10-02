@@ -4,7 +4,7 @@ import { useState } from "react";
 
 const MODELS = [
   { id: "claude-haiku-4-5-20251001", label: "Haiku - fast, economical" },
-  { id: "claude-sonnet-4-6", label: "Sonnet - balanced" },
+  { id: "claude-sonnet-5-5", label: "Sonnet - balanced" },
   { id: "claude-opus-4-6", label: "Opus - most powerful" },
 ];
 

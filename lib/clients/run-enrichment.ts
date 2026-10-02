@@ -24,6 +24,7 @@ import { generateHubspotSuggestions } from "./hubspot-suggestions";
 import { fetchHubspotDealFields } from "./hubspot-fields";
 import type { ClientFields, News } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "../models/compat";
 
 export type RunEnrichmentResult =
   | { ok: true; alreadyDone?: boolean }
@@ -35,9 +36,9 @@ export type RunEnrichmentResult =
 //   1. Verrouille la row (enrichment_status = 'running').
 //   2. Charge le contexte HubSpot + Claap pour le deal.
 //   3. En parallèle :
-//        - Extraction des 6 sections de fields (Claude Sonnet 4.6)
-//        - Brief coachs (Claude Sonnet 4.6)
-//        - Recap deal IA (Claude Sonnet 4.6)
+//        - Extraction des 6 sections de fields (Claude Sonnet 5.5)
+//        - Brief coachs (Claude Sonnet 5.5)
+//        - Recap deal IA (Claude Sonnet 5.5)
 //        - News entreprise (Tavily, pas d'IA)
 //   4. Calcul du health + insights (règles simples, pas d'IA).
 //   5. Écrit tout, bascule en 'done'.
@@ -113,14 +114,13 @@ export async function runClientEnrichment(
     // le brief s'écrit dans la langue dominante des transcripts.
     const fieldsPromise = withAnthropicRetry(
       () =>
-        client.messages.create({
+        client.messages.create(withForcedTool({
           model: clientsModel,
           max_tokens: 8000,
           system: `${CLIENT_EXTRACTION_SYSTEM_PROMPT}\n\n${NO_EM_DASH_RULE}`,
           messages: [{ role: "user", content: contextPrompt }],
           tools: [CLIENT_FIELDS_TOOL],
-          tool_choice: { type: "tool" as const, name: "client_fields" },
-        }),
+        }, "client_fields")),
       { label: `clients/enrich/${clientId}` },
     );
 

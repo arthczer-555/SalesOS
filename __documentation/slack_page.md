@@ -69,7 +69,7 @@ create table if not exists slack_agent_runs (
 create index slack_agent_runs_agent_idx on slack_agent_runs(agent_id, started_at desc);
 ```
 
-Et ajouter la clé `slack_agents` dans `guide_defaults.model_preferences` (UI admin existante) — default `claude-sonnet-4-6` recommandé (les agents ont besoin d'agentic tool-calling solide, haiku sera trop léger pour synthèses complexes).
+Et ajouter la clé `slack_agents` dans `guide_defaults.model_preferences` (UI admin existante) — default `claude-sonnet-5-5` recommandé (les agents ont besoin d'agentic tool-calling solide, haiku sera trop léger pour synthèses complexes).
 
 ---
 
@@ -227,7 +227,7 @@ Placée après `Sales Coach` dans le nav array.
 
 `/api/slack-agents/generate-prompt` reçoit `{ description, target_label, tools_enabled }` et renvoie `{ system_prompt }`.
 
-Meta-prompt à envoyer à Claude (sonnet 4.6, tool_use forcé pour JSON déterministe) :
+Meta-prompt à envoyer à Claude (Sonnet 5.5, sortie via outil avec `withForcedTool` de lib/models/compat.ts : le tool_choice forcé est refusé par Sonnet 5.5) :
 
 > Tu es un concepteur d'agents Slack pour CoachelloHQ. L'utilisateur a décrit ce qu'il veut :
 > « {description} »

@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { logUsage } from "@/lib/log-usage";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { noExtendedThinking, textOf } from "@/lib/models/compat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -149,6 +150,7 @@ export async function POST(req: NextRequest) {
       max_tokens: 1024,
       system: systemPrompt,
       messages: [{ role: "user", content: `Rédige un email de suivi pour ce deal :\n\n${contextBlock}` }],
+      ...noExtendedThinking(emailModel),
     });
 
     logUsage(
@@ -158,7 +160,7 @@ export async function POST(req: NextRequest) {
       message.usage.output_tokens,
       isRewrite ? "deals_email_rewrite" : "deals_email",
     );
-    const raw = message.content[0].type === "text" ? message.content[0].text : "";
+    const raw = textOf(message.content);
     let subject = "";
     let body = "";
     try {

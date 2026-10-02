@@ -43,6 +43,7 @@ import {
 } from "./language";
 import { scoreOneDeal } from "../deal-scoring";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
 const DEFAULT_ANALYZE_MODEL = "claude-haiku-4-5-20251001";
 const MAX_TRANSCRIPT_CHARS_FOR_CLAUDE = 150_000;
@@ -99,14 +100,13 @@ async function generateCoachingAnalysis<T extends AnySalesCoachAnalysis>(args: {
   let retryReminder = "";
   let lastFailure: "shape" | "lang" = "shape";
   for (let attempt = 1; attempt <= MAX_LANG_ATTEMPTS; attempt++) {
-    const msg = await client.messages.stream({
+    const msg = await client.messages.stream(withForcedTool({
       model: args.model,
       max_tokens: 8000,
       system: args.system,
       messages: [{ role: "user", content: args.prompt + retryReminder }],
       tools: [args.tool],
-      tool_choice: { type: "tool" as const, name: args.tool.name },
-    }).finalMessage();
+    }, args.tool.name)).finalMessage();
     logUsage(args.userId, args.model, msg.usage.input_tokens, msg.usage.output_tokens, args.usageTag);
     const tb = msg.content.find((b) => b.type === "tool_use");
     if (!tb || !("input" in tb)) throw new Error(`No tool_use block in ${args.label} coaching response`);

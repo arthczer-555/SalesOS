@@ -6,6 +6,7 @@ import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { renderClientContextForPrompt, type ClientEnrichmentContext } from "./context";
 import type { CoachBrief } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "../models/compat";
 
 // Brief client à destination des coachs Coachello. C'est ce qu'on envoie sur
 // le canal Slack des coachs au moment du staffing, suivant un template
@@ -122,7 +123,7 @@ const COACH_BRIEF_TOOL: Anthropic.Tool = {
   },
 };
 
-// Haiku 4.5 pendant la phase de test — basculer sur claude-sonnet-4-6 si la
+// Haiku 4.5 pendant la phase de test — basculer sur claude-sonnet-5-5 si la
 // qualité du brief n'est pas suffisante sur les profils complexes.
 const COACH_BRIEF_MODEL = "claude-haiku-4-5-20251001";
 
@@ -138,14 +139,13 @@ export async function generateCoachBrief(
   const client = anthropicClient({ timeout: 600_000 });
   const msg = await withAnthropicRetry(
     () =>
-      client.messages.create({
+      client.messages.create(withForcedTool({
         model,
         max_tokens: 4000,
         system: COACH_BRIEF_SYSTEM_PROMPT,
         messages: [{ role: "user", content: prompt }],
         tools: [COACH_BRIEF_TOOL],
-        tool_choice: { type: "tool" as const, name: "client_coach_brief" },
-      }),
+      }, "client_coach_brief")),
     { label: "clients/coach-brief" },
   );
 

@@ -4,8 +4,9 @@ import { logUsage } from "../log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { searchSlackForCompany } from "@/lib/slack/search";
+import { withForcedTool } from "@/lib/models/compat";
 
-const DEFAULT_ANALYZE_MODEL = "claude-sonnet-4-6";
+const DEFAULT_ANALYZE_MODEL = "claude-sonnet-5-5";
 
 export const analyzeTool: Anthropic.Tool = {
   name: "deal_analysis",
@@ -343,7 +344,7 @@ export async function runDealAnalysis(dealId: string, userId: string | null): Pr
     ].filter(Boolean).join("\n").slice(0, 14000);
 
     const client = anthropicClient({ timeout: 600_000 });
-    const message = await client.messages.create({
+    const message = await client.messages.create(withForcedTool({
       model: analyzeModel,
       max_tokens: 4000,
       system: `Tu es un expert en vente B2B pour Coachello (coaching professionnel).
@@ -357,8 +358,7 @@ Utilise l'outil deal_analysis pour retourner ton analyse.
 ${NO_EM_DASH_RULE}`,
       messages: [{ role: "user", content: contextBlock }],
       tools: [analyzeTool],
-      tool_choice: { type: "tool" as const, name: "deal_analysis" },
-    });
+    }, "deal_analysis"));
 
     logUsage(userId, analyzeModel, message.usage.input_tokens, message.usage.output_tokens, "deals_analyze");
     const toolBlock = message.content.find((b) => b.type === "tool_use");

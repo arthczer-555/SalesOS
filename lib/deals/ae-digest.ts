@@ -51,6 +51,7 @@ import {
 } from "../slack/lookup";
 import { isNurtureLabel } from "./stages";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { noExtendedThinking, textOf } from "@/lib/models/compat";
 
 // ─── Seuils de tri (ajustables) ───────────────────────────────────────────────
 const HOT_SCORE = 70; // score ≥ => Hot
@@ -312,10 +313,11 @@ Return ONLY raw JSON, no markdown:
     max_tokens: 1200,
     system,
     messages: [{ role: "user", content: user }],
+    ...noExtendedThinking(model),
   });
   logUsage(null, model, message.usage.input_tokens, message.usage.output_tokens, "deals_ae_digest");
 
-  const raw = message.content[0].type === "text" ? message.content[0].text : "";
+  const raw = textOf(message.content);
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("AI digest: réponse invalide");
   const ai = JSON.parse(match[0]) as { intro?: string; actions?: string[] };

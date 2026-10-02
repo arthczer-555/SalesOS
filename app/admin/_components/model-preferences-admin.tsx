@@ -4,7 +4,7 @@ import { useState } from "react";
 
 const MODELS = [
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5 - fast, economical" },
-  { id: "claude-sonnet-4-6", label: "Sonnet 4.6 - balanced" },
+  { id: "claude-sonnet-5-5", label: "Sonnet 5.5 - balanced" },
   { id: "claude-opus-4-6", label: "Opus 4.6" },
   { id: "claude-opus-4-8", label: "Opus 4.8 - most powerful" },
 ];
@@ -15,15 +15,18 @@ const FEATURES = [
   { key: "prospection",    label: "Prospecting email generation",       defaultModel: "claude-haiku-4-5-20251001" },
   { key: "mass_prospection", label: "Mass prospecting (campaigns)",     defaultModel: "claude-haiku-4-5-20251001" },
   { key: "deals_score",    label: "Deal scoring",                       defaultModel: "claude-haiku-4-5-20251001" },
-  { key: "deals_analyze",  label: "In-depth deal analysis",             defaultModel: "claude-sonnet-4-6" },
+  { key: "deals_analyze",  label: "In-depth deal analysis",             defaultModel: "claude-sonnet-5-5" },
   { key: "deals_email",    label: "Deal follow-up email",               defaultModel: "claude-haiku-4-5-20251001" },
   { key: "sales_coach",    label: "Sales Coach (meeting debriefs)",     defaultModel: "claude-haiku-4-5-20251001" },
   { key: "meeting_recap",  label: "Sales Coach - meeting recap",        defaultModel: "claude-haiku-4-5-20251001" },
-  { key: "clients",        label: "Clients - profiles & recaps",        defaultModel: "claude-sonnet-4-6" },
-  { key: "marketing",      label: "Marketing - articles & LinkedIn",    defaultModel: "claude-sonnet-4-6" },
-  { key: "orgchart",       label: "Org Chart - hierarchy classification", defaultModel: "claude-sonnet-4-6" },
+  { key: "clients",        label: "Clients - profiles & recaps",        defaultModel: "claude-sonnet-5-5" },
+  { key: "marketing",      label: "Marketing - articles & LinkedIn",    defaultModel: "claude-sonnet-5-5" },
+  { key: "orgchart",       label: "Org Chart - hierarchy classification", defaultModel: "claude-sonnet-5-5" },
   { key: "rag_insights",   label: "RAG Insights - question judge",      defaultModel: "claude-haiku-4-5-20251001" },
-  { key: "rag_gaps",       label: "RAG Insights - Notion gaps",         defaultModel: "claude-sonnet-4-6" },
+  { key: "rag_gaps",       label: "RAG Insights - Notion gaps",         defaultModel: "claude-sonnet-5-5" },
+  { key: "agents",         label: "Agents - design & scheduled runs",   defaultModel: "claude-sonnet-5-5" },
+  { key: "prospecting_write",    label: "Prospecting - sequence writing",      defaultModel: "claude-sonnet-5-5" },
+  { key: "prospecting_research", label: "Prospecting - research brief",        defaultModel: "claude-haiku-4-5-20251001" },
 ];
 
 export function ModelPreferencesAdmin({ initialPreferences }: { initialPreferences: Record<string, string> }) {

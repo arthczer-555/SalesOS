@@ -18,8 +18,9 @@ import {
 } from "./types";
 import { wouldCreateCycle } from "./graph";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
-const MODEL_DEFAULT = "claude-sonnet-4-6";
+const MODEL_DEFAULT = "claude-sonnet-5-5";
 const MAX_CONTACTS = 150;
 const MIN_MANAGER_CONFIDENCE = 0.55;
 
@@ -123,14 +124,13 @@ export async function classifyHierarchy(
   try {
     const model = await getModelPreference("orgchart", MODEL_DEFAULT);
     const client = anthropicClient({ timeout: 120_000, maxRetries: 1 });
-    const msg = await client.messages.create({
+    const msg = await client.messages.create(withForcedTool({
       model,
       max_tokens: 8000,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMsg }],
       tools: [TOOL],
-      tool_choice: { type: "tool" as const, name: "classify_org" },
-    });
+    }, "classify_org"));
     logUsage(userId, model, msg.usage.input_tokens, msg.usage.output_tokens, "orgchart_classify");
     const block = msg.content.find((b) => b.type === "tool_use");
     if (block && "input" in block) {

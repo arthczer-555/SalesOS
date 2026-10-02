@@ -32,6 +32,7 @@ import type {
   RefreshReport,
 } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "../models/compat";
 
 // Refresh incrémental d'un client déjà 'done' (bouton Refresh + cron hebdo du
 // lundi). Lit les nouvelles activités depuis le dernier passage :
@@ -219,14 +220,13 @@ export async function runClientRefresh(
       const client = anthropicClient({ timeout: 600_000 });
       const msg = await withAnthropicRetry(
         () =>
-          client.messages.create({
+          client.messages.create(withForcedTool({
             model: clientsModel,
             max_tokens: 10000,
             system: `${CLIENT_EXTRACTION_SYSTEM_PROMPT}\n\n${CLIENT_REFRESH_PROMPT_ADDENDUM}\n\n${NO_EM_DASH_RULE}`,
             messages: [{ role: "user", content: contextPrompt }],
             tools: [CLIENT_FIELDS_TOOL],
-            tool_choice: { type: "tool" as const, name: "client_fields" },
-          }),
+          }, "client_fields")),
         { label: `clients/refresh/${clientId}` },
       );
       logUsage(userId, clientsModel, msg.usage.input_tokens, msg.usage.output_tokens, "clients_refresh_fields");

@@ -264,7 +264,9 @@ Un seul écran, **trois couches qui se cumulent** selon le profil (un Head of Sa
 | Recherche web | Tavily API | — |
 | Enrichissement LinkedIn | Bright Data (SERP + datasets) | — |
 
-> **Modèle IA par défaut** : `claude-haiku-4-5-20251001`. Configurable globalement (admin) et par utilisateur via la table `guide_defaults` (clé `model_preferences`). Modèles disponibles : Haiku (`claude-haiku-4-5-20251001`), Sonnet (`claude-sonnet-4-6`), Opus (`claude-opus-4-6`, `claude-opus-4-8`).
+> **Modèle IA par défaut** : `claude-haiku-4-5-20251001`. Configurable globalement (admin) et par utilisateur via la table `guide_defaults` (clé `model_preferences`). Modèles disponibles : Haiku (`claude-haiku-4-5-20251001`), Sonnet (`claude-sonnet-5-5`, $2 / $10 par MTok), Opus (`claude-opus-4-6`, `claude-opus-4-8`).
+>
+> **Compatibilité modèles** ([lib/models/compat.ts](lib/models/compat.ts)) : Sonnet 5.5 refuse le `tool_choice` forcé et `thinking: disabled` (400), et pense par défaut (adaptive thinking, décompté de `max_tokens`). Tout appel dont le modèle vient d'une préférence passe donc par `withForcedTool(params, toolName)` (sortie structurée via outil) ou étale `...noExtendedThinking(model)` (génération simple, même profil coût/latence que Sonnet 4.6 sans thinking), et lit le texte avec `textOf(content)`, jamais `content[0]`. Seule la boucle agentique du chat (et des agents) garde l'adaptive thinking, avec `max_tokens` 16000. Migration des préférences stockées : `supabase/migrations/sonnet_5_5.sql`.
 
 ---
 

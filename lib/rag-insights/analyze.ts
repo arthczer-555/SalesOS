@@ -28,6 +28,7 @@ import {
   type RagVerdict,
 } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
 const BATCH = 12;
 const FALLBACK_MODEL = "claude-haiku-4-5-20251001";
@@ -144,7 +145,7 @@ async function judgeBatch(turns: RagTurn[], model: string): Promise<Map<number, 
 
   const msg = await withAnthropicRetry(
     () =>
-      client.messages.create({
+      client.messages.create(withForcedTool({
         model,
         max_tokens: 6000,
         system: SYSTEM,
@@ -155,8 +156,7 @@ async function judgeBatch(turns: RagTurn[], model: string): Promise<Map<number, 
           },
         ],
         tools: [judgeTool],
-        tool_choice: { type: "tool" as const, name: "judge_turns" },
-      }),
+      }, "judge_turns")),
     { label: "rag-insights/analyze" },
   );
 

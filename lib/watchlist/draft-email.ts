@@ -7,8 +7,9 @@ import { getBriefs, type AeAnalysisContent, type HubspotRecapContent, type NewsC
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-sonnet-5-5";
 
 export interface DraftRecipient {
   name?: string | null;
@@ -118,14 +119,13 @@ export async function draftProspectionEmail(params: DraftEmailParams): Promise<D
 
   try {
     const client = anthropicClient({ timeout: 60_000, maxRetries: 1 });
-    const message = await client.messages.create({
+    const message = await client.messages.create(withForcedTool({
       model: MODEL,
       max_tokens: 1500,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userPrompt }],
       tools: [DRAFT_TOOL],
-      tool_choice: { type: "tool", name: "email_draft" },
-    });
+    }, "email_draft"));
     logUsage(params.userId, MODEL, message.usage.input_tokens, message.usage.output_tokens, "watchlist_email_draft");
 
     const block = message.content.find((b) => b.type === "tool_use");

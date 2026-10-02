@@ -6,6 +6,7 @@ import { logUsage } from "@/lib/log-usage";
 import { getModelPreference } from "@/lib/models/get-model-preference";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { noExtendedThinking, textOf } from "@/lib/models/compat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -46,11 +47,12 @@ export async function POST(req: NextRequest) {
           content: `Analyse les 10 derniers posts LinkedIn de ${body.name ?? body.username} :\n\n${block}\n\nRends ton analyse au format JSON strict :\n{\n  "themes": ["thème 1", "thème 2", ...],\n  "tonality": "description courte du ton (1 phrase)",\n  "ctas": ["CTA récurrent 1", ...],\n  "topPerformers": ["résumé du post le plus engageant", ...],\n  "differentiators": ["élément différenciant 1", ...],\n  "recommendation": "1 phrase d'opportunité pour notre stratégie"\n}`,
         },
       ],
+      ...noExtendedThinking(model),
     });
 
     logUsage(user.id, model, message.usage.input_tokens, message.usage.output_tokens, "marketing_linkedin_analyze");
 
-    const raw = message.content[0].type === "text" ? message.content[0].text : "{}";
+    const raw = textOf(message.content) || "{}";
     const jsonMatch = raw.match(/\{[\s\S]*\}/);
     const parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
 

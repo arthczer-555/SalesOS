@@ -25,8 +25,9 @@ import { listChildPages } from "@/lib/notion/read";
 import { computeStats, failingTurns } from "./stats";
 import type { RagAnalysisRow, RagGapReport } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
-const FALLBACK_MODEL = "claude-sonnet-4-6";
+const FALLBACK_MODEL = "claude-sonnet-5-5";
 const ROOT_PAGE_ID = process.env.NOTION_ROOT_PAGE_ID ?? "3911c2f23b0e81368321d2f8a4ea524e";
 const MAX_FAILING = 60;
 
@@ -175,7 +176,7 @@ ${NO_EM_DASH_RULE_EN}`;
   const client = anthropicClient({ timeout: 180_000 });
   const msg = await withAnthropicRetry(
     () =>
-      client.messages.create({
+      client.messages.create(withForcedTool({
         model,
         max_tokens: 6000,
         system,
@@ -198,8 +199,7 @@ ${NO_EM_DASH_RULE_EN}`;
           },
         ],
         tools: [gapTool],
-        tool_choice: { type: "tool" as const, name: "emit_gap_report" },
-      }),
+      }, "emit_gap_report")),
     { label: "rag-insights/gaps" },
   );
 

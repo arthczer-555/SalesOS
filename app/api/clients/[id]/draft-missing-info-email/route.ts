@@ -11,6 +11,7 @@ import {
 } from "@/lib/clients/types";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { noExtendedThinking, textOf } from "@/lib/models/compat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -75,11 +76,12 @@ async function generateDraft(client: ClientRow, senderName: string, userId: stri
     max_tokens: 1024,
     system: systemPrompt,
     messages: [{ role: "user", content: `Rédige l'email de demande d'informations manquantes :\n\n${contextBlock}` }],
+    ...noExtendedThinking(model),
   });
 
   logUsage(userId, model, message.usage.input_tokens, message.usage.output_tokens, "clients_missing_info_email");
 
-  const raw = message.content[0]?.type === "text" ? message.content[0].text : "";
+  const raw = textOf(message.content);
   let subject = "";
   let body = "";
   try {

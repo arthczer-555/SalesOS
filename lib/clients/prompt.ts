@@ -257,9 +257,9 @@ export const CLIENT_FIELDS_TOOL: Anthropic.Tool = {
   },
 };
 
-// Sonnet 4.6 pour l'extraction des 30 fields : Haiku 4.5 ignorait le schéma
+// Sonnet (5.5) pour l'extraction des 30 fields : Haiku 4.5 ignorait le schéma
 // imbriqué et ne renvoyait que la section general_info (les `required` du tool
 // ne sont pas imposés par l'API). Sonnet honore les 6 sections. Le brief et le
 // recap restent sur Haiku (cf. coach-brief.ts / deal-recap.ts), ils marchent
 // bien et ça limite le surcoût au seul appel qui en a besoin.
-export const CLIENT_EXTRACTION_MODEL = "claude-sonnet-4-6";
+export const CLIENT_EXTRACTION_MODEL = "claude-sonnet-5-5";

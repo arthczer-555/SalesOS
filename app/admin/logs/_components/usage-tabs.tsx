@@ -81,6 +81,7 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
 const MODEL_COLORS: Record<string, { bg: string; text: string }> = {
   "haiku-4-5":   { bg: "#f0fdf4", text: "#166534" },
   "sonnet-4-6":  { bg: "#eff6ff", text: "#1d4ed8" },
+  "sonnet-5-5":  { bg: "#eff6ff", text: "#1d4ed8" },
   "opus-4-6":    { bg: "#fdf4ff", text: "#7e22ce" },
 };
 
@@ -167,15 +168,15 @@ const PREF_DEFAULTS: Record<string, string> = {
   chat:           "claude-haiku-4-5-20251001",
   briefing:       "claude-haiku-4-5-20251001",
   deals_score:    "claude-haiku-4-5-20251001",
-  deals_analyze:  "claude-sonnet-4-6",
+  deals_analyze:  "claude-sonnet-5-5",
   deals_email:    "claude-haiku-4-5-20251001",
   prospection:    "claude-haiku-4-5-20251001",
   sales_coach:    "claude-haiku-4-5-20251001",
   meeting_recap:  "claude-haiku-4-5-20251001",
-  clients:        "claude-sonnet-4-6",
-  marketing:      "claude-sonnet-4-6",
+  clients:        "claude-sonnet-5-5",
+  marketing:      "claude-sonnet-5-5",
   rag_insights:   "claude-haiku-4-5-20251001",
-  rag_gaps:       "claude-sonnet-4-6",
+  rag_gaps:       "claude-sonnet-5-5",
 };
 
 export function UsageTabs({

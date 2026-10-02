@@ -24,6 +24,7 @@ import {
   type OutputLang,
 } from "./language";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
 const DEFAULT_RECAP_MODEL = "claude-haiku-4-5-20251001";
 
@@ -273,14 +274,13 @@ export async function generateMeetingRecap(args: {
   const client = anthropicClient({ timeout: 600_000 });
   let retryReminder = "";
   for (let attempt = 1; attempt <= MAX_LANG_ATTEMPTS; attempt++) {
-    const message = await client.messages.stream({
+    const message = await client.messages.stream(withForcedTool({
       model,
       max_tokens: 4000,
       system: MEETING_RECAP_SYSTEM_PROMPT,
       messages: [{ role: "user", content: prompt + retryReminder }],
       tools: [meetingRecapTool],
-      tool_choice: { type: "tool" as const, name: "meeting_recap" },
-    }).finalMessage();
+    }, "meeting_recap")).finalMessage();
 
     logUsage(args.userId, model, message.usage.input_tokens, message.usage.output_tokens, "sales_coach_recap");
 

@@ -7,6 +7,7 @@ import { logUsage } from "@/lib/log-usage";
 import { DEFAULT_BRIEFING_GUIDE } from "@/lib/guides/briefing";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -399,14 +400,13 @@ ${contextBlock || "Aucune donnée trouvée dans les sources connectées."}
 Génère le briefing pour cette réunion.`;
 
     const client = anthropicClient({ apiKey: claudeApiKey });
-    const message = await client.messages.create({
+    const message = await client.messages.create(withForcedTool({
       model: briefingModel,
       max_tokens: 5000,
       system: systemPrompt,
       messages: [{ role: "user", content: userPrompt }],
       tools: [briefingTool],
-      tool_choice: { type: "tool" as const, name: "generate_briefing" },
-    });
+    }, "generate_briefing"));
 
     logUsage(user.id, briefingModel, message.usage.input_tokens, message.usage.output_tokens, "briefing");
 

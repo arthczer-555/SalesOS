@@ -8,8 +8,9 @@ import { getModelPreference } from "@/lib/models/get-model-preference";
 import { NO_EM_DASH_RULE_EN, stripEmDashes } from "@/lib/no-em-dash";
 import type { ArticleDraft, ArticleRecommendation, InternalLink } from "@/lib/marketing-types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
-const ARTICLE_MODEL_DEFAULT = "claude-sonnet-4-6";
+const ARTICLE_MODEL_DEFAULT = "claude-sonnet-5-5";
 
 const REC_SELECT =
   "id, user_id, topic, target_keyword, justification, estimated_traffic, difficulty, priority, status, relevance_score, relevance_reason, created_at";
@@ -367,13 +368,12 @@ ${sharedContext}
 
 Call the \`write_article_language\` tool with your complete output.`;
 
-      const response = await client.messages.create({
+      const response = await client.messages.create(withForcedTool({
         model: articleModel,
         max_tokens: 16000,
         tools: [writeLanguageTool],
-        tool_choice: { type: "tool", name: "write_article_language" },
         messages: [{ role: "user", content: langPrompt }],
-      });
+      }, "write_article_language"));
 
       logUsage(userId, articleModel, response.usage.input_tokens, response.usage.output_tokens, `marketing_content_generate_${lang}`);
 

@@ -25,8 +25,9 @@ import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import { SALES_CONTEXT_PROMPT_BLOCK } from "@/lib/business-context";
 import type { AeRelationshipState } from "@/lib/watchlist/briefs";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
-const MODEL = "claude-sonnet-4-6";
+const MODEL = "claude-sonnet-5-5";
 
 const RELATIONSHIP_STATES: AeRelationshipState[] = [
   "never_contacted",
@@ -291,14 +292,13 @@ export async function runAeAnalysis(input: {
     // en conséquence (la BG fn Netlify laisse largement le temps). En mode
     // "analyse seule" (sans messages), la sortie est bien plus courte.
     const client = anthropicClient({ timeout: 300_000, maxRetries: 1 });
-    const message = await client.messages.create({
+    const message = await client.messages.create(withForcedTool({
       model: MODEL,
       max_tokens: withMessages ? 8000 : 2500,
       system: buildSystemPrompt(prospectionGuide, withMessages, targets.length > 0),
       messages: [{ role: "user", content: userPrompt }],
       tools: [buildAnalysisTool(withMessages)],
-      tool_choice: { type: "tool", name: "emit_ae_analysis" },
-    });
+    }, "emit_ae_analysis"));
 
     logUsage(userId, MODEL, message.usage.input_tokens, message.usage.output_tokens, "watchlist_ae_analysis");
 

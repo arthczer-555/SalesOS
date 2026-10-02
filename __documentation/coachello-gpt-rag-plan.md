@@ -45,7 +45,7 @@ Principes directeurs :
 6. **Conventions maison respectées** : tool forcé + parse manuel, `withAnthropicRetry`,
    `getModelPreference`, `logUsage`, `NO_EM_DASH_RULE`, surfaces inchangées (web
    `chat_jobs` + polling, Slack threads).
-7. **Condition de l'architecture : modèle principal Sonnet** (`claude-sonnet-4-6` via la
+7. **Condition de l'architecture : modèle principal Sonnet** (`claude-sonnet-5-5` via la
    préférence `chat`). C'est l'agent qui porte la décision de charger les bons guides ;
    Haiku est trop peu discipliné pour ça (critère de bascule en §11).
 
@@ -303,7 +303,7 @@ seulement quand ils servent.
 |---|---|---|
 | Architecture | Agent unique manifest + `load_guide`, PAS de routeur en amont | C'est le pattern du RAG local déjà validé ; meilleur sur les questions mixtes (cas central) ; pas de misroute ; code plus simple ; migration inverse possible (ajouter un routeur plus tard est facile, le retirer jette du code) |
 | Écriture Notion | **Le chat CoachelloHQ n'écrit jamais** (aucun outil d'écriture dans son registre). Le mode ÉCRITURE conversationnel reste local (Claude Code + WRITE.md, repo `Coachello.RAG`). Seule exception : le runner DAILY MAJ écrit après feu vert Slack, périmètre borné au contenu de pages existantes | Décision utilisateur ferme (2026-07-21). Le registre reste édité uniquement en local, pas de conflit de source de vérité |
-| Modèle principal | `chat` -> Sonnet (`claude-sonnet-4-6`), recommandé fortement | L'agent porte la décision de charger les bons guides ; critère de retour arrière en §11 |
+| Modèle principal | `chat` -> Sonnet (`claude-sonnet-5-5`), recommandé fortement | L'agent porte la décision de charger les bons guides ; critère de retour arrière en §11 |
 | Auth Notion | Intégration interne unique, `NOTION_TOKEN`, partagée sur `🧭 DATABASE` seulement (droits d'écriture pour le seul flux DAILY MAJ, verrou dans le code) | Cohérent avec HubSpot/Slack/Claap partagés ; le partage Notion borne le périmètre |
 | Packs sales | Versionnés dans `Coachello.RAG/coachellohq/`, édités en local, fetchés par CoachelloHQ | Une seule source de vérité pour tout le cerveau, un seul workflow d'édition |
 | Fraîcheur du cerveau | Fetch GitHub + cache 5 min + snapshot DB de secours | Simple, quasi temps réel, résilient |

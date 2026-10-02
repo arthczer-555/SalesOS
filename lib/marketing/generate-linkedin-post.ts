@@ -7,8 +7,9 @@ import { NO_EM_DASH_RULE_EN, stripEmDashes } from "@/lib/no-em-dash";
 import { fetchLinkedInTrends, type LinkedInTrendItem } from "@/lib/marketing/linkedin-trends";
 import type { GeneratedLinkedInPost, LinkedInPostDraft, LinkedInPostRecommendation } from "@/lib/marketing-types";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { withForcedTool } from "@/lib/models/compat";
 
-const POST_MODEL_DEFAULT = "claude-sonnet-4-6";
+const POST_MODEL_DEFAULT = "claude-sonnet-5-5";
 
 const REC_SELECT = "id, user_id, topic, angle, target_audience, justification, priority, status, created_at";
 
@@ -172,13 +173,12 @@ ${sharedContext}
 
 Call the \`write_linkedin_posts\` tool with your complete output.`;
 
-    const response = await client.messages.create({
+    const response = await client.messages.create(withForcedTool({
       model,
       max_tokens: 6000,
       tools: [writePostsTool],
-      tool_choice: { type: "tool", name: "write_linkedin_posts" },
       messages: [{ role: "user", content: prompt }],
-    });
+    }, "write_linkedin_posts"));
 
     logUsage(userId, model, response.usage.input_tokens, response.usage.output_tokens, "marketing_linkedin_generate");
 

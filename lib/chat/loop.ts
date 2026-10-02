@@ -38,7 +38,9 @@ function pricingFor(model: string): { input: number; output: number } {
   // Opus 4.6 / 4.8 / 5 sont à 5/25 par MTok, pas 15/75 (tarif Opus 4.1 et
   // antérieurs). Garder ce tarif aligné sur PRICING de app/admin/logs/page.tsx.
   if (model.includes("opus")) return { input: 5, output: 25 };
-  return { input: 3, output: 15 }; // sonnet et défaut
+  // Sonnet 5 / 5.5 : 2/10 (Sonnet 4.x : 3/15).
+  if (model.includes("sonnet-5")) return { input: 2, output: 10 };
+  return { input: 3, output: 15 }; // sonnet 4.x et défaut
 }
 
 function estimateCost(
@@ -131,9 +133,12 @@ export async function runLoop(args: {
   };
 
   while (true) {
+    // 16000 : Sonnet 5.5 pense par défaut (adaptive thinking, utile en boucle
+    // agentique) et ce thinking est décompté de max_tokens. 8192 suffisait à
+    // Sonnet 4.6 qui répondait sans thinking ; on garde le même budget de texte.
     const apiStream = client.messages.stream({
       model,
-      max_tokens: 8192,
+      max_tokens: 16000,
       system,
       tools,
       messages: withCacheBreakpoint(currentMessages),
