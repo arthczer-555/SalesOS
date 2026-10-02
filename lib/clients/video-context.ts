@@ -30,8 +30,10 @@ export function buildClientContextText(client: ClientRow): string {
 
   const ins = client.insights as Insights | null;
   if (ins) {
-    if (ins.observations?.length) lines.push(`Observations : ${ins.observations.join(" ; ")}`);
-    if (ins.actions?.length) lines.push(`Actions recommandées : ${ins.actions.map((a) => a.title).join(" ; ")}`);
+    if (ins.highlights?.length) lines.push(`Faits récents : ${ins.highlights.map((h) => h.text).join(" ; ")}`);
+    else if (ins.observations?.length) lines.push(`Observations : ${ins.observations.join(" ; ")}`);
+    const open = (ins.actions ?? []).filter((a) => !a.done_at);
+    if (open.length) lines.push(`Actions recommandées : ${open.map((a) => a.title).join(" ; ")}`);
   }
 
   return lines.join("\n");

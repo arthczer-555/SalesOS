@@ -30,8 +30,6 @@ export default async (req: Request) => {
     console.error(`[clients-refresh-bg] ${id} failed:`, result.error);
   } else if ("skipped" in result) {
     console.log(`[clients-refresh-bg] ${id} skipped: ${result.reason}`);
-  } else if ("needsConfirmation" in result) {
-    console.log(`[clients-refresh-bg] ${id} needs confirmation: ${result.candidates.length} new meeting(s)`);
   } else {
     console.log(
       `[clients-refresh-bg] ${id} done: ${result.report.new_activity_count} new activities, ${result.report.changed_fields.length} fields changed`,

@@ -10,9 +10,10 @@ export const dynamic = "force-dynamic";
 // Édition manuelle des blocs IA du haut de fiche (recap deal, brief coachs,
 // phrase health). Contrairement aux fields (source=manual préservée), ces blocs
 // sont réécrits intégralement par l'IA au prochain enrichissement : l'édition
-// manuelle est une correction temporaire jusqu'au prochain run. On écrit la
-// colonne JSONB en entier après validation stricte du nom de bloc (pas
-// d'écriture de colonne arbitraire).
+// manuelle est une correction temporaire jusqu'au prochain run. Exception : le
+// coach brief retouché à la main (coach_brief_edited_at) n'est pas régénéré par
+// le refresh hebdo. On écrit la colonne JSONB en entier après validation
+// stricte du nom de bloc (pas d'écriture de colonne arbitraire).
 
 const EDITABLE_BLOCKS = new Set(["deal_recap", "coach_brief", "health"]);
 
@@ -39,10 +40,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "value must be an object" }, { status: 400 });
   }
 
-  const { error: updateErr } = await db
-    .from("clients")
-    .update({ [block]: value, updated_at: new Date().toISOString() })
-    .eq("id", id);
+  const now = new Date().toISOString();
+  const patch: Record<string, unknown> = { [block]: value, updated_at: now };
+  if (block === "coach_brief") patch.coach_brief_edited_at = now;
+
+  let { error: updateErr } = await db.from("clients").update(patch).eq("id", id);
+  // Migration clients_v2_tabs_refresh.sql pas encore appliquée : on sauvegarde
+  // quand même le brief, sans la date d'édition.
+  if (updateErr && block === "coach_brief" && /coach_brief_edited_at/.test(updateErr.message)) {
+    ({ error: updateErr } = await db.from("clients").update({ [block]: value, updated_at: now }).eq("id", id));
+  }
 
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message }, { status: 500 });

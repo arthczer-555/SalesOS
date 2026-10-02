@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, Sparkles, RefreshCw, Copy, Check, CheckCircle2 } from "lucide-react";
+import { Loader2, Sparkles, RefreshCw, Copy, Check, CheckCircle2, ChevronDown, ExternalLink } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import {
   HUBSPOT_CHECKLIST_FIELDS,
@@ -10,6 +10,7 @@ import {
   type ClientRow,
   type HubspotChecklistFieldDef,
 } from "@/lib/clients/types";
+import { Card, CardHeader, Tag } from "./ui";
 
 const GROUP_LABELS: Record<HubspotChecklistFieldDef["group"], string> = {
   qualification: "Qualification",
@@ -18,21 +19,30 @@ const GROUP_LABELS: Record<HubspotChecklistFieldDef["group"], string> = {
   contract_billing: "Contract & billing",
 };
 
-// "HubSpot checklist" card (left column). Lists the deal qualification / info
-// fields still empty in HubSpot, each with an AI fill suggestion. Validating
-// writes to HubSpot. Filled fields collapse at the bottom. The card disappears
-// once nothing is missing.
-export function HubspotChecklistPanel({ client, onUpdated }: { client: ClientRow; onUpdated: () => void }) {
+// Onglet "HubSpot cleaner" : champs du deal encore vides dans HubSpot, groupés
+// comme les cards de la fiche deal HubSpot, chacun avec une suggestion IA.
+// "Write to HubSpot" écrit la valeur. Champs remplis repliés en bas. L'état
+// HubSpot injoignable est géré par l'onglet (jamais "rien à compléter").
+export function HubspotChecklistPanel({
+  client,
+  onUpdated,
+  hubspotUrl,
+}: {
+  client: ClientRow;
+  onUpdated: () => void;
+  hubspotUrl?: string | null;
+}) {
   const dealFields = client.hubspot_deal_fields ?? null;
   const suggestions = client.hubspot_field_suggestions ?? null;
 
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showFilled, setShowFilled] = useState(false);
 
   const missing = getMissingHubspotFields(dealFields);
   const filled = HUBSPOT_CHECKLIST_FIELDS.filter((f) => !isHubspotFieldEmpty(dealFields?.[f.property]));
 
-  // No HubSpot values read (HubSpot down): hide the card rather than mislead.
+  // HubSpot illisible ou rien à compléter : l'onglet affiche son propre état.
   if (!dealFields) return null;
   if (missing.length === 0) return null;
 
@@ -67,108 +77,100 @@ export function HubspotChecklistPanel({ client, onUpdated }: { client: ClientRow
   }
 
   return (
-    <div style={{ background: COLORS.bgCard, border: `1px solid ${COLORS.line}`, borderRadius: 12, overflow: "hidden" }}>
-      <div
-        style={{
-          padding: "12px 16px",
-          borderBottom: `1px solid ${COLORS.line}`,
-          background: COLORS.warnBg,
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-        }}
-      >
-        <AlertTriangle size={15} style={{ color: COLORS.warn, flexShrink: 0 }} />
-        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.warn }}>
-          HubSpot checklist · {missing.length} missing field{missing.length > 1 ? "s" : ""}
-        </h3>
-        <button
-          type="button"
-          onClick={() => void generate()}
-          disabled={generating}
-          title={suggestions ? "Regenerate suggestions" : "Generate fill suggestions"}
-          style={{
-            marginLeft: "auto",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
-            fontSize: 12,
-            fontWeight: 600,
-            padding: "5px 10px",
-            borderRadius: 8,
-            border: `1px solid ${COLORS.warn}`,
-            background: "transparent",
-            color: COLORS.warn,
-            cursor: generating ? "not-allowed" : "pointer",
-          }}
-        >
-          {generating ? (
-            <Loader2 size={13} className="animate-spin" />
-          ) : suggestions ? (
-            <RefreshCw size={13} />
-          ) : (
-            <Sparkles size={13} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+        <div>
+          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.015em" }}>
+            {missing.length} field{missing.length > 1 ? "s" : ""} missing in HubSpot
+          </div>
+          <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>
+            Each value is a suggestion from the account data. Check it, then write it to the deal.
+          </div>
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button type="button" className="ch-btn ch-btn-sm" onClick={() => void generate()} disabled={generating}>
+            {generating ? <Loader2 size={13} className="animate-spin" /> : suggestions ? <RefreshCw size={13} /> : <Sparkles size={13} />}
+            {suggestions ? "Regenerate suggestions" : "Suggest values"}
+          </button>
+          {hubspotUrl && (
+            <a className="ch-btn ch-btn-sm" href={hubspotUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={13} />
+              Open deal in HubSpot
+            </a>
           )}
-          {suggestions ? "Refresh" : "Analyze"}
-        </button>
+        </div>
       </div>
 
-      <div style={{ padding: 14, display: "flex", flexDirection: "column", gap: 14 }}>
-        {error && <div style={{ fontSize: 12, color: COLORS.err }}>{error}</div>}
+      {error && <div style={{ fontSize: 12, color: COLORS.err }}>{error}</div>}
+      {!suggestions && (
+        <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>
+          Click &quot;Suggest values&quot; to prefill each missing field from the enriched account data.
+        </div>
+      )}
 
-        {!suggestions && (
-          <div style={{ fontSize: 12, color: COLORS.ink2, lineHeight: 1.5 }}>
-            Run the analysis to suggest a fill value for each missing field, based on the enriched account data.
-          </div>
-        )}
-
+      <div className="ch-grid-2">
         {groups.map((g) => (
-          <div key={g.key} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: COLORS.ink3, textTransform: "uppercase", letterSpacing: 0.4 }}>
-              {GROUP_LABELS[g.key]}
-            </div>
-            {g.fields.map((f) => (
-              <FieldRow
-                key={f.property}
-                clientId={client.id}
-                def={f}
-                suggestion={suggestionByProp.get(f.property)?.suggestion ?? ""}
-                rationale={suggestionByProp.get(f.property)?.rationale ?? ""}
-                onSaved={onUpdated}
-              />
-            ))}
-          </div>
-        ))}
-
-        {filled.length > 0 && (
-          <div style={{ marginTop: 2, paddingTop: 10, borderTop: `1px dashed ${COLORS.line}` }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.ink3, marginBottom: 6 }}>Filled in</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-              {filled.map((f) => (
-                <span
+          <Card key={g.key}>
+            <CardHeader title={GROUP_LABELS[g.key]} right={<Tag tone="err">{g.fields.length} missing</Tag>} />
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {g.fields.map((f) => (
+                <FieldRow
                   key={f.property}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 4,
-                    fontSize: 11,
-                    color: COLORS.ink3,
-                    background: COLORS.bgSoft,
-                    border: `1px solid ${COLORS.line}`,
-                    borderRadius: 999,
-                    padding: "2px 8px",
-                  }}
-                >
-                  <CheckCircle2 size={11} style={{ color: COLORS.ok }} />
-                  {f.label}
-                </span>
+                  clientId={client.id}
+                  def={f}
+                  suggestion={suggestionByProp.get(f.property)?.suggestion ?? ""}
+                  rationale={suggestionByProp.get(f.property)?.rationale ?? ""}
+                  onSaved={onUpdated}
+                />
               ))}
             </div>
-          </div>
-        )}
+          </Card>
+        ))}
       </div>
+
+      {filled.length > 0 && (
+        <Card>
+          <button
+            type="button"
+            onClick={() => setShowFilled((v) => !v)}
+            aria-expanded={showFilled}
+            style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: 0, padding: 0, cursor: "pointer", fontSize: 13, fontWeight: 600, color: COLORS.ink1 }}
+          >
+            <CheckCircle2 size={15} style={{ color: COLORS.ok }} />
+            {filled.length} fields already filled
+            <ChevronDown size={14} style={{ transform: showFilled ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+          </button>
+          {showFilled && (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "4px 24px", marginTop: 12 }}>
+              {filled.map((f) => (
+                <div
+                  key={f.property}
+                  style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "6px 0", borderTop: `1px solid ${COLORS.line}`, fontSize: 12.5 }}
+                >
+                  <span style={{ color: COLORS.ink3 }}>{f.label}</span>
+                  <span style={{ fontWeight: 500, textAlign: "right", minWidth: 0, overflowWrap: "anywhere" }}>
+                    {displayValue(f, dealFields?.[f.property] ?? null)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      )}
     </div>
   );
+}
+
+// Valeur lisible d'un champ HubSpot rempli : libellé d'option pour les enums,
+// date courte pour les dates (ISO ou timestamp ms).
+function displayValue(def: HubspotChecklistFieldDef, raw: string | null): string {
+  if (raw == null) return "-";
+  if (def.type === "enumeration") return def.options?.find((o) => o.value === raw)?.label ?? raw;
+  if (def.type === "date") {
+    const d = /^\d+$/.test(raw) ? new Date(Number(raw)) : new Date(raw);
+    return Number.isNaN(d.getTime()) ? raw : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  }
+  return raw;
 }
 
 function FieldRow({
@@ -287,7 +289,7 @@ function FieldRow({
           }}
         >
           {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-          Validate
+          Write to HubSpot
         </button>
       </div>
       {error && <div style={{ fontSize: 11, color: COLORS.err }}>{error}</div>}
@@ -412,8 +414,12 @@ function FieldInput({
   disabled: boolean;
   onChange: (v: string) => void;
 }) {
+  // minWidth 0 + width 100% : sans ça un <select> prend la largeur de sa plus
+  // longue option et pousse le bouton "Write to HubSpot" hors de la carte.
   const base: React.CSSProperties = {
-    flex: 1,
+    flex: "1 1 0",
+    minWidth: 0,
+    width: "100%",
     fontSize: 12,
     padding: "6px 8px",
     borderRadius: 8,

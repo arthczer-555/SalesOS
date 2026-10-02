@@ -12,15 +12,17 @@ import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { parseClientFieldsFromClaude } from "./parse-output";
 import { generateCoachBrief } from "./coach-brief";
 import { generateDealRecap } from "./deal-recap";
-import { fetchClientNews } from "./news";
+import { fetchClientNews, mergeNewsHistory } from "./news";
+import { mergeExtractedFields } from "./merge-fields";
 import { rankClientNews } from "./rank-news";
 import { getBillingForClient } from "../billing/google-sheet";
 import { computeHealth, computeInsights } from "./health";
-import { generateHealthSummary } from "./health-summary";
+import { generateHealthSummary, judgeRecentTone } from "./health-summary";
 import { generateInsightsAI } from "./insights-ai";
 import { notifyOwnerOfEnrichedClient } from "./notify-owner";
 import { generateHubspotSuggestions } from "./hubspot-suggestions";
-import type { ClientFields } from "./types";
+import { fetchHubspotDealFields } from "./hubspot-fields";
+import type { ClientFields, News } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
 
 export type RunEnrichmentResult =
@@ -40,9 +42,9 @@ export type RunEnrichmentResult =
 //   4. Calcul du health + insights (règles simples, pas d'IA).
 //   5. Écrit tout, bascule en 'done'.
 //
-// Sécurité fields manuels : on merge avec les fields existants en préservant
-// ceux marqués source.kind = "manual" (cf. plan §6 "Re-enrichir ne touche pas
-// aux fields édités manuellement").
+// Sécurité fields manuels : on merge avec les fields existants (mergeExtractedFields,
+// même règle que le refresh). Une édition manuelle est conservée, sauf si une
+// source datée APRÈS l'édition dit autre chose (cf. merge-fields.ts).
 //
 // Côté health : on garde un historique snapshot dans health_history pour
 // pouvoir tracer la trend mois après mois (utile quand on branchera le cron).
@@ -55,7 +57,7 @@ export async function runClientEnrichment(
 ): Promise<RunEnrichmentResult> {
   const { data: row, error: rowErr } = await db
     .from("clients")
-    .select("id, hubspot_deal_id, enrichment_status, updated_at, health, health_history, confirmed_claap_recordings")
+    .select("id, hubspot_deal_id, closedwon_at, enrichment_status, updated_at, health, health_history, confirmed_claap_recordings, fields_json, news")
     .eq("id", clientId)
     .single();
 
@@ -174,13 +176,26 @@ export async function runClientEnrichment(
       return null;
     });
 
-    const [msg, coachBrief, dealRecap, news, billing, hubspotSuggestions] = await Promise.all([
+    // Health : ton des derniers meetings (signal du score, best-effort) et date
+    // de fin de contrat (phase du compte), en parallèle du reste.
+    const tonePromise = judgeRecentTone(ctx, userId).then(
+      (tone) => ({ tone, error: null as string | null }),
+      (e) => {
+        console.warn(`[clients/enrich/${clientId}] tone judge failed:`, e instanceof Error ? e.message : e);
+        return { tone: null, error: e instanceof Error ? e.message : String(e) };
+      },
+    );
+    const dealFieldsPromise = fetchHubspotDealFields(row.hubspot_deal_id);
+
+    const [msg, coachBrief, dealRecap, news, billing, hubspotSuggestions, toneRes, dealFields] = await Promise.all([
       fieldsPromise,
       briefPromise,
       recapPromise,
       newsPromise,
       billingPromise,
       hubspotSuggestionsPromise,
+      tonePromise,
+      dealFieldsPromise,
     ]);
 
     logUsage(userId, clientsModel, msg.usage.input_tokens, msg.usage.output_tokens, "clients_enrich_fields");
@@ -190,13 +205,13 @@ export async function runClientEnrichment(
       throw new Error("No tool_use block in Claude response");
     }
 
-    // Re-enrich écrase : la sortie IA remplace fields_json (le parser renvoie
-    // les 6 sections complètes). Les éditions manuelles ne sont pas préservées,
-    // c'est le comportement voulu (l'IA reprend la main à chaque run).
+    // Re-enrich : la sortie IA (6 sections complètes) est fusionnée avec
+    // l'existant. Les éditions manuelles survivent, sauf info plus récente.
     const parsed = parseClientFieldsFromClaude(toolBlock.input);
+    const { merged } = mergeExtractedFields((row.fields_json ?? {}) as Partial<ClientFields>, parsed);
 
     const updatePayload: Record<string, unknown> = {
-      fields_json: parsed,
+      fields_json: merged,
       enrichment_status: "done",
       enrichment_error: null,
       last_enriched_at: new Date().toISOString(),
@@ -210,16 +225,18 @@ export async function runClientEnrichment(
       updatePayload.deal_recap = dealRecap;
     }
     if (news) {
-      // Tri/filtrage IA des news (best-effort). Sans signal pertinent, on
-      // garde la liste brute Tavily.
+      // Tri IA "important pour le compte" (best-effort), puis fusion avec les
+      // news déjà connues (historique 12 mois, badge New).
       if (news.items.length > 0) {
-        news.items = await rankClientNews(news.items, {
+        const ranked = await rankClientNews(news.items, {
           companyName: ctx.deal?.company?.name ?? ctx.deal?.name ?? "",
           userId,
           feature: "clients_news_rank",
-        }).catch(() => news.items);
+        }).catch(() => ({ items: news.items, ignored: 0 }));
+        news.items = ranked.items;
+        news.ignored_count = ranked.ignored;
       }
-      updatePayload.news = news;
+      updatePayload.news = mergeNewsHistory((row.news as News | null) ?? null, news).news;
       updatePayload.last_news_run_at = new Date().toISOString();
     }
     if (billing) {
@@ -246,18 +263,39 @@ export async function runClientEnrichment(
       }));
     updatePayload.discovered_claap_recordings = discoveredRecordings;
 
-    // Health + insights — calcul léger basé sur les signaux du contexte
-    // qu'on vient de charger. Pas d'IA, pas de coût additionnel. Le score
-    // précédent (s'il existe) sert à dériver la trend (up/down/stable).
+    // Health + insights : règles sur les signaux du contexte qu'on vient de
+    // charger, plus le ton jugé ci-dessus. Le score précédent (s'il existe) sert
+    // à dériver la trend (up/down/stable).
     const previousScore =
       row.health && typeof row.health === "object" && "score" in row.health
         ? Number((row.health as { score?: unknown }).score)
         : null;
-    const health = computeHealth(ctx, Number.isFinite(previousScore) ? previousScore : null);
-    // Reco IA (anglais, orientée closed-won), best-effort -> fallback règles EN.
     const fieldsForInsights = (updatePayload.fields_json as Partial<ClientFields>) ?? {};
+    const newsForHealth = (updatePayload.news as News | undefined) ?? (row.news as News | null) ?? null;
+    const closedwonAt = (row.closedwon_at as string | null) ?? ctx.deal?.close_date ?? null;
+    const contractEndDate = dealFields?.contract_end_date ?? null;
+    const kickoff = fieldsForInsights.planning?.kickoff_envisage_le?.value;
+    const health = computeHealth(ctx, Number.isFinite(previousScore) ? previousScore : null, {
+      closedwonAt,
+      kickoffDate: typeof kickoff === "string" ? kickoff : null,
+      contractEndDate,
+      news: newsForHealth,
+      tone: toneRes.tone,
+      toneError: toneRes.error,
+    });
+    // Reco IA (anglais, orientée closed-won), best-effort -> fallback règles EN.
     const insights =
-      (await generateInsightsAI(ctx, health, fieldsForInsights, userId).catch((e) => {
+      (await generateInsightsAI({
+        ctx,
+        health,
+        fields: fieldsForInsights,
+        news: (updatePayload.news as News | undefined) ?? null,
+        closedwonAt,
+        hubspotNextStep: dealFields?.hs_next_step ?? null,
+        contractEndDate,
+        previous: null,
+        userId,
+      }).catch((e) => {
         console.warn(
           `[clients/enrich/${clientId}] AI insights failed:`,
           e instanceof Error ? e.message : e,

@@ -2,52 +2,69 @@ import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { withAnthropicRetry } from "../anthropic-retry";
 import { fetchDealContext } from "../hubspot";
-import { loadClientContext, loadClaapMeetingsForDeal, renderClientContextForPrompt, type ClientEnrichmentContext } from "./context";
+import { getBillingForClient } from "../billing/google-sheet";
+import { loadClientContext, loadClaapMeetingsForDeal, renderClientContextForPrompt } from "./context";
 import { discoverClaapMeetingCandidates } from "./claap-discovery";
 import {
   CLIENT_EXTRACTION_MODEL,
   CLIENT_EXTRACTION_SYSTEM_PROMPT,
   CLIENT_FIELDS_TOOL,
+  CLIENT_REFRESH_PROMPT_ADDENDUM,
 } from "./prompt";
 import { getModelPreference } from "../models/get-model-preference";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { parseClientFieldsFromClaude } from "./parse-output";
-import { fetchClientNews } from "./news";
+import { mergeExtractedFields } from "./merge-fields";
+import { fetchClientNews, mergeNewsHistory } from "./news";
 import { rankClientNews } from "./rank-news";
 import { computeHealth, computeInsights } from "./health";
-import { generateHealthSummary } from "./health-summary";
+import { generateHealthSummary, judgeRecentTone } from "./health-summary";
 import { generateInsightsAI } from "./insights-ai";
-import {
-  SECTION_DEFINITIONS,
-  type ClientFields,
-  type ClientFieldValue,
-  type ConfirmedRecording,
-  type MeetingCandidate,
-  type RefreshReport,
-  type SectionKey,
+import { generateCoachBrief } from "./coach-brief";
+import { generateHubspotSuggestions } from "./hubspot-suggestions";
+import { fetchHubspotDealFields } from "./hubspot-fields";
+import { fetchClientSlackActivity } from "./slack-context";
+import type {
+  ClientFields,
+  ConfirmedRecording,
+  Insights,
+  News,
+  RefreshReport,
 } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
 
-// Refresh incrémental — version LÉGÈRE de l'enrichissement. Ne tourne que sur
-// un client déjà 'done'. Prend en compte les activités nouvelles depuis le
-// dernier passage, recalcule health + news (ranking IA), et si de nouvelles
-// activités existent, ré-extrait les fields et diff contre l'existant en
-// PRÉSERVANT les éditions manuelles. Ne régénère PAS coach brief ni deal recap
-// (la partie lourde). Ne touche JAMAIS enrichment_status.
+// Refresh incrémental d'un client déjà 'done' (bouton Refresh + cron hebdo du
+// lundi). Lit les nouvelles activités depuis le dernier passage :
+//   - Claap : nouveaux meetings détectés (domaine / titre) RETENUS
+//     AUTOMATIQUEMENT, plus de popup de confirmation. Ils sont listés dans le
+//     report (auto_added_meetings) avec un "Not this account" pour les retirer ;
+//   - HubSpot : engagements deal + company ;
+//   - Slack : canal dédié au client + mentions ailleurs (slack-context.ts) ;
+//   - News : Tavily + Google News, triées "important pour le compte".
+// S'il y a du nouveau, ré-extrait TOUS les fields et fusionne (merge-fields.ts :
+// une édition manuelle n'est remplacée que par une source plus récente).
+// Recalcule toujours health, Next actions, news ; régénère le coach brief si le
+// périmètre a changé (sauf retouche manuelle) et les suggestions HubSpot ;
+// resynchronise le billing (sauf en cron, où il est synchronisé en lot).
+// Ne régénère pas le deal recap (histoire de la signature). Ne touche jamais
+// enrichment_status.
 
 export type RunRefreshResult =
   | { ok: true; report: RefreshReport }
   | { ok: true; skipped: true; reason: "not_done" }
-  | { ok: true; needsConfirmation: true; candidates: MeetingCandidate[] }
   | { ok: false; error: string };
 
 type ClientRefreshRow = {
   id: string;
   hubspot_deal_id: string;
+  company_name: string;
+  closedwon_at: string | null;
   enrichment_status: string;
   fields_json: Partial<ClientFields> | null;
   health: { score?: number } | null;
   health_history: unknown[] | null;
+  insights: Insights | null;
+  news: News | null;
   last_enriched_at: string | null;
   last_refreshed_at: string | null;
   confirmed_claap_recordings: ConfirmedRecording[] | null;
@@ -59,91 +76,38 @@ type ClientRefreshRow = {
     discovered_at: string;
   }> | null;
   declined_claap_recording_ids: string[] | null;
+  coach_brief_generated_at: string | null;
+  coach_brief_edited_at?: string | null;
 };
 
-// Compte les activités (engagements HubSpot + meetings Claap) postérieures à
-// `since`. since = max(last_refreshed_at, last_enriched_at). Si since est null,
-// tout est considéré comme nouveau. Les timestamps null sont ignorés pour la
-// décision (on ne peut pas prouver la récence) mais restent dans le prompt.
-function countNewActivitiesSince(ctx: ClientEnrichmentContext, since: string | null): number {
-  if (!since) {
-    return (ctx.deal?.engagements?.length ?? 0) + (ctx.meetings?.length ?? 0);
-  }
-  const sinceTs = new Date(since).getTime();
-  let count = 0;
-  for (const e of ctx.deal?.engagements ?? []) {
-    if (e.date && new Date(e.date).getTime() > sinceTs) count++;
-  }
-  for (const m of ctx.meetings ?? []) {
-    if (m.meeting_started_at && new Date(m.meeting_started_at).getTime() > sinceTs) count++;
-  }
-  return count;
-}
+// Sections dont un changement rend le coach brief obsolète.
+const BRIEF_SENSITIVE: Array<{ section: string; key?: string }> = [
+  { section: "program_scope" },
+  { section: "planning" },
+  { section: "general_info", key: "langues_requises" },
+  { section: "general_info", key: "zones_geographiques" },
+];
 
-// Normalise une valeur pour comparaison stable (arrays triés, objets via JSON).
-function normalizeForCompare(value: unknown): string {
-  if (value == null) return "";
-  if (Array.isArray(value)) {
-    const items = value.map((v) => (typeof v === "object" ? JSON.stringify(v) : String(v)));
-    return JSON.stringify([...items].sort());
-  }
-  if (typeof value === "object") return JSON.stringify(value);
-  return String(value);
-}
-
-// Merge la ré-extraction contre l'existant en préservant les fields manuels et
-// en ne remplaçant que quand la nouvelle valeur est non-nulle ET différente.
-// Renvoie le fields_json fusionné + la liste des fields qui ont changé.
-function mergeFieldsPreservingManual(
-  prev: Partial<ClientFields>,
-  next: Partial<ClientFields>,
-): { merged: Partial<ClientFields>; changed: RefreshReport["changed_fields"] } {
-  const merged: Record<string, Record<string, ClientFieldValue>> = {};
-  const changed: RefreshReport["changed_fields"] = [];
-
-  for (const section of SECTION_DEFINITIONS) {
-    const sectionKey = section.key as SectionKey;
-    const prevSection = (prev?.[sectionKey] ?? {}) as Record<string, ClientFieldValue>;
-    const nextSection = (next?.[sectionKey] ?? {}) as Record<string, ClientFieldValue>;
-    const out: Record<string, ClientFieldValue> = { ...prevSection };
-
-    for (const field of section.fields) {
-      const prevField = prevSection[field.key];
-      const nextField = nextSection[field.key];
-
-      // Field édité manuellement : on ne touche jamais, pas compté comme changé.
-      if (prevField?.source?.kind === "manual") continue;
-
-      if (!nextField) continue;
-      // Ne pas blanchir un field que la ré-extraction n'a pas re-trouvé.
-      if (nextField.value == null) continue;
-
-      const prevNorm = normalizeForCompare(prevField?.value ?? null);
-      const nextNorm = normalizeForCompare(nextField.value);
-      if (prevNorm !== nextNorm) {
-        out[field.key] = nextField;
-        changed.push({ section: sectionKey, key: field.key, label: field.label });
-      }
-    }
-
-    merged[sectionKey] = out;
-  }
-
-  return { merged: merged as Partial<ClientFields>, changed };
+function after(iso: string | null | undefined, sinceTs: number | null): boolean {
+  if (!iso) return false;
+  if (sinceTs === null) return true;
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) && t > sinceTs;
 }
 
 export async function runClientRefresh(
   clientId: string,
   userId: string | null = null,
-  opts?: { trigger?: "manual" | "cron" },
+  opts?: { trigger?: "manual" | "cron"; skipBilling?: boolean },
 ): Promise<RunRefreshResult> {
   const trigger = opts?.trigger ?? "manual";
 
+  // select("*") plutôt qu'une liste : la colonne coach_brief_edited_at (migration
+  // clients_v2_tabs_refresh.sql) peut ne pas exister encore, elle arrive alors
+  // undefined et le refresh tourne quand même.
   const { data: row, error: rowErr } = await db
     .from("clients")
-    .select(
-      "id, hubspot_deal_id, enrichment_status, fields_json, health, health_history, last_enriched_at, last_refreshed_at, confirmed_claap_recordings, discovered_claap_recordings, declined_claap_recording_ids",
-    )
+    .select("*")
     .eq("id", clientId)
     .single<ClientRefreshRow>();
 
@@ -159,22 +123,16 @@ export async function runClientRefresh(
     if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY missing");
 
     const declinedIds = row.declined_claap_recording_ids ?? [];
+    const notes: string[] = [];
 
-    // ── Détection des NOUVEAUX meetings Claap pour ce client ──────────────────
-    // "Connu" = indexé sous ce deal (sales_coach_analyses status=done), déjà
-    // confirmé, déjà découvert lors d'un refresh précédent, ou explicitement
-    // décliné. Tout recording qui matche par domaine/titre en dehors de cet
-    // ensemble est un candidat "nouveau" pour ce client. On ne se base PAS sur
-    // une fenêtre de date : un meeting jamais vu par le pipeline (ex. lié à un
-    // deal HubSpot différent créé après le closed-won) doit être détecté même
-    // s'il est chronologiquement ancien.
+    // ── Nouveaux meetings Claap : retenus automatiquement ─────────────────────
+    // "Connu" = indexé sous ce deal, déjà confirmé, déjà découvert ou retiré à la
+    // main. Tout recording qui matche par domaine/titre en dehors de cet ensemble
+    // est nouveau, quelle que soit sa date (ex. meeting lié à un autre deal).
     const [indexedMeetings, dealForDiscovery] = await Promise.all([
       loadClaapMeetingsForDeal(row.hubspot_deal_id),
       fetchDealContext(row.hubspot_deal_id).catch((e) => {
-        console.warn(
-          `[clients/refresh/${clientId}] deal fetch for meeting discovery failed:`,
-          e instanceof Error ? e.message : e,
-        );
+        console.warn(`[clients/refresh/${clientId}] deal fetch for meeting discovery failed:`, e instanceof Error ? e.message : e);
         return null;
       }),
     ]);
@@ -184,77 +142,61 @@ export async function runClientRefresh(
       ...(row.discovered_claap_recordings ?? []).map((r) => r.recording_id),
       ...declinedIds,
     ]);
+    let claapError: string | null = null;
     const newCandidates = await discoverClaapMeetingCandidates(dealForDiscovery, knownIds).catch((e) => {
-      console.warn(
-        `[clients/refresh/${clientId}] new-meeting discovery failed:`,
-        e instanceof Error ? e.message : e,
-      );
-      return [] as MeetingCandidate[];
+      claapError = e instanceof Error ? e.message : String(e);
+      console.warn(`[clients/refresh/${clientId}] new-meeting discovery failed:`, claapError);
+      return [];
     });
-
-    // Refresh manuel + nouveau(x) meeting(s) : on s'arrête ici, rien d'autre
-    // n'est mis à jour (health/news/fields compris) tant qu'un humain n'a pas
-    // confirmé ou décliné. Cf. app/api/clients/[id]/confirm-refresh-meetings.
-    if (newCandidates.length > 0 && trigger === "manual") {
-      await db
-        .from("clients")
-        .update({
-          pending_refresh_meeting_candidates: newCandidates,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", clientId);
-      return { ok: true, needsConfirmation: true, candidates: newCandidates };
-    }
-
-    // Refresh cron + nouveau(x) meeting(s) : pas d'humain disponible, on les
-    // retient directement (tracé dans confirmed_claap_recordings). La discovery
-    // aveugle plus bas les remontera de toute façon (même matching domaine/
-    // titre) ; cet append sert la traçabilité et évite qu'un futur refresh
-    // manuel les reflague comme "nouveaux".
-    const autoConfirmed: ConfirmedRecording[] =
-      newCandidates.length > 0
-        ? newCandidates.map((c) => ({
-            recording_id: c.recording_id,
-            meeting_title: c.meeting_title,
-            meeting_started_at: c.meeting_started_at,
-            claap_url: c.claap_url,
-            added_manually: false,
-          }))
-        : [];
+    const autoConfirmed: ConfirmedRecording[] = newCandidates.map((c) => ({
+      recording_id: c.recording_id,
+      meeting_title: c.meeting_title,
+      meeting_started_at: c.meeting_started_at,
+      claap_url: c.claap_url,
+      added_manually: false,
+    }));
 
     const clientsModel = await getModelPreference("clients", CLIENT_EXTRACTION_MODEL);
 
     const ctx = await loadClientContext(row.hubspot_deal_id, {
       excludeRecordingIds: declinedIds.length > 0 ? declinedIds : undefined,
     });
+    const companyName = ctx.deal?.company?.name ?? ctx.deal?.name ?? row.company_name ?? "";
 
     const since = [row.last_refreshed_at, row.last_enriched_at]
       .filter((d): d is string => !!d)
       .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0] ?? null;
+    const sinceTs = since ? new Date(since).getTime() : null;
 
-    // Meetings jamais vus par le pipeline avant ce cycle (nouvellement inclus
-    // dans ctx.meetings via la discovery), indépendamment de leur date. Capture
-    // le cas où un meeting matché par domaine/titre est antérieur à `since`
-    // (ex. lié à un deal HubSpot différent créé après le closed-won) : sans ce
-    // signal, countNewActivitiesSince le raterait et les fields ne seraient
-    // jamais ré-extraits alors que le meeting vient tout juste d'être retenu.
+    // ── Slack + champs HubSpot live (next step, fin de contrat) ───────────────
+    const [slack, dealFields] = await Promise.all([
+      fetchClientSlackActivity({
+        companyName,
+        lastReadAt: row.last_refreshed_at,
+      }).catch((e) => ({
+        channels: [] as Array<{ id: string; name: string }>,
+        messages: [],
+        errors: [`Slack failed (${e instanceof Error ? e.message : e})`],
+      })),
+      fetchHubspotDealFields(row.hubspot_deal_id),
+    ]);
+    ctx.slack = slack.messages;
+
+    // ── Compteurs "nouveau depuis le dernier passage" ─────────────────────────
     const priorDiscoveredIds = new Set((row.discovered_claap_recordings ?? []).map((d) => d.recording_id));
-    const newlyDiscoveredCount = ctx.meetings.filter(
-      (m) => m.is_discovered && !priorDiscoveredIds.has(m.recording_id),
-    ).length;
-    const newActivityCount = countNewActivitiesSince(ctx, since) + newlyDiscoveredCount;
+    const newlyDiscoveredCount = ctx.meetings.filter((m) => m.is_discovered && !priorDiscoveredIds.has(m.recording_id)).length;
+    const newClaap = ctx.meetings.filter((m) => after(m.meeting_started_at, sinceTs)).length;
+    const claapNew = Math.max(newClaap, newlyDiscoveredCount);
+    const hubspotNew = (ctx.deal?.engagements ?? []).filter((e) => after(e.date, sinceTs)).length;
+    const slackNew = slack.messages.filter((m) => after(m.date, sinceTs)).length;
+    const newActivityCount = claapNew + hubspotNew + slackNew;
 
-    const companyName = ctx.deal?.company?.name ?? ctx.deal?.name ?? "";
-    const prevScore =
-      row.health && typeof row.health.score === "number" ? row.health.score : null;
-
+    const prevScore = row.health && typeof row.health.score === "number" ? row.health.score : null;
     const updatePayload: Record<string, unknown> = {};
     let changedFields: RefreshReport["changed_fields"] = [];
 
-    // Trace des recordings retenus ce cycle (existants + nouveaux), avec
-    // discovered_at préservé pour ceux déjà connus. Persisté à chaque refresh
-    // (pas seulement à l'enrichissement initial), sinon un futur refresh
-    // reflague indéfiniment les mêmes meetings comme "nouveaux".
+    // Trace des recordings retenus ce cycle (discovered_at préservé), sinon un
+    // futur refresh reflaguerait indéfiniment les mêmes meetings comme nouveaux.
     const priorDiscoveredById = new Map((row.discovered_claap_recordings ?? []).map((d) => [d.recording_id, d]));
     updatePayload.discovered_claap_recordings = ctx.meetings
       .filter((m) => m.is_discovered)
@@ -265,22 +207,22 @@ export async function runClientRefresh(
         claap_url: m.claap_url ?? null,
         discovered_at: priorDiscoveredById.get(m.recording_id)?.discovered_at ?? new Date().toISOString(),
       }));
-
     if (autoConfirmed.length > 0) {
       updatePayload.confirmed_claap_recordings = [...(row.confirmed_claap_recordings ?? []), ...autoConfirmed];
-      updatePayload.pending_refresh_meeting_candidates = null;
     }
+    // Ancien flux de confirmation : on purge les candidats restés en attente.
+    updatePayload.pending_refresh_meeting_candidates = null;
 
-    // ── Fields : ré-extraction seulement s'il y a du nouveau ──────────────────
-    if (newActivityCount > 0) {
-      const contextPrompt = renderClientContextForPrompt(ctx);
+    // ── Fields (tous) : ré-extraction seulement s'il y a du nouveau ───────────
+    const contextPrompt = newActivityCount > 0 ? renderClientContextForPrompt(ctx) : null;
+    if (contextPrompt) {
       const client = anthropicClient({ timeout: 600_000 });
       const msg = await withAnthropicRetry(
         () =>
           client.messages.create({
             model: clientsModel,
-            max_tokens: 8000,
-            system: `${CLIENT_EXTRACTION_SYSTEM_PROMPT}\n\n${NO_EM_DASH_RULE}`,
+            max_tokens: 10000,
+            system: `${CLIENT_EXTRACTION_SYSTEM_PROMPT}\n\n${CLIENT_REFRESH_PROMPT_ADDENDUM}\n\n${NO_EM_DASH_RULE}`,
             messages: [{ role: "user", content: contextPrompt }],
             tools: [CLIENT_FIELDS_TOOL],
             tool_choice: { type: "tool" as const, name: "client_fields" },
@@ -292,42 +234,137 @@ export async function runClientRefresh(
       const toolBlock = msg.content.find((b) => b.type === "tool_use");
       if (toolBlock && "input" in toolBlock) {
         const parsed = parseClientFieldsFromClaude(toolBlock.input);
-        const { merged, changed } = mergeFieldsPreservingManual(row.fields_json ?? {}, parsed);
+        const { merged, changed } = mergeExtractedFields(row.fields_json ?? {}, parsed);
         changedFields = changed;
         if (changed.length > 0) updatePayload.fields_json = merged;
       }
     }
+    const fieldsNow = (updatePayload.fields_json as Partial<ClientFields>) ?? row.fields_json ?? {};
 
-    // ── News : toujours rafraîchies + rankées (best-effort) ───────────────────
-    const news = await fetchClientNews({
-      companyName,
-      industry: ctx.deal?.company?.industry ?? null,
-    }).catch((e) => {
+    // ── En parallèle : news, billing, suggestions HubSpot, coach brief ────────
+    const briefOutdated = changedFields.some((c) =>
+      BRIEF_SENSITIVE.some((b) => b.section === c.section && (!b.key || b.key === c.key)),
+    );
+    const briefEditedByHand =
+      !!row.coach_brief_edited_at &&
+      (!row.coach_brief_generated_at || row.coach_brief_edited_at > row.coach_brief_generated_at);
+
+    const newsPromise = fetchClientNews({ companyName, industry: ctx.deal?.company?.industry ?? null }).catch((e) => {
       console.warn(`[clients/refresh/${clientId}] news fetch failed:`, e instanceof Error ? e.message : e);
       return null;
     });
-    if (news) {
-      if (news.items.length > 0) {
-        news.items = await rankClientNews(news.items, {
+    const billingPromise =
+      trigger === "cron" || opts?.skipBilling ? Promise.resolve(null) : getBillingForClient(companyName).catch(() => null);
+    const suggestionsPromise = contextPrompt
+      ? generateHubspotSuggestions(row.hubspot_deal_id, contextPrompt, userId).catch((e) => {
+          console.warn(`[clients/refresh/${clientId}] hubspot suggestions failed:`, e instanceof Error ? e.message : e);
+          return null;
+        })
+      : Promise.resolve(null);
+    const briefPromise =
+      briefOutdated && !briefEditedByHand
+        ? generateCoachBrief(ctx, userId).catch((e) => {
+            console.warn(`[clients/refresh/${clientId}] coach brief failed:`, e instanceof Error ? e.message : e);
+            return null;
+          })
+        : Promise.resolve(null);
+    if (briefOutdated && briefEditedByHand) {
+      notes.push("The program changed but the coach brief was edited by hand, so it was not regenerated. Check it before sharing.");
+    }
+
+    // Ton des derniers meetings (signal du health). Un échec n'arrête rien :
+    // le signal n'est pas noté et la carte le signale.
+    const tonePromise = judgeRecentTone(ctx, userId).then(
+      (tone) => ({ tone, error: null as string | null }),
+      (e) => {
+        console.warn(`[clients/refresh/${clientId}] tone judge failed:`, e instanceof Error ? e.message : e);
+        return { tone: null, error: e instanceof Error ? e.message : String(e) };
+      },
+    );
+
+    const [freshNews, billing, suggestions, coachBrief, toneRes] = await Promise.all([
+      newsPromise,
+      billingPromise,
+      suggestionsPromise,
+      briefPromise,
+      tonePromise,
+    ]);
+
+    let newsNew = 0;
+    let newsError: string | null = null;
+    if (freshNews) {
+      if (freshNews.items.length > 0) {
+        const ranked = await rankClientNews(freshNews.items, {
           companyName,
           userId,
           feature: "clients_refresh_news_rank",
-        }).catch(() => news.items);
+          programContext: [
+            fieldsNow.program_scope?.nom_programme?.value,
+            fieldsNow.program_scope?.population_accompagnee?.value,
+          ].filter(Boolean).join(", ") || null,
+        }).catch(() => ({ items: freshNews.items, ignored: 0 }));
+        freshNews.items = ranked.items;
+        freshNews.ignored_count = ranked.ignored;
       }
+      const { news, newImportantCount } = mergeNewsHistory(row.news, freshNews);
+      newsNew = newImportantCount;
+      // Deux sources (web + Google News) : les deux KO = news injoignables ;
+      // une seule KO = résultat partiel, signalé en note.
+      const errs = freshNews.errors ?? [];
+      if (errs.length >= 2) newsError = errs.join(" · ");
+      else if (errs.length === 1) notes.push(`News are partial: ${errs[0]}.`);
       updatePayload.news = news;
       updatePayload.last_news_run_at = new Date().toISOString();
+    } else {
+      newsError = "News could not be loaded";
     }
 
-    // ── Health : toujours recalculé ───────────────────────────────────────────
-    const health = computeHealth(ctx, prevScore);
-    // Reco IA (anglais, orientée closed-won), best-effort -> fallback règles EN.
-    const fieldsForInsights =
-      (updatePayload.fields_json as Partial<ClientFields>) ?? (row.fields_json ?? {});
-    const insights =
-      (await generateInsightsAI(ctx, health, fieldsForInsights, userId).catch((e) => {
-        console.warn(`[clients/refresh/${clientId}] AI insights failed:`, e instanceof Error ? e.message : e);
-        return null;
-      })) ?? computeInsights(ctx, health);
+    if (billing?.matched) {
+      updatePayload.billing = billing;
+      updatePayload.billing_refreshed_at = new Date().toISOString();
+    }
+    if (suggestions) updatePayload.hubspot_field_suggestions = suggestions.suggestions;
+    if (coachBrief) {
+      updatePayload.coach_brief = coachBrief;
+      updatePayload.coach_brief_generated_at = new Date().toISOString();
+    }
+
+    // ── Health + Next actions : toujours recalculés ───────────────────────────
+    const newsForInsights = (updatePayload.news as News | undefined) ?? row.news ?? null;
+    const kickoff = fieldsNow.planning?.kickoff_envisage_le?.value;
+    const health = computeHealth(ctx, prevScore, {
+      closedwonAt: row.closedwon_at,
+      kickoffDate: typeof kickoff === "string" ? kickoff : null,
+      contractEndDate: dealFields?.contract_end_date ?? null,
+      news: newsForInsights,
+      tone: toneRes.tone,
+      toneError: toneRes.error,
+    });
+    const aiInsights = await generateInsightsAI({
+      ctx,
+      health,
+      fields: fieldsNow,
+      news: newsForInsights,
+      closedwonAt: row.closedwon_at,
+      hubspotNextStep: dealFields?.hs_next_step ?? null,
+      contractEndDate: dealFields?.contract_end_date ?? null,
+      previous: row.insights,
+      userId,
+    }).catch((e) => {
+      console.warn(`[clients/refresh/${clientId}] AI insights failed:`, e instanceof Error ? e.message : e);
+      return null;
+    });
+    let insights: Insights;
+    if (aiInsights) {
+      insights = aiInsights;
+    } else {
+      // Fallback règles : on garde quand même les actions faites récemment.
+      const fallback = computeInsights(ctx, health);
+      const recentDone = (row.insights?.actions ?? []).filter(
+        (a) => a.done_at && Date.now() - new Date(a.done_at).getTime() < 30 * 24 * 60 * 60 * 1000,
+      );
+      insights = { ...fallback, actions: [...fallback.actions, ...recentDone] };
+    }
     health.summary = await generateHealthSummary(ctx, health, userId).catch((e) => {
       console.warn(`[clients/refresh/${clientId}] health summary failed:`, e instanceof Error ? e.message : e);
       return null;
@@ -341,10 +378,31 @@ export async function runClientRefresh(
 
     const report: RefreshReport = {
       refreshed_at: new Date().toISOString(),
+      trigger,
       health_before: prevScore,
       health_after: health.score,
       new_activity_count: newActivityCount,
       changed_fields: changedFields,
+      sources: {
+        claap: { new: claapNew, error: claapError },
+        hubspot: { new: hubspotNew, error: ctx.deal ? null : "HubSpot deal could not be read" },
+        slack: {
+          new: slackNew,
+          // Une erreur partielle (un canal illisible) n'invalide pas le reste : la
+          // source n'est "KO" que si rien n'a pu être lu.
+          error: slack.errors.length && slack.messages.length === 0 ? slack.errors.join(" · ") : null,
+          channel: slack.channels.length ? slack.channels.map((c) => `#${c.name}`).join(", ") : null,
+        },
+        news: { new: newsNew, error: newsError },
+      },
+      auto_added_meetings: autoConfirmed.map((m) => ({
+        recording_id: m.recording_id,
+        meeting_title: m.meeting_title,
+        meeting_started_at: m.meeting_started_at,
+      })),
+      notes: [...notes, ...(slack.messages.length > 0 ? slack.errors : [])].length
+        ? [...notes, ...(slack.messages.length > 0 ? slack.errors : [])]
+        : undefined,
       skipped_no_activity: newActivityCount === 0,
     };
 
@@ -370,6 +428,7 @@ export async function runClientRefresh(
       .update({
         last_refresh_report: {
           refreshed_at: new Date().toISOString(),
+          trigger,
           health_before: null,
           health_after: null,
           new_activity_count: 0,

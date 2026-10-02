@@ -16,6 +16,10 @@ export type ClientFieldValue<T = unknown> = {
   confidence: number; // 0..1
   source: ClientFieldSource | null;
   updated_at: string; // ISO
+  // Date (YYYY-MM-DD) de la source la plus récente qui appuie la valeur, donnée
+  // par l'IA à l'extraction. Sert au refresh pour décider si une info récente
+  // peut remplacer une édition manuelle plus ancienne (cf. run-refresh.ts).
+  evidence_at?: string | null;
 };
 
 // ── 2.1 Informations générales ───────────────────────────────────────────
@@ -53,11 +57,30 @@ export type GoalsFields = {
   attentes_specifiques: ClientFieldValue<string>;
 };
 
-// ── 2.4 Organisation & intégration ───────────────────────────────────────
+// ── 2.4 Organisation & intégration (dont IT & accès) ─────────────────────
+// Les champs IT vivent dans `org` (et pas dans une section dédiée) pour ne pas
+// casser l'outil chat get_client, qui mappe déjà org = intégration IT.
+export type ModeAcces = "sso" | "magic_link" | "email_password";
+export type Provisioning = "manuel" | "csv" | "scim" | "sirh";
+export type CanalCoaching = "slack" | "teams" | "web";
+export type StatutApp = "non_requis" | "a_demander" | "en_validation" | "installee";
+export type MeetingProvider = "teams" | "google_meet" | "zoom" | "autre";
+export type QuestionnaireSecurite = "non_requis" | "a_faire" | "en_cours" | "valide";
 export type OrgFields = {
   integration_it: ClientFieldValue<string>;
   referentiels_documents: ClientFieldValue<Array<{ title: string; url?: string }>>;
   contraintes_organisationnelles: ClientFieldValue<string>;
+  mode_acces: ClientFieldValue<ModeAcces>;
+  sso_details: ClientFieldValue<string>;
+  provisioning: ClientFieldValue<Provisioning>;
+  provisioning_details: ClientFieldValue<string>;
+  canal: ClientFieldValue<CanalCoaching>;
+  statut_app: ClientFieldValue<StatutApp>;
+  meeting_provider: ClientFieldValue<MeetingProvider>;
+  questionnaire_securite: ClientFieldValue<QuestionnaireSecurite>;
+  dpa: ClientFieldValue<{ enabled: boolean; details?: string }>;
+  residence_donnees: ClientFieldValue<string>;
+  whitelisting_email: ClientFieldValue<{ enabled: boolean; details?: string }>;
 };
 
 // ── 2.5 Contexte & historique ────────────────────────────────────────────
@@ -100,6 +123,9 @@ export type FieldDefinition = {
   // (FR) — seul l'affichage est traduit, pour ne pas casser les données ni le
   // prompt d'extraction.
   optionLabels?: Record<string, string>;
+  // Couleur de statut par valeur d'enum (ex : app "Installed" en vert, "Pending
+  // IT approval" en ambre). Sans tone, l'enum s'affiche en pastille neutre.
+  optionTones?: Record<string, "ok" | "warn" | "err" | "neutral">;
   // Champ obligatoire avant que l'AE puisse notifier l'AM/CS (handover). Vide ->
   // surligné en ambre sur la fiche + envoi bloqué.
   required?: boolean;
@@ -155,9 +181,20 @@ export const SECTION_DEFINITIONS: ReadonlyArray<{
   },
   {
     key: "org",
-    label: "Organization & integration",
+    label: "Organization & IT",
     fields: [
-      { key: "integration_it", label: "IT integration (SSO, HRIS, Slack, …)", kind: "long_text", recommended: true },
+      { key: "mode_acces", label: "Access", kind: "enum", options: ["sso", "magic_link", "email_password"] as const, optionLabels: { sso: "SSO", magic_link: "Magic link", email_password: "Email + password" }, recommended: true },
+      { key: "sso_details", label: "SSO provider & protocol", kind: "text" },
+      { key: "provisioning", label: "User provisioning", kind: "enum", options: ["manuel", "csv", "scim", "sirh"] as const, optionLabels: { manuel: "Manual invites", csv: "CSV import", scim: "SCIM", sirh: "HRIS sync" }, recommended: true },
+      { key: "provisioning_details", label: "Provisioning details", kind: "text" },
+      { key: "canal", label: "Coaching channel", kind: "enum", options: ["slack", "teams", "web"] as const, optionLabels: { slack: "Slack", teams: "Teams", web: "Web only" }, recommended: true },
+      { key: "statut_app", label: "Slack / Teams app", kind: "enum", options: ["non_requis", "a_demander", "en_validation", "installee"] as const, optionLabels: { non_requis: "Not needed", a_demander: "To request", en_validation: "Pending IT approval", installee: "Installed" }, optionTones: { non_requis: "neutral", a_demander: "warn", en_validation: "warn", installee: "ok" } },
+      { key: "meeting_provider", label: "Meeting provider", kind: "enum", options: ["teams", "google_meet", "zoom", "autre"] as const, optionLabels: { teams: "Teams", google_meet: "Google Meet", zoom: "Zoom", autre: "Other" } },
+      { key: "questionnaire_securite", label: "Security questionnaire", kind: "enum", options: ["non_requis", "a_faire", "en_cours", "valide"] as const, optionLabels: { non_requis: "Not needed", a_faire: "To do", en_cours: "In progress", valide: "Done" }, optionTones: { non_requis: "neutral", a_faire: "warn", en_cours: "warn", valide: "ok" } },
+      { key: "dpa", label: "DPA signed", kind: "bool_with_details" },
+      { key: "residence_donnees", label: "Data residency", kind: "text" },
+      { key: "whitelisting_email", label: "Email domain whitelisted", kind: "bool_with_details" },
+      { key: "integration_it", label: "Other IT notes", kind: "long_text" },
       { key: "referentiels_documents", label: "References & documents", kind: "array_doc" },
       { key: "contraintes_organisationnelles", label: "Organizational constraints", kind: "long_text" },
     ],
@@ -239,19 +276,98 @@ export type HealthSnapshot = {
   drivers: string[];
   computed_at: string;
 };
+// Les 6 signaux du score, dans l'ordre d'affichage du popup "How is this
+// computed?" (cf. lib/clients/health.ts).
+export type HealthSignal = "contact" | "meetings" | "activity" | "stakeholders" | "tone" | "news";
+// Source d'un driver : même forme que les sources des Next actions, plus un
+// lien direct (meeting Claap, article). HubSpot n'a pas d'url : l'UI renvoie
+// vers le deal.
+export type HealthDriverSource = InsightSource & { url?: string | null };
+// Un palier de la règle d'un signal ("Within 21 days" -> +20).
+export type HealthRuleTier = { when: string; points: number };
+export type HealthDriver = {
+  label: string;
+  impact: "positive" | "negative" | "neutral";
+  // Points ajoutés ou retirés au score. 0 = signal lu mais sans effet.
+  // Absent sur les fiches calculées avant la v2 du score.
+  points?: number;
+  signal?: HealthSignal;
+  // Règle du signal en paliers, et index du palier atteint : le popup les
+  // affiche tous et surligne celui-ci.
+  rules?: HealthRuleTier[];
+  applied?: number | null;
+  // Contexte de la règle ("Thresholds for a Running account").
+  rule_note?: string | null;
+  // Précision affichée sous la ligne (noms des contacts, raison du ton, titre de la news).
+  detail?: string | null;
+  // Signal non noté parce qu'une source n'a pas pu être lue (raison affichée).
+  skipped?: string | null;
+  source?: HealthDriverSource | null;
+};
+export type HealthPhase = {
+  key: "onboarding" | "running" | "renewal";
+  days_since_signature: number | null;
+  days_to_contract_end: number | null;
+};
+// Ton des derniers meetings, jugé par IA (Haiku) : une phrase de justification
+// et les meetings lus, pour que le driver soit vérifiable.
+export type HealthTone = {
+  label: "positive" | "neutral" | "negative";
+  reason: string;
+  meetings: Array<{ recording_id: string; title: string | null; date: string | null; url?: string | null }>;
+};
 export type Health = HealthSnapshot & {
   trend?: "up" | "down" | "stable";
-  // Phrase courte (FR) expliquant le score, ancrée surtout sur les derniers
+  // Drivers qui ont bougé le score (points ≠ 0), triés par impact : chips de la
+  // carte. `drivers` (texte seul) reste pour l'historique et les anciens consommateurs.
+  drivers_detail?: HealthDriver[];
+  // Décomposition complète (un driver par signal, points à 0 compris) : popup
+  // "How is this computed?". score = clamp(baseline + somme des points, 0, 100).
+  breakdown?: HealthDriver[];
+  baseline?: number;
+  // Phase du compte au moment du calcul : elle règle les seuils de silence.
+  phase?: HealthPhase | null;
+  // Sources illisibles au calcul. Une source absente ne coûte jamais de points :
+  // les signaux qui en dépendent sont marqués `skipped` et la carte l'affiche.
+  data_gaps?: string[];
+  tone?: HealthTone | null;
+  // Dernier contact connu (engagement HubSpot ou meeting Claap) : tuile "Last
+  // touch" de Key dates. null si aucune activité datée.
+  last_contact_at?: string | null;
+  last_contact_source?: "hubspot" | "claap" | null;
+  // Phrase courte expliquant le score, ancrée surtout sur les derniers
   // échanges (meetings récents). Générée par IA à l'enrichissement, best-effort
   // (null si la génération échoue ou pas de signal). Pas stockée dans les
   // snapshots d'historique, c'est une lecture du moment présent.
   summary?: string | null;
 };
 
+// Next actions (onglet Key insights) : 1 à 3 actions, chacune avec un owner,
+// une échéance et la source datée qui la déclenche. `rationale` / `observations`
+// et la priorité "low" ne viennent que des anciennes générations (rétrocompat).
+export type InsightSourceKind = "claap" | "hubspot" | "slack" | "news" | "fiche";
+export type InsightSource = { kind: InsightSourceKind; date?: string | null; label?: string | null };
+export type InsightAction = {
+  id?: string;
+  title: string;
+  why?: string;
+  rationale?: string;
+  owner?: "AM" | "CS" | "AE" | null;
+  due?: "this_week" | "next_2_weeks" | "this_month" | null;
+  priority?: "high" | "medium" | "low";
+  source?: InsightSource | null;
+  done_at?: string | null;
+  done_by?: string | null;
+};
+export type InsightHighlight = { text: string; date?: string | null; source?: InsightSource | null };
 export type Insights = {
   generated_at: string;
-  actions: Array<{ title: string; rationale?: string; priority?: "high" | "medium" | "low" }>;
-  observations: string[];
+  actions: InsightAction[];
+  highlights?: InsightHighlight[];
+  // Version courte des points de vigilance pour Key insights (3 max, ~8 mots).
+  // La liste complète reste dans fields_json.history.points_de_vigilance.
+  watch_points?: string[];
+  observations?: string[];
 };
 
 // Catégorie attribuée par le ranking IA (Haiku) pour ne garder que les news
@@ -262,19 +378,36 @@ export type NewsCategory =
   | "acquisition"
   | "leadership"
   | "product"
+  | "restructuring"
+  | "results"
+  | "expansion"
+  | "regulation"
   | "other";
+
+export type NewsImportance = "high" | "medium" | "low";
+
+export type NewsItem = {
+  title: string;
+  url: string;
+  published_at?: string;
+  summary?: string;
+  relevance?: number; // score brut Tavily
+  category?: NewsCategory; // attribué par rankClientNews (Haiku)
+  interest?: number; // 0..1, ancien ranking (rétrocompat)
+  importance?: NewsImportance; // pour un AM/CS qui gère le compte
+  why_it_matters?: string | null; // une phrase : risque ou opportunité pour le compte
+  source_name?: string | null; // média (Les Echos, LSA…)
+  origin?: "tavily" | "google_news";
+  first_seen_at?: string; // 1re fois qu'un refresh l'a vue : badge "New"
+};
 
 export type News = {
   refreshed_at: string;
-  items: Array<{
-    title: string;
-    url: string;
-    published_at?: string;
-    summary?: string;
-    relevance?: number; // score brut Tavily
-    category?: NewsCategory; // attribué par rankClientNews (Haiku)
-    interest?: number; // 0..1, attribué par rankClientNews, sert au tri/filtre
-  }>;
+  items: NewsItem[];
+  // Sources qui ont échoué au dernier passage (affiché, jamais un 0 muet).
+  errors?: string[];
+  // Articles écartés comme bruit au dernier passage (info "N ignored").
+  ignored_count?: number;
 };
 
 // ── Refresh report (bouton "Actualiser" + cron) ──────────────────────────────
@@ -283,12 +416,35 @@ export type News = {
 // liste des fields qui ont changé. skipped_no_activity = true quand le refresh
 // a tourné mais n'a trouvé aucune activité nouvelle (health/news recalculés
 // quand même, fields inchangés).
+export type RefreshSourceStat = { new: number; error?: string | null };
 export type RefreshReport = {
   refreshed_at: string;
+  trigger?: "manual" | "cron";
   health_before: number | null;
   health_after: number | null;
   new_activity_count: number;
-  changed_fields: Array<{ section: SectionKey; key: string; label: string }>;
+  // `before` / `after` : valeurs avant et après, pour l'Undo. overrode_manual :
+  // la valeur remplacée avait été éditée à la main (source plus récente).
+  changed_fields: Array<{
+    section: SectionKey;
+    key: string;
+    label: string;
+    before?: unknown;
+    after?: unknown;
+    overrode_manual?: boolean;
+  }>;
+  // Compteurs par source (nouveau depuis le refresh précédent) + erreur
+  // éventuelle : une source KO s'affiche comme telle, jamais comme un 0.
+  sources?: {
+    claap?: RefreshSourceStat;
+    hubspot?: RefreshSourceStat;
+    slack?: RefreshSourceStat & { channel?: string | null };
+    news?: RefreshSourceStat;
+  };
+  // Meetings Claap retenus automatiquement à ce refresh (plus de popup de
+  // confirmation) : listés dans What's new avec "Not this account".
+  auto_added_meetings?: Array<{ recording_id: string; meeting_title: string | null; meeting_started_at: string | null }>;
+  notes?: string[];
   skipped_no_activity?: boolean;
   error?: string;
 };
@@ -598,12 +754,11 @@ export type ClientRow = {
   meetings_confirmed_at: string | null;
   meetings_confirmed_by: string | null;
   meeting_confirmation_requested_at: string | null;
-  // Nouveaux meetings Claap détectés lors d'un refresh (bouton ou cron), en
-  // attente de confirmation humaine (refresh manuel uniquement). Cf.
-  // migration clients_refresh_meeting_confirmation.sql et run-refresh.ts.
+  // Ancien flux de confirmation des nouveaux meetings au refresh (abandonné :
+  // ils sont désormais retenus automatiquement). Colonne conservée, plus lue.
   pending_refresh_meeting_candidates: MeetingCandidate[] | null;
-  // Recordings explicitement déclinés lors d'un popup de refresh : exclus
-  // définitivement de la discovery pour ce client.
+  // Recordings retirés à la main ("Not this account") : exclus définitivement
+  // de la discovery pour ce client.
   declined_claap_recording_ids: string[] | null;
   last_enriched_at: string | null;
   last_health_run_at: string | null;
@@ -611,6 +766,9 @@ export type ClientRow = {
   last_refreshed_at: string | null;
   last_refresh_report: RefreshReport | null;
   owner_notified_at: string | null;
+  // Dernière édition manuelle du coach brief : le refresh ne le régénère pas
+  // s'il a été retouché depuis la dernière génération.
+  coach_brief_edited_at: string | null;
   // Handover AM/CS : l'AE assigne un Account Manager et un Customer Success et
   // les notifie sur Slack une fois la fiche complète. Cf. notify-handover.ts.
   am_email: string | null;

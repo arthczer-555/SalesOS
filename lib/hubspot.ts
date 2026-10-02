@@ -278,11 +278,17 @@ export type DealContactSnapshot = {
 };
 
 export type DealEngagementSnapshot = {
+  // ID de l'objet HubSpot : rendu dans le prompt pour que l'IA puisse citer la
+  // source (hubspot:<type>:<id>) au lieu d'un id inventé.
+  id?: string | null;
   type: "meeting" | "call" | "note" | "email" | "engagement";
   date: string | null;
   title: string | null;
   body: string;
   direction?: "in" | "out" | null;
+  // Expéditeur d'un email (minuscule). Sert au health : un email entrant = un
+  // interlocuteur client actif.
+  from_email?: string | null;
 };
 
 export type DealCompanySnapshot = {
@@ -505,6 +511,7 @@ export async function fetchDealContext(
       title: props.hs_email_subject ?? null,
       body: bodyRaw.slice(0, 2500),
       direction: props.hs_email_direction === "INCOMING_EMAIL" ? "in" : "out",
+      from_email: props.hs_email_from_email?.trim().toLowerCase() || null,
     };
   };
 
@@ -525,7 +532,7 @@ export async function fetchDealContext(
           if (seen.has(key)) continue;
           seen.add(key);
         }
-        engagements.push(mapRow(type, row));
+        engagements.push({ ...mapRow(type, row), id: row.id ?? null });
       }
     }
   };
@@ -658,7 +665,8 @@ export function renderDealContextForPrompt(snapshot: DealSnapshot | null): strin
       // les calls/meetings qui sont déjà résumés par les Claap recaps.
       const bodyLimit = e.type === "email" || e.type === "note" ? 1200 : 500;
       const body = e.body ? ` : ${e.body.slice(0, bodyLimit)}` : "";
-      const line = `- [${label} ${date}]${title}${body}`;
+      const idSuffix = e.id ? ` id:${e.id}` : "";
+      const line = `- [${label} ${date}${idSuffix}]${title}${body}`;
       if (charsUsed + line.length > MAX_ENGAGEMENT_CHARS) {
         const skipped = snapshot.engagements.length - rendered;
         lines.push(`(${skipped} engagement(s) plus ancien(s) omis pour rester sous le budget de prompt)`);

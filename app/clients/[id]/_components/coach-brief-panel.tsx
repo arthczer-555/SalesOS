@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Copy, Check, Users } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { Copy, Check, Users, ChevronDown } from "lucide-react";
+import { COLORS, SHADOWS } from "@/lib/design/tokens";
 import type { CoachBrief } from "@/lib/clients/types";
 import { EditableText, EditableObjectList } from "./editable";
 import { patchContent } from "./content-client";
@@ -11,7 +11,8 @@ import { patchContent } from "./content-client";
 //  - Champs éditables inline (le CS corrige ce que l'IA a produit).
 //  - Bouton "Copier pour Slack" qui produit la version markdown/texte prête à
 //    coller dans le canal #coaches.
-// Une relance d'enrichissement réécrit le brief (pas de préservation).
+// Le refresh hebdo le régénère quand le périmètre change, sauf s'il a été retouché
+// à la main depuis (coach_brief_edited_at). Replié par défaut dans Knowledge.
 
 function fmtDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -129,6 +130,7 @@ export function CoachBriefPanel({
   onUpdated?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [open, setOpen] = useState(false);
 
   if (!brief) {
     return (
@@ -158,9 +160,8 @@ export function CoachBriefPanel({
           </span>
         </div>
         <div style={{ fontSize: 12, color: COLORS.ink3, lineHeight: 1.5 }}>
-          The brief will be created on the next AI enrichment (the &quot;Run enrichment&quot;
-          button at the top of the page). It follows the format of the standard Slack message sent
-          to coaches at staffing.
+          Created by the AI enrichment (Options, then Re-run enrichment, for admins). It follows the
+          format of the standard Slack message sent to coaches at staffing.
         </div>
       </div>
     );
@@ -191,54 +192,41 @@ export function CoachBriefPanel({
 
   return (
     <div
+      id="k-brief"
       style={{
         background: COLORS.bgCard,
         border: `1px solid ${COLORS.line}`,
         borderRadius: 12,
-        overflow: "hidden",
+        boxShadow: SHADOWS.card,
+        padding: "16px 20px",
+        scrollMarginTop: 64,
       }}
     >
-      <div
-        style={{
-          padding: "12px 16px",
-          borderBottom: `1px solid ${COLORS.line}`,
-          background: COLORS.bgSoft,
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-        }}
-      >
-        <Users size={14} style={{ color: COLORS.ink1 }} />
-        <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink0 }}>Coach brief</h3>
-        {generatedAt && (
-          <span style={{ fontSize: 11, color: COLORS.ink3 }}>
-            generated on {new Date(generatedAt).toLocaleDateString("en-GB")}
-          </span>
-        )}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: 0, padding: 0, cursor: "pointer", color: COLORS.ink0 }}
+        >
+          <Users size={15} style={{ color: COLORS.ink2 }} />
+          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Coach brief</h3>
+          <ChevronDown size={15} style={{ color: COLORS.ink3, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+        </button>
+        {generatedAt && <span style={{ fontSize: 12, color: COLORS.ink3 }}>Generated {new Date(generatedAt).toLocaleDateString("en-GB")}</span>}
         <button
           type="button"
           onClick={copyToClipboard}
-          style={{
-            marginLeft: "auto",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 5,
-            padding: "5px 10px",
-            fontSize: 12,
-            fontWeight: 500,
-            borderRadius: 6,
-            border: `1px solid ${copied ? COLORS.ok : COLORS.line}`,
-            background: copied ? COLORS.okBg : COLORS.bgCard,
-            color: copied ? COLORS.ok : COLORS.ink2,
-            cursor: "pointer",
-          }}
+          className="ch-btn ch-btn-sm"
+          style={{ marginLeft: "auto", ...(copied ? { borderColor: COLORS.ok, background: COLORS.okBg, color: COLORS.ok } : {}) }}
         >
           {copied ? <Check size={12} /> : <Copy size={12} />}
           {copied ? "Copied" : "Copy for Slack"}
         </button>
       </div>
 
-      <div style={{ padding: "4px 16px 12px" }}>
+      {open && (
+      <div style={{ paddingTop: 8 }}>
         {text("Intro", brief.intro, "intro", true)}
         {text("Industry", brief.industry, "industry")}
         {text("Website", brief.website, "website")}
@@ -326,6 +314,7 @@ export function CoachBriefPanel({
         {text("Program end date", brief.program_end_date, "program_end_date")}
         {text("Program duration", brief.program_duration, "program_duration")}
       </div>
+      )}
     </div>
   );
 }

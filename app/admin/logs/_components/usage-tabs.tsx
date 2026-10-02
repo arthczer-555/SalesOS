@@ -152,6 +152,7 @@ const FEATURE_TO_PREF: Record<string, string> = {
   clients_enrich_fields:      "clients",
   clients_refresh_fields:     "clients",
   clients_health_summary:     "clients",
+  clients_health_tone:        "clients",
   clients_coach_brief:        "clients",
   clients_deal_recap:         "clients",
   marketing_content_analyze:  "marketing",

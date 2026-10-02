@@ -229,7 +229,9 @@ function articleKey(a: MarketArticle): string {
  */
 export async function fetchCompanyMarketNews(
   company: string,
-  opts: { country?: string; lang?: string; since?: string; num?: number } = {},
+  // `errors` (optionnel) : reçoit les échecs des requêtes SERP, pour que
+  // l'appelant distingue "aucune news" de "Bright Data KO" (credentials, zone).
+  opts: { country?: string; lang?: string; since?: string; num?: number; errors?: string[] } = {},
 ): Promise<MarketArticle[]> {
   if (!BRIGHTDATA_API_KEY || !company.trim()) return [];
 
@@ -264,7 +266,17 @@ export async function fetchCompanyMarketNews(
   const seen = new Set<string>();
   const articles: MarketArticle[] = [];
   for (const r of results) {
-    if (r.status !== "fulfilled" || !r.value.isJson) continue;
+    if (r.status === "rejected") {
+      opts.errors?.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+      continue;
+    }
+    if (!r.value.ok) {
+      // Proxy error Bright Data : le message est dans `data` (cf. fetchSerp).
+      const msg = typeof r.value.data === "string" && r.value.data.trim() ? r.value.data.trim().slice(0, 140) : `HTTP ${r.value.status}`;
+      opts.errors?.push(msg);
+      continue;
+    }
+    if (!r.value.isJson) continue;
     const data = r.value.data as { news?: GoogleNewsItem[] } | null;
     const news = Array.isArray(data?.news) ? data!.news : [];
     for (const n of news) {

@@ -44,14 +44,33 @@ Sections à remplir :
    population, nb coachés estimé, format cohortes, options activées comme auto-assessment,
    flash feedback, tripartite, quadripartite, offres associées).
 3. goals : objectifs business/RH du client, KPIs visés, attentes spécifiques exprimées.
-4. org : intégration IT (SSO, SIRH, Slack...), référentiels/documents partagés (avec
-   liens si dispo), contraintes organisationnelles (zones horaires, validation interne...).
+4. org : organisation et IT. Mode d'accès des coachés (SSO, magic link, email + mot de
+   passe) et détails SSO (fournisseur type Azure AD / Okta / Google, protocole SAML / OIDC),
+   provisioning des utilisateurs (invitations manuelles, import CSV, SCIM, sync SIRH) et
+   détails, canal de coaching (Slack, Teams, web) et statut de l'app Slack/Teams côté IT,
+   outil de visio, questionnaire sécurité, DPA, résidence des données, whitelisting du
+   domaine email Coachello, autres notes IT, référentiels/documents partagés (avec liens
+   si dispo), contraintes organisationnelles (zones horaires, validation interne...).
 5. history : relation commerciale (nouveau / renouvellement / upsell), initiatives RH
    parallèles, points de vigilance détectés pendant le deal.
 6. planning : date de kickoff envisagée, suivi CS attendu (QBR, adoption call M+1...),
    engagements pris par le sales pendant le deal (promesses contractuelles ou non).
 
+- evidence_date : pour chaque field rempli, la date (YYYY-MM-DD) de la source la plus
+  récente qui appuie la valeur (date du meeting, de l'email, de la note, du message Slack).
+  null si la valeur n'est pas datable ou si value=null.
+
 Tu réponds UNIQUEMENT via l'outil client_fields.`;
+
+// Ajouté au system prompt lors d'un refresh (compte déjà en cours, pas un
+// closed-won tout frais). Le merge (run-refresh.ts) s'appuie sur evidence_date
+// pour laisser une info récente remplacer une édition manuelle plus ancienne.
+export const CLIENT_REFRESH_PROMPT_ADDENDUM = `CONTEXTE REFRESH : ce compte est déjà client depuis un moment, ce n'est plus un
+closed-won tout frais. Le contexte contient aussi les échanges post-signature (meetings
+Claap de suivi, emails HubSpot, messages Slack du canal client). Quand deux sources se
+contredisent, l'information la plus RÉCENTE prime (ex : nouveau contact facturation
+annoncé en septembre > contact cité au closing en mars). Remplis evidence_date avec soin :
+c'est ce qui permet de savoir qu'une info est plus récente que la fiche.`;
 
 // Tool definition. On a fait le choix de garder une **forme à plat par
 // field** (value, confidence, source string) et de wrapper en
@@ -61,7 +80,7 @@ Tu réponds UNIQUEMENT via l'outil client_fields.`;
 //    qu'on parse en ClientFieldSource structuré dans parse-claude-output.ts.
 //    Plus tolérant que d'exiger un objet à 3 champs à chaque field.
 
-type FieldSpec = { type: string; nullable?: boolean; description?: string; items?: unknown };
+type FieldSpec = { type: string; nullable?: boolean; description?: string; items?: unknown; enum?: readonly string[] };
 
 function field(spec: FieldSpec) {
   // Schéma générique d'un field : value (typage variable), confidence 0..1, source string.
@@ -111,12 +130,9 @@ function field(spec: FieldSpec) {
   } else if (spec.type === "date") {
     valueSchema.type = ["string", "null"];
     valueSchema.description = (spec.description ?? "") + " (format ISO YYYY-MM-DD)";
-  } else if (spec.type === "enum_type_coaching") {
+  } else if (spec.type === "enum") {
     valueSchema.type = ["string", "null"];
-    valueSchema.enum = ["humain", "ia", "hybride", null];
-  } else if (spec.type === "enum_relation") {
-    valueSchema.type = ["string", "null"];
-    valueSchema.enum = ["nouveau", "renouvellement", "upsell", null];
+    valueSchema.enum = [...(spec.enum ?? []), null];
   }
 
   return {
@@ -128,6 +144,10 @@ function field(spec: FieldSpec) {
         type: "string",
         description:
           "Format: hubspot:note:<id> | hubspot:email:<id> | hubspot:meeting:<id> | hubspot:call:<id> | hubspot:deal:<id> | hubspot:company:<id> | claap:<recordingId> | inferred | empty (si value=null)",
+      },
+      evidence_date: {
+        type: ["string", "null"],
+        description: "Date YYYY-MM-DD de la source la plus récente qui appuie la valeur, null si non datable.",
       },
     },
     required: ["value", "confidence", "source"],
@@ -163,7 +183,7 @@ export const CLIENT_FIELDS_TOOL: Anthropic.Tool = {
       program_scope: {
         type: "object",
         properties: {
-          type_coaching: field({ type: "enum_type_coaching", description: "humain (1:1 humain), ia (Coachello GPT), hybride" }),
+          type_coaching: field({ type: "enum", enum: ["humain", "ia", "hybride"], description: "humain (1:1 humain), ia (Coachello GPT), hybride" }),
           nom_programme: field({ type: "string" }),
           population_accompagnee: field({ type: "string", description: "Qui est coaché : managers, leaders, équipe RH, dirigeants…" }),
           nb_coaches_estime: field({ type: "number", description: "Nombre estimé de bénéficiaires sur la durée du contrat" }),
@@ -192,16 +212,32 @@ export const CLIENT_FIELDS_TOOL: Anthropic.Tool = {
       org: {
         type: "object",
         properties: {
-          integration_it: field({ type: "string", description: "SSO, SIRH, Slack, Teams, autres systèmes à intégrer" }),
+          mode_acces: field({ type: "enum", enum: ["sso", "magic_link", "email_password"], description: "Comment les coachés se connectent à Coachello" }),
+          sso_details: field({ type: "string", description: "Fournisseur d'identité et protocole SSO (ex : Azure AD, SAML)" }),
+          provisioning: field({ type: "enum", enum: ["manuel", "csv", "scim", "sirh"], description: "Comment les comptes utilisateurs sont créés : invitations manuelles, import CSV, SCIM, sync SIRH" }),
+          provisioning_details: field({ type: "string", description: "Détails du provisioning (SIRH utilisé, fréquence de sync, qui l'opère)" }),
+          canal: field({ type: "enum", enum: ["slack", "teams", "web"], description: "Canal principal du coaching / de l'app Coachello côté coachés" }),
+          statut_app: field({ type: "enum", enum: ["non_requis", "a_demander", "en_validation", "installee"], description: "Statut de l'app Slack/Teams Coachello côté IT client" }),
+          meeting_provider: field({ type: "enum", enum: ["teams", "google_meet", "zoom", "autre"], description: "Outil de visio utilisé pour les sessions" }),
+          questionnaire_securite: field({ type: "enum", enum: ["non_requis", "a_faire", "en_cours", "valide"], description: "Questionnaire sécurité / RSSI demandé par l'IT client" }),
+          dpa: field({ type: "bool_with_details", description: "DPA / accord de traitement des données signé (details : date, version)" }),
+          residence_donnees: field({ type: "string", description: "Exigence de localisation des données (ex : UE, France)" }),
+          whitelisting_email: field({ type: "bool_with_details", description: "Domaine email Coachello whitelisté par l'IT (délivrabilité des invitations)" }),
+          integration_it: field({ type: "string", description: "Autres notes IT : SIRH, LMS, autres systèmes à intégrer, contraintes d'équipement" }),
           referentiels_documents: field({ type: "array_doc", description: "Drives, slides, leadership models partagés par le client" }),
           contraintes_organisationnelles: field({ type: "string", description: "Validation comex requise, fuseaux horaires, etc." }),
         },
-        required: ["integration_it", "referentiels_documents", "contraintes_organisationnelles"],
+        required: [
+          "integration_it", "referentiels_documents", "contraintes_organisationnelles",
+          "mode_acces", "sso_details", "provisioning", "provisioning_details", "canal",
+          "statut_app", "meeting_provider", "questionnaire_securite", "dpa",
+          "residence_donnees", "whitelisting_email",
+        ],
       },
       history: {
         type: "object",
         properties: {
-          relation_commerciale: field({ type: "enum_relation" }),
+          relation_commerciale: field({ type: "enum", enum: ["nouveau", "renouvellement", "upsell"] }),
           initiatives_rh_paralleles: field({ type: "string", description: "Autres programmes RH déjà en place chez le client" }),
           points_de_vigilance: field({ type: "array_string", description: "Risques d'onboarding repérés dans le deal (champion fragile, budget tendu, scope flou…)" }),
         },

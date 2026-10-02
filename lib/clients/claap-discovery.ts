@@ -237,8 +237,11 @@ async function scanMatchingRecordings(
       },
     });
   } catch (e) {
+    // On relance : tous les appelants ont un .catch, et une liste Claap
+    // illisible ne doit pas passer pour "aucun nouveau meeting" (refresh report,
+    // health).
     console.warn(`[clients/claap-discovery] list failed:`, e instanceof Error ? e.message : e);
-    return [];
+    throw e;
   }
 
   // Filtre : (date >= windowStart) ET (pas déjà indexé) ET (matche le deal).
@@ -311,6 +314,12 @@ function recordingToMeeting(rec: ClaapRecording, transcript: string | null): Cla
     transcript_text: transcript,
     is_discovered: true,
     claap_url: rec.url ?? null,
+    participants: (rec.meeting?.participants ?? [])
+      .filter((p): p is typeof p & { email: string } => {
+        const domain = p.email?.toLowerCase().split("@")[1];
+        return !!domain && !OWN_EMAIL_DOMAINS.has(domain);
+      })
+      .map((p) => ({ name: p.name ?? null, email: p.email.toLowerCase(), attended: p.attended ?? null })),
   };
 }
 

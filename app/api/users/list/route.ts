@@ -5,8 +5,8 @@ import { db } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 // GET /api/users/list
-// Liste légère des utilisateurs (id, email, name) pour peupler les dropdowns
-// AM/CS du panneau handover. Authentifié simple (pas admin) : tout AE doit
+// Liste légère des utilisateurs (id, email, name, sales_roles) pour peupler les
+// dropdowns AM/CS du handover (les AM/CSM sont proposés en premier). Authentifié simple (pas admin) : tout AE doit
 // pouvoir assigner un AM/CS. La route admin (/api/admin/users) reste gated.
 export async function GET() {
   const user = await getAuthenticatedUser();
@@ -14,7 +14,7 @@ export async function GET() {
 
   const { data, error } = await db
     .from("users")
-    .select("id, email, name")
+    .select("id, email, name, sales_roles")
     .order("name", { ascending: true, nullsFirst: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

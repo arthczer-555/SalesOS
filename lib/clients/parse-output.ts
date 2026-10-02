@@ -46,7 +46,18 @@ export function parseSourceString(raw: string | null | undefined): ClientFieldSo
   return { kind: "inferred" };
 }
 
-type RawField = { value: unknown; confidence: unknown; source: unknown };
+type RawField = { value: unknown; confidence: unknown; source: unknown; evidence_date?: unknown };
+
+// Date de la preuve la plus récente (YYYY-MM-DD) renvoyée par l'IA. On ne garde
+// qu'une date ISO plausible (pas dans le futur), sinon null.
+function parseEvidenceDate(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const m = raw.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  if (!m) return null;
+  const t = new Date(`${m[1]}T00:00:00Z`).getTime();
+  if (!Number.isFinite(t) || t > Date.now() + 24 * 60 * 60 * 1000) return null;
+  return m[1];
+}
 
 function isRawField(x: unknown): x is RawField {
   return !!x && typeof x === "object" && "value" in (x as object) && "confidence" in (x as object) && "source" in (x as object);
@@ -64,7 +75,8 @@ function toFieldValue<T>(raw: unknown): ClientFieldValue<T> {
   // pour rendre visible "j'ai trouvé quelque chose mais je n'ai pas confiance"
   // plutôt que "je n'ai rien trouvé" (qui aurait value=null).
   const finalConfidence = confidence === 0 && value !== null ? 0.1 : confidence;
-  return { value, confidence: finalConfidence, source, updated_at: now };
+  const evidence_at = value === null ? null : parseEvidenceDate(raw.evidence_date);
+  return { value, confidence: finalConfidence, source, updated_at: now, evidence_at };
 }
 
 // Traverse la sortie Claude et la transforme en ClientFields. Garantit une
@@ -108,7 +120,12 @@ export function parseClientFieldsFromClaude(raw: unknown): Partial<ClientFields>
     "quadripartite", "offres_associees",
   ]);
   mapSection("goals", ["objectifs_business_rh", "kpis_cles", "attentes_specifiques"]);
-  mapSection("org", ["integration_it", "referentiels_documents", "contraintes_organisationnelles"]);
+  mapSection("org", [
+    "integration_it", "referentiels_documents", "contraintes_organisationnelles",
+    "mode_acces", "sso_details", "provisioning", "provisioning_details", "canal",
+    "statut_app", "meeting_provider", "questionnaire_securite", "dpa",
+    "residence_donnees", "whitelisting_email",
+  ]);
   mapSection("history", ["relation_commerciale", "initiatives_rh_paralleles", "points_de_vigilance"]);
   mapSection("planning", ["kickoff_envisage_le", "suivi_cs_attendu", "engagements_sales"]);
 

@@ -9,6 +9,10 @@ export type TabItem = {
   badge?: React.ReactNode;
   disabled?: boolean;
   hidden?: boolean;
+  // "alert" (rouge) / "warn" (ambre) : onglet qui demande une action. Le libellé
+  // passe dans une pilule teintée, avec `count` en pastille pleine.
+  tone?: "alert" | "warn";
+  count?: React.ReactNode;
 };
 
 export function TabBar({
@@ -31,6 +35,7 @@ export function TabBar({
         .map((t) => {
           const Icon = t.icon;
           const isActive = t.key === active;
+          const toneClass = t.tone ? `ds-tab-${t.tone}` : "";
           return (
             <button
               key={t.key}
@@ -38,11 +43,18 @@ export function TabBar({
               aria-selected={isActive}
               disabled={t.disabled}
               onClick={() => onChange(t.key)}
-              className={`ds-tab ${isActive ? "ds-tab-active" : ""}`.trim()}
+              className={`ds-tab ${isActive ? "ds-tab-active" : ""} ${toneClass}`.trim()}
               style={t.disabled ? { opacity: 0.4, cursor: "not-allowed" } : undefined}
             >
               {Icon ? <Icon size={14} /> : null}
-              <span>{t.label}</span>
+              {t.tone ? (
+                <span className="ds-tab-tone">
+                  {t.label}
+                  {t.count != null ? <span className="ds-tab-count">{t.count}</span> : null}
+                </span>
+              ) : (
+                <span>{t.label}</span>
+              )}
               {t.badge ? <span style={{ marginLeft: 4 }}>{t.badge}</span> : null}
             </button>
           );

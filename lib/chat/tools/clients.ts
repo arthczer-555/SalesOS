@@ -15,7 +15,8 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 import { normalizeCompany, pickBestFuzzy } from "@/lib/fuzzy-match";
-import { SECTION_DEFINITIONS, type ClientFields, type ClientRow } from "@/lib/clients/types";
+import { SECTION_DEFINITIONS, mergeOnboardingItems, type ClientFields, type ClientRow } from "@/lib/clients/types";
+import { getClientTodo } from "@/lib/clients/todo";
 import type { ToolContext, ToolModule } from "./types";
 
 // Colonnes de la liste : jamais select("*") ici, fields_json et health_history
@@ -26,7 +27,7 @@ const LIST_COLUMNS =
 // Colonnes de la fiche : tout ce que get_client peut rendre, section par
 // section. Explicite plutôt que "*" pour ne pas embarquer les colonnes de
 // travail (candidats de meetings en attente, brouillon d'email, etc.).
-const DETAIL_COLUMNS = `${LIST_COLUMNS}, hubspot_company_id, billing_refreshed_at, am_cs_notified_at, fields_json, deal_recap, insights, news, coach_brief, coach_brief_generated_at, health_history, onboarding_checklist, hubspot_field_suggestions, enrichment_error`;
+const DETAIL_COLUMNS = `${LIST_COLUMNS}, hubspot_company_id, billing_refreshed_at, am_cs_notified_at, fields_json, deal_recap, insights, news, coach_brief, coach_brief_generated_at, health_history, onboarding_checklist, hubspot_field_suggestions, enrichment_error, last_refresh_report`;
 
 // Les 6 sections du brief (SECTION_DEFINITIONS) sont adressables une par une :
 // chacune pèse 1 à 3 ko, les 6 ensemble 9 à 14 ko. Rendre la fiche entière à
@@ -46,15 +47,43 @@ const SECTION_KEYS = [
   "coach_brief",
   "checklist",
   "meetings",
+  "whats_new",
 ] as const;
 type SectionName = (typeof SECTION_KEYS)[number];
+
+// Où vit chaque section sur la fiche (?tab= + ancre #k-… de l'onglet
+// Knowledge, cf. knowledge-tab.tsx) : l'agent renvoie l'utilisateur pile sur
+// l'info qu'il cite. "" = onglet par défaut (Key insights).
+const SECTION_PAGE_PATHS: Record<SectionName, string> = {
+  general_info: "?tab=knowledge#k-contacts",
+  program_scope: "?tab=knowledge#k-program",
+  goals: "?tab=knowledge#k-goals",
+  org: "?tab=knowledge#k-it",
+  history: "?tab=knowledge#k-history",
+  planning: "?tab=knowledge#k-planning",
+  fields: "?tab=knowledge",
+  health: "",
+  deal_recap: "?tab=knowledge#k-recap",
+  insights: "",
+  news: "?tab=knowledge#k-news",
+  coach_brief: "?tab=knowledge#k-brief",
+  checklist: "?tab=todo",
+  meetings: "?tab=knowledge#k-meetings",
+  whats_new: "?tab=knowledge#k-activity",
+};
+
+// URL absolue : la réponse part aussi dans Slack, où "/clients/…" ne mène nulle part.
+function clientsPageUrl(path = ""): string {
+  const appUrl = (process.env.NEXT_PUBLIC_APP_URL || process.env.URL || "").replace(/\/$/, "");
+  return `${appUrl}/clients${path}`;
+}
 
 /** Ce que contient chaque section : sert au tail "non chargé" pour que l'agent sache quoi rappeler. */
 const FIELD_SECTION_HINTS: Record<FieldSectionName, string> = {
   general_info: "contacts (signataire, RH principal, RH opérationnel, facturation, IT), autres parties prenantes, langues, zones géographiques",
   program_scope: "type de coaching, nom du programme, population accompagnée, nb de coachés, cohortes, offres associées",
   goals: "objectifs business/RH, KPIs clés, attentes spécifiques",
-  org: "intégration IT (SSO, HRIS, Slack), documents de référence, contraintes organisationnelles",
+  org: "IT et accès (SSO, provisioning, canal Slack/Teams et statut de l'app, visio, sécurité, DPA, résidence des données), documents de référence, contraintes organisationnelles",
   history: "relation commerciale (nouveau/renouvellement/upsell), initiatives RH parallèles, points de vigilance",
   planning: "date de kickoff, suivi CS attendu, engagements pris par le sales",
 };
@@ -85,6 +114,7 @@ type DetailRow = ListRow &
     | "hubspot_company_id" | "billing_refreshed_at" | "am_cs_notified_at" | "fields_json"
     | "deal_recap" | "insights" | "news" | "coach_brief" | "coach_brief_generated_at"
     | "health_history" | "onboarding_checklist" | "hubspot_field_suggestions" | "enrichment_error"
+    | "last_refresh_report"
   >;
 
 // ── Helpers de rendu ─────────────────────────────────────────────────────────
@@ -96,7 +126,68 @@ function mineFilter(email: string): string {
 
 function slimHealth(h: ClientRow["health"]) {
   if (!h) return null;
-  return { score: h.score, label: h.label, trend: h.trend, summary: h.summary, computed_at: h.computed_at };
+  // drivers : libellés courts avec leurs points ("Recent contact (5d ago) (+20)"),
+  // assez pour expliquer un score sans charger la décomposition complète.
+  return {
+    score: h.score,
+    label: h.label,
+    trend: h.trend,
+    summary: h.summary,
+    drivers: h.drivers,
+    phase: h.phase?.key ?? null,
+    data_gaps: h.data_gaps?.length ? h.data_gaps : undefined,
+    // Tuile "Last touch" de la fiche : répond à "quand a-t-on parlé à X ?".
+    last_contact_at: h.last_contact_at ?? null,
+    last_contact_source: h.last_contact_source ?? null,
+    tone: h.tone ? { label: h.tone.label, reason: h.tone.reason } : null,
+    computed_at: h.computed_at,
+  };
+}
+
+/**
+ * Next actions de la fiche. Une action cochée sur la page garde sa place dans
+ * `actions` avec un done_at : on la sort de la liste ouverte, sinon l'agent
+ * présente comme "à faire" ce que l'équipe a déjà fait.
+ */
+function slimInsights(i: ClientRow["insights"]) {
+  if (!i) return null;
+  const open = i.actions.filter((a) => !a.done_at);
+  const done = i.actions.filter((a) => a.done_at);
+  return {
+    generated_at: i.generated_at,
+    next_actions: open.map((a) => ({
+      title: a.title,
+      why: a.why ?? a.rationale ?? null,
+      owner: a.owner ?? null,
+      due: a.due ?? null,
+      priority: a.priority ?? null,
+      source: a.source ?? null,
+    })),
+    done_actions: done.length > 0 ? done.map((a) => ({ title: a.title, done_at: a.done_at, done_by: a.done_by ?? null })) : undefined,
+    highlights: i.highlights?.length ? i.highlights : undefined,
+    watch_points: i.watch_points?.length ? i.watch_points : undefined,
+    observations: i.observations?.length ? i.observations : undefined,
+    note: "'due' est relatif à generated_at (this_week = la semaine de la génération), pas à aujourd'hui.",
+  };
+}
+
+/** Carte "What's new" : ce que le dernier refresh (manuel ou cron hebdo) a trouvé et changé. */
+function slimRefreshReport(r: ClientRow["last_refresh_report"]) {
+  if (!r) return null;
+  return {
+    refreshed_at: r.refreshed_at,
+    trigger: r.trigger ?? null,
+    health_before: r.health_before,
+    health_after: r.health_after,
+    new_activity_count: r.new_activity_count,
+    // Par source : une source en erreur n'a pas été lue, ce n'est pas "rien de neuf".
+    sources: r.sources ?? undefined,
+    changed_fields: r.changed_fields.map((f) => ({ field: f.label, before: f.before, after: f.after, overrode_manual: f.overrode_manual })),
+    meetings_added: r.auto_added_meetings?.length ? r.auto_added_meetings : undefined,
+    notes: r.notes?.length ? r.notes : undefined,
+    skipped_no_activity: r.skipped_no_activity ?? false,
+    error: r.error ?? undefined,
+  };
 }
 
 function isEmpty(v: unknown): boolean {
@@ -201,7 +292,7 @@ async function notFound(company: string): Promise<string> {
     matched: false,
     message: `Aucune fiche client pour "${company}". ATTENTION : cela ne veut PAS dire que ce compte est inconnu de Coachello. La table clients ne couvre que les deals signés depuis la mise en place de la fiche client, beaucoup de clients historiques n'y figurent pas. Enchaîne MAINTENANT sur tes autres outils, dans le même tour si possible : search_deals / get_companies (HubSpot), get_billing_revenue (le sheet revenue liste tous les clients facturés, y compris ceux absents d'ici), search_claap_meetings, search_slack. Ne réponds jamais "je n'ai pas d'information sur ce client" sur la seule base de cet échec.`,
     warning: `⚠️ ${company} n'a pas de fiche client dans CoachelloHQ. Si c'est bien un client signé, il doit être IMPORTÉ dans la table clients pour que son contexte (programme, contacts, objectifs, santé) soit disponible ici.`,
-    action_required: "Aller sur /clients et importer le compte (bouton d'import des deals closed-won), puis confirmer ses meetings Claap pour lancer l'enrichissement.",
+    action_required: `Aller sur ${clientsPageUrl()} et importer le compte (bouton d'import des deals closed-won), puis confirmer ses meetings Claap pour lancer l'enrichissement.`,
     tell_the_user:
       "DIS-LE À L'UTILISATEUR, explicitement, à la fin de ta réponse : c'est une action concrète de sa part qui manque. Mais réponds d'abord à sa question avec tes autres outils : l'absence de fiche n'est pas une absence d'information.",
     fallback_tools: ["search_deals", "get_companies", "get_billing_revenue", "search_claap_meetings", "search_slack"],
@@ -235,7 +326,7 @@ const defs: Anthropic.Tool[] = [
       "Fiche client CoachelloHQ : LA source de vérité sur l'état d'un compte signé, quand elle existe. Elle agrège déjà HubSpot, les meetings Claap analysés et le sheet revenue. " +
       "RÉFLEXE : dès qu'une question nomme un client Coachello, commence par ici. " +
       "QUESTION DE DÉTAIL = CET OUTIL SEUL. 'Qui est le contact RH chez X', 'quel est le programme de X', 'la date de kickoff de X', 'qui est l'AM sur X' : UN appel, tu réponds, tu n'ouvres RIEN d'autre. N'appelle pas HubSpot, Claap, le sheet revenue ni Notion 'pour compléter'. Ne croise que pour une question d'ANALYSE (point de compte, QBR, risque de churn, upsell). " +
-      "CIBLE LA BONNE SECTION en un seul appel, via 'sections' : general_info = les contacts (signataire, RH principal, RH opérationnel, facturation, IT), parties prenantes, langues, zones. program_scope = type de coaching, nom du programme, population, nb de coachés, cohortes, offres. goals = objectifs business/RH, KPIs, attentes. org = intégration IT (SSO, HRIS, Slack), documents, contraintes. history = relation commerciale, initiatives RH parallèles, POINTS DE VIGILANCE. planning = date de KICKOFF, suivi CS attendu, engagements pris par le sales. Plus : health, deal_recap (comment le deal s'est signé, objections, promesses), insights, news, coach_brief, checklist (onboarding), meetings. Utilise 'fields' pour charger les 6 sections d'un coup, seulement si la question est large. " +
+      "CIBLE LA BONNE SECTION en un seul appel, via 'sections' : general_info = les contacts (signataire, RH principal, RH opérationnel, facturation, IT), parties prenantes, langues, zones. program_scope = type de coaching, nom du programme, population, nb de coachés, cohortes, offres. goals = objectifs business/RH, KPIs, attentes. org = organisation et IT : mode d'accès (SSO, magic link), provisioning (SCIM, CSV, SIRH), canal Slack/Teams et statut de l'app, visio, questionnaire sécurité, DPA, résidence des données, documents, contraintes. history = relation commerciale, initiatives RH parallèles, POINTS DE VIGILANCE. planning = date de KICKOFF, suivi CS attendu, engagements pris par le sales. Plus : health (score, drivers, DERNIER CONTACT, ton des derniers meetings), deal_recap (comment le deal s'est signé, objections, promesses), insights (NEXT ACTIONS avec owner et échéance, faits récents), whats_new (QUOI DE NEUF : ce que le dernier refresh a trouvé et changé), news, coach_brief, checklist (ce qui reste à faire : handover, champs à compléter, onboarding), meetings. Utilise 'fields' pour charger les 6 sections d'un coup, seulement si la question est large. " +
       "SI AUCUNE FICHE N'EXISTE : ne conclus jamais que le client est inconnu. La table ne couvre que les deals signés depuis la mise en place de la fiche, beaucoup de clients historiques y manquent. Bascule immédiatement sur HubSpot (search_deals, get_companies), get_billing_revenue, search_claap_meetings et search_slack, ET préviens l'utilisateur que ce client devrait être importé dans la table clients. " +
       "AVERTISSEMENTS À RELAYER : si le résultat contient un champ 'warning' (fiche absente, meetings Claap à confirmer, enrichissement jamais lancé ou en échec), reprends-le tel quel à la fin de ta réponse avec l'action à faire. C'est une action concrète de l'utilisateur qui manque, pas une information inexistante : ne le laisse jamais croire l'inverse. " +
       "Les pages clients de Notion sont des use cases et références commerciales, jamais l'état opérationnel d'un compte. Les valeurs sont extraites par IA et datées (last_enriched_at) : signale une fiche ancienne, et ne présente jamais un champ listé dans low_confidence comme un fait acquis. Le bloc billing est un instantané ; pour un chiffre de CA à jour ou le détail par année, get_billing_revenue fait foi.",
@@ -248,7 +339,7 @@ const defs: Anthropic.Tool[] = [
           type: "array",
           items: { type: "string", enum: [...SECTION_KEYS] },
           description:
-            "Sections à charger, ciblées sur la question (chaque section coûte 1 à 3 ko). Défaut : general_info + program_scope + health + meetings. Pour les points de vigilance → history. Pour la date de kickoff ou les engagements sales → planning. Pour l'intégration IT → org. Pour les objectifs/KPIs → goals. 'fields' charge les 6 d'un coup.",
+            "Sections à charger, ciblées sur la question (chaque section coûte 1 à 3 ko). Défaut : general_info + program_scope + health + meetings. Pour les points de vigilance → history. Pour la date de kickoff ou les engagements sales → planning. Pour l'IT (SSO, provisioning, app Teams/Slack, sécurité) → org. Pour les objectifs/KPIs → goals. Pour 'quoi de neuf' → whats_new + insights. Pour 'que reste-t-il à faire / à compléter' → checklist. Pour 'dernier contact' → health. 'fields' charge les 6 d'un coup.",
         },
       },
       required: [],
@@ -303,7 +394,7 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
 
   const capped = rows.slice(0, limit);
   for (const r of capped.slice(0, 5)) {
-    ctx.onSource({ kind: "client", title: r.company_name, url: `/clients/${r.id}` });
+    ctx.onSource({ kind: "client", title: r.company_name, url: clientsPageUrl(`/${r.id}`) });
   }
 
   // Fiches bloquées sur une action humaine : à relayer, sinon l'utilisateur
@@ -319,6 +410,9 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
       "Liste des clients AYANT UNE FICHE, pas la liste des clients Coachello. Ne présente jamais ce total comme le nombre de clients de l'entreprise : pour un décompte ou un classement, c'est get_billing_revenue (sheet revenue) qui fait foi.",
     count: rows.length,
     returned: capped.length,
+    // Un gabarit plutôt qu'une URL par ligne : 50 URLs complètes pèseraient ~1k tokens.
+    client_page_url: clientsPageUrl("/{client_id}"),
+    client_page_note: "Pour renvoyer vers la fiche d'un compte cité, remplace {client_id} par son client_id.",
     clients: capped.map((r) => ({
       client_id: r.id,
       company: r.company_name,
@@ -377,7 +471,8 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
   }
 
   const row = rows[0];
-  ctx.onSource({ kind: "client", title: row.company_name, url: `/clients/${row.id}` });
+  const pageUrl = clientsPageUrl(`/${row.id}`);
+  ctx.onSource({ kind: "client", title: row.company_name, url: pageUrl });
 
   const requested = new Set<SectionName>(
     Array.isArray(input.sections) && input.sections.length > 0
@@ -385,13 +480,19 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
       : DEFAULT_SECTIONS
   );
 
+  // Un lien par section chargée, vers l'onglet et l'ancre qui l'affichent.
+  const pageLinks: Record<string, string> = { overview: pageUrl };
+  for (const s of requested) pageLinks[s] = `${pageUrl}${SECTION_PAGE_PATHS[s]}`;
+
   // Identité + handover + poids financier : toujours là, c'est le minimum
   // vital pour situer le compte, et ça pèse quelques lignes.
   const out: Record<string, unknown> = {
     source: "fiche client CoachelloHQ",
     client_id: row.id,
     company: row.company_name,
-    url: `/clients/${row.id}`,
+    page_links: pageLinks,
+    page_links_note:
+      "Termine ta réponse par un lien markdown vers la section de la fiche qui contient l'info citée, URL prise telle quelle dans page_links (overview si la réponse couvre plusieurs sections), libellé dans la langue de l'utilisateur.",
     hubspot_deal_id: row.hubspot_deal_id,
     closedwon_at: row.closedwon_at,
     deal_amount: row.deal_amount,
@@ -423,10 +524,10 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
       error: `⚠️ L'enrichissement de la fiche de ${row.company_name} a échoué (${row.enrichment_error ?? "raison inconnue"}) : les champs ci-dessous peuvent être vides ou dater d'une run précédente.`,
     };
     const actions: Record<string, string> = {
-      awaiting_meetings: `Ouvrir la fiche (${`/clients/${row.id}`}) et confirmer la liste des meetings Claap (bouton "Meetings to confirm") pour lancer l'enrichissement.`,
-      pending: `Ouvrir la fiche (${`/clients/${row.id}`}) et lancer l'enrichissement.`,
+      awaiting_meetings: `Ouvrir la fiche (${pageUrl}) et confirmer la liste des meetings Claap (bouton "Confirm meetings") pour lancer l'enrichissement.`,
+      pending: `Ouvrir la fiche (${pageUrl}) et lancer l'enrichissement.`,
       running: "Rien à faire, attendre la fin de la run.",
-      error: `Ouvrir la fiche (${`/clients/${row.id}`}) et relancer l'enrichissement.`,
+      error: `Ouvrir la fiche (${pageUrl}) et relancer l'enrichissement.`,
     };
     out.warning = warnings[row.enrichment_status] ?? `Fiche au statut ${row.enrichment_status} : données partielles.`;
     out.action_required = actions[row.enrichment_status];
@@ -452,18 +553,29 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
     out.health_note = "Le score de santé est un JUGEMENT produit par IA à la date indiquée, pas une mesure. Cite-le comme tel.";
   }
   if (requested.has("deal_recap")) out.deal_recap = row.deal_recap;
-  if (requested.has("insights")) out.insights = row.insights;
+  if (requested.has("insights")) out.insights = slimInsights(row.insights);
+  if (requested.has("whats_new")) out.whats_new = slimRefreshReport(row.last_refresh_report);
   if (requested.has("news")) out.news = row.news;
   if (requested.has("coach_brief")) {
     out.coach_brief = row.coach_brief;
     out.coach_brief_generated_at = row.coach_brief_generated_at;
   }
   if (requested.has("checklist")) {
-    const items = row.onboarding_checklist?.items ?? [];
-    out.onboarding_checklist = {
-      done: items.filter((i) => i.done).length,
-      total: items.length,
-      remaining: items.filter((i) => !i.done).map((i) => `${i.category} > ${i.section} : ${i.label}`),
+    // Même calcul que l'onglet To do (getClientTodo) : les compteurs que
+    // l'agent cite sont ceux que l'utilisateur voit sur la page.
+    const todo = getClientTodo(row);
+    const items = mergeOnboardingItems(row.onboarding_checklist);
+    out.todo = {
+      handover_pending: todo.handoverPending,
+      fields_to_fill: todo.missingFields.map((f) => `${f.group} > ${f.label}${f.required ? " (required)" : ""}`),
+      onboarding_checklist:
+        todo.onboarding.applicable && !todo.onboarding.dismissed
+          ? {
+              done: todo.onboarding.done,
+              total: todo.onboarding.total,
+              remaining: items.filter((i) => !i.done).map((i) => `${i.category} > ${i.section} : ${i.label}`),
+            }
+          : "not applicable (coaching IA, type de coaching inconnu, ou checklist masquée sur la fiche)",
     };
     out.hubspot_fields_to_fill = (row.hubspot_field_suggestions?.fields ?? []).map((f) => f.label);
   }
@@ -482,7 +594,8 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
     if (filled > 0) availableElsewhere.push(`${s} : ${FIELD_SECTION_HINTS[s]}`);
   }
   if (!requested.has("deal_recap") && row.deal_recap) availableElsewhere.push("deal_recap (comment le deal s'est signé, objections, promesses sales, risques onboarding)");
-  if (!requested.has("insights") && row.insights) availableElsewhere.push("insights (actions recommandées)");
+  if (!requested.has("insights") && row.insights) availableElsewhere.push("insights (next actions ouvertes et faites, faits récents, points de vigilance courts)");
+  if (!requested.has("whats_new") && row.last_refresh_report) availableElsewhere.push(`whats_new (dernier refresh du ${row.last_refresh_report.refreshed_at.slice(0, 10)} : champs modifiés, activité nouvelle par source, meetings ajoutés)`);
   if (!requested.has("news") && row.news?.items?.length) availableElsewhere.push(`news (${row.news.items.length} actualités)`);
   if (!requested.has("coach_brief") && row.coach_brief) availableElsewhere.push("coach_brief (brief de staffing des coachs)");
   if (!requested.has("checklist") && row.onboarding_checklist?.items?.length) availableElsewhere.push("checklist (avancement onboarding)");

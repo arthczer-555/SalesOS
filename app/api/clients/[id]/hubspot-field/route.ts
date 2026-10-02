@@ -14,6 +14,8 @@ export const dynamic = "force-dynamic";
 // selon le type du champ (enum -> option valide, number -> nombre, date ->
 // YYYY-MM-DD) pour que l'ecriture HubSpot ne soit jamais rejetee. Une fois
 // ecrite, le champ n'est plus vide => l'item passe en "validé" cote front.
+// closedate (date de signature, éditable depuis Key dates) : on synchronise
+// aussi clients.closedwon_at, affiché comme "Signed" sur la fiche.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
@@ -68,6 +70,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     await hubspotUpdate("deals", row.hubspot_deal_id, { [property]: toWrite });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "HubSpot error" }, { status: 502 });
+  }
+
+  if (property === "closedate") {
+    const { error: syncErr } = await db
+      .from("clients")
+      .update({ closedwon_at: `${toWrite}T12:00:00.000Z`, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (syncErr) {
+      return NextResponse.json({ error: `Saved in HubSpot, but not on the account page: ${syncErr.message}` }, { status: 500 });
+    }
   }
 
   return NextResponse.json({ ok: true, property, value: toWrite });

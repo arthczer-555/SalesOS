@@ -40,7 +40,7 @@ Agent conversationnel unique, architecture **"manifest"** (2026-07-21, plan : [_
 
 Le cerveau (socle + packs sales + guide Notion) vit dans le repo GitHub privé `Coachello.RAG` (`coachellohq/socle.md`, `coachellohq/packs/*.md`, `AGENT_GUIDE.md`), fetché avec cache 5 min + snapshot DB de secours ([lib/chat/rag/guide-loader.ts](lib/chat/rag/guide-loader.ts)). **Pièces jointes** : PDF/images (natifs Claude), xlsx, docx, csv, txt, md (upload via trombone, table `chat_attachments`). **Sources consultées** (pages Notion, meetings Claap, fichiers Drive...) émises en temps réel vers le front (colonne `chat_jobs.sources`). Prompt caching Anthropic (socle + tools + historique). Historique conversations en DB, instructions perso par utilisateur via `/prompt`, modèle configurable (défaut : Sonnet). **Une URL par conversation** : `/c/<id>` (bookmarkable, résiste au refresh, l'URL suit la conversation ouverte via `history.replaceState`). Partager = envoyer ce lien, il n'y a rien à activer : l'auteur y retrouve son chat complet et continue d'écrire, un autre membre l'ouvre en **lecture seule**. Le lien **exige une session CoachelloHQ** (middleware Clerk) : lisible par tout collègue connecté, par personne d'autre, et son contenu est live.
 
-**Fiche client** : `search_clients` / `get_client` ([lib/chat/tools/clients.ts](lib/chat/tools/clients.ts)) lisent la table `clients` en lecture seule, la même donnée que l'onglet [Clients](app/clients/). Sur un compte signé, la fiche agrège déjà HubSpot + meetings Claap + sheet revenue : une question de **détail** ("le contact RH chez X", "la date de kickoff") se répond en **un seul appel, sans croiser ni charger de guide**. Les 6 sections du brief sont adressables une par une (`general_info`, `program_scope`, `goals`, `org`, `history`, `planning`) pour ne pas payer 4 k tokens sur une question factuelle. **Couverture partielle assumée** : la table ne contient que les deals signés depuis la mise en place de la feature, donc l'absence de fiche ne prouve rien et l'agent bascule sur HubSpot / sheet revenue / Claap / Slack. Quand une fiche manque ou n'est pas enrichie (meetings Claap à confirmer), le résultat porte un `warning` que l'agent relaie à l'utilisateur avec l'action à faire.
+**Fiche client** : `search_clients` / `get_client` ([lib/chat/tools/clients.ts](lib/chat/tools/clients.ts)) lisent la table `clients` en lecture seule, la même donnée que l'onglet [Clients](app/clients/). Sur un compte signé, la fiche agrège déjà HubSpot + meetings Claap + sheet revenue : une question de **détail** ("le contact RH chez X", "la date de kickoff") se répond en **un seul appel, sans croiser ni charger de guide**. Les 6 sections du brief sont adressables une par une (`general_info`, `program_scope`, `goals`, `org`, `history`, `planning`) pour ne pas payer 4 k tokens sur une question factuelle. **Couverture partielle assumée** : la table ne contient que les deals signés depuis la mise en place de la feature, donc l'absence de fiche ne prouve rien et l'agent bascule sur HubSpot / sheet revenue / Claap / Slack. Quand une fiche manque ou n'est pas enrichie (meetings Claap à confirmer), le résultat porte un `warning` que l'agent relaie à l'utilisateur avec l'action à faire. Les blocs de la fiche v2 sont aussi exposés : `whats_new` (dernier refresh), `insights` (next actions ouvertes, séparées de celles déjà cochées), `checklist` (même calcul que l'onglet To do) et le dernier contact dans `health`. **Renvoi vers la fiche** : `get_client` renvoie des `page_links` absolus (`NEXT_PUBLIC_APP_URL` ou `URL`) qui pointent sur l'onglet et l'ancre de chaque section (`?tab=knowledge#k-contacts`…), et l'agent termine sa réponse par le lien de la section citée, cliquable aussi dans Slack. La page scrolle sur l'ancre au chargement.
 
 **Couverture Notion** : sur une question de type "comment on fait X / guide-moi", l'agent ouvre **toutes** les pages plausibles du registre en une fois (procédure + écran de l'outil + qui-fait-quoi), pas seulement la première qui matche. Règle §3.0 du cerveau (`AGENT_GUIDE.md`), rappelée dans l'adapter CoachelloHQ ([lib/chat/rag/guide-loader.ts](lib/chat/rag/guide-loader.ts)) et dans la description de `notion_fetch` ; rendue abordable par l'**exécution parallèle des tool calls** d'un même tour ([lib/chat/loop.ts](lib/chat/loop.ts)) : ouvrir 4 pages coûte le temps d'une.
 
@@ -128,13 +128,37 @@ Le principe qui gouverne tout le pipeline : **un signal n'entre dans le feed que
 Chaque signal porte son `query_id` : de quoi voir en base quelle requête produit et éteindre les stériles (`enabled: false` dans `queries.ts`).
 
 ### Clients (`/clients`)
-Suivi des comptes post-signature (Customer Success). À la signature d'un deal (webhook HubSpot closed-won), un client est créé et enrichi par Claude à partir du contexte HubSpot + transcripts Claap :
-- **Fiche client** : ~30 champs extraits (besoins, stakeholders, contexte, risques…), éditables manuellement (les éditions manuelles sont préservées au refresh).
-- **Health score** (vert/orange/rouge) + phrase d'explication ancrée sur les derniers échanges.
-- **Coach brief** : brief à destination des coachs Coachello (canal Slack staffing).
-- **Deal recap** : timeline « comment ce deal a été signé ».
-- **News** : actualités de l'entreprise (Tavily), filtrées/triées par Claude.
-- Enrichissement auto contrôlé par `CLIENTS_AUTO_ENRICH` / `CLIENTS_ENRICHMENT_DEAL_WHITELIST` ; refresh incrémental sur nouvelles activités. Modèle Claude configurable via la clé `clients` (admin > Modèles IA).
+Suivi des comptes post-signature (AM / Customer Success). À la signature d'un deal (webhook HubSpot closed-won), un client est créé, ses meetings Claap sont confirmés une fois par un humain, puis la fiche est enrichie par Claude à partir de HubSpot + transcripts Claap.
+
+**Fiche client v2 (`/clients/[id]`, 2026-10-01)** : header sticky + 4 onglets pleine largeur (`?tab=` dans l'URL). Maquette validée : artifact "Client Page v2".
+- **Header** : avatar, nom, badge santé, chips AE / AM / CS (AM et CS modifiables à tout moment, y compris après le handover), deux boutons seulement : **Refresh** ("Updated X ago · auto every Monday") et **Options** (Change AM / CS, Draft missing-info email, Create video, Analyzed meetings, Show onboarding checklist, Open in HubSpot ; admin : Re-run enrichment, Delete).
+- **Bandeau handover** : rose plein, sur tous les onglets, tant que l'AM/CS n'ont pas été notifiés ("Do the handover so the CSM is notified and has the data").
+- **Key insights** (lecture en un coup d'œil) : **Client health** en grand (score cliquable vers le popup "How is this computed?", phase du compte, delta, phrase IA éditable, drivers en vert ou rouge avec leur source cliquable (les points sont dans le popup), courbe des derniers refresh avec date et score au survol, avertissement "Partial data" si une source était illisible) + **Billing** à côté (CA de l'année, YoY, lifetime, barres par année, dates de contrat HubSpot) ; **Next actions** (1 à 3, owner, échéance, "Why" + source datée, bouton Done) ; **What's new** (3 lignes : faits récents, meetings ajoutés automatiquement avec "Not this account?", news importantes ; tout le fil dans Knowledge > Recent activity) ; **Key dates**, **Company news** (2 importantes), **Watch points** (3 courts, générés au refresh). Page volontairement courte : le détail du dernier refresh (compteurs par source, champs modifiés avec Undo) est dans une popup, lien "details" sous le bouton Refresh.
+- **Knowledge** (référence) : activité récente complète, deal recap, objectifs, contexte & historique, meetings, toutes les news ; contacts en cartes, périmètre, **IT & access** (mode d'accès SSO / magic link, provisioning CSV / SCIM / SIRH, canal Slack / Teams + statut de l'app, visio, questionnaire sécurité, DPA, résidence des données, whitelisting email), planning, coach brief (replié). Barre d'ancres collante.
+- **To do** : handover, infos clés manquantes (required + recommended, éditables sur place, bouton email de demande), checklist d'onboarding. **Onglet rouge tant qu'il reste un item** (source : [lib/clients/todo.ts](lib/clients/todo.ts)).
+- **HubSpot cleaner** : champs du deal vides dans HubSpot avec suggestion IA et "Write to HubSpot". Rouge tant qu'il en manque ; HubSpot injoignable = état d'erreur explicite (onglet ambre), jamais "tout est propre".
+
+**Refresh** ([lib/clients/run-refresh.ts](lib/clients/run-refresh.ts)), bouton ou cron hebdo du lundi :
+- **Sources** : nouveaux meetings Claap (domaine participant / titre) **retenus automatiquement, sans popup** (retirables via "Not this account", exclus ensuite définitivement) ; HubSpot (engagements deal + company) ; **Slack** ([lib/clients/slack-context.ts](lib/clients/slack-context.ts)) : jusqu'à 3 canaux auto-détectés sur le nom de la société (#adyen + #coachello-adyen), lus via le bot ou, s'il n'est pas membre, via la recherche du user token ; **#12-everything-clients lu par défaut** (messages qui citent le client + tout leur thread) ; mentions ailleurs (hors canaux de flux auto `0x-`, `1y-`, `2x-`…) ; **news** : Tavily + Google News (Bright Data), triées par Haiku "important pour le compte" (leadership, restructuration, M&A, résultats, expansion…) avec une phrase "why it matters", doublons supprimés, historique 12 mois et badge New.
+- **Fields** : si du nouveau, ré-extraction de **tous** les fields. Règle de merge ([lib/clients/merge-fields.ts](lib/clients/merge-fields.ts), aussi utilisée par le re-run d'enrichissement) : un field IA est remplacé si la nouvelle valeur est non nulle et différente ; **une édition manuelle n'est remplacée que par une source datée après l'édition** (`evidence_at` > `updated_at`, confiance >= 0.7), signalée "replaced a manual edit" dans le report, avec Undo.
+- **Aussi** : health + Next actions recalculés à chaque fois ; coach brief régénéré si périmètre / planning / langues changent (sauf retouche manuelle, `coach_brief_edited_at`) ; suggestions HubSpot régénérées ; billing resynchronisé (en lot côté cron). Le deal recap n'est pas touché.
+- **Report par source** (`last_refresh_report.sources`) : une source en échec s'affiche "not reachable", jamais comme un 0.
+
+**Next actions** ([lib/clients/insights-ai.ts](lib/clients/insights-ai.ts)) : 1 à 3 actions, cadrées par la phase du compte ([lib/clients/lifecycle.ts](lib/clients/lifecycle.ts) : onboarding / running / renewal à moins de 120 j de la fin de contrat), à partir des 45 derniers jours (meetings, emails/notes HubSpot, Slack, news importantes, next step HubSpot). Les actions faites (Done) restent stockées 30 j et ne sont pas reproposées.
+
+**Health score** ([lib/clients/health.ts](lib/clients/health.ts), v2 du 2026-10-02) : `score = clamp(50 + points des 6 signaux, 0, 100)`, green >= 70, yellow 40-69, red < 40. Recalculé à chaque enrichissement et refresh. Le popup de la carte montre la décomposition complète (chaque signal, tous ses paliers, celui atteint, la source).
+- **Dernier contact** (email, call ou meeting HubSpot, meeting Claap ; **les notes HubSpot ne comptent pas**, elles sont internes ; les meetings futurs non plus). Seuils selon la phase ([lib/clients/lifecycle.ts](lib/clients/lifecycle.ts)) : onboarding et renewal +20 jusqu'à 14 j, +5 jusqu'à 30 j, -10 jusqu'à 60 j, -25 au-delà ; running +20 / +5 / -10 / -25 à 21 / 45 / 90 j ; aucun contact -15.
+- **Meetings Claap sur 90 j** : 3+ +15, 2 +5, 1 -5 (0 en running : un meeting par trimestre est normal), aucun -15.
+- **Activité HubSpot sur 30 j** (emails, calls, notes, meetings, deal + company) : 5+ +10, 1 à 4 0, aucune -5.
+- **Interlocuteurs client actifs sur 90 j** (participants présents aux meetings Claap + expéditeurs d'emails entrants, hors coachello.io et no-reply) : 3+ +5, 2 0, un seul -10 (champion fragile), aucun 0 (déjà pénalisé par le dernier contact).
+- **Ton des derniers meetings** : Haiku lit les 3 derniers meetings des 90 j (recap, sinon transcript) et juge le client : positif +10, neutre 0, négatif -15, avec une phrase de justification (`judgeRecentTone`, [lib/clients/health-summary.ts](lib/clients/health-summary.ts)). Tourne avant le score ; la phrase de synthèse est générée après.
+- **News à risque sur 90 j** : leadership, restructuration ou M&A d'importance haute : -10.
+- ⚠ **Une source illisible ne coûte jamais de points** : HubSpot ou Claap en panne (ou juge de ton en échec), les pénalités des signaux qui en dépendent sont neutralisées et marquées "Not scored", les points positifs restent (ce qu'on a vu est vrai), et la carte affiche "Partial data" (`health.data_gaps`). La discovery Claap remonte désormais ses erreurs au lieu de renvoyer une liste vide.
+- Les fiches calculées avant la v2 n'ont pas de décomposition : le popup le dit et invite à rafraîchir.
+
+Enrichissement auto contrôlé par `CLIENTS_AUTO_ENRICH` / `CLIENTS_ENRICHMENT_DEAL_WHITELIST`. Modèle Claude configurable via la clé `clients` (admin > Modèles IA).
+
+> **À appliquer** : migration [clients_v2_tabs_refresh.sql](supabase/migrations/clients_v2_tabs_refresh.sql) (`coach_brief_edited_at`). Le code tourne sans elle ; tant qu'elle n'est pas passée, un coach brief retouché à la main peut être régénéré par le refresh.
 
 ### Watch List (`/watchlist`)
 Deux onglets :
@@ -371,7 +395,7 @@ DEALS_AE_DIGEST_MODE=           # "prod" (DM au vrai AE) | "test" (default, DM A
 DEALS_SALES_PIPELINE_ID=        # (optionnel) id du pipeline sales pour le digest. Défaut : 1er pipeline HubSpot (= Kanban /deals). Exclut le pipeline CS.
 
 # Clients (closed-won enrichment)
-CLIENTS_AUTO_ENRICH=                  # "false" (test) bloque l'enrichissement auto au webhook ; le user lance manuellement via le bouton "Lancer l'enrichissement" sur /clients/[id]. Unset ou "true" : auto.
+CLIENTS_AUTO_ENRICH=                  # "false" (test) bloque l'enrichissement auto au webhook ; un admin le lance via Options > Run enrichment sur /clients/[id]. Unset ou "true" : auto.
 CLIENTS_ENRICHMENT_DEAL_WHITELIST=    # liste CSV de dealIds HubSpot. Si défini ET auto-enrich activé, seuls ces deals déclenchent Claude au passage closed-won ; les autres restent en pending (manuel).
 
 # AE Sales Activity (dashboard admin /admin/ae-activity)
@@ -410,7 +434,7 @@ app/
   prospecting/page.tsx              # Recherche contacts + emails
   mass-prospection/page.tsx         # Campagnes prospection
   clients/page.tsx                  # Clients post-signature (CS)
-    clients/[id]/page.tsx           # Fiche client : fields + health + coach brief + deal recap
+    clients/[id]/page.tsx           # Fiche client v2 : header + onglets Key insights / Knowledge / To do / HubSpot cleaner (_components/tabs/)
   lists/page.tsx                    # Redirect vers /watchlist?tab=lists
   watchlist/page.tsx                # Watch List : onglets Accounts + Lists
     watchlist/[id]/page.tsx         # Détail compte : AE analysis + news
@@ -784,7 +808,7 @@ Voir section 11 pour les détails.
 - **[intel/company-contact-ids.ts](lib/intel/company-contact-ids.ts)** + **[intel/push-list-to-hubspot.ts](lib/intel/push-list-to-hubspot.ts)** - Résolution contacts HubSpot + push d'une liste vers HubSpot (création contacts, dédup email).
 - **[models/get-model-preference.ts](lib/models/get-model-preference.ts)** - Résout le modèle Claude configuré dans l'admin (`guide_defaults.model_preferences`) pour une feature, avec fallback. Utilisé par chat, deals, prospection, sales-coach, clients, marketing…
 - **[scope-companies.ts](lib/scope-companies.ts)** - CRUD `scope_companies`, parsing/sérialisation CSV, helper `maybeCreateSalesRep`.
-- **lib/clients/** - Enrichissement des comptes post-signature : `run-enrichment.ts` / `run-refresh.ts` (orchestration), `prompt.ts` (extraction 30 fields), `health.ts` + `health-summary.ts`, `coach-brief.ts`, `deal-recap.ts`, `news.ts` + `rank-news.ts`.
+- **lib/clients/** - Enrichissement des comptes post-signature : `run-enrichment.ts` / `run-refresh.ts` (orchestration), `trigger-refresh.ts` (inline local / background Netlify), `prompt.ts` (extraction des fields, dont IT & accès, avec `evidence_date`), `merge-fields.ts` (règle de merge manuel vs IA), `slack-context.ts` (canaux client + #12-everything-clients), `health.ts` + `health-summary.ts`, `insights-ai.ts` + `lifecycle.ts` (Next actions), `todo.ts` (état To do / HubSpot cleaner), `coach-brief.ts`, `deal-recap.ts`, `news.ts` + `rank-news.ts`, `notify-handover.ts` / `notify-reassign.ts` (DM Slack AM/CS).
 - **lib/watchlist/** - Brief generation pour la Watch List :
   - `briefs.ts` : helpers DB (upsert/finish ok|error) et types `BriefContent` discriminés par `kind` (`ae_analysis` | `news`).
   - `fetch-news.ts` : posts LinkedIn (Bright Data) + veille marché SERP (synthèse Claude).
@@ -1222,7 +1246,7 @@ Implémentées en tant que **Netlify Scheduled / Background Functions** dans [ne
 | `lead-orphan-alerts-background.mts` | `0 9 * * *` (tous les jours 9h UTC) | `POST /api/marketing/leads/orphan-alerts` | `X-Cron-Secret` | Alerte Slack sur les leads non traités. |
 | `score-deals-background.mts` | `0 22 1,15 * *` (1er et 15, 22h UTC) | `POST /api/deals/score-all` (chunks de 5), puis `POST /api/deals/ae-digest` | `X-Cron-Secret` | Rescore tous les deals HubSpot ouverts, **puis envoie le deal digest par AE** (voir ci-dessous). |
 | `sales-coach-recover-stuck-scheduled.mts` | `*/10 * * * *` (toutes les 10 min) | `POST /api/sales-coach/recover-stuck` | `X-Cron-Secret` | Récupère les analyses Claap bloquées en `analyzing` depuis trop longtemps. |
-| `clients-monthly-refresh-scheduled.mts` | `0 3 1 * *` (1er du mois, 3h UTC) | refresh incrémental des clients | `X-Cron-Secret` | Re-enrichit les fiches clients sur les nouvelles activités du mois. |
+| `clients-weekly-refresh-scheduled.mts` | `0 4 * * 1` (lundi, 4h UTC) | `clients-weekly-refresh-background` | `X-Internal-Secret` | Sync billing en lot puis un refresh par client (Claap, HubSpot, Slack, news, fields, Next actions). |
 | `ae-activity-refresh-scheduled.mts` | `0 6 * * *` (tous les jours 6h UTC) | `POST /.netlify/functions/ae-activity-refresh-background` | `Bearer CRON_SECRET` | Recalcule le dashboard **AE Sales Activity** (activité HubSpot + revenu Sheet + Claap + Slack + note Claap mensuelle) pour tous les reps sales. **Aucun appel LLM** : tout est recalculé à chaque passage depuis les sources. Aussi déclenchable via le bouton "Refresh" (`X-Internal-Secret`), ou pour **un seul rep** via `{ ownerIds: [...] }` depuis `/api/me/dashboard/refresh`. |
 | `rag-insights-scheduled.mts` | `0 7 * * 1` (tous les lundis 7h UTC) | `POST /.netlify/functions/rag-insights-background` | `Bearer CRON_SECRET` | Analyse les nouveaux tours de CoachelloAI (**RAG Insights**), reconstruit le rapport de trous Notion et envoie le **recap Slack hebdo** (DM Arthur en test, + `RAG_INSIGHTS_RECIPIENTS` en prod). Aussi déclenchable via les boutons "Refresh analysis" / "Send Slack recap" de `/admin/rag` (`X-Internal-Secret`). |
 | `signals-sweep-scheduled.mts` | `0 5 * * *` (tous les jours 5h UTC) | `POST /.netlify/functions/signals-sweep-background` | `Bearer CRON_SECRET` | Sweep **Signals** : scan marché global, scoring Claude, dédup, recherche d'un lead joignable, insert des 10 meilleurs, rétention 14 j. |
@@ -1257,7 +1281,8 @@ Idempotence : `(owner_id, run_date)` stampé dans `deal_ae_digest_log`. Test man
 | `sales-coach-analyze-background.mts` | Webhook Claap (`/api/webhooks/claap`) | `X-Internal-Secret` | Analyse asynchrone d'un meeting + recap Slack. |
 | `deals-analyze-background.mts` | `/api/deals/analyze` | `X-Internal-Secret` | Analyse approfondie d'un deal (offload depuis l'UI). |
 | `clients-enrich-background.mts` | Webhook HubSpot closed-won / bouton manuel | `X-Internal-Secret` | Enrichissement initial d'une fiche client (Claude). |
-| `clients-refresh-background.mts` / `clients-monthly-refresh-background.mts` | refresh incrémental | `X-Internal-Secret` | Re-extraction fields + health + news sur nouvelles activités. |
+| `clients-refresh-background.mts` | bouton Refresh, "Not this account", cron hebdo | `X-Internal-Secret` | Refresh incrémental d'un client (`runClientRefresh`). |
+| `clients-weekly-refresh-background.mts` | cron hebdo | `X-Internal-Secret` | Sync billing (1 download) puis fan-out : un `clients-refresh-background` par client, espacés de 5 s (chaque client a son propre budget de 15 min). |
 | `clients-prepare-meetings-background.mts` | closed-won (garde-fou meetings) | `X-Internal-Secret` | Prépare la liste de recordings Claap à confirmer. |
 | `marketing-generate-content-background.mts` | `/api/marketing/content` (génération drafts) | `X-Internal-Secret` | Génération de drafts FR/EN d'articles WordPress. |
 | `lists-push-hubspot-background.mts` | `/api/intel/enrich/lists/[id]/push-hubspot` | `X-Internal-Secret` | Push d'une liste vers HubSpot (création contacts, dédup email). |
@@ -1346,7 +1371,7 @@ Webhook HubSpot closed-won (/api/webhooks/hubspot-closed-won)
 → loadClientContext (HubSpot + transcripts Claap) → Claude (modèle clé `clients`)
    → fields (30 champs) + coach brief + deal recap + news (Tavily, rankés) en parallèle
 → computeHealth + generateHealthSummary → update clients
-→ refresh incrémental mensuel (clients-monthly-refresh) sur nouvelles activités
+→ refresh hebdo (lundi, clients-weekly-refresh) : nouveaux meetings Claap auto, HubSpot, Slack, news, fields (merge manuel/IA), Next actions
 ```
 
 ### Flux Watch List (briefs à la demande)

@@ -52,23 +52,23 @@ function MissingValue() {
   return <span style={{ color: COLORS.ink4, fontStyle: "italic", fontSize: 13 }}>Not set</span>;
 }
 
-// Field clé vide (handover AM/CS) : ligne surlignée en jaune pour attirer l'œil,
-// mais non bloquant — l'AE peut notifier l'AM/CS sans l'avoir rempli.
+// Field clé vide : ligne surlignée en ambre (il alimente l'onglet To do), mais
+// non bloquant pour le handover.
 function HighlightedMissing() {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: COLORS.warn }}>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, color: COLORS.warn }}>
       <AlertTriangle size={13} style={{ flexShrink: 0 }} />
-      <span style={{ fontStyle: "italic", color: COLORS.ink4 }}>Not set</span>
+      Missing
     </span>
   );
 }
 
-// Field recommandé vide : indice discret, non bloquant.
+// Field recommandé vide : même signal, plus discret.
 function RecommendedMissing() {
   return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13 }}>
-      <span style={{ fontStyle: "italic", color: COLORS.ink4 }}>Not set</span>
-      <span style={{ fontSize: 11, color: COLORS.ink3 }}>· Recommended</span>
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+      <span style={{ fontWeight: 600, color: COLORS.warn }}>Missing</span>
+      <span style={{ color: COLORS.ink3 }}>· Recommended</span>
     </span>
   );
 }
@@ -100,15 +100,25 @@ function renderValue(value: unknown, definition: FieldDefinition): React.ReactNo
         return <span style={{ fontSize: 13, color: COLORS.ink0 }}>{String(value)}</span>;
       }
     }
-    case "enum":
+    case "enum": {
+      const tone = definition.optionTones?.[String(value)];
+      const palette =
+        tone === "ok"
+          ? { bg: COLORS.okBg, fg: COLORS.ok }
+          : tone === "warn"
+            ? { bg: COLORS.warnBg, fg: COLORS.warn }
+            : tone === "err"
+              ? { bg: COLORS.errBg, fg: COLORS.err }
+              : { bg: COLORS.bgSoft, fg: COLORS.ink1 };
       return (
         <span
           style={{
             display: "inline-flex",
-            padding: "2px 8px",
+            padding: "2px 9px",
             borderRadius: 999,
-            background: COLORS.brandTint,
-            color: COLORS.brand,
+            background: palette.bg,
+            color: palette.fg,
+            border: tone ? "none" : `1px solid ${COLORS.line}`,
             fontSize: 12,
             fontWeight: 600,
           }}
@@ -116,8 +126,20 @@ function renderValue(value: unknown, definition: FieldDefinition): React.ReactNo
           {definition.optionLabels?.[String(value)] ?? String(value)}
         </span>
       );
+    }
     case "array_string": {
       const arr = value as string[];
+      if (arr.some((s) => String(s).length > 32)) {
+        return (
+          <ul style={{ margin: 0, paddingLeft: 16, display: "flex", flexDirection: "column", gap: 4 }}>
+            {arr.map((s, i) => (
+              <li key={i} style={{ fontSize: 13, color: COLORS.ink0, lineHeight: 1.45 }}>
+                {s}
+              </li>
+            ))}
+          </ul>
+        );
+      }
       return (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {arr.map((s, i) => (
@@ -195,7 +217,7 @@ function renderValue(value: unknown, definition: FieldDefinition): React.ReactNo
               color: b.enabled ? COLORS.ok : COLORS.ink3,
             }}
           >
-            {b.enabled ? "Enabled" : "No"}
+            {b.enabled ? "Yes" : "No"}
           </span>
           {b.details && <span style={{ marginLeft: 8, color: COLORS.ink1 }}>{b.details}</span>}
         </div>
@@ -644,9 +666,9 @@ export function FieldDisplay({
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: "200px 1fr auto",
-        gap: 16,
-        padding: "10px 12px",
+        gridTemplateColumns: "minmax(110px, 180px) minmax(0, 1fr) auto",
+        gap: 14,
+        padding: "9px 12px",
         margin: "0 -12px",
         borderBottom: `1px solid ${COLORS.line}`,
         borderLeft: isMissingHighlighted && !editing ? `3px solid ${COLORS.warn}` : "3px solid transparent",
@@ -658,7 +680,7 @@ export function FieldDisplay({
         if (canEdit && !editing) setEditing(true);
       }}
     >
-      <div style={{ fontSize: 12, color: COLORS.ink2, fontWeight: 500, paddingTop: 2 }}>
+      <div style={{ fontSize: 12, color: COLORS.ink3, fontWeight: 500, paddingTop: 2 }}>
         {definition.label}
       </div>
       <div style={{ minWidth: 0 }}>

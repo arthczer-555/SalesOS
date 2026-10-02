@@ -67,7 +67,7 @@ export async function notifyOwnerOfEnrichedClient(
 
   const text =
     mode === "test"
-      ? `:test_tube: *Test* — in prod, this DM would go to ${row.owner_email ?? row.owner_name ?? "the deal owner"}\n\n${body}`
+      ? `:test_tube: *Test* - in prod, this DM would go to ${row.owner_email ?? row.owner_name ?? "the deal owner"}\n\n${body}`
       : body;
 
   try {

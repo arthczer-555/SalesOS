@@ -3,6 +3,7 @@ import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { searchSlackForCompany } from "@/lib/slack/search";
 
 const DEFAULT_ANALYZE_MODEL = "claude-sonnet-4-6";
 
@@ -122,16 +123,6 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
   return res.json();
 }
 
-async function slackGet(path: string, params?: Record<string, string>) {
-  const url = new URL(`https://slack.com/api${path}`);
-  if (params) Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
-  const res = await fetch(url.toString(), {
-    headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
-  });
-  const data = await res.json();
-  return data.ok ? data : null;
-}
-
 type ClaapRecapRow = {
   meeting_title: string | null;
   meeting_started_at: string | null;
@@ -155,69 +146,6 @@ async function fetchSalesCoachRecaps(dealId: string): Promise<ClaapRecapRow[]> {
     .eq("status", "done")
     .order("meeting_started_at", { ascending: false });
   return (data ?? []) as ClaapRecapRow[];
-}
-
-async function searchSlackForCompany(companyName: string): Promise<{ channel: string; text: string; user: string; timestamp: string }[]> {
-  if (!companyName || !process.env.SLACK_BOT_TOKEN) return [];
-  const messages: { channel: string; text: string; user: string; timestamp: string }[] = [];
-
-  try {
-    const userToken = process.env.SLACK_USER_TOKEN;
-    if (userToken) {
-      const url = new URL("https://slack.com/api/search.messages");
-      url.searchParams.set("query", companyName);
-      url.searchParams.set("count", "20");
-      url.searchParams.set("sort", "timestamp");
-      url.searchParams.set("sort_dir", "desc");
-      const res = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${userToken}` },
-      });
-      const data = await res.json();
-      if (data.ok) {
-        for (const m of (data.messages?.matches ?? []).slice(0, 20)) {
-          messages.push({
-            channel: m.channel?.name ?? "",
-            text: m.text?.slice(0, 500) ?? "",
-            user: m.user ?? m.username ?? "",
-            timestamp: m.ts ?? "",
-          });
-        }
-        return messages;
-      }
-    }
-
-    const channels: { name: string; id: string }[] = [];
-    let cursor: string | undefined;
-    do {
-      const params: Record<string, string> = { limit: "200", types: "public_channel,private_channel" };
-      if (cursor) params.cursor = cursor;
-      const data = await slackGet("/conversations.list", params);
-      if (!data) break;
-      channels.push(...(data.channels ?? []));
-      cursor = data.response_metadata?.next_cursor || undefined;
-    } while (cursor);
-
-    const keyword = companyName.toLowerCase();
-    for (const ch of channels) {
-      if (messages.length >= 20) break;
-      const history = await slackGet("/conversations.history", { channel: ch.id, limit: "200" });
-      if (!history) continue;
-      const matched = (history.messages ?? []).filter((m: { text: string }) =>
-        m.text?.toLowerCase().includes(keyword)
-      );
-      for (const m of matched.slice(0, 5)) {
-        messages.push({
-          channel: ch.name,
-          text: m.text?.slice(0, 500) ?? "",
-          user: m.user ?? "",
-          timestamp: m.ts ?? "",
-        });
-      }
-    }
-    return messages;
-  } catch {
-    return [];
-  }
 }
 
 export type DealAnalysisResult =

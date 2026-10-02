@@ -89,11 +89,14 @@ export function EditableText({
   onSave,
   multiline = false,
   placeholder,
+  textStyle,
 }: {
   value: string | null | undefined;
   onSave: (v: string | null) => Promise<void>;
   multiline?: boolean;
   placeholder?: string;
+  // Surcharge du style du texte affiché (ex : phrase health en 15 px).
+  textStyle?: React.CSSProperties;
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value ?? "");
@@ -153,7 +156,7 @@ export function EditableText({
 
   return (
     <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
-      <div style={{ flex: 1, fontSize: 13, color: COLORS.ink0, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+      <div style={{ flex: 1, fontSize: 13, color: COLORS.ink0, lineHeight: 1.5, whiteSpace: "pre-wrap", ...textStyle }}>
         {value && value.trim() ? value : <EmptyVal />}
       </div>
       <PencilBtn onClick={() => { setVal(value ?? ""); setEditing(true); }} />
