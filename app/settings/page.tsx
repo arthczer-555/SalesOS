@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { Suspense } from "react";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
@@ -13,6 +14,7 @@ import { normalizeSignature, type EmailSignature } from "@/lib/email/signature";
 import { DEFAULT_BOT_GUIDE } from "@/lib/guides/bot";
 import { DEFAULT_PROSPECTION_GUIDE } from "@/lib/guides/prospection";
 
+export const metadata: Metadata = { title: "Settings" };
 
 async function getIntegrationStatus(userId: string) {
   const [keyRes, gmailRes, userRes] = await Promise.all([

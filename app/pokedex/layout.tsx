@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Pokedex | Coachello",
+  title: "Pokedex",
   description: "Coachello internal tools directory",
 };
 

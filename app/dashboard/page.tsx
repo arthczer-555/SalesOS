@@ -1,7 +1,10 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
 import { MyDashboard } from "./_components/my-dashboard";
+
+export const metadata: Metadata = { title: "My dashboard" };
 
 export const dynamic = "force-dynamic";
 

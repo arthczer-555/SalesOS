@@ -1,8 +1,11 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
 import { db } from "@/lib/db";
 import { UsageTabs } from "./_components/usage-tabs";
+
+export const metadata: Metadata = { title: "Logs & Usage" };
 
 export const dynamic = "force-dynamic";
 

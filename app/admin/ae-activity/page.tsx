@@ -1,7 +1,10 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
 import { AeAdminTabs } from "./_components/tabs";
+
+export const metadata: Metadata = { title: "AE Activity" };
 
 export const dynamic = "force-dynamic";
 

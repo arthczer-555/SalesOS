@@ -1,8 +1,11 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
 import { listIdeas } from "@/lib/ideas/read";
 import { IdeasTable } from "./_components/ideas-table";
+
+export const metadata: Metadata = { title: "Idea box" };
 
 export const dynamic = "force-dynamic";
 

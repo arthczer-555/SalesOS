@@ -1,4 +1,7 @@
+import type { Metadata } from "next";
 import { ChatWorkspace } from "@/app/_components/chat-workspace";
+
+export const metadata: Metadata = { title: "CoachelloAI" };
 
 // Nouveau chat. Dès le premier message, l'URL devient /c/<id> (voir
 // ChatWorkspace) pour que la conversation soit adressable et partageable.

@@ -1,7 +1,10 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
 import { RagDashboard } from "./_components/rag-dashboard";
+
+export const metadata: Metadata = { title: "RAG Insights" };
 
 export const dynamic = "force-dynamic";
 

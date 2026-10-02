@@ -1,9 +1,12 @@
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { ChatWorkspace } from "@/app/_components/chat-workspace";
 import { SharedConversationView } from "./shared-view";
 import type { Message } from "@/app/_components/chat-message";
+
+export const metadata: Metadata = { title: "CoachelloAI" };
 
 export const dynamic = "force-dynamic";
 

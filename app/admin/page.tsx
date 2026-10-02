@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { isAdmin } from "@/lib/admin";
@@ -9,6 +10,8 @@ import { GuideEditor } from "../settings/_components/guide-editor";
 import { ModelPreferencesAdmin } from "./_components/model-preferences-admin";
 import { ResetGuidesButton } from "./_components/reset-guides-button";
 import { Suspense } from "react";
+
+export const metadata: Metadata = { title: "Admin" };
 
 export const dynamic = "force-dynamic";
 

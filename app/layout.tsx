@@ -14,7 +14,9 @@ const geist = Geist({ subsets: ["latin"] });
 const spaceGrotesk = Space_Grotesk({ subsets: ["latin"], variable: "--font-chats" });
 
 export const metadata: Metadata = {
-  title: "CoachelloHQ",
+  // Onglet du navigateur : "<Page> · CoachelloHQ". Chaque page (ou le layout
+  // de son segment, pour les pages "use client") ne déclare que "<Page>".
+  title: { default: "CoachelloHQ", template: "%s · CoachelloHQ" },
   description: "AI-powered sales intelligence platform",
   icons: { icon: "/icon.png" },
 };
