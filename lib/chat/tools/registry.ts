@@ -21,6 +21,7 @@ import { notionTools } from "./notion";
 import { loadGuideTools } from "./load-guide";
 import { clientsTools } from "./clients";
 import { invoicesTools } from "./invoices";
+import { revenuePlanTools } from "./revenue-plan";
 import type { ToolContext, ToolHandler } from "./types";
 
 // Ordre stable : ne pas réordonner sans raison (chaque changement d'ordre
@@ -41,6 +42,7 @@ const MODULES = [
   // définitions déjà cachées côté Anthropic.
   clientsTools,
   invoicesTools,
+  revenuePlanTools,
 ];
 
 export const TOOLS: Anthropic.Tool[] = MODULES.flatMap((m) => m.defs);

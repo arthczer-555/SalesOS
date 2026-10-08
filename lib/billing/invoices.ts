@@ -18,9 +18,9 @@
 // { ok: false } sur onglet absent ou illisible, ne throw jamais vers l'appelant.
 // ────────────────────────────────────────────────────────────────────────
 
-import { downloadWorkbook, sheetGrid, parseAmount, norm } from "./drive-xlsx";
+import { sheetGrid, parseAmount, norm } from "./drive-xlsx";
+import { getRevenueWorkbook } from "./revenue-workbook";
 
-const DEFAULT_FILE_ID = "1zjB-phoCampmQOFNwwiYnw6jwjvrfwmb";
 const TAB = "Factures";
 // Un agent ou une question peut appeler l'outil plusieurs fois avec des
 // filtres différents : un téléchargement du classeur par minute suffit.
@@ -80,7 +80,7 @@ function toStatus(label: string): InvoiceStatus {
 
 async function load(): Promise<InvoicesResult> {
   try {
-    const wb = await downloadWorkbook(process.env.AE_REVENUE_DRIVE_FILE_ID || DEFAULT_FILE_ID);
+    const wb = await getRevenueWorkbook();
     const grid = sheetGrid(wb, TAB);
     if (grid.length === 0) return { ok: false, error: `Onglet "${TAB}" introuvable ou vide (onglets : ${wb.SheetNames.join(", ")}).` };
 
