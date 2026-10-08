@@ -5,8 +5,9 @@ import { COLORS } from "@/lib/design/tokens";
 import type { ClientRow, NewsCategory, NewsItem } from "@/lib/clients/types";
 import { Card, CardHeader, Tag, fmtDay } from "./ui";
 
-// Cartes de la colonne droite de Key insights : Company news (importantes
-// seulement) et Watch points. Key dates vit dans key-dates-card.tsx.
+// Cartes de la colonne droite de Key insights : Watch points (à côté de la
+// santé) et Company news (importantes seulement). Key dates vit dans
+// key-dates-card.tsx.
 
 const CATEGORY_LABEL: Record<NewsCategory, string> = {
   leadership: "Leadership",
@@ -114,18 +115,21 @@ export function WatchPointsCard({ client }: { client: ClientRow }) {
   const raw = client.fields_json?.history?.points_de_vigilance?.value;
   const long = Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string" && !!p.trim()) : [];
   const points = (short.length > 0 ? short : long).slice(0, 3);
-  if (points.length === 0) return null;
   return (
     <Card>
       <CardHeader icon={Eye} title="Watch points" style={{ marginBottom: 10 }} />
-      <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
-        {points.map((p, i) => (
-          <li key={i} title={p} style={{ display: "flex", gap: 8, fontSize: 13, lineHeight: 1.45, minWidth: 0 }}>
-            <span style={{ width: 6, height: 6, borderRadius: 99, background: COLORS.warn, marginTop: 7, flexShrink: 0 }} />
-            <span style={{ minWidth: 0, ...ONE_LINE }}>{p}</span>
-          </li>
-        ))}
-      </ul>
+      {points.length === 0 ? (
+        <div style={{ fontSize: 13, color: COLORS.ink3 }}>Nothing to watch right now. The next refresh flags new risks if something comes up.</div>
+      ) : (
+        <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
+          {points.map((p, i) => (
+            <li key={i} title={p} style={{ display: "flex", gap: 8, fontSize: 13, lineHeight: 1.45, minWidth: 0 }}>
+              <span style={{ width: 6, height: 6, borderRadius: 99, background: COLORS.warn, marginTop: 7, flexShrink: 0 }} />
+              <span style={{ minWidth: 0, ...ONE_LINE }}>{p}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }

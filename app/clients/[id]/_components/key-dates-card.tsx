@@ -5,24 +5,32 @@ import { Calendar, Check, Loader2, Pencil, X } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { ClientRow } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
-import { Card, CardHeader, Tag, daysUntil, fmtDay, parseLooseDate, relativeDays } from "./ui";
+import { saveNextBilling } from "../../_components/next-billing-api";
+import { Card, CardHeader, Tag, contractEndTone, daysUntil, fmtDay, nextBillingToneOf, parseLooseDate, relativeDays } from "./ui";
 
-// Carte "Key dates" de Key insights : jalons factuels, éditables sur place.
+// Carte "Key dates" de Key insights : jalons factuels dans l'ordre
+// chronologique (Signed, Kickoff, Last touch, Next billing, Contract end),
+// éditables sur place. Contract end passe en orange puis rouge à l'approche
+// (contractEndTone), Next billing de même (nextBillingToneOf).
 //  - Kickoff : field de la fiche (planning.kickoff_envisage_le, source manuelle) ;
 //  - Contract end / Signed : écrits dans le deal HubSpot (contract_end_date,
 //    closedate), la source de vérité ; la route synchronise aussi
 //    clients.closedwon_at pour Signed ;
-//  - Last touch : calculé (dernier engagement HubSpot ou meeting Claap), non éditable.
+//  - Last touch : calculé (dernier engagement HubSpot ou meeting Claap), non éditable ;
+//  - Next billing : saisie manuelle (clients.next_billing_date), aussi éditable
+//    depuis la vue portefeuille /clients.
 
 type Target =
   | { kind: "field"; sectionKey: "planning"; fieldKey: "kickoff_envisage_le" }
-  | { kind: "hubspot"; property: "contract_end_date" | "closedate" };
+  | { kind: "hubspot"; property: "contract_end_date" | "closedate" }
+  | { kind: "next_billing" };
 
 function toInputDate(iso: string | null): string {
   return iso ? iso.slice(0, 10) : "";
 }
 
 async function saveDate(clientId: string, target: Target, value: string): Promise<void> {
+  if (target.kind === "next_billing") return saveNextBilling(clientId, value || null);
   const res =
     target.kind === "field"
       ? await fetch(`/api/clients/${clientId}/fields`, {
@@ -161,8 +169,12 @@ export function KeyDatesCard({ client, onUpdated }: { client: ClientRow; onUpdat
   const hubspotOk = dealFields != null;
   const contractEnd = parseLooseDate(dealFields?.contract_end_date);
   const toEnd = daysUntil(contractEnd);
+  const endTone = contractEndTone(toEnd);
   const lastContact = client.health?.last_contact_at ?? null;
   const lastSource = client.health?.last_contact_source;
+  const nextBilling = client.next_billing_date ?? null;
+  const toNextBilling = daysUntil(nextBilling);
+  const nextBillingTone = nextBillingToneOf(toNextBilling);
 
   function saver(target: Target, label: string) {
     return async (v: string) => {
@@ -177,30 +189,22 @@ export function KeyDatesCard({ client, onUpdated }: { client: ClientRow; onUpdat
       <CardHeader icon={Calendar} title="Key dates" style={{ marginBottom: 6 }} />
       <div style={{ marginTop: -8 }}>
         <DateRow
+          label="Signed"
+          value={fmtDay(client.closedwon_at, true)}
+          hint={relativeDays(client.closedwon_at)}
+          editable={hubspotOk}
+          requireValue
+          note="Saved as the HubSpot close date"
+          initial={toInputDate(client.closedwon_at)}
+          onSave={saver({ kind: "hubspot", property: "closedate" }, "Signed date")}
+        />
+        <DateRow
           label="Kickoff"
           value={kickoff ? fmtDay(kickoff, true) : <span style={{ color: COLORS.warn }}>Not set</span>}
           hint={toKickoff === null ? null : toKickoff <= 0 ? <Tag tone="ok">Done</Tag> : `in ${toKickoff} days`}
           editable
           initial={toInputDate(kickoff)}
           onSave={saver({ kind: "field", sectionKey: "planning", fieldKey: "kickoff_envisage_le" }, "Kickoff")}
-        />
-        <DateRow
-          label="Contract end"
-          value={
-            !hubspotOk ? (
-              <span style={{ color: COLORS.warn }}>HubSpot unreachable</span>
-            ) : contractEnd ? (
-              fmtDay(contractEnd, true)
-            ) : (
-              <span style={{ color: COLORS.warn }}>Missing in HubSpot</span>
-            )
-          }
-          hint={toEnd === null ? null : toEnd >= 0 ? `in ${toEnd} days` : <Tag tone="err">ended</Tag>}
-          editable={hubspotOk}
-          requireValue
-          note="Saved to the HubSpot deal"
-          initial={toInputDate(contractEnd)}
-          onSave={saver({ kind: "hubspot", property: "contract_end_date" }, "Contract end")}
         />
         <DateRow
           label="Last touch"
@@ -212,14 +216,53 @@ export function KeyDatesCard({ client, onUpdated }: { client: ClientRow; onUpdat
           }
         />
         <DateRow
-          label="Signed"
-          value={fmtDay(client.closedwon_at, true)}
-          hint={relativeDays(client.closedwon_at)}
+          label="Next billing"
+          value={
+            nextBilling ? (
+              <span style={{ color: nextBillingTone === "err" ? COLORS.err : undefined }}>{fmtDay(nextBilling, true)}</span>
+            ) : (
+              <span style={{ color: COLORS.warn }}>Not set</span>
+            )
+          }
+          hint={
+            toNextBilling === null ? null : (
+              <span title={client.next_billing_set_by ? `Set by ${client.next_billing_set_by}` : undefined}>
+                {nextBillingTone ? (
+                  <Tag tone={nextBillingTone}>
+                    {toNextBilling < 0 ? `${-toNextBilling} days overdue` : toNextBilling === 0 ? "today" : `in ${toNextBilling} days`}
+                  </Tag>
+                ) : (
+                  `in ${toNextBilling} days`
+                )}
+              </span>
+            )
+          }
+          editable
+          note="Entered manually by the AM or CS"
+          initial={nextBilling ?? ""}
+          onSave={saver({ kind: "next_billing" }, "Next billing")}
+        />
+        <DateRow
+          label="Contract end"
+          value={
+            !hubspotOk ? (
+              <span style={{ color: COLORS.warn }}>HubSpot unreachable</span>
+            ) : contractEnd ? (
+              <span style={{ color: endTone === "err" ? COLORS.err : endTone === "warn" ? COLORS.warn : undefined }}>{fmtDay(contractEnd, true)}</span>
+            ) : (
+              <span style={{ color: COLORS.warn }}>Missing in HubSpot</span>
+            )
+          }
+          hint={
+            toEnd === null || !endTone ? null : (
+              <Tag tone={endTone}>{toEnd >= 0 ? `in ${toEnd} days` : "ended"}</Tag>
+            )
+          }
           editable={hubspotOk}
           requireValue
-          note="Saved as the HubSpot close date"
-          initial={toInputDate(client.closedwon_at)}
-          onSave={saver({ kind: "hubspot", property: "closedate" }, "Signed date")}
+          note="Saved to the HubSpot deal"
+          initial={toInputDate(contractEnd)}
+          onSave={saver({ kind: "hubspot", property: "contract_end_date" }, "Contract end")}
         />
       </div>
     </Card>

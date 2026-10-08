@@ -2,25 +2,16 @@
 
 import Link from "next/link";
 import { COLORS } from "@/lib/design/tokens";
+import { CompanyAvatar } from "@/components/ui/company-avatar";
+import { PersonAvatar } from "@/components/ui/person-avatar";
+import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
 import { HealthBadge } from "./health-badge";
-import type { Health, Billing } from "@/lib/clients/types";
 
-export type ClientListItem = {
-  id: string;
-  hubspot_deal_id: string;
-  hubspot_company_id: string | null;
-  company_name: string;
-  owner_email: string | null;
-  owner_name: string | null;
-  closedwon_at: string;
-  deal_amount: number | null;
-  billing: Billing | null;
-  health: Health | null;
-  enrichment_status: "pending" | "awaiting_meetings" | "running" | "done" | "error";
-  enrichment_error: string | null;
-  last_enriched_at: string | null;
-  am_cs_notified_at: string | null;
-};
+// Vue par défaut de /clients : la liste simple des comptes (signature,
+// montants, santé, statut du handover). La vue avancée (portfolio-table.tsx)
+// s'active avec le toggle "Advanced view".
+
+const GRID = "minmax(220px, 2fr) minmax(150px, 1fr) 110px 110px 120px 140px 160px";
 
 function fmtAmount(n: number | null): string {
   if (n == null) return "-";
@@ -36,16 +27,16 @@ function StatusPill({
   status,
   amCsNotifiedAt,
 }: {
-  status: ClientListItem["enrichment_status"];
+  status: ClientPortfolioItem["enrichment_status"];
   amCsNotifiedAt: string | null;
 }) {
-  const map: Record<ClientListItem["enrichment_status"], { fg: string; bg: string; label: string }> = {
+  const map: Record<ClientPortfolioItem["enrichment_status"], { fg: string; bg: string; label: string }> = {
     pending: { fg: COLORS.ink2, bg: COLORS.bgSoft, label: "Pending" },
-    awaiting_meetings: { fg: COLORS.brand, bg: COLORS.brandTint, label: "Meetings to confirm" },
+    awaiting_meetings: { fg: COLORS.ink1, bg: COLORS.bgSoft, label: "Meetings to confirm" },
     running: { fg: COLORS.info, bg: COLORS.infoBg, label: "Enriching…" },
     // Une fois enrichi, l'étape suivante est la validation par l'AE (remplir les
     // champs requis + assigner/notifier l'AM et le CS). On reflète ce sous-état :
-    // "À valider" tant que l'AM/CS ne sont pas notifiés, "Transmis AM/CS" ensuite.
+    // "To validate" tant que l'AM/CS ne sont pas notifiés, "Handed over" ensuite.
     done: { fg: COLORS.ok, bg: COLORS.okBg, label: "Enriched" },
     error: { fg: COLORS.err, bg: COLORS.errBg, label: "Error" },
   };
@@ -66,6 +57,7 @@ function StatusPill({
         color: s.fg,
         fontSize: 11,
         fontWeight: 600,
+        whiteSpace: "nowrap",
       }}
     >
       {s.label}
@@ -73,7 +65,7 @@ function StatusPill({
   );
 }
 
-export function ClientsTable({ clients }: { clients: ClientListItem[] }) {
+export function ClientsTable({ clients }: { clients: ClientPortfolioItem[] }) {
   if (clients.length === 0) {
     return (
       <div
@@ -95,6 +87,8 @@ export function ClientsTable({ clients }: { clients: ClientListItem[] }) {
     );
   }
 
+  const num: React.CSSProperties = { fontSize: 12.5, color: COLORS.ink1, fontVariantNumeric: "tabular-nums", textAlign: "right" };
+
   return (
     <div
       style={{
@@ -102,12 +96,13 @@ export function ClientsTable({ clients }: { clients: ClientListItem[] }) {
         border: `1px solid ${COLORS.line}`,
         borderRadius: 12,
         overflow: "hidden",
+        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.04)",
       }}
     >
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(200px, 2fr) minmax(140px, 1fr) 120px 120px 130px 140px 100px",
+          gridTemplateColumns: GRID,
           gap: 12,
           padding: "10px 16px",
           background: COLORS.bgSoft,
@@ -121,8 +116,8 @@ export function ClientsTable({ clients }: { clients: ClientListItem[] }) {
       >
         <div>Account</div>
         <div>Owner</div>
-        <div>HubSpot amount</div>
-        <div>Billed amount</div>
+        <div style={{ textAlign: "right" }}>HubSpot amount</div>
+        <div style={{ textAlign: "right" }}>Billed amount</div>
         <div>Signed on</div>
         <div>Health</div>
         <div>Status</div>
@@ -133,9 +128,9 @@ export function ClientsTable({ clients }: { clients: ClientListItem[] }) {
           href={`/clients/${c.id}`}
           style={{
             display: "grid",
-            gridTemplateColumns: "minmax(200px, 2fr) minmax(140px, 1fr) 120px 120px 130px 140px 100px",
+            gridTemplateColumns: GRID,
             gap: 12,
-            padding: "12px 16px",
+            padding: "11px 16px",
             borderBottom: `1px solid ${COLORS.line}`,
             color: "inherit",
             textDecoration: "none",
@@ -144,42 +139,42 @@ export function ClientsTable({ clients }: { clients: ClientListItem[] }) {
             transition: "background 120ms",
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.background = COLORS.brandTintSoft;
+            e.currentTarget.style.background = COLORS.bgSoft;
           }}
           onMouseLeave={(e) => {
             e.currentTarget.style.background = COLORS.bgCard;
           }}
         >
-          <div style={{ minWidth: 0 }}>
-            <div
-              style={{
-                fontSize: 13,
-                fontWeight: 600,
-                color: COLORS.ink0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-              title={c.company_name}
-            >
-              {c.company_name}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
+            <CompanyAvatar name={c.company_name} size={32} rounded="md" />
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 600,
+                  color: COLORS.ink0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={c.company_name}
+              >
+                {c.company_name}
+              </div>
+              <div style={{ fontSize: 11, color: COLORS.ink4, marginTop: 1 }}>deal #{c.hubspot_deal_id}</div>
             </div>
-            <div style={{ fontSize: 11, color: COLORS.ink3, marginTop: 1 }}>
-              deal #{c.hubspot_deal_id}
-            </div>
           </div>
-          <div style={{ fontSize: 12, color: COLORS.ink1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {c.owner_name || c.owner_email || "-"}
+          <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+            {(c.owner_name || c.owner_email) && <PersonAvatar name={c.owner_name || c.owner_email} size={22} />}
+            <span style={{ fontSize: 12.5, color: COLORS.ink1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {c.owner_name || c.owner_email || "-"}
+            </span>
           </div>
-          <div style={{ fontSize: 12, color: COLORS.ink1, fontVariantNumeric: "tabular-nums" }}>
-            {fmtAmount(c.deal_amount)}
+          <div style={num}>{fmtAmount(c.deal_amount)}</div>
+          <div style={num} title={c.billing_matched ? "Lifetime billed (revenue sheet)" : "Not in the revenue sheet"}>
+            {fmtAmount(c.billed_lifetime)}
           </div>
-          <div style={{ fontSize: 12, color: COLORS.ink1, fontVariantNumeric: "tabular-nums" }}>
-            {fmtAmount(c.billing?.total_contract_value ?? null)}
-          </div>
-          <div style={{ fontSize: 12, color: COLORS.ink1, fontVariantNumeric: "tabular-nums" }}>
-            {fmtDate(c.closedwon_at)}
-          </div>
+          <div style={{ fontSize: 12.5, color: COLORS.ink1, fontVariantNumeric: "tabular-nums" }}>{fmtDate(c.closedwon_at)}</div>
           <div>
             <HealthBadge health={c.health} compact />
           </div>

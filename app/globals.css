@@ -485,22 +485,13 @@
   color: var(--c-brand);
   border-bottom-color: var(--c-brand);
 }
-/* Onglet à compléter (tone alert / warn) : pilule rouge ou ambre claire derrière
-   le libellé + compteur plein. Le soulignement actif reste celui de .ds-tab-active. */
+/* Onglet à compléter (tone alert / warn) : libellé neutre, seul le compteur
+   plein passe en rouge ou ambre (le rouge reste réservé au signal). Le
+   soulignement actif reste celui de .ds-tab-active. */
 .ds-tab-tone {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  padding: 3px 5px 3px 10px;
-  border-radius: 999px;
-}
-.ds-tab-alert .ds-tab-tone {
-  background: var(--c-err-bg);
-  color: var(--c-err);
-}
-.ds-tab-warn .ds-tab-tone {
-  background: var(--c-warn-bg);
-  color: var(--c-warn);
 }
 .ds-tab-count {
   min-width: 19px;
@@ -959,6 +950,36 @@
 .ch-anchor:hover {
   border-color: var(--c-ink-4);
 }
+/* Bouton "Expand all / Collapse all" au bout de la barre d'ancres. */
+.ch-anchor-ghost {
+  margin-left: auto;
+  border-color: transparent;
+  background: transparent;
+  color: var(--c-ink-2);
+}
+/* Nom d'un contact (Knowledge > Contacts) cliquable vers sa fiche HubSpot. */
+.ch-person-link {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--c-ink-0);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ch-person-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+/* Titre de carte repliable (Knowledge) : le chevron fonce au survol. */
+.ch-collapse:hover svg:last-child {
+  color: var(--c-ink-0) !important;
+}
+.ch-collapse:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
 .ch-progress {
   position: absolute;
   left: 0;
@@ -987,5 +1008,579 @@
   .ch-act {
     animation: none;
     transition: none;
+  }
+}
+
+/* ============================================================
+   Primitives de formulaire et d'overlay (components/ui) : inputs,
+   switch, checkbox, segmented, table, modal, drawer, skeleton.
+   Préfixe ds-. Utilisées d'abord par Prospecting v2.
+   ============================================================ */
+.ds-input {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--c-ink-0);
+  background: var(--c-bg-card);
+  border: 1px solid var(--c-line-strong);
+  border-radius: 10px;
+  padding: 8px 11px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.ds-input::placeholder {
+  color: var(--c-ink-4);
+}
+.ds-input:hover {
+  border-color: #d6d6dc;
+}
+.ds-input:focus,
+.ds-input:focus-within {
+  border-color: var(--c-brand);
+  box-shadow: 0 0 0 3px rgba(240, 21, 99, 0.12);
+}
+.ds-input:disabled {
+  background: var(--c-bg-soft);
+  color: var(--c-ink-3);
+  cursor: not-allowed;
+}
+.ds-input-sm {
+  font-size: 12px;
+  padding: 6px 9px;
+  border-radius: 8px;
+}
+.ds-input-invalid,
+.ds-input-invalid:focus {
+  border-color: var(--c-err);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+}
+.ds-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: text;
+}
+.ds-input-wrap > input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  padding: 0;
+}
+textarea.ds-input {
+  resize: none;
+  display: block;
+}
+select.ds-input {
+  appearance: none;
+  padding-right: 30px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+.ch-btn-danger {
+  color: var(--c-err);
+  border-color: #fbcaca;
+  background: #fff;
+}
+.ch-btn-danger:hover {
+  background: var(--c-err-bg);
+  border-color: var(--c-err);
+}
+.ch-btn-subtle {
+  background: var(--c-bg-soft);
+  border-color: var(--c-line);
+  color: var(--c-ink-1);
+}
+.ch-btn-subtle:hover {
+  background: #f1f1f4;
+}
+.ch-btn-dark {
+  background: var(--c-ink-0);
+  border-color: var(--c-ink-0);
+  color: #fff;
+}
+.ch-btn-dark:hover {
+  background: #2a2a2a;
+  border-color: #2a2a2a;
+}
+.ch-btn:focus-visible,
+.ds-focusable:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
+}
+.ch-btn-icon-only {
+  padding: 7px;
+}
+.ch-btn-sm.ch-btn-icon-only {
+  padding: 5px;
+}
+.ch-btn .ds-spin {
+  animation: ds-spin 0.8s linear infinite;
+}
+@keyframes ds-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Switch */
+.ds-switch {
+  position: relative;
+  flex-shrink: 0;
+  width: 34px;
+  height: 20px;
+  border-radius: 999px;
+  background: #d9d9de;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  transition: background 0.18s;
+}
+.ds-switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ds-switch[aria-checked="true"] {
+  background: var(--c-brand);
+}
+.ds-switch[aria-checked="true"]::after {
+  transform: translateX(14px);
+}
+.ds-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ds-switch:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
+}
+
+/* Checkbox */
+.ds-checkbox {
+  appearance: none;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border-radius: 5px;
+  border: 1.5px solid #cfcfd6;
+  background: #fff;
+  cursor: pointer;
+  display: inline-grid;
+  place-content: center;
+  transition: background 0.12s, border-color 0.12s;
+}
+.ds-checkbox:hover {
+  border-color: var(--c-brand);
+}
+.ds-checkbox:checked,
+.ds-checkbox:indeterminate {
+  background: var(--c-brand);
+  border-color: var(--c-brand);
+}
+.ds-checkbox:checked::after {
+  content: "";
+  width: 8px;
+  height: 4.5px;
+  border-left: 2px solid #fff;
+  border-bottom: 2px solid #fff;
+  transform: translateY(-1px) rotate(-45deg);
+}
+.ds-checkbox:indeterminate::after {
+  content: "";
+  width: 8px;
+  height: 2px;
+  background: #fff;
+  border-radius: 2px;
+}
+.ds-checkbox:focus-visible {
+  outline: 2px solid var(--c-brand);
+  outline-offset: 2px;
+}
+
+/* Segmented control */
+.ds-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: #f1f1f4;
+  border: 1px solid var(--c-line);
+}
+.ds-segmented-item {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 11px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--c-ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.ds-segmented-item:hover {
+  color: var(--c-ink-0);
+}
+.ds-segmented-item[aria-pressed="true"] {
+  background: #fff;
+  color: var(--c-ink-0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.03);
+}
+.ds-segmented-item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ds-segmented-sm .ds-segmented-item {
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+/* Tables */
+.ds-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 13px;
+}
+.ds-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--c-bg-soft);
+  color: var(--c-ink-3);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--c-line);
+  white-space: nowrap;
+}
+.ds-table tbody td {
+  padding: 10px 12px;
+  border-bottom: 1px solid #f3f3f5;
+  vertical-align: middle;
+  color: var(--c-ink-1);
+}
+.ds-table tbody tr {
+  transition: background 0.1s;
+}
+.ds-table tbody tr:hover {
+  background: #fcfcfd;
+}
+.ds-table tbody tr.ds-row-clickable {
+  cursor: pointer;
+}
+.ds-table tbody tr.ds-row-selected {
+  background: var(--c-brand-tint-soft);
+}
+.ds-table tbody tr.ds-row-active {
+  background: var(--c-brand-tint-soft);
+  box-shadow: inset 2px 0 0 var(--c-brand);
+}
+.ds-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.ds-th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+.ds-th-sort:hover {
+  color: var(--c-ink-0);
+}
+
+/* Overlays */
+.ds-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(17, 17, 24, 0.42);
+  backdrop-filter: blur(2px);
+  animation: ds-fade-in 0.16s ease-out;
+}
+.ds-modal {
+  animation: ds-pop-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ds-drawer {
+  animation: ds-slide-in-right 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.ds-pop {
+  animation: ds-pop-in 0.14s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes ds-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes ds-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+}
+@keyframes ds-slide-in-right {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+.ds-rise {
+  animation: ds-pop-in 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* Skeleton */
+.ds-skeleton {
+  background: linear-gradient(90deg, #f1f1f4 0%, #f8f8fa 40%, #f1f1f4 80%);
+  background-size: 300% 100%;
+  animation: ds-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes ds-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+/* Kbd */
+.ds-kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-family: var(--font-geist-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--c-ink-2);
+  background: #fff;
+  border: 1px solid var(--c-line-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+}
+
+/* Tag input */
+.ds-tag-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 5px 7px;
+  cursor: text;
+}
+.ds-tag-input input {
+  flex: 1;
+  min-width: 90px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  padding: 2px 4px;
+}
+.ds-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 2px 4px 2px 8px;
+  border-radius: 7px;
+  background: #f3f3f6;
+  color: var(--c-ink-1);
+  border: 1px solid var(--c-line);
+}
+.ds-tag-chip button {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--c-ink-3);
+  cursor: pointer;
+  padding: 0;
+}
+.ds-tag-chip button:hover {
+  background: #e6e6ea;
+  color: var(--c-ink-0);
+}
+
+/* Dropzone */
+.ds-dropzone {
+  border: 1.5px dashed #d6d6dc;
+  border-radius: 14px;
+  background: var(--c-bg-soft);
+  transition: border-color 0.15s, background 0.15s;
+  cursor: pointer;
+}
+.ds-dropzone:hover,
+.ds-dropzone-active {
+  border-color: var(--c-brand);
+  background: var(--c-brand-tint-soft);
+}
+
+/* Prospecting : cartes d'étapes de séquence et éléments propres à la page. */
+.pg-step-card {
+  position: relative;
+  background: #fff;
+  border: 1px solid var(--c-line);
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  cursor: pointer;
+}
+.pg-step-card:hover {
+  border-color: #dcdce2;
+  box-shadow: 0 4px 14px rgba(20, 20, 30, 0.06);
+}
+.pg-step-card-active {
+  border-color: var(--c-brand);
+  box-shadow: 0 0 0 3px rgba(240, 21, 99, 0.12), 0 4px 14px rgba(240, 21, 99, 0.08);
+}
+.pg-step-card-dragging {
+  opacity: 0.45;
+}
+.pg-drop-indicator {
+  height: 3px;
+  border-radius: 3px;
+  background: var(--c-brand);
+  margin: 2px 0;
+}
+.pg-add-step {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.pg-connector:hover .pg-add-step,
+.pg-add-step:focus-visible,
+.pg-add-step[data-open="true"] {
+  opacity: 1;
+}
+.pg-hero-gradient {
+  background:
+    radial-gradient(1200px 300px at 0% 0%, rgba(240, 21, 99, 0.08), transparent 60%),
+    radial-gradient(800px 260px at 100% 0%, rgba(124, 58, 237, 0.07), transparent 60%),
+    #fff;
+}
+.pg-card-link {
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+.pg-card-link:hover {
+  border-color: #dcdce2;
+  box-shadow: 0 8px 24px rgba(20, 20, 30, 0.07);
+  transform: translateY(-1px);
+}
+.pg-option-card {
+  text-align: left;
+  font: inherit;
+  background: #fff;
+  border: 1.5px solid var(--c-line);
+  border-radius: 14px;
+  padding: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.pg-option-card:hover {
+  border-color: #d6d6dc;
+}
+.pg-option-card[aria-pressed="true"] {
+  border-color: var(--c-brand);
+  background: var(--c-brand-tint-soft);
+  box-shadow: 0 0 0 3px rgba(240, 21, 99, 0.1);
+}
+.pg-source-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-ink-1);
+  background: transparent;
+  border: 0;
+  border-radius: 10px;
+  padding: 9px 10px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.pg-source-btn:hover {
+  background: #f3f3f6;
+}
+.pg-source-btn[aria-current="true"] {
+  background: #fff;
+  color: var(--c-ink-0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 0 1px var(--c-line);
+}
+.pg-queue-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  padding: 10px 12px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.pg-queue-row:hover {
+  background: var(--c-bg-soft);
+}
+.pg-queue-row[aria-current="true"] {
+  background: var(--c-brand-tint-soft);
+  border-left-color: var(--c-brand);
+}
+@media (prefers-reduced-motion: reduce) {
+  .ds-overlay,
+  .ds-modal,
+  .ds-drawer,
+  .ds-pop,
+  .ds-rise,
+  .ds-skeleton,
+  .ch-btn .ds-spin {
+    animation: none;
+  }
+}
+@media (max-width: 1100px) {
+  .pg-seq-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
   }
 }

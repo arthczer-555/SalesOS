@@ -61,7 +61,8 @@ export async function hubspotSearchAll<T = Record<string, unknown>>(
   objectType: HubspotObjectType,
   body: {
     properties: string[];
-    filterGroups?: Array<{ filters: Array<{ propertyName: string; operator: string; value?: string }> }>;
+    // `values` : opérateurs multi-valeurs (IN, NOT_IN).
+    filterGroups?: Array<{ filters: Array<{ propertyName: string; operator: string; value?: string; values?: string[] }> }>;
     sorts?: Array<{ propertyName: string; direction: "ASCENDING" | "DESCENDING" }>;
     query?: string;
     limit?: number;

@@ -1,5 +1,8 @@
 import { COLORS } from "@/lib/design/tokens";
-import type { Health, HealthLabel } from "@/lib/clients/types";
+import type { HealthLabel } from "@/lib/clients/types";
+
+// Accepte un Health complet (fiche) ou sa version compacte (vue portefeuille).
+type HealthLike = { label: HealthLabel; score?: number | null; drivers?: string[] };
 
 const STYLE: Record<HealthLabel, { fg: string; bg: string; dot: string; label: string }> = {
   green: { fg: COLORS.ok, bg: COLORS.okBg, dot: COLORS.ok, label: "Healthy" },
@@ -7,7 +10,7 @@ const STYLE: Record<HealthLabel, { fg: string; bg: string; dot: string; label: s
   red: { fg: COLORS.err, bg: COLORS.errBg, dot: COLORS.err, label: "At risk" },
 };
 
-export function HealthBadge({ health, compact = false }: { health: Health | null; compact?: boolean }) {
+export function HealthBadge({ health, compact = false }: { health: HealthLike | null; compact?: boolean }) {
   if (!health) {
     return (
       <span

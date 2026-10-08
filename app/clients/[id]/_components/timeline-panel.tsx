@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { ExternalLink, Video } from "lucide-react";
-import { Card, CardHeader } from "./ui";
+import { Card, CardHeader, type Collapse } from "./ui";
 import { COLORS } from "@/lib/design/tokens";
 import type { DiscoveredRecording } from "@/lib/clients/types";
 
@@ -153,11 +153,13 @@ export function TimelinePanel({
   discoveredRecordings = [],
   onDecline,
   decliningId,
+  collapse,
 }: {
   meetings: ClientMeeting[];
   discoveredRecordings?: DiscoveredRecording[];
   onDecline?: (r: DiscoveredRecording) => void;
   decliningId?: string | null;
+  collapse?: Collapse;
 }) {
   // Dédoublonne par recording_id (au cas où) : on garde la version indexed
   // qui a plus d'info.
@@ -180,14 +182,15 @@ export function TimelinePanel({
   const discoveredCount = items.filter((i) => i.kind === "discovered").length;
 
   return (
-    <Card id="k-meetings" padding="18px 20px 6px" style={{ scrollMarginTop: 64 }}>
+    <Card id="k-meetings" padding={collapse && !collapse.open ? "18px 20px" : "18px 20px 6px"} style={{ scrollMarginTop: 64 }}>
       <CardHeader
         icon={Video}
         title={`Meetings (${items.length})`}
         meta={discoveredCount > 0 ? `${indexedCount} analyzed · ${discoveredCount} auto-matched` : "Claap"}
         style={{ marginBottom: 6 }}
+        collapse={collapse}
       />
-      {items.length === 0 ? (
+      {collapse && !collapse.open ? null : items.length === 0 ? (
         <div style={{ color: COLORS.ink3, fontSize: 13, padding: "8px 0 14px" }}>No Claap meeting found for this account yet.</div>
       ) : (
         <div style={{ margin: "0 -20px" }}>

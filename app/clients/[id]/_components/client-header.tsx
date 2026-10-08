@@ -27,14 +27,14 @@ import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { TabBar, type TabItem } from "@/components/ui/tab-bar";
 import { DropdownMenu } from "@/components/ui/dropdown-menu";
 import { HEALTH_STYLE } from "./health-hero";
-import { fmtDay, relativeDays } from "./ui";
+import { fmtDay, fmtEur, relativeDays } from "./ui";
 import type { ClientTabKey } from "./tabs/key-insights-tab";
 
 // Header sticky de la fiche : identité (avatar, nom, santé), chips AE / AM / CS
 // (AM et CS modifiables), deux actions seulement (Refresh + Options) et la
 // barre d'onglets. Toutes les actions secondaires vivent dans Options.
 
-function Chip({ label, value, onClick, warn }: { label: string; value: string; onClick?: () => void; warn?: boolean }) {
+function Chip({ label, value, onClick, warn, title }: { label: string; value: string; onClick?: () => void; warn?: boolean; title?: string }) {
   const style: React.CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
@@ -62,7 +62,7 @@ function Chip({ label, value, onClick, warn }: { label: string; value: string; o
       </button>
     );
   }
-  return <span style={style}>{inner}</span>;
+  return <span style={style} title={title}>{inner}</span>;
 }
 
 export type HeaderActions = {
@@ -109,6 +109,9 @@ export function ClientHeader({
   const hs = health ? HEALTH_STYLE[health.label] : null;
   const lastUpdate = client.last_refreshed_at ?? client.last_enriched_at;
   const handedOver = !!client.am_cs_notified_at;
+  // Facturé lifetime (sheet revenue, source de vérité) plutôt que le montant du
+  // deal, figé à la signature. Société absente du sheet : "unknown", pas 0.
+  const billed = client.billing?.matched ? (client.billing.total_contract_value ?? null) : null;
 
   const tabs: TabItem[] = [
     { key: "insights", label: "Key insights", icon: Zap },
@@ -189,7 +192,11 @@ export function ClientHeader({
                 )
               )}
               <Chip label="Signed" value={fmtDay(client.closedwon_at, true)} />
-              {client.deal_amount != null && <Chip label="Deal" value={`€${Math.round(client.deal_amount / 1000)}k`} />}
+              {billed != null ? (
+                <Chip label="Billed" value={billed >= 1000 ? `€${Math.round(billed / 1000)}k` : fmtEur(billed)} title="Billed since the start (lifetime), from the revenue sheet" />
+              ) : (
+                done && <Chip label="Billed" value="unknown" warn title="Company not found in the revenue sheet, so billed revenue is unknown (not zero)" />
+              )}
             </div>
           </div>
         </div>

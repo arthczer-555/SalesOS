@@ -3,7 +3,7 @@
 import * as React from "react";
 import { SECTION_DEFINITIONS, type ClientFields, type FieldDefinition, type SectionKey } from "@/lib/clients/types";
 import { FieldDisplay } from "./field-display";
-import { Card, CardHeader } from "./ui";
+import { Card, CardHeader, type Collapse } from "./ui";
 
 // Cartes de fields de la fiche. Au lieu d'itérer bêtement sur les 6 sections,
 // chaque carte de Knowledge (et chaque groupe de To do) liste les fields qu'elle
@@ -25,33 +25,64 @@ export function sectionRefs(section: SectionKey, exclude: string[] = []): FieldR
     .map((f) => ({ section, key: f.key }));
 }
 
+// Champs de détail rangés sous leur champ clé quand `nestDetails` est actif
+// (Knowledge) : "Access: SSO" reste visible, le fournisseur SSO se déplie au
+// clic. To do garde la liste à plat pour ne masquer aucun manque.
+const DETAIL_OF: Record<string, string> = {
+  "org.sso_details": "org.mode_acces",
+  "org.provisioning_details": "org.provisioning",
+};
+
+const refId = (ref: FieldRef) => `${ref.section}.${ref.key}`;
+
+function isFilled(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (Array.isArray(v)) return v.length > 0;
+  if (typeof v === "string") return !!v.trim();
+  return true;
+}
+
 export function FieldRows({
   refs,
   fields,
   clientId,
   onUpdated,
+  nestDetails = false,
 }: {
   refs: FieldRef[];
   fields: Partial<ClientFields>;
   clientId: string;
   onUpdated: () => void;
+  nestDetails?: boolean;
 }) {
+  const present = new Set(refs.map(refId));
+  const nested = (ref: FieldRef) => nestDetails && present.has(DETAIL_OF[refId(ref)] ?? "");
+
+  function row(ref: FieldRef, details?: { node: React.ReactNode; hasValue: boolean }) {
+    const def = resolveFieldDef(ref);
+    if (!def) return null;
+    const sectionData = (fields[ref.section] ?? {}) as Record<string, unknown>;
+    return (
+      <FieldDisplay
+        key={refId(ref)}
+        definition={def}
+        field={sectionData[ref.key] as Parameters<typeof FieldDisplay>[0]["field"]}
+        clientId={clientId}
+        sectionKey={ref.section}
+        onUpdated={onUpdated}
+        details={details}
+      />
+    );
+  }
+
   return (
     <div style={{ padding: "0 12px", margin: "0 -12px" }}>
       {refs.map((ref) => {
-        const def = resolveFieldDef(ref);
-        if (!def) return null;
-        const sectionData = (fields[ref.section] ?? {}) as Record<string, unknown>;
-        return (
-          <FieldDisplay
-            key={`${ref.section}.${ref.key}`}
-            definition={def}
-            field={sectionData[ref.key] as Parameters<typeof FieldDisplay>[0]["field"]}
-            clientId={clientId}
-            sectionKey={ref.section}
-            onUpdated={onUpdated}
-          />
-        );
+        if (nested(ref)) return null;
+        const child = nestDetails ? refs.find((r) => DETAIL_OF[refId(r)] === refId(ref)) : undefined;
+        if (!child) return row(ref);
+        const childValue = ((fields[child.section] ?? {}) as Record<string, { value?: unknown } | undefined>)[child.key]?.value;
+        return row(ref, { node: row(child), hasValue: isFilled(childValue) });
       })}
     </div>
   );
@@ -67,6 +98,8 @@ export function FieldsCard({
   clientId,
   onUpdated,
   children,
+  collapse,
+  nestDetails,
 }: {
   id?: string;
   icon?: IconType;
@@ -77,12 +110,18 @@ export function FieldsCard({
   clientId: string;
   onUpdated: () => void;
   children?: React.ReactNode;
+  collapse?: Collapse;
+  nestDetails?: boolean;
 }) {
   return (
     <Card id={id} style={{ scrollMarginTop: 64 }}>
-      <CardHeader icon={icon} title={title} meta={meta} style={{ marginBottom: 6 }} />
-      {children}
-      <FieldRows refs={refs} fields={fields} clientId={clientId} onUpdated={onUpdated} />
+      <CardHeader icon={icon} title={title} meta={meta} style={{ marginBottom: 6 }} collapse={collapse} />
+      {(!collapse || collapse.open) && (
+        <>
+          {children}
+          <FieldRows refs={refs} fields={fields} clientId={clientId} onUpdated={onUpdated} nestDetails={nestDetails} />
+        </>
+      )}
     </Card>
   );
 }

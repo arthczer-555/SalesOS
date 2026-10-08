@@ -6,6 +6,7 @@ import { COLORS, SHADOWS } from "@/lib/design/tokens";
 import type { CoachBrief } from "@/lib/clients/types";
 import { EditableText, EditableObjectList } from "./editable";
 import { patchContent } from "./content-client";
+import type { Collapse } from "./ui";
 
 // Brief client à destination des coachs Coachello.
 //  - Champs éditables inline (le CS corrige ce que l'IA a produit).
@@ -122,20 +123,27 @@ export function CoachBriefPanel({
   companyName,
   clientId,
   onUpdated,
+  collapse,
 }: {
   brief: CoachBrief | null;
   generatedAt: string | null;
   companyName: string;
   clientId?: string;
   onUpdated?: () => void;
+  // Fourni par Knowledge (état des sections mémorisé) ; sinon état local, replié.
+  collapse?: Collapse;
 }) {
   const [copied, setCopied] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [localOpen, setLocalOpen] = useState(false);
+  const open = collapse ? collapse.open : localOpen;
+  const toggle = collapse ? collapse.onToggle : () => setLocalOpen((o) => !o);
 
   if (!brief) {
     return (
       <div
+        id="k-brief"
         style={{
+          scrollMarginTop: 64,
           background: COLORS.bgCard,
           border: `1px dashed ${COLORS.lineStrong}`,
           borderRadius: 12,
@@ -205,7 +213,7 @@ export function CoachBriefPanel({
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
+          onClick={toggle}
           aria-expanded={open}
           style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: 0, padding: 0, cursor: "pointer", color: COLORS.ink0 }}
         >

@@ -10,7 +10,7 @@ export type TabItem = {
   disabled?: boolean;
   hidden?: boolean;
   // "alert" (rouge) / "warn" (ambre) : onglet qui demande une action. Le libellé
-  // passe dans une pilule teintée, avec `count` en pastille pleine.
+  // reste neutre, seul `count` (pastille pleine) prend la couleur du ton.
   tone?: "alert" | "warn";
   count?: React.ReactNode;
 };

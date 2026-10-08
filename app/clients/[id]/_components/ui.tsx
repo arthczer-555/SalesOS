@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { ChevronDown } from "lucide-react";
 import { COLORS, RADIUS, SHADOWS } from "@/lib/design/tokens";
 import type { HealthLabel } from "@/lib/clients/types";
 
@@ -39,23 +40,59 @@ export function Card({
   );
 }
 
+// Section repliable (Knowledge) : l'état vit chez le parent, la carte masque
+// son corps quand `open` est faux.
+export type Collapse = { open: boolean; onToggle: () => void };
+
 export function CardHeader({
   icon: Icon,
   title,
   meta,
   right,
   style,
+  collapse,
 }: {
   icon?: IconType;
   title: React.ReactNode;
   meta?: React.ReactNode;
   right?: React.ReactNode;
   style?: React.CSSProperties;
+  // Fourni : icône + titre deviennent le bouton de repli (chevron), la méta
+  // reste visible repliée et sert de résumé.
+  collapse?: Collapse;
 }) {
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 14, flexWrap: "wrap", ...style }}>
+  const heading = (
+    <>
       {Icon ? <Icon size={15} style={{ color: COLORS.ink2, flexShrink: 0 }} /> : null}
       <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: COLORS.ink0, letterSpacing: "-0.005em" }}>{title}</h3>
+    </>
+  );
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        marginBottom: 14,
+        flexWrap: "wrap",
+        ...style,
+        ...(collapse && !collapse.open ? { marginBottom: 0 } : {}),
+      }}
+    >
+      {collapse ? (
+        <button
+          type="button"
+          onClick={collapse.onToggle}
+          aria-expanded={collapse.open}
+          className="ch-collapse"
+          style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: 0, padding: 0, cursor: "pointer", color: COLORS.ink0, textAlign: "left", minWidth: 0 }}
+        >
+          {heading}
+          <ChevronDown size={15} style={{ color: COLORS.ink3, flexShrink: 0, transform: collapse.open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+        </button>
+      ) : (
+        heading
+      )}
       {(meta || right) && (
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           {meta ? <span style={{ fontSize: 12, color: COLORS.ink3, whiteSpace: "nowrap" }}>{meta}</span> : null}
@@ -175,14 +212,16 @@ export function EmptyState({
 }
 
 // Carte pointillée "pas encore disponible" (bloc IA pas encore généré).
-export function PendingCard({ icon: Icon, title, text }: { icon: IconType; title: string; text: string }) {
+export function PendingCard({ icon: Icon, title, text, id }: { icon: IconType; title: string; text: string; id?: string }) {
   return (
     <section
+      id={id}
       style={{
         background: COLORS.bgCard,
         border: `1px dashed ${COLORS.lineStrong}`,
         borderRadius: RADIUS.lg,
         padding: "18px 20px",
+        scrollMarginTop: 64,
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
@@ -236,4 +275,24 @@ export function daysUntil(iso: string | null | undefined): number | null {
   const t = new Date(iso).getTime();
   if (!Number.isFinite(t)) return null;
   return Math.ceil((t - Date.now()) / 86_400_000);
+}
+
+// Ton de la fin de contrat (Key dates, Billing) : rouge si terminé ou à 30
+// jours ou moins, orange à 120 jours ou moins (le temps de préparer le
+// renouvellement), neutre au-delà. null = pas de date.
+export function contractEndTone(days: number | null): Extract<TagTone, "neutral" | "warn" | "err"> | null {
+  if (days === null) return null;
+  if (days <= 30) return "err";
+  if (days <= 120) return "warn";
+  return "neutral";
+}
+
+// Ton de la prochaine facturation (Key dates, vue portefeuille) : rouge si la
+// date est passée (facture à émettre ou date à mettre à jour), orange à 30
+// jours ou moins, rien au-delà. null = pas de date ou rien à signaler.
+export function nextBillingToneOf(days: number | null): Extract<TagTone, "warn" | "err"> | null {
+  if (days === null) return null;
+  if (days < 0) return "err";
+  if (days <= 30) return "warn";
+  return null;
 }

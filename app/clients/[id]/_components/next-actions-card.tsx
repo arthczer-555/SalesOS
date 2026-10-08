@@ -7,12 +7,12 @@ import type { InsightAction, InsightSource, Insights } from "@/lib/clients/types
 import { useToast } from "@/components/ui/toast";
 import { Card, CardHeader, Tag, daysAgo, fmtDay } from "./ui";
 
-// "Next actions" de Key insights : 1 à 3 actions, la 1re mise en avant si elle
-// est prioritaire. Chacune : titre impératif, owner, échéance, "Why" avec la
-// source datée. "Done" la masque (PATCH /insights) ; les actions faites restent
-// consultables ("N done") avec Reopen.
+// "Next actions" de Key insights : 1 à 3 actions, toutes en neutre (le rouge
+// est réservé à l'échéance "This week"). Chacune : titre impératif, owner,
+// échéance, "Why" avec la source datée. "Done" la masque (PATCH /insights) ;
+// les actions faites restent consultables ("N done") avec Reopen.
 
-const DUE_LABEL: Record<NonNullable<InsightAction["due"]>, string> = {
+export const DUE_LABEL: Record<NonNullable<InsightAction["due"]>, string> = {
   this_week: "This week",
   next_2_weeks: "Next 2 weeks",
   this_month: "This month",
@@ -120,7 +120,6 @@ export function NextActionsCard({
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {open.map((a, i) => {
-            const top = i === 0 && a.priority === "high";
             const why = a.why ?? a.rationale;
             return (
               <div
@@ -132,9 +131,9 @@ export function NextActionsCard({
                   gap: 12,
                   alignItems: "start",
                   padding: "11px 12px",
-                  border: `1px solid ${top ? "#f8cddb" : COLORS.line}`,
+                  border: `1px solid ${COLORS.line}`,
                   borderRadius: 10,
-                  background: top ? COLORS.brandTintSoft : COLORS.bgCard,
+                  background: COLORS.bgCard,
                 }}
               >
                 <span
@@ -146,7 +145,7 @@ export function NextActionsCard({
                     placeItems: "center",
                     fontWeight: 700,
                     fontSize: 13,
-                    background: top ? COLORS.brand : COLORS.ink0,
+                    background: COLORS.ink0,
                     color: "#fff",
                   }}
                 >

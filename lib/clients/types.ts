@@ -809,6 +809,11 @@ export type ClientRow = {
   am_cs_notified_at: string | null;
   billing: Billing | null;
   billing_refreshed_at: string | null;
+  // Prochaine facturation, saisie à la main (cf. migration clients_next_billing.sql).
+  // Absentes tant que la migration n'est pas appliquée.
+  next_billing_date?: string | null; // YYYY-MM-DD
+  next_billing_set_by?: string | null;
+  next_billing_set_at?: string | null;
   // Checklists colonne gauche (cf. migration clients_checklists.sql).
   hubspot_field_suggestions: HubspotFieldSuggestions | null;
   onboarding_checklist: OnboardingChecklist | null;

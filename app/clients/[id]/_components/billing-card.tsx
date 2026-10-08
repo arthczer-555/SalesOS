@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Loader2, Receipt, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { Billing, HubspotDealFields } from "@/lib/clients/types";
-import { Card, CardHeader, Eyebrow, Tag, daysUntil, fmtDay, fmtEur, parseLooseDate } from "./ui";
+import { Card, CardHeader, Eyebrow, Tag, contractEndTone, daysUntil, fmtDay, fmtEur, parseLooseDate } from "./ui";
 
 // Carte "Billing" de Key insights, à côté de la santé : CA de l'année (sheet
 // revenue, source de vérité), YoY, lifetime, barres par année, et le contrat
@@ -77,7 +77,7 @@ export function BillingCard({
         <>
           <dt style={{ color: COLORS.ink3 }}>{toEnd >= 0 ? "Renewal in" : "Contract ended"}</dt>
           <dd style={{ margin: 0, textAlign: "right" }}>
-            <Tag tone={toEnd < 0 ? "err" : toEnd <= 120 ? "warn" : "neutral"}>
+            <Tag tone={contractEndTone(toEnd) ?? "neutral"}>
               {toEnd >= 0 ? `${toEnd} days` : `${-toEnd} days ago`}
             </Tag>
           </dd>
@@ -161,7 +161,7 @@ export function BillingCard({
                     maxWidth: 34,
                     height: Math.max(4, Math.round((amount / max) * 42)),
                     borderRadius: "6px 6px 3px 3px",
-                    background: isCur ? COLORS.brand : COLORS.lineStrong,
+                    background: isCur ? COLORS.ink0 : COLORS.lineStrong,
                   }}
                 />
                 <span style={{ fontSize: 11, color: isCur ? COLORS.ink0 : COLORS.ink3, fontWeight: isCur ? 600 : 400, fontVariantNumeric: "tabular-nums" }}>

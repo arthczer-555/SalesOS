@@ -1,5 +1,37 @@
 import { hubspotFetch } from "@/lib/hubspot";
 import { HUBSPOT_CHECKLIST_FIELDS, type HubspotDealFields } from "./types";
+import type { DealContractInfo } from "./portfolio";
+
+type BatchReadResp = { results?: Array<{ id: string; properties?: Record<string, string | null> }> };
+
+// Vue portefeuille : montant et fin de contrat de plusieurs deals en un appel
+// batch (100 ids max par appel). Échec = { ok: false } avec le message, jamais
+// une map vide qui se lirait comme "aucune date".
+export async function fetchDealsContractInfo(
+  dealIds: string[],
+): Promise<{ ok: true; deals: Map<string, DealContractInfo> } | { ok: false; error: string }> {
+  const ids = [...new Set(dealIds.filter(Boolean))];
+  const deals = new Map<string, DealContractInfo>();
+  try {
+    for (let i = 0; i < ids.length; i += 100) {
+      const resp = await hubspotFetch<BatchReadResp>("/crm/v3/objects/deals/batch/read", "POST", {
+        properties: ["amount", "contract_end_date"],
+        inputs: ids.slice(i, i + 100).map((id) => ({ id })),
+      });
+      for (const r of resp.results ?? []) {
+        const p = r.properties ?? {};
+        const amount = p.amount == null || p.amount === "" ? null : Number(p.amount);
+        deals.set(r.id, {
+          amount: amount != null && Number.isFinite(amount) ? amount : null,
+          contractEnd: p.contract_end_date || null,
+        });
+      }
+    }
+    return { ok: true, deals };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 // Lit les valeurs courantes des champs de qualification surveilles
 // (HUBSPOT_CHECKLIST_FIELDS) sur un deal HubSpot. Best-effort : renvoie null si

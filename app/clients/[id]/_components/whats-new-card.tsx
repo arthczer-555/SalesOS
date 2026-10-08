@@ -6,12 +6,14 @@ import { COLORS, SHADOWS } from "@/lib/design/tokens";
 import type { AccountCompany, ClientFields, Insights, News, RefreshReport, RefreshSourceStat } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { SourceLabel } from "./next-actions-card";
-import { Card, CardHeader, Eyebrow, Tag, fmtDay } from "./ui";
+import { Card, CardHeader, Eyebrow, Tag, fmtDay, type Collapse } from "./ui";
 
-// "What's new" : ce qui a changé récemment, toutes sources confondues (faits
-// clés tirés par l'IA, meetings Claap ajoutés tout seuls, news importantes).
-//  - variant "compact" (Key insights) : 3 lignes max, une ligne chacune ;
-//  - variant "full" (Knowledge > Recent activity) : tout, avec la source.
+// "What's new" : ce qui a changé récemment (faits clés tirés par l'IA,
+// meetings Claap ajoutés tout seuls, news importantes).
+//  - variant "compact" (Key insights) : 3 lignes max, une ligne chacune, news
+//    comprises ;
+//  - variant "full" (Knowledge > Recent activity) : tout, avec la source, mais
+//    seulement l'activité interne (les news ont leur carte Company news).
 // Le détail du dernier refresh (compteurs par source, champs modifiés + Undo)
 // vit dans RefreshReportModal, ouvert depuis le petit lien du header.
 
@@ -69,9 +71,11 @@ function buildFeed(
   report: RefreshReport | null,
   news: News | null,
   decline: { busy: string | null; decline: (id: string, title: string | null) => Promise<void> },
+  includeNews: boolean,
 ): FeedItem[] {
   const feed: FeedItem[] = [];
   for (const [i, h] of (insights?.highlights ?? []).entries()) {
+    if (!includeNews && h.source?.kind === "news") continue;
     feed.push({ key: `h${i}`, date: h.date ?? h.source?.date ?? null, source: <SourceLabel source={h.source ? { ...h.source, date: null } : null} />, text: h.text, title: h.text });
   }
   if (!insights?.highlights?.length) {
@@ -100,7 +104,7 @@ function buildFeed(
     });
   }
   const sinceLast = report?.refreshed_at ? new Date(report.refreshed_at).getTime() - 10 * 60_000 : null;
-  for (const n of news?.items ?? []) {
+  for (const n of includeNews ? (news?.items ?? []) : []) {
     if (n.importance !== "high" || !n.first_seen_at || sinceLast === null) continue;
     if (new Date(n.first_seen_at).getTime() < sinceLast) continue;
     feed.push({
@@ -129,6 +133,7 @@ export function WhatsNewCard({
   variant,
   onSeeAll,
   id,
+  collapse,
 }: {
   insights: Insights | null;
   report: RefreshReport | null;
@@ -138,10 +143,13 @@ export function WhatsNewCard({
   variant: "compact" | "full";
   onSeeAll?: () => void;
   id?: string;
+  collapse?: Collapse;
 }) {
   const decline = useDeclineMeeting(clientId, onUpdated);
-  const feed = buildFeed(insights, report, news, decline);
   const compact = variant === "compact";
+  // Les news importantes restent dans What's new (Key insights) ; Recent
+  // activity (Knowledge) ne garde que l'interne, les news ont leur carte.
+  const feed = buildFeed(insights, report, news, decline, compact);
   const shown = compact ? feed.slice(0, 3) : feed;
 
   return (
@@ -151,15 +159,17 @@ export function WhatsNewCard({
         title={compact ? "What's new" : "Recent activity"}
         meta={report?.refreshed_at ? `Since ${fmtDay(report.refreshed_at)}` : undefined}
         right={
+          // Sans compteur : Recent activity n'a pas les news, le total différerait.
           compact && feed.length > shown.length && onSeeAll ? (
             <button type="button" className="ch-link" style={{ fontSize: 12 }} onClick={onSeeAll}>
-              See all {feed.length}
+              See all activity
             </button>
           ) : undefined
         }
         style={compact ? { marginBottom: 10 } : undefined}
+        collapse={collapse}
       />
-      {shown.length === 0 ? (
+      {collapse && !collapse.open ? null : shown.length === 0 ? (
         <div style={{ fontSize: 13, color: COLORS.ink3 }}>Nothing new yet. The weekly refresh fills this every Monday.</div>
       ) : compact ? (
         <div style={{ display: "flex", flexDirection: "column" }}>

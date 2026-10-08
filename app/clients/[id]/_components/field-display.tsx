@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Pencil, Check, X, AlertTriangle } from "lucide-react";
+import { Pencil, Check, X, AlertTriangle, ChevronDown } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { ClientFieldSource, ClientFieldValue, FieldDefinition } from "@/lib/clients/types";
 
@@ -73,6 +73,95 @@ function RecommendedMissing() {
   );
 }
 
+// ── Valeur clé visible, détail au clic ───────────────────────────────────
+// Retour CSM : la fiche est dense, on montre la valeur clé (Yes/No, SSO…) et
+// le détail se déplie à la demande.
+
+export function DetailsToggle({ open, onToggle, label = "Details", tone }: { open: boolean; onToggle: () => void; label?: string; tone?: "warn" }) {
+  return (
+    <button
+      type="button"
+      className="ch-link"
+      onClick={(e) => {
+        e.stopPropagation();
+        onToggle();
+      }}
+      onDoubleClick={(e) => e.stopPropagation()}
+      aria-expanded={open}
+      style={{ display: "inline-flex", alignItems: "center", gap: 2, fontSize: 12, fontWeight: 500, textDecoration: "none", color: tone === "warn" ? COLORS.warn : COLORS.ink2 }}
+    >
+      {open ? "Hide" : label}
+      <ChevronDown size={12} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+    </button>
+  );
+}
+
+function BoolWithDetails({ value }: { value: { enabled: boolean; details?: string } }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ fontSize: 13, color: COLORS.ink0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+        <span
+          style={{
+            display: "inline-block",
+            padding: "1px 8px",
+            borderRadius: 999,
+            fontWeight: 600,
+            fontSize: 11,
+            background: value.enabled ? COLORS.okBg : COLORS.bgSoft,
+            color: value.enabled ? COLORS.ok : COLORS.ink3,
+          }}
+        >
+          {value.enabled ? "Yes" : "No"}
+        </span>
+        {value.details && <DetailsToggle open={open} onToggle={() => setOpen((o) => !o)} />}
+      </div>
+      {open && value.details && <div style={{ marginTop: 6, color: COLORS.ink1, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>{value.details}</div>}
+    </div>
+  );
+}
+
+// Texte long coupé à 2 lignes, "Show more" seulement s'il déborde vraiment.
+function ClampedText({ text }: { text: string }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && !open) setOverflows(el.scrollHeight > el.clientHeight + 1);
+  }, [text, open]);
+  return (
+    <div>
+      <span
+        ref={ref}
+        style={{
+          fontSize: 13,
+          color: COLORS.ink0,
+          whiteSpace: "pre-wrap",
+          lineHeight: 1.5,
+          ...(open ? { display: "block" } : { display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }),
+        }}
+      >
+        {text}
+      </span>
+      {(overflows || open) && (
+        <button
+          type="button"
+          className="ch-link"
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((o) => !o);
+          }}
+          onDoubleClick={(e) => e.stopPropagation()}
+          style={{ fontSize: 12, fontWeight: 500, color: COLORS.ink2, marginTop: 2 }}
+        >
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── Read-only rendering ──────────────────────────────────────────────────
 
 function renderValue(value: unknown, definition: FieldDefinition): React.ReactNode {
@@ -83,8 +172,9 @@ function renderValue(value: unknown, definition: FieldDefinition): React.ReactNo
 
   switch (kind) {
     case "text":
-    case "long_text":
       return <span style={{ fontSize: 13, color: COLORS.ink0, whiteSpace: "pre-wrap" }}>{String(value)}</span>;
+    case "long_text":
+      return <ClampedText text={String(value)} />;
     case "number":
       return <span style={{ fontSize: 13, color: COLORS.ink0, fontVariantNumeric: "tabular-nums" }}>{String(value)}</span>;
     case "date": {
@@ -202,27 +292,8 @@ function renderValue(value: unknown, definition: FieldDefinition): React.ReactNo
         </div>
       );
     }
-    case "bool_with_details": {
-      const b = value as { enabled: boolean; details?: string };
-      return (
-        <div style={{ fontSize: 13, color: COLORS.ink0 }}>
-          <span
-            style={{
-              display: "inline-block",
-              padding: "1px 8px",
-              borderRadius: 999,
-              fontWeight: 600,
-              fontSize: 11,
-              background: b.enabled ? COLORS.okBg : COLORS.bgSoft,
-              color: b.enabled ? COLORS.ok : COLORS.ink3,
-            }}
-          >
-            {b.enabled ? "Yes" : "No"}
-          </span>
-          {b.details && <span style={{ marginLeft: 8, color: COLORS.ink1 }}>{b.details}</span>}
-        </div>
-      );
-    }
+    case "bool_with_details":
+      return <BoolWithDetails value={value as { enabled: boolean; details?: string }} />;
     default:
       return <span style={{ fontSize: 13, color: COLORS.ink0 }}>{JSON.stringify(value)}</span>;
   }
@@ -622,12 +693,16 @@ export function FieldDisplay({
   clientId,
   sectionKey,
   onUpdated,
+  details,
 }: {
   definition: FieldDefinition;
   field: ClientFieldValue | undefined;
   clientId?: string;
   sectionKey?: string;
   onUpdated?: () => void;
+  // Champ de détail rangé sous celui-ci (Knowledge, ex. le fournisseur SSO sous
+  // Access) : "Details" / "Add details" déplie sa ligne, éditable, juste dessous.
+  details?: { node: React.ReactNode; hasValue: boolean };
 }) {
   const value = field?.value;
   const confidence = field?.confidence ?? 0;
@@ -636,6 +711,7 @@ export function FieldDisplay({
 
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const canEdit = !!clientId && !!sectionKey && EDITABLE_KINDS.has(definition.kind);
   // `required` ne bloque plus rien : c'est juste un champ clé qu'on surligne en
   // jaune tant qu'il est vide (cf. handover). `recommended` = indice discret.
@@ -662,77 +738,95 @@ export function FieldDisplay({
     }
   }
 
+  const display = isMissingHighlighted ? (
+    <HighlightedMissing />
+  ) : isMissingRecommended ? (
+    <RecommendedMissing />
+  ) : (
+    renderValue(value, definition)
+  );
+
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "minmax(110px, 180px) minmax(0, 1fr) auto",
-        gap: 14,
-        padding: "9px 12px",
-        margin: "0 -12px",
-        borderBottom: `1px solid ${COLORS.line}`,
-        borderLeft: isMissingHighlighted && !editing ? `3px solid ${COLORS.warn}` : "3px solid transparent",
-        background: isMissingHighlighted && !editing ? COLORS.warnBg : undefined,
-        borderRadius: isMissingHighlighted && !editing ? 6 : 0,
-        alignItems: "flex-start",
-      }}
-      onDoubleClick={() => {
-        if (canEdit && !editing) setEditing(true);
-      }}
-    >
-      <div style={{ fontSize: 12, color: COLORS.ink3, fontWeight: 500, paddingTop: 2 }}>
-        {definition.label}
+    <>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(110px, 180px) minmax(0, 1fr) auto",
+          gap: 14,
+          padding: "9px 12px",
+          margin: "0 -12px",
+          borderBottom: `1px solid ${COLORS.line}`,
+          borderLeft: isMissingHighlighted && !editing ? `3px solid ${COLORS.warn}` : "3px solid transparent",
+          background: isMissingHighlighted && !editing ? COLORS.warnBg : undefined,
+          borderRadius: isMissingHighlighted && !editing ? 6 : 0,
+          alignItems: "flex-start",
+        }}
+        onDoubleClick={() => {
+          if (canEdit && !editing) setEditing(true);
+        }}
+      >
+        <div style={{ fontSize: 12, color: COLORS.ink3, fontWeight: 500, paddingTop: 2 }}>
+          {definition.label}
+        </div>
+        <div style={{ minWidth: 0 }}>
+          {editing ? (
+            <FieldEditor
+              definition={definition}
+              initial={value}
+              onSave={save}
+              onCancel={() => {
+                setEditing(false);
+                setError(null);
+              }}
+            />
+          ) : details ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              {display}
+              <DetailsToggle
+                open={detailsOpen}
+                onToggle={() => setDetailsOpen((o) => !o)}
+                label={details.hasValue ? "Details" : "Add details"}
+              />
+            </div>
+          ) : (
+            display
+          )}
+          {error && (
+            <div style={{ fontSize: 11, color: COLORS.err, marginTop: 4 }}>{error}</div>
+          )}
+        </div>
+        <div style={{ paddingTop: 3, display: "flex", alignItems: "center", gap: 8 }}>
+          {hasValue && !editing ? <ConfidenceDot confidence={confidence} source={source} /> : null}
+          {canEdit && !editing && (
+            <button
+              type="button"
+              onClick={() => setEditing(true)}
+              title="Edit (or double-click the row)"
+              style={{
+                background: "none",
+                border: "none",
+                padding: 2,
+                cursor: "pointer",
+                color: COLORS.ink4,
+                opacity: 0.6,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.opacity = "1";
+                e.currentTarget.style.color = COLORS.brand;
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.opacity = "0.6";
+                e.currentTarget.style.color = COLORS.ink4;
+              }}
+            >
+              <Pencil size={11} />
+            </button>
+          )}
+        </div>
       </div>
-      <div style={{ minWidth: 0 }}>
-        {editing ? (
-          <FieldEditor
-            definition={definition}
-            initial={value}
-            onSave={save}
-            onCancel={() => {
-              setEditing(false);
-              setError(null);
-            }}
-          />
-        ) : isMissingHighlighted ? (
-          <HighlightedMissing />
-        ) : isMissingRecommended ? (
-          <RecommendedMissing />
-        ) : (
-          renderValue(value, definition)
-        )}
-        {error && (
-          <div style={{ fontSize: 11, color: COLORS.err, marginTop: 4 }}>{error}</div>
-        )}
-      </div>
-      <div style={{ paddingTop: 3, display: "flex", alignItems: "center", gap: 8 }}>
-        {hasValue && !editing ? <ConfidenceDot confidence={confidence} source={source} /> : null}
-        {canEdit && !editing && (
-          <button
-            type="button"
-            onClick={() => setEditing(true)}
-            title="Edit (or double-click the row)"
-            style={{
-              background: "none",
-              border: "none",
-              padding: 2,
-              cursor: "pointer",
-              color: COLORS.ink4,
-              opacity: 0.6,
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.opacity = "1";
-              e.currentTarget.style.color = COLORS.brand;
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.opacity = "0.6";
-              e.currentTarget.style.color = COLORS.ink4;
-            }}
-          >
-            <Pencil size={11} />
-          </button>
-        )}
-      </div>
-    </div>
+      {details && detailsOpen && (
+        <div style={{ padding: "0 12px 0 28px", margin: "0 -12px", background: COLORS.bgSoft }}>{details.node}</div>
+      )}
+    </>
   );
 }
