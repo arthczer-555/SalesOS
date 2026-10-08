@@ -21,7 +21,8 @@ import { daysUntil } from "./[id]/_components/ui";
 //    portefeuille, les infos clés de chaque compte côte à côte pour prioriser
 //    (tri par défaut : santé croissante) et faire les points AM/CSM (filtres AM
 //    et CSM cumulables). Seule celle-ci lit HubSpot en live.
-// Dans les deux : colonne Tier modifiable en place et filtre par tier.
+// Dans les deux : colonne Tier modifiable en place, filtre par tier et tri en
+// cliquant sur l'en-tête des colonnes.
 
 // Le fetcher SWR doit throw sur non-2xx, sinon le body d'erreur devient
 // `data` et l'UI affiche "Aucun client" alors qu'on a une 500. Voir mémoire
@@ -137,6 +138,8 @@ export default function ClientsPage() {
   const [csFilter, setCsFilter] = useState("");
   const [tierFilter, setTierFilter] = useState("");
   const [quick, setQuick] = useState<QuickFilter | null>(null);
+  // Un tri par vue (colonnes différentes). Vue simple : signature la plus récente d'abord.
+  const [simpleSort, setSimpleSort] = useState<PortfolioSort>({ key: "signed", dir: "desc" });
   const [sort, setSort] = useState<PortfolioSort>({ key: "health", dir: "asc" });
   const [backfillOpen, setBackfillOpen] = useState(false);
 
@@ -194,6 +197,7 @@ export default function ClientsPage() {
   }, [scoped, hubspot]);
 
   const rows = useMemo(() => sortPortfolio(quick ? groups[quick] : scoped, sort), [quick, groups, scoped, sort]);
+  const simpleRows = useMemo(() => sortPortfolio(scoped, simpleSort), [scoped, simpleSort]);
 
   // Facturé all time (sheet revenue), dans les deux vues : pas de montant HubSpot.
   const billed = billedSummary(scoped);
@@ -383,7 +387,7 @@ export default function ClientsPage() {
           ) : errorMessage ? (
             <div style={{ color: COLORS.err, fontSize: 13 }}>{errorMessage}</div>
           ) : (
-            <ClientsTable clients={scoped} onTierSaved={onTierSaved} />
+            <ClientsTable clients={simpleRows} sort={simpleSort} onSortChange={setSimpleSort} onTierSaved={onTierSaved} />
           )
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>

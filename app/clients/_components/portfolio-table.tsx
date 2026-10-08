@@ -53,21 +53,56 @@ function relDays(days: number): string {
   return days > 0 ? `in ${days}d` : `${-days}d ago`;
 }
 
-// Valeurs de tri : null toujours en bas, quel que soit le sens.
+// Statut du handover dans l'ordre du cycle de vie, l'erreur en tête (bloquante).
+function statusOrder(c: ClientPortfolioItem): number {
+  switch (c.enrichment_status) {
+    case "error":
+      return 0;
+    case "pending":
+      return 1;
+    case "awaiting_meetings":
+      return 2;
+    case "running":
+      return 3;
+    case "done":
+      return c.am_cs_notified_at ? 5 : 4;
+  }
+}
+
+// Échéance de la prochaine action, la plus urgente d'abord ; sans échéance ensuite.
+const DUE_ORDER: Record<keyof typeof DUE_LABEL, number> = { this_week: 0, next_2_weeks: 1, this_month: 2 };
+
+function personKey(name: string | null, email: string | null): string | null {
+  return (name || email)?.toLowerCase() ?? null;
+}
+
+// Valeurs de tri des deux vues de /clients (clés = colonnes) : null toujours
+// en bas, quel que soit le sens.
 function sortValue(c: ClientPortfolioItem, key: string): number | string | null {
   switch (key) {
     case "account":
       return c.company_name.toLowerCase();
     case "tier":
       return c.tier;
+    case "owner":
+      return personKey(c.owner_name, c.owner_email);
+    case "signed":
+      return c.closedwon_at;
+    case "status":
+      return statusOrder(c);
     case "health":
       return c.health?.score ?? null;
     case "phase":
       return c.health?.phase ? PHASE[c.health.phase.key].order : null;
     case "billed":
       return c.billed_lifetime;
+    case "next_step":
+      return c.next_action ? (c.next_action.due ? DUE_ORDER[c.next_action.due] : 3) : null;
     case "contract_end":
       return c.contract_end?.date ?? null;
+    case "team":
+      // Trié sur l'AM (première ligne de la cellule).
+      return personKey(c.am_name, c.am_email);
     default:
       return null;
   }
@@ -151,6 +186,7 @@ export function PortfolioTable({
       key: "account",
       header: "Account",
       sortable: true,
+      sortFirstDir: "asc",
       render: (c) => (
         <div style={{ minWidth: 0 }}>
           <Link
@@ -170,6 +206,7 @@ export function PortfolioTable({
       key: "tier",
       header: "Tier",
       sortable: true,
+      sortFirstDir: "asc",
       width: 96,
       render: (c) => <TierSelect clientId={c.id} tier={c.tier} onSaved={(tier) => onTierSaved(c.id, tier)} />,
     },
@@ -177,6 +214,7 @@ export function PortfolioTable({
       key: "phase",
       header: "Phase",
       sortable: true,
+      sortFirstDir: "asc",
       width: 110,
       render: (c) => {
         const phase = c.health?.phase ? PHASE[c.health.phase.key] : null;
@@ -193,6 +231,7 @@ export function PortfolioTable({
       key: "health",
       header: "Health",
       sortable: true,
+      sortFirstDir: "asc",
       width: 200,
       render: (c) => (
         <div>
@@ -231,6 +270,8 @@ export function PortfolioTable({
     {
       key: "next_step",
       header: "Next step",
+      sortable: true,
+      sortFirstDir: "asc",
       render: (c) =>
         c.next_action ? (
           <div style={{ minWidth: 200 }}>
@@ -262,12 +303,15 @@ export function PortfolioTable({
       key: "contract_end",
       header: "Contract end",
       sortable: hubspot === "ok",
+      sortFirstDir: "asc",
       width: 130,
       render: (c) => <ContractEndCell client={c} hubspot={hubspot} />,
     },
     {
       key: "team",
       header: "Team",
+      sortable: true,
+      sortFirstDir: "asc",
       width: 150,
       render: (c) => (
         <div style={{ maxWidth: 150 }}>

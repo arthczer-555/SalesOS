@@ -4,17 +4,30 @@ import Link from "next/link";
 import { COLORS } from "@/lib/design/tokens";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { PersonAvatar } from "@/components/ui/person-avatar";
+import { SortButton, type SortDir } from "@/components/ui/data-table";
 import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
 import type { ClientTier } from "@/lib/clients/tier";
 import { HealthBadge } from "./health-badge";
 import { TierSelect } from "./tier-select";
+import type { PortfolioSort } from "./portfolio-table";
 
 // Vue par défaut de /clients : la liste simple des comptes (signature,
 // facturé all time, santé, statut du handover). Pas de montant HubSpot : le
 // facturé du sheet revenue fait foi. La vue avancée (portfolio-table.tsx)
-// s'active avec le toggle "Advanced view".
+// s'active avec le toggle "Advanced view". Toutes les colonnes sont triables
+// (clés et valeurs de tri communes : sortPortfolio).
 
 const GRID = "minmax(220px, 2fr) 96px minmax(150px, 1fr) 130px 120px 140px 160px";
+
+const HEADERS: { key: string; label: string; firstDir: SortDir; right?: boolean }[] = [
+  { key: "account", label: "Account", firstDir: "asc" },
+  { key: "tier", label: "Tier", firstDir: "asc" },
+  { key: "owner", label: "Owner", firstDir: "asc" },
+  { key: "billed", label: "Billed all time", firstDir: "desc", right: true },
+  { key: "signed", label: "Signed on", firstDir: "desc" },
+  { key: "health", label: "Health", firstDir: "asc" },
+  { key: "status", label: "Status", firstDir: "asc" },
+];
 
 function fmtAmount(n: number | null): string {
   if (n == null) return "-";
@@ -70,9 +83,13 @@ function StatusPill({
 
 export function ClientsTable({
   clients,
+  sort,
+  onSortChange,
   onTierSaved,
 }: {
   clients: ClientPortfolioItem[];
+  sort: PortfolioSort;
+  onSortChange: (s: PortfolioSort) => void;
   onTierSaved: (clientId: string, tier: ClientTier | null) => void;
 }) {
   if (clients.length === 0) {
@@ -123,13 +140,13 @@ export function ClientsTable({
           letterSpacing: 0.4,
         }}
       >
-        <div>Account</div>
-        <div>Tier</div>
-        <div>Owner</div>
-        <div style={{ textAlign: "right" }}>Billed all time</div>
-        <div>Signed on</div>
-        <div>Health</div>
-        <div>Status</div>
+        {HEADERS.map((h) => (
+          <div key={h.key} style={h.right ? { textAlign: "right" } : undefined}>
+            <SortButton sortKey={h.key} sort={sort} onSortChange={onSortChange} firstDir={h.firstDir}>
+              {h.label}
+            </SortButton>
+          </div>
+        ))}
       </div>
       {clients.map((c) => (
         <Link

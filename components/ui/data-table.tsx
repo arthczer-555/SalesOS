@@ -15,8 +15,39 @@ export type Column<T> = {
   width?: number | string;
   align?: "left" | "right" | "center";
   sortable?: boolean;
+  // Sens du premier clic (desc par défaut) : asc pour un nom, une échéance…
+  sortFirstDir?: SortDir;
   render: (row: T, index: number) => React.ReactNode;
 };
+
+// En-tête triable, aussi utilisé hors DataTable (tableaux en grille) : premier
+// clic dans le sens de la colonne, les suivants inversent.
+export function SortButton({
+  sortKey,
+  sort,
+  onSortChange,
+  firstDir = "desc",
+  children,
+}: {
+  sortKey: string;
+  sort?: { key: string; dir: SortDir } | null;
+  onSortChange: (s: { key: string; dir: SortDir }) => void;
+  firstDir?: SortDir;
+  children: React.ReactNode;
+}) {
+  const active = sort?.key === sortKey;
+  return (
+    <button
+      type="button"
+      className="ds-th-sort"
+      onClick={() => onSortChange({ key: sortKey, dir: active ? (sort?.dir === "desc" ? "asc" : "desc") : firstDir })}
+      style={active ? { color: COLORS.ink0 } : undefined}
+    >
+      {children}
+      {active ? sort?.dir === "desc" ? <ArrowDown size={11} /> : <ArrowUp size={11} /> : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
+    </button>
+  );
+}
 
 // Tableau générique : tri, sélection (shift-clic pour une plage), ligne active,
 // en-tête collant, états chargement / erreur / vide explicites.
@@ -101,26 +132,17 @@ export function DataTable<T>({
                 />
               </th>
             ) : null}
-            {columns.map((c) => {
-              const active = sort?.key === c.key;
-              return (
-                <th key={c.key} style={{ width: c.width, textAlign: c.align ?? "left" }}>
-                  {c.sortable && onSortChange ? (
-                    <button
-                      type="button"
-                      className="ds-th-sort"
-                      onClick={() => onSortChange({ key: c.key, dir: active && sort?.dir === "desc" ? "asc" : "desc" })}
-                      style={active ? { color: COLORS.ink0 } : undefined}
-                    >
-                      {c.header}
-                      {active ? sort?.dir === "desc" ? <ArrowDown size={11} /> : <ArrowUp size={11} /> : <ArrowUpDown size={11} style={{ opacity: 0.4 }} />}
-                    </button>
-                  ) : (
-                    c.header
-                  )}
-                </th>
-              );
-            })}
+            {columns.map((c) => (
+              <th key={c.key} style={{ width: c.width, textAlign: c.align ?? "left" }}>
+                {c.sortable && onSortChange ? (
+                  <SortButton sortKey={c.key} sort={sort} onSortChange={onSortChange} firstDir={c.sortFirstDir}>
+                    {c.header}
+                  </SortButton>
+                ) : (
+                  c.header
+                )}
+              </th>
+            ))}
           </tr>
         </thead>
         <tbody>
