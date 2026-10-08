@@ -2,21 +2,19 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { ArrowDownRight, ArrowUpRight, Check, Loader2, Pencil, X } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { DataTable, type Column, type SortDir } from "@/components/ui/data-table";
-import { useToast } from "@/components/ui/toast";
 import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
 import { HealthBadge } from "./health-badge";
-import { saveNextBilling } from "./next-billing-api";
-import { Tag, contractEndTone, daysUntil, fmtDay, fmtEur, nextBillingToneOf, parseLooseDate } from "../[id]/_components/ui";
+import { Tag, contractEndTone, daysUntil, fmtDay, fmtEur, parseLooseDate } from "../[id]/_components/ui";
 import { DUE_LABEL } from "../[id]/_components/next-actions-card";
 
 // Tableau de la vue avancée (/clients, toggle "Advanced view") : une ligne par fiche, les infos
 // clés de Key insights pour comparer les comptes et prioriser. Couleurs
 // neutres par défaut ; orange/rouge réservés à la santé, la fin de contrat
-// proche, la facturation en retard et les infos manquantes.
+// proche et les infos manquantes. Next billing (saisie manuelle) n'est plus
+// une colonne : il reste dans Key dates sur la fiche.
 
 export type HubspotState = "loading" | "ok" | "error";
 export type PortfolioSort = { key: string; dir: SortDir };
@@ -54,8 +52,6 @@ function sortValue(c: ClientPortfolioItem, key: string): number | string | null 
       return c.health?.score ?? null;
     case "contract":
       return c.contract_value;
-    case "next_billing":
-      return c.next_billing_date;
     case "contract_end":
       return parseLooseDate(c.contract_end_date);
     default:
@@ -75,108 +71,6 @@ export function sortPortfolio(rows: ClientPortfolioItem[], sort: PortfolioSort):
     if (va > vb) return factor;
     return a.company_name.localeCompare(b.company_name);
   });
-}
-
-function NextBillingCell({
-  client,
-  editable,
-  onSaved,
-}: {
-  client: ClientPortfolioItem;
-  editable: boolean;
-  onSaved: () => void;
-}) {
-  const { toast } = useToast();
-  const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(client.next_billing_date ?? "");
-  const [saving, setSaving] = useState(false);
-
-  async function commit() {
-    setSaving(true);
-    try {
-      await saveNextBilling(client.id, val || null);
-      toast(val ? `Next billing set for ${client.company_name}` : `Next billing cleared for ${client.company_name}`, "success");
-      setEditing(false);
-      onSaved();
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "Could not save", "error");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (editing) {
-    return (
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }} onClick={(e) => e.stopPropagation()}>
-        <input
-          type="date"
-          autoFocus
-          value={val}
-          disabled={saving}
-          onChange={(e) => setVal(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") void commit();
-            if (e.key === "Escape") setEditing(false);
-          }}
-          aria-label={`Next billing date for ${client.company_name}`}
-          style={{ fontSize: 12, padding: "3px 6px", borderRadius: 6, border: `1px solid ${COLORS.lineStrong}`, width: 118, fontFamily: "inherit" }}
-        />
-        <button type="button" className="ch-btn ch-btn-sm ch-btn-primary" style={{ padding: "3px 6px" }} disabled={saving} onClick={() => void commit()} aria-label="Save">
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-        </button>
-        <button type="button" className="ch-btn ch-btn-sm ch-btn-ghost" style={{ padding: "3px 4px" }} disabled={saving} onClick={() => setEditing(false)} aria-label="Cancel">
-          <X size={12} />
-        </button>
-      </div>
-    );
-  }
-
-  const days = daysUntil(client.next_billing_date);
-  const tone = nextBillingToneOf(days);
-  const startEdit = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setVal(client.next_billing_date ?? "");
-    setEditing(true);
-  };
-
-  if (!client.next_billing_date) {
-    return editable ? (
-      <button
-        type="button"
-        onClick={startEdit}
-        title="Set the next billing date"
-        style={{ background: "none", border: 0, padding: 0, cursor: "pointer", color: COLORS.warn, fontSize: 12, fontWeight: 500, display: "inline-flex", alignItems: "center", gap: 4, fontFamily: "inherit" }}
-      >
-        Not set <Pencil size={11} style={{ opacity: 0.6 }} />
-      </button>
-    ) : (
-      <span style={{ fontSize: 12, color: COLORS.ink4 }} title="Database update pending (migration clients_next_billing.sql)">
-        -
-      </span>
-    );
-  }
-
-  return (
-    <button
-      type="button"
-      onClick={editable ? startEdit : (e) => e.stopPropagation()}
-      title={client.next_billing_set_by ? `Set by ${client.next_billing_set_by}. Click to edit.` : "Click to edit"}
-      style={{ background: "none", border: 0, padding: 0, cursor: editable ? "pointer" : "default", textAlign: "left", fontFamily: "inherit" }}
-    >
-      <div style={{ fontSize: 12.5, color: tone === "err" ? COLORS.err : COLORS.ink0, fontWeight: 500, fontVariantNumeric: "tabular-nums" }}>
-        {fmtDay(client.next_billing_date, true)}
-      </div>
-      {days !== null && (
-        <div style={{ marginTop: 2 }}>
-          {tone ? (
-            <Tag tone={tone}>{days < 0 ? `${-days}d overdue` : relDays(days)}</Tag>
-          ) : (
-            <span style={{ fontSize: 11, color: COLORS.ink3 }}>{relDays(days)}</span>
-          )}
-        </div>
-      )}
-    </button>
-  );
 }
 
 function ContractEndCell({ client, hubspot }: { client: ClientPortfolioItem; hubspot: HubspotState }) {
@@ -222,8 +116,6 @@ export function PortfolioTable({
   sort,
   onSortChange,
   hubspot,
-  nextBillingEditable,
-  onUpdated,
 }: {
   clients: ClientPortfolioItem[];
   loading: boolean;
@@ -232,11 +124,8 @@ export function PortfolioTable({
   sort: PortfolioSort;
   onSortChange: (s: PortfolioSort) => void;
   hubspot: HubspotState;
-  nextBillingEditable: boolean;
-  onUpdated: () => void;
 }) {
   const router = useRouter();
-  const year = new Date().getFullYear();
 
   const columns: Column<ClientPortfolioItem>[] = [
     {
@@ -283,7 +172,7 @@ export function PortfolioTable({
       key: "contract",
       header: "Contract",
       sortable: true,
-      width: 130,
+      width: 150,
       render: (c) => (
         <div>
           <div
@@ -292,8 +181,11 @@ export function PortfolioTable({
           >
             {fmtEur(c.contract_value)}
           </div>
-          <div style={{ fontSize: 11, marginTop: 2, color: c.billing_matched ? COLORS.ink3 : COLORS.warn, whiteSpace: "nowrap" }}>
-            {c.billing_matched ? `Billed ${year}: ${fmtEur(c.billed_current_year)}` : "Not in revenue sheet"}
+          <div
+            style={{ fontSize: 11, marginTop: 2, color: c.billing_matched ? COLORS.ink3 : COLORS.warn, whiteSpace: "nowrap" }}
+            title={c.billing_matched ? "Billed since the start (lifetime), from the revenue sheet" : undefined}
+          >
+            {c.billing_matched ? `Billed all time: ${fmtEur(c.billed_lifetime)}` : "Not in revenue sheet"}
           </div>
         </div>
       ),
@@ -327,13 +219,6 @@ export function PortfolioTable({
         ) : (
           <span style={{ fontSize: 12, color: COLORS.ink4 }}>{c.enrichment_status === "done" ? "No open action" : "Not analysed yet"}</span>
         ),
-    },
-    {
-      key: "next_billing",
-      header: "Next billing",
-      sortable: true,
-      width: 150,
-      render: (c) => <NextBillingCell client={c} editable={nextBillingEditable} onSaved={onUpdated} />,
     },
     {
       key: "contract_end",

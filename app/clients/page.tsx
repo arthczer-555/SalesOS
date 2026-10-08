@@ -37,10 +37,9 @@ type ListResponse = {
   clients: ClientPortfolioItem[];
   hubspotLoaded: boolean;
   hubspotError: string | null;
-  nextBillingAvailable: boolean;
 };
 
-type QuickFilter = "at_risk" | "attention" | "renewal" | "billing" | "unassigned";
+type QuickFilter = "at_risk" | "attention" | "renewal" | "unassigned";
 
 // Choix de vue mémorisé dans localStorage (confort par utilisateur), lu via
 // useSyncExternalStore : le rendu serveur reste en vue simple sans erreur
@@ -76,7 +75,6 @@ function subscribeAdvancedView(listener: () => void) {
 }
 const UNASSIGNED = "__unassigned";
 const RENEWAL_WINDOW_DAYS = 120;
-const BILLING_WINDOW_DAYS = 30;
 
 function fmtK(n: number): string {
   return `${(n / 1000).toFixed(n >= 10_000 || n === 0 ? 0 : 1)}k€`;
@@ -148,12 +146,8 @@ export default function ClientsPage() {
             return d !== null && d <= RENEWAL_WINDOW_DAYS;
           })
         : [];
-    const billing = scoped.filter((c) => {
-      const d = daysUntil(c.next_billing_date);
-      return d !== null && d <= BILLING_WINDOW_DAYS;
-    });
     const unassigned = scoped.filter((c) => !c.am_email || !c.cs_email);
-    return { at_risk: atRisk, attention, renewal, billing, unassigned };
+    return { at_risk: atRisk, attention, renewal, unassigned };
   }, [scoped, hubspot]);
 
   const rows = useMemo(() => sortPortfolio(quick ? groups[quick] : scoped, sort), [quick, groups, scoped, sort]);
@@ -291,7 +285,7 @@ export default function ClientsPage() {
 
         <label
           style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 500, color: COLORS.ink1, cursor: "pointer" }}
-          title="Compare accounts side by side: health, contract, next step, billing, renewal"
+          title="Compare accounts side by side: health, contract, next step, contract end"
         >
           <Switch checked={advanced} onChange={writeAdvancedView} />
           Advanced view
@@ -377,13 +371,6 @@ export default function ClientsPage() {
                 title={hubspot === "ok" ? "Contract ends within 120 days (or already ended)" : "Contract end dates unavailable (HubSpot not read)"}
               />
               <StatPill
-                label={`Billing ≤ ${BILLING_WINDOW_DAYS}d`}
-                value={alert(groups.billing.length, COLORS.warn)}
-                onClick={() => toggleQuick("billing")}
-                active={quick === "billing"}
-                title="Next billing date within 30 days or overdue"
-              />
-              <StatPill
                 label="No AM / CS"
                 value={alert(groups.unassigned.length, COLORS.warn)}
                 onClick={() => toggleQuick("unassigned")}
@@ -397,11 +384,6 @@ export default function ClientsPage() {
                 Contract end dates are unavailable and amounts are those at signature. {data.hubspotError}
               </Banner>
             )}
-            {data && !data.nextBillingAvailable && (
-              <Banner tone="info">
-                Next billing dates need a database update (migration clients_next_billing.sql) before they can be saved.
-              </Banner>
-            )}
 
             <PortfolioTable
               clients={rows}
@@ -411,8 +393,6 @@ export default function ClientsPage() {
               sort={sort}
               onSortChange={setSort}
               hubspot={hubspot}
-              nextBillingEditable={data?.nextBillingAvailable ?? false}
-              onUpdated={() => void mutate()}
             />
           </div>
         )}
