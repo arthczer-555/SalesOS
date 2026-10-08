@@ -69,7 +69,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .eq("status", "done")
     .order("meeting_started_at", { ascending: false, nullsFirst: false });
 
-  const safeMeetings = (meetings as MeetingRow[] | null ?? []).map((m) => ({
+  // Meetings retirés à la main : hors de la fiche, timeline comprise.
+  const declinedIds = new Set<string>((data.declined_claap_recording_ids as string[] | null) ?? []);
+  const safeMeetings = (meetings as MeetingRow[] | null ?? []).filter((m) => !declinedIds.has(m.claap_recording_id)).map((m) => ({
     id: m.id,
     claap_recording_id: m.claap_recording_id,
     meeting_title: m.meeting_title,

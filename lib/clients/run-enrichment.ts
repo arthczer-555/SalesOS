@@ -97,8 +97,11 @@ export async function runClientEnrichment(
           .filter((id): id is string => !!id)
       : null;
     const accountCompanyIds = ((row.account_companies as AccountCompany[] | null | undefined) ?? []).map((c) => c.id);
+    // Meetings retirés à la main : exclus aussi d'un re-enrich.
+    const declined = (row.declined_claap_recording_ids as string[] | null) ?? [];
     const ctx = await loadClientContext(row.hubspot_deal_id, {
       confirmedRecordingIds: confirmed && confirmed.length > 0 ? confirmed : undefined,
+      excludeRecordingIds: declined.length > 0 ? declined : undefined,
       accountCompanyIds,
     });
     const contextPrompt = renderClientContextForPrompt(ctx);

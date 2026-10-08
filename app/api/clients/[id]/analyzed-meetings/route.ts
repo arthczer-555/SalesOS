@@ -27,7 +27,8 @@ type AnalyzedMeeting = {
 // dernier refresh compris (deal Customer Success créé après le closed-won), OU
 // hubspot_company_id) + ceux inclus via la discovery mais sans recap. Sert le
 // bouton "info" de la fiche, pour vérifier ce que le refresh a réellement pris
-// en compte.
+// en compte, et retirer un meeting (POST decline-meeting). Les meetings retirés
+// sont exclus.
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
@@ -36,7 +37,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const { data: client, error: clientErr } = await db
     .from("clients")
-    .select("id, hubspot_deal_id, hubspot_company_id, confirmed_claap_recordings, discovered_claap_recordings, last_refresh_report")
+    .select("id, hubspot_deal_id, hubspot_company_id, confirmed_claap_recordings, discovered_claap_recordings, declined_claap_recording_ids, last_refresh_report")
     .eq("id", id)
     .single();
   if (clientErr || !client) {
@@ -68,7 +69,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     if (r?.recording_id) urlByRecordingId.set(r.recording_id, r.claap_url ?? null);
   }
 
-  const seen = new Set<string>();
+  // Les meetings retirés à la main (corbeille de la popup, "Not this account")
+  // ne nourrissent plus la fiche : on ne les liste pas.
+  const seen = new Set<string>((client.declined_claap_recording_ids as string[] | null) ?? []);
   const meetings: AnalyzedMeeting[] = [];
 
   for (const r of analyzed ?? []) {

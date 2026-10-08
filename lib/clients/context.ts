@@ -136,7 +136,11 @@ export async function loadClientContext(
     accountCompanyIds: opts?.accountCompanyIds,
   });
   const indexedRes = await queryClaapMeetingsForDeals(contextDealIds(dealId, deal));
-  const indexed = indexedRes.meetings;
+  // Un meeting retiré à la main (popup "meetings analyzed" ou "Not this
+  // account") sort aussi des indexés : rattaché au deal par sales-coach, il
+  // reviendrait sinon à chaque refresh.
+  const excluded = new Set(opts?.excludeRecordingIds ?? []);
+  const indexed = indexedRes.meetings.filter((m) => !excluded.has(m.recording_id));
   const sourceErrors: NonNullable<ClientEnrichmentContext["sourceErrors"]> = {};
   if (!deal) sourceErrors.hubspot = "HubSpot deal could not be read";
   if (indexedRes.error) sourceErrors.claap = "Analyzed Claap meetings could not be loaded";
@@ -147,19 +151,14 @@ export async function loadClientContext(
   //    aveugle. Garantit que l'analyse couvre les meetings confirmés (ni plus,
   //    ni moins).
   //  - sinon (refresh mensuel / cron) : discovery automatique par domaine/titre
-  //    comme historiquement. excludeRecordingIds (refresh uniquement) exclut en
-  //    plus les recordings explicitement déclinés par un humain lors d'un popup
-  //    de refresh — la discovery ne doit plus jamais les faire réapparaître.
+  //    comme historiquement. excludeRecordingIds exclut en plus les recordings
+  //    retirés à la main : la discovery ne doit plus jamais les faire
+  //    réapparaître.
   const alreadyIndexed = new Set(indexed.map((m) => m.recording_id));
   const confirmedIds = opts?.confirmedRecordingIds;
   const extras = await (confirmedIds
     ? fetchClaapRecordingsByIds(confirmedIds, alreadyIndexed)
-    : discoverExtraClaapMeetings(
-        deal,
-        opts?.excludeRecordingIds?.length
-          ? new Set([...alreadyIndexed, ...opts.excludeRecordingIds])
-          : alreadyIndexed,
-      )
+    : discoverExtraClaapMeetings(deal, new Set([...alreadyIndexed, ...excluded]))
   ).catch((e) => {
     console.warn(`[clients/context] Claap meetings load failed:`, e instanceof Error ? e.message : e);
     sourceErrors.claap = "Claap could not be searched for new meetings";

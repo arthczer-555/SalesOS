@@ -27,7 +27,7 @@ const LIST_COLUMNS =
 // Colonnes de la fiche : tout ce que get_client peut rendre, section par
 // section. Explicite plutôt que "*" pour ne pas embarquer les colonnes de
 // travail (candidats de meetings en attente, brouillon d'email, etc.).
-const DETAIL_COLUMNS = `${LIST_COLUMNS}, hubspot_company_id, billing_refreshed_at, am_cs_notified_at, fields_json, deal_recap, insights, news, coach_brief, coach_brief_generated_at, health_history, onboarding_checklist, hubspot_field_suggestions, enrichment_error, last_refresh_report`;
+const DETAIL_COLUMNS = `${LIST_COLUMNS}, hubspot_company_id, billing_refreshed_at, am_cs_notified_at, fields_json, deal_recap, insights, news, coach_brief, coach_brief_generated_at, health_history, onboarding_checklist, hubspot_field_suggestions, enrichment_error, last_refresh_report, declined_claap_recording_ids`;
 
 // Les 6 sections du brief (SECTION_DEFINITIONS) sont adressables une par une :
 // chacune pèse 1 à 3 ko, les 6 ensemble 9 à 14 ko. Rendre la fiche entière à
@@ -114,7 +114,7 @@ type DetailRow = ListRow &
     | "hubspot_company_id" | "billing_refreshed_at" | "am_cs_notified_at" | "fields_json"
     | "deal_recap" | "insights" | "news" | "coach_brief" | "coach_brief_generated_at"
     | "health_history" | "onboarding_checklist" | "hubspot_field_suggestions" | "enrichment_error"
-    | "last_refresh_report"
+    | "last_refresh_report" | "declined_claap_recording_ids"
   >;
 
 // ── Helpers de rendu ─────────────────────────────────────────────────────────
@@ -232,7 +232,8 @@ function flattenFields(
 }
 
 /** Meetings Claap analysés du deal, SANS transcript (l'agent enchaîne sur get_claap_meeting_transcript). */
-async function loadMeetings(dealId: string) {
+// declinedIds : meetings retirés à la main de la fiche, exclus ici aussi.
+async function loadMeetings(dealId: string, declinedIds: string[] | null) {
   const { data, error } = await db
     .from("sales_coach_analyses")
     .select("claap_recording_id, meeting_title, meeting_started_at, meeting_kind, meeting_recap, score_global")
@@ -248,7 +249,8 @@ async function loadMeetings(dealId: string) {
     meeting_recap: { summary?: string | null } | null;
     score_global: number | null;
   };
-  return (data as Row[] | null ?? []).map((m) => ({
+  const declined = new Set(declinedIds ?? []);
+  return (data as Row[] | null ?? []).filter((m) => !declined.has(m.claap_recording_id)).map((m) => ({
     recording_id: m.claap_recording_id,
     title: m.meeting_title,
     date: m.meeting_started_at,
@@ -580,7 +582,7 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
     out.hubspot_fields_to_fill = (row.hubspot_field_suggestions?.fields ?? []).map((f) => f.label);
   }
   if (requested.has("meetings")) {
-    out.analyzed_meetings = await loadMeetings(row.hubspot_deal_id);
+    out.analyzed_meetings = await loadMeetings(row.hubspot_deal_id, row.declined_claap_recording_ids);
     out.meetings_note = "Transcript non inclus. Pour le détail d'un meeting : get_claap_meeting_transcript(recording_id).";
   }
 

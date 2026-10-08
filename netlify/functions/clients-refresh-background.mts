@@ -10,11 +10,20 @@ export default async (req: Request) => {
   let id: string | undefined;
   let userId: string | null = null;
   let trigger: "manual" | "cron" = "manual";
+  let removedRecordingIds: string[] | undefined;
   try {
-    const body = (await req.json()) as { id?: string; userId?: string | null; trigger?: "manual" | "cron" };
+    const body = (await req.json()) as {
+      id?: string;
+      userId?: string | null;
+      trigger?: "manual" | "cron";
+      removedRecordingIds?: unknown;
+    };
     id = body.id;
     userId = body.userId ?? null;
     trigger = body.trigger === "cron" ? "cron" : "manual";
+    if (Array.isArray(body.removedRecordingIds)) {
+      removedRecordingIds = body.removedRecordingIds.filter((r): r is string => typeof r === "string");
+    }
   } catch {
     console.error("[clients-refresh-bg] invalid JSON body");
     return;
@@ -25,7 +34,7 @@ export default async (req: Request) => {
     return;
   }
 
-  const result = await runClientRefresh(id, userId, { trigger });
+  const result = await runClientRefresh(id, userId, { trigger, removedRecordingIds });
   if (!result.ok) {
     console.error(`[clients-refresh-bg] ${id} failed:`, result.error);
   } else if ("skipped" in result) {

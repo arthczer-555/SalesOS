@@ -10,10 +10,14 @@ export const maxDuration = 30;
 // POST /api/clients/[id]/decline-meeting
 // Body: { recording_id: string }
 //
-// "Not this account" : retire un meeting Claap retenu automatiquement par le
-// refresh (matching domaine / titre trompé). Il est exclu DÉFINITIVEMENT
+// Retire un meeting Claap des données du client : "Not this account" (meeting
+// retenu automatiquement par le refresh, matching domaine / titre trompé) ou
+// corbeille de la popup "Claap meetings analyzed" (y compris un meeting analysé
+// par sales-coach sous le deal). Il est exclu DÉFINITIVEMENT
 // (declined_claap_recording_ids), retiré des listes confirmées/découvertes et
-// du report, puis un refresh relance l'analyse sans lui.
+// du report, puis un refresh ré-extrait les fields sans lui (cf.
+// removedRecordingIds dans run-refresh.ts). refresh_started = false si la
+// fiche n'est pas encore enrichie ou si le refresh n'a pas pu partir.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
@@ -25,7 +29,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { data: client, error: clientErr } = await db
     .from("clients")
-    .select("id, confirmed_claap_recordings, discovered_claap_recordings, declined_claap_recording_ids, last_refresh_report")
+    .select("id, enrichment_status, confirmed_claap_recordings, discovered_claap_recordings, declined_claap_recording_ids, last_refresh_report")
     .eq("id", id)
     .single();
   if (clientErr || !client) return NextResponse.json({ error: "Client not found" }, { status: 404 });
@@ -50,10 +54,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     .eq("id", id);
   if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
 
+  // Le refresh ne tourne que sur une fiche enrichie : avant, l'exclusion est
+  // appliquée par l'enrichissement (run-enrichment.ts).
+  if (client.enrichment_status !== "done") {
+    return NextResponse.json({ ok: true, refresh_started: false });
+  }
   try {
-    const mode = await triggerClientRefresh(req.nextUrl.origin, id, user.id);
-    return NextResponse.json({ ok: true, mode }, { status: 202 });
+    const mode = await triggerClientRefresh(req.nextUrl.origin, id, user.id, { removedRecordingIds: [recordingId] });
+    return NextResponse.json({ ok: true, refresh_started: true, mode }, { status: 202 });
   } catch (e) {
-    return NextResponse.json({ ok: true, refresh: "not_started", error: e instanceof Error ? e.message : String(e) }, { status: 202 });
+    return NextResponse.json({ ok: true, refresh_started: false, error: e instanceof Error ? e.message : String(e) }, { status: 202 });
   }
 }

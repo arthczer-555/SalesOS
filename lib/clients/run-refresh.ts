@@ -29,6 +29,7 @@ import type {
   AccountCompany,
   ClientFields,
   ConfirmedRecording,
+  DealRecap,
   Insights,
   News,
   RefreshReport,
@@ -54,6 +55,11 @@ import { withForcedTool } from "../models/compat";
 // resynchronise le billing (sauf en cron, où il est synchronisé en lot).
 // Ne régénère pas le deal recap (histoire de la signature). Ne touche jamais
 // enrichment_status.
+//
+// removedRecordingIds : refresh lancé après le retrait à la main d'un meeting
+// Claap (decline-meeting). Les fields sont ré-extraits même sans activité
+// nouvelle, ceux qui s'appuyaient sur ce meeting prennent la nouvelle valeur
+// (ou se vident), et ses étapes sortent de la timeline du deal recap.
 
 export type RunRefreshResult =
   | { ok: true; report: RefreshReport }
@@ -82,6 +88,7 @@ type ClientRefreshRow = {
     discovered_at: string;
   }> | null;
   declined_claap_recording_ids: string[] | null;
+  deal_recap: DealRecap | null;
   coach_brief_generated_at: string | null;
   coach_brief_edited_at?: string | null;
   // undefined tant que la migration clients_account_companies.sql n'est pas
@@ -108,9 +115,10 @@ function after(iso: string | null | undefined, sinceTs: number | null): boolean 
 export async function runClientRefresh(
   clientId: string,
   userId: string | null = null,
-  opts?: { trigger?: "manual" | "cron"; skipBilling?: boolean },
+  opts?: { trigger?: "manual" | "cron"; skipBilling?: boolean; removedRecordingIds?: string[] },
 ): Promise<RunRefreshResult> {
   const trigger = opts?.trigger ?? "manual";
+  const removedIds = new Set(opts?.removedRecordingIds ?? []);
 
   // select("*") plutôt qu'une liste : la colonne coach_brief_edited_at (migration
   // clients_v2_tabs_refresh.sql) peut ne pas exister encore, elle arrive alors
@@ -263,8 +271,10 @@ export async function runClientRefresh(
 
     // ── Fields (tous) : ré-extraction seulement s'il y a du nouveau ───────────
     // Une company ajoutée au compte compte comme du nouveau : son historique
-    // (antérieur au dernier refresh) n'a jamais été lu.
-    const contextPrompt = newActivityCount > 0 || addedCompanies.length > 0 ? renderClientContextForPrompt(ctx) : null;
+    // (antérieur au dernier refresh) n'a jamais été lu. Un meeting retiré aussi :
+    // les fields qu'il appuyait doivent être relus sans lui.
+    const contextPrompt =
+      newActivityCount > 0 || addedCompanies.length > 0 || removedIds.size > 0 ? renderClientContextForPrompt(ctx) : null;
     if (contextPrompt) {
       const client = anthropicClient({ timeout: 600_000 });
       const msg = await withAnthropicRetry(
@@ -283,12 +293,20 @@ export async function runClientRefresh(
       const toolBlock = msg.content.find((b) => b.type === "tool_use");
       if (toolBlock && "input" in toolBlock) {
         const parsed = parseClientFieldsFromClaude(toolBlock.input);
-        const { merged, changed } = mergeExtractedFields(row.fields_json ?? {}, parsed);
+        const { merged, changed } = mergeExtractedFields(row.fields_json ?? {}, parsed, { purgeRecordingIds: removedIds });
         changedFields = changed;
         if (changed.length > 0) updatePayload.fields_json = merged;
       }
     }
     const fieldsNow = (updatePayload.fields_json as Partial<ClientFields>) ?? row.fields_json ?? {};
+
+    // Le deal recap n'est pas régénéré : on retire seulement les étapes de sa
+    // timeline sourcées par un meeting retiré.
+    const recapTimeline = row.deal_recap?.timeline;
+    if (row.deal_recap && recapTimeline && removedIds.size > 0) {
+      const kept = recapTimeline.filter((t) => !(t.source?.kind === "claap" && t.source.recordingId && removedIds.has(t.source.recordingId)));
+      if (kept.length !== recapTimeline.length) updatePayload.deal_recap = { ...row.deal_recap, timeline: kept };
+    }
 
     // ── En parallèle : news, billing, suggestions HubSpot, coach brief ────────
     const briefOutdated = changedFields.some((c) =>
@@ -465,7 +483,8 @@ export async function runClientRefresh(
       notes: [...notes, ...(slack.messages.length > 0 ? slack.errors : [])].length
         ? [...notes, ...(slack.messages.length > 0 ? slack.errors : [])]
         : undefined,
-      skipped_no_activity: newActivityCount === 0,
+      // Fields non ré-analysés (rien de nouveau, ni company ajoutée, ni meeting retiré).
+      skipped_no_activity: contextPrompt === null,
     };
 
     updatePayload.health = health;

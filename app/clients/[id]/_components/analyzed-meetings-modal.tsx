@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import useSWR from "swr";
-import { Loader2, Video, ExternalLink, FileText } from "lucide-react";
+import { Loader2, Video, ExternalLink, FileText, Trash2 } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
+import { useToast } from "@/components/ui/toast";
 
 type AnalyzedMeeting = {
   recording_id: string;
@@ -33,13 +35,59 @@ function fmtDate(iso: string | null): string {
 // de cette fiche (analysés par sales-coach + inclus via discovery). Utile pour
 // vérifier ce que le pipeline a réellement pris en compte, notamment quand un
 // meeting est rattaché à un deal HubSpot différent de celui de la fiche.
-export function AnalyzedMeetingsModal({ clientId, dealId, onClose }: { clientId: string; dealId: string; onClose: () => void }) {
-  const { data, error, isLoading } = useSWR<{ meetings: AnalyzedMeeting[] }>(
+// Corbeille par meeting (confirmation inline) : exclusion définitive via
+// decline-meeting, qui relance un refresh sans lui. onRemoved(refreshStarted)
+// laisse la page suivre ce refresh.
+export function AnalyzedMeetingsModal({
+  clientId,
+  dealId,
+  onClose,
+  onRemoved,
+}: {
+  clientId: string;
+  dealId: string;
+  onClose: () => void;
+  onRemoved: (refreshStarted: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const { data, error, isLoading, mutate } = useSWR<{ meetings: AnalyzedMeeting[] }>(
     `/api/clients/${clientId}/analyzed-meetings`,
     fetcher,
     { revalidateOnFocus: false },
   );
   const meetings = data?.meetings ?? [];
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [removingId, setRemovingId] = useState<string | null>(null);
+
+  async function remove(m: AnalyzedMeeting) {
+    setRemovingId(m.recording_id);
+    try {
+      const res = await fetch(`/api/clients/${clientId}/decline-meeting`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recording_id: m.recording_id }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string; refresh_started?: boolean };
+      if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+      await mutate(
+        (cur) => (cur ? { meetings: cur.meetings.filter((x) => x.recording_id !== m.recording_id) } : cur),
+        { revalidate: false },
+      );
+      const refreshStarted = body.refresh_started === true;
+      toast(
+        refreshStarted
+          ? `"${m.meeting_title ?? "Meeting"}" removed. Refreshing the account without it.`
+          : `"${m.meeting_title ?? "Meeting"}" removed, but the refresh could not start. Use the Refresh button.`,
+        refreshStarted ? "success" : "info",
+      );
+      onRemoved(refreshStarted);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not remove the meeting", "error");
+    } finally {
+      setRemovingId(null);
+      setConfirmingId(null);
+    }
+  }
 
   return (
     <div
@@ -84,7 +132,8 @@ export function AnalyzedMeetingsModal({ clientId, dealId, onClose }: { clientId:
               Claap meetings analyzed ({meetings.length})
             </h2>
             <p style={{ margin: "4px 0 0", fontSize: 12, color: COLORS.ink2 }}>
-              Everything that has fed this client&apos;s data, most recent first.
+              Everything that has fed this client&apos;s data, most recent first. Remove a meeting that does not belong
+              to this account and the page refreshes without it.
             </p>
           </div>
         </div>
@@ -158,17 +207,94 @@ export function AnalyzedMeetingsModal({ clientId, dealId, onClose }: { clientId:
                   {m.audience ? ` · ${m.audience}` : ""}
                   {m.hubspot_deal_id && m.hubspot_deal_id !== dealId ? ` · linked to deal ${m.hubspot_deal_id}` : ""}
                 </div>
+                {confirmingId === m.recording_id && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      flexWrap: "wrap",
+                      marginTop: 8,
+                      padding: "8px 10px",
+                      borderRadius: 8,
+                      background: COLORS.errBg,
+                      fontSize: 11,
+                      color: COLORS.ink1,
+                    }}
+                  >
+                    <span style={{ flex: 1, minWidth: 180 }}>
+                      Remove it from this account for good? The fields it supported are re-analyzed without it.
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmingId(null)}
+                      disabled={removingId === m.recording_id}
+                      style={{
+                        fontSize: 11,
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        border: `1px solid ${COLORS.line}`,
+                        background: COLORS.bgCard,
+                        color: COLORS.ink2,
+                        cursor: "pointer",
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void remove(m)}
+                      disabled={removingId === m.recording_id}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        padding: "4px 10px",
+                        borderRadius: 6,
+                        border: "none",
+                        background: COLORS.err,
+                        color: "#fff",
+                        cursor: removingId === m.recording_id ? "default" : "pointer",
+                      }}
+                    >
+                      {removingId === m.recording_id ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                      {removingId === m.recording_id ? "Removing…" : "Remove"}
+                    </button>
+                  </div>
+                )}
               </div>
               {m.claap_url && (
                 <a
                   href={m.claap_url}
                   target="_blank"
                   rel="noreferrer"
+                  title="Open in Claap"
                   style={{ color: COLORS.ink4, marginTop: 2, flexShrink: 0 }}
                 >
                   <ExternalLink size={13} />
                 </a>
               )}
+              <button
+                type="button"
+                title="Remove this meeting from the account"
+                aria-label="Remove this meeting from the account"
+                onClick={() => setConfirmingId(m.recording_id)}
+                disabled={removingId !== null}
+                style={{
+                  display: "inline-flex",
+                  padding: 0,
+                  marginTop: 2,
+                  border: "none",
+                  background: "transparent",
+                  color: confirmingId === m.recording_id ? COLORS.err : COLORS.ink4,
+                  cursor: removingId !== null ? "default" : "pointer",
+                  flexShrink: 0,
+                }}
+              >
+                <Trash2 size={13} />
+              </button>
             </div>
           ))}
         </div>

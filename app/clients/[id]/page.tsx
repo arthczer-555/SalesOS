@@ -204,8 +204,8 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     }
   }
 
-  // Suit un refresh lancé côté serveur (bouton Refresh, ou retrait d'une
-  // company du compte) : bandeau + polling jusqu'au nouveau report.
+  // Suit un refresh lancé côté serveur (bouton Refresh, retrait d'une company
+  // du compte ou d'un meeting Claap) : bandeau + polling jusqu'au nouveau report.
   function watchRefresh() {
     refreshBaselineRef.current = data?.client.last_refresh_report?.refreshed_at ?? null;
     refreshDeadlineRef.current = Date.now() + 5 * 60_000;
@@ -368,7 +368,15 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       )}
       {emailModalOpen && <MissingInfoEmailModal clientId={client.id} onClose={() => setEmailModalOpen(false)} />}
       {analyzedMeetingsOpen && (
-        <AnalyzedMeetingsModal clientId={client.id} dealId={client.hubspot_deal_id} onClose={() => setAnalyzedMeetingsOpen(false)} />
+        <AnalyzedMeetingsModal
+          clientId={client.id}
+          dealId={client.hubspot_deal_id}
+          onClose={() => setAnalyzedMeetingsOpen(false)}
+          onRemoved={(refreshStarted) => {
+            if (refreshStarted) watchRefresh();
+            reload();
+          }}
+        />
       )}
       {confirmOpen && (
         <MeetingConfirmationModal

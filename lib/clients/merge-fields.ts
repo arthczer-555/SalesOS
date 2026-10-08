@@ -8,6 +8,9 @@ import { SECTION_DEFINITIONS, type ClientFieldValue, type ClientFields, type Ref
 //    appuyée par une source datée APRÈS l'édition (evidence_at > updated_at) et
 //    avec une confiance >= 0.7. Le changement est alors marqué overrode_manual
 //    pour être signalé (et annulable) dans le refresh report.
+//  - exception : un field IA dont la source est un meeting Claap retiré à la
+//    main (purgeRecordingIds) prend la nouvelle valeur telle quelle, y compris
+//    nulle. La ré-extraction tourne sans ce meeting, elle fait donc foi.
 
 const MANUAL_OVERRIDE_MIN_CONFIDENCE = 0.7;
 
@@ -32,9 +35,11 @@ function isEmpty(value: unknown): boolean {
 export function mergeExtractedFields(
   prev: Partial<ClientFields>,
   next: Partial<ClientFields>,
+  opts?: { purgeRecordingIds?: ReadonlySet<string> },
 ): { merged: Partial<ClientFields>; changed: RefreshReport["changed_fields"] } {
   const merged: Record<string, Record<string, ClientFieldValue>> = {};
   const changed: RefreshReport["changed_fields"] = [];
+  const purgeIds = opts?.purgeRecordingIds ?? new Set<string>();
 
   for (const section of SECTION_DEFINITIONS) {
     const sectionKey = section.key as SectionKey;
@@ -45,6 +50,17 @@ export function mergeExtractedFields(
     for (const field of section.fields) {
       const prevField = prevSection[field.key];
       const nextField = nextSection[field.key];
+
+      const prevSource = prevField?.source;
+      if (prevField && prevSource?.kind === "claap" && prevSource.recordingId && purgeIds.has(prevSource.recordingId)) {
+        const replacement: ClientFieldValue = nextField ?? { value: null, confidence: 0, source: null, updated_at: new Date().toISOString() };
+        out[field.key] = replacement;
+        if (normalizeForCompare(prevField.value) !== normalizeForCompare(replacement.value)) {
+          changed.push({ section: sectionKey, key: field.key, label: field.label, before: prevField.value ?? null, after: replacement.value ?? null });
+        }
+        continue;
+      }
+
       if (!nextField) continue;
 
       // Structure complète : un field jamais vu prend la valeur extraite (même
