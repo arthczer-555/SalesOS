@@ -1,6 +1,5 @@
 {
   "permissions": {
-    "defaultMode": "bypassPermissions",
     "allow": [
       "Bash",
       "Bash(*)",
@@ -78,7 +77,10 @@
       "Agent(*)",
       "Monitor",
       "Skill",
-      "Skill(*)"
-    ]
+      "Skill(*)",
+      "ClaudeInChromeDomain(localhost:3000)",
+      "ClaudeInChromeDomain(127.0.0.1:3000)"
+    ],
+    "defaultMode": "bypassPermissions"
   }
 }
