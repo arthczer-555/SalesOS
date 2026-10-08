@@ -4,7 +4,7 @@ import type { DealContractInfo } from "./portfolio";
 
 type BatchReadResp = { results?: Array<{ id: string; properties?: Record<string, string | null> }> };
 
-// Vue portefeuille : montant et fin de contrat de plusieurs deals en un appel
+// Vue portefeuille : fin de contrat de plusieurs deals en un appel
 // batch (100 ids max par appel). Échec = { ok: false } avec le message, jamais
 // une map vide qui se lirait comme "aucune date".
 export async function fetchDealsContractInfo(
@@ -15,16 +15,11 @@ export async function fetchDealsContractInfo(
   try {
     for (let i = 0; i < ids.length; i += 100) {
       const resp = await hubspotFetch<BatchReadResp>("/crm/v3/objects/deals/batch/read", "POST", {
-        properties: ["amount", "contract_end_date"],
+        properties: ["contract_end_date"],
         inputs: ids.slice(i, i + 100).map((id) => ({ id })),
       });
       for (const r of resp.results ?? []) {
-        const p = r.properties ?? {};
-        const amount = p.amount == null || p.amount === "" ? null : Number(p.amount);
-        deals.set(r.id, {
-          amount: amount != null && Number.isFinite(amount) ? amount : null,
-          contractEnd: p.contract_end_date || null,
-        });
+        deals.set(r.id, { contractEnd: r.properties?.contract_end_date || null });
       }
     }
     return { ok: true, deals };

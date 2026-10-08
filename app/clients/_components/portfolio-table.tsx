@@ -13,13 +13,21 @@ import { DUE_LABEL } from "../[id]/_components/next-actions-card";
 // Tableau de la vue avancée (/clients, toggle "Advanced view") : une ligne par fiche, les infos
 // clés de Key insights pour comparer les comptes et prioriser. Couleurs
 // neutres par défaut ; orange/rouge réservés à la santé, la fin de contrat
-// proche et les infos manquantes. Next billing (saisie manuelle) n'est plus
-// une colonne : il reste dans Key dates sur la fiche.
+// proche et les infos manquantes. La phase du compte a sa colonne. Next
+// billing (saisie manuelle) n'est plus une colonne : il reste dans Key dates
+// sur la fiche.
 
 export type HubspotState = "loading" | "ok" | "error";
 export type PortfolioSort = { key: string; dir: SortDir };
 
-const PHASE_LABEL = { onboarding: "Onboarding", running: "Running", renewal: "Renewal" } as const;
+// Phase du compte (computeAccountPhase, stockée dans la santé) : colonne à part
+// entière. Pas d'orange/rouge ici (réservés au signal) ; ordre de tri = cycle de vie.
+type PhaseKey = NonNullable<NonNullable<ClientPortfolioItem["health"]>["phase"]>["key"];
+const PHASE: Record<PhaseKey, { label: string; tone: "info" | "neutral" | "brand"; order: number }> = {
+  onboarding: { label: "Onboarding", tone: "info", order: 0 },
+  running: { label: "Running", tone: "neutral", order: 1 },
+  renewal: { label: "Renewal", tone: "brand", order: 2 },
+};
 
 function StatusPill({ status, amCsNotifiedAt }: { status: ClientPortfolioItem["enrichment_status"]; amCsNotifiedAt: string | null }) {
   // Une fois enrichie et transmise à l'AM/CS, la fiche n'a plus de statut à
@@ -50,8 +58,10 @@ function sortValue(c: ClientPortfolioItem, key: string): number | string | null 
       return c.company_name.toLowerCase();
     case "health":
       return c.health?.score ?? null;
-    case "contract":
-      return c.contract_value;
+    case "phase":
+      return c.health?.phase ? PHASE[c.health.phase.key].order : null;
+    case "billed":
+      return c.billed_lifetime;
     case "contract_end":
       return c.contract_end?.date ?? null;
     default:
@@ -145,11 +155,26 @@ export function PortfolioTable({
             {c.company_name}
           </Link>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
-            {c.health?.phase && <span style={{ fontSize: 11, color: COLORS.ink3 }}>{PHASE_LABEL[c.health.phase.key]}</span>}
             <StatusPill status={c.enrichment_status} amCsNotifiedAt={c.am_cs_notified_at} />
           </div>
         </div>
       ),
+    },
+    {
+      key: "phase",
+      header: "Phase",
+      sortable: true,
+      width: 110,
+      render: (c) => {
+        const phase = c.health?.phase ? PHASE[c.health.phase.key] : null;
+        return phase ? (
+          <Tag tone={phase.tone}>{phase.label}</Tag>
+        ) : (
+          <span style={{ fontSize: 12, color: COLORS.ink4 }} title="Phase computed with the health score, not available yet">
+            -
+          </span>
+        );
+      },
     },
     {
       key: "health",
@@ -172,26 +197,23 @@ export function PortfolioTable({
       ),
     },
     {
-      key: "contract",
-      header: "Contract",
+      // Facturé lifetime (colonne Total du sheet revenue), pas le montant du deal
+      // HubSpot. Jamais 0 quand la société n'est pas dans le sheet.
+      key: "billed",
+      header: "Billed all time",
       sortable: true,
-      width: 150,
-      render: (c) => (
-        <div>
-          <div
-            style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, fontVariantNumeric: "tabular-nums" }}
-            title={c.contract_value_source === "hubspot" ? "Current amount of the HubSpot deal" : "Deal amount at signature (HubSpot not read)"}
+      width: 140,
+      render: (c) =>
+        c.billing_matched ? (
+          <span
+            style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}
+            title="Billed since the start, from the revenue sheet (Total column)"
           >
-            {fmtEur(c.contract_value)}
-          </div>
-          <div
-            style={{ fontSize: 11, marginTop: 2, color: c.billing_matched ? COLORS.ink3 : COLORS.warn, whiteSpace: "nowrap" }}
-            title={c.billing_matched ? "Billed since the start (lifetime), from the revenue sheet" : undefined}
-          >
-            {c.billing_matched ? `Billed all time: ${fmtEur(c.billed_lifetime)}` : "Not in revenue sheet"}
-          </div>
-        </div>
-      ),
+            {fmtEur(c.billed_lifetime)}
+          </span>
+        ) : (
+          <span style={{ fontSize: 12, color: COLORS.warn, whiteSpace: "nowrap" }}>Not in revenue sheet</span>
+        ),
     },
     {
       key: "next_step",
@@ -255,7 +277,7 @@ export function PortfolioTable({
         sort={sort}
         onSortChange={onSortChange}
         onRowClick={(c) => router.push(`/clients/${c.id}`)}
-        style={{ minWidth: 1080 }}
+        style={{ minWidth: 1180 }}
         empty={
           <div style={{ padding: 40, textAlign: "center" }}>
             <div style={{ fontSize: 14, color: COLORS.ink2 }}>No clients match these filters.</div>

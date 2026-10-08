@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import useSWR from "swr";
 import { Check, Copy, History, Layers, Linkedin, Newspaper, Pencil, Shield, Target, Users, Calendar, AlertTriangle } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
-import type { ClientRow, ClientFieldValue, DiscoveredRecording } from "@/lib/clients/types";
+import type { ClientRow, ClientFieldValue, DiscoveredRecording, SectionKey } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { DealRecapPanel } from "../deal-recap-panel";
 import { CoachBriefPanel } from "../coach-brief-panel";
@@ -15,11 +15,13 @@ import { WhatsNewCard } from "../whats-new-card";
 import { Card, CardHeader, type Collapse } from "../ui";
 
 // Onglet Knowledge : la référence du compte (qui, quoi, comment, historique).
-// Mise en page voulue par les CSM, sur 2 colonnes :
-//  1. "ce qu'on fait avec eux" : Goals & expectations + Program scope ;
-//  2. "comment on le fait" : IT & access + Contacts ;
-//  3. le reste : activité récente, deal recap, contexte, meetings à gauche ;
-//     planning, brief coachs, news à droite.
+// Mise en page voulue par les CSM, 2 colonnes indépendantes coupées au milieu
+// (une carte ouverte d'un côté ne décale pas l'autre colonne) :
+//  - gauche : Goals & expectations, IT & access, activité récente, deal recap,
+//    contexte, meetings ;
+//  - droite : Program scope, Contacts, planning, brief coachs, news.
+// Dans chaque carte, ordre "entonnoir" : valeurs courtes en haut (enums,
+// Yes/No, dates), listes et textes longs en bas, champs liés gardés ensemble.
 // Chaque section se replie (les deux premières rangées ouvertes par défaut,
 // choix mémorisé par utilisateur) ; dans les sections, la valeur clé reste
 // visible et le détail se déplie au clic (cf. field-display). Barre d'ancres
@@ -35,11 +37,36 @@ const CONTACT_ROLES: Array<{ key: string; role: string }> = [
   { key: "contact_it", role: "IT" },
 ];
 
+// Ordre explicite par carte (pas celui de SECTION_DEFINITIONS) : un field
+// ajouté à SECTION_DEFINITIONS doit aussi être placé ici pour apparaître.
+const refsOf = (section: SectionKey, keys: string[]): FieldRef[] => keys.map((key) => ({ section, key }));
+
+const PROGRAM_REFS: FieldRef[] = refsOf("program_scope", [
+  "nom_programme", "type_coaching", "nb_coaches_estime", "population_accompagnee",
+  "auto_assessment", "flash_feedback", "tripartite", "quadripartite",
+  "cohortes_format", "offres_associees",
+]);
+
+// Paramétrage d'abord, puis conformité, puis le contact IT et les notes.
 const IT_REFS: FieldRef[] = [
+  ...refsOf("org", [
+    "mode_acces", "sso_details", "provisioning", "provisioning_details", "canal", "statut_app", "meeting_provider",
+    "questionnaire_securite", "dpa", "whitelisting_email", "residence_donnees",
+  ]),
   { section: "general_info", key: "contact_it" },
-  ...["mode_acces", "sso_details", "provisioning", "provisioning_details", "canal", "statut_app", "meeting_provider", "questionnaire_securite", "dpa", "residence_donnees", "whitelisting_email", "integration_it"].map(
-    (key) => ({ section: "org" as const, key }),
-  ),
+  { section: "org", key: "integration_it" },
+];
+
+// Langues et zones (general_info) vivent ici plutôt que dans Contacts.
+const HISTORY_REFS: FieldRef[] = [
+  { section: "history", key: "relation_commerciale" },
+  ...refsOf("general_info", ["langues_requises", "zones_geographiques"]),
+  ...refsOf("history", ["points_de_vigilance", "initiatives_rh_paralleles"]),
+];
+
+const PLANNING_REFS: FieldRef[] = [
+  ...refsOf("planning", ["kickoff_envisage_le", "fin_contrat_le", "suivi_cs_attendu", "engagements_sales"]),
+  ...refsOf("org", ["referentiels_documents", "contraintes_organisationnelles"]),
 ];
 
 // Ordre de lecture de la page (rangées, puis colonne gauche, puis droite).
@@ -261,17 +288,6 @@ function ContactsCard({ client, onUpdated, collapse }: { client: ClientRow; onUp
                 : <PersonCard role="Other stakeholders" contact={null} company={client.company_name} onAdd={startEditing} />}
             </div>
           )}
-          <div style={{ marginTop: 12 }}>
-            <FieldRows
-              refs={[
-                { section: "general_info", key: "langues_requises" },
-                { section: "general_info", key: "zones_geographiques" },
-              ]}
-              fields={client.fields_json ?? {}}
-              clientId={client.id}
-              onUpdated={onUpdated}
-            />
-          </div>
         </>
       )}
     </Card>
@@ -292,10 +308,6 @@ function itSummary(client: ClientRow): string | undefined {
   const parts = [missing ? `${missing} missing` : null, inProgress ? `${inProgress} in progress` : null].filter(Boolean);
   return parts.length ? parts.join(" · ") : undefined;
 }
-
-// Rangées en paires : chaque carte garde sa hauteur, une section repliée ne
-// s'étire pas à côté d'une section ouverte.
-const PAIR_ROW: React.CSSProperties = { alignItems: "start" };
 
 export function KnowledgeTab({
   client,
@@ -384,13 +396,9 @@ export function KnowledgeTab({
         </button>
       </nav>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-        <div className="ch-grid-3-2" style={PAIR_ROW}>
+      <div className="ch-grid-2" style={{ alignItems: "start" }}>
+        <div className="ch-col">
           <FieldsCard id="k-goals" icon={Target} title="Goals & expectations" refs={sectionRefs("goals")} fields={fields} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-goals")} />
-          <FieldsCard id="k-program" icon={Layers} title="Program scope" refs={sectionRefs("program_scope")} fields={fields} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-program")} />
-        </div>
-
-        <div className="ch-grid-3-2" style={PAIR_ROW}>
           <FieldsCard
             id="k-it"
             icon={Shield}
@@ -403,74 +411,64 @@ export function KnowledgeTab({
             collapse={collapse("k-it")}
             nestDetails
           />
-          <ContactsCard client={client} onUpdated={onUpdated} collapse={collapse("k-contacts")} />
+          <WhatsNewCard
+            id="k-activity"
+            insights={client.insights}
+            report={client.last_refresh_report}
+            clientId={client.id}
+            onUpdated={onUpdated}
+            collapse={collapse("k-activity")}
+          />
+          <DealRecapPanel recap={client.deal_recap} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-recap")} />
+          <FieldsCard id="k-history" icon={History} title="Context & history" refs={HISTORY_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-history")} />
+          <TimelinePanel
+            meetings={meetings}
+            discoveredRecordings={client.discovered_claap_recordings ?? []}
+            onDecline={decline}
+            decliningId={decliningId}
+            collapse={collapse("k-meetings")}
+          />
         </div>
 
-        <div className="ch-grid-3-2" style={PAIR_ROW}>
-          <div className="ch-col">
-            <WhatsNewCard
-              id="k-activity"
-              variant="full"
-              insights={client.insights}
-              report={client.last_refresh_report}
-              news={client.news}
-              clientId={client.id}
-              onUpdated={onUpdated}
-              collapse={collapse("k-activity")}
-            />
-            <DealRecapPanel recap={client.deal_recap} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-recap")} />
-            <FieldsCard id="k-history" icon={History} title="Context & history" refs={sectionRefs("history")} fields={fields} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-history")} />
-            <TimelinePanel
-              meetings={meetings}
-              discoveredRecordings={client.discovered_claap_recordings ?? []}
-              onDecline={decline}
-              decliningId={decliningId}
-              collapse={collapse("k-meetings")}
-            />
-          </div>
-
-          <div className="ch-col">
-            <FieldsCard
-              id="k-planning"
-              icon={Calendar}
-              title="Planning & organization"
-              refs={[
-                ...sectionRefs("planning"),
-                { section: "org", key: "contraintes_organisationnelles" },
-                { section: "org", key: "referentiels_documents" },
-              ]}
-              fields={fields}
-              clientId={client.id}
-              onUpdated={onUpdated}
-              collapse={collapse("k-planning")}
-            />
-            <CoachBriefPanel
-              brief={client.coach_brief ?? null}
-              generatedAt={client.coach_brief_generated_at ?? null}
-              companyName={client.company_name}
-              clientId={client.id}
-              onUpdated={onUpdated}
-              collapse={collapse("k-brief")}
-            />
-            <Card id="k-news" style={{ scrollMarginTop: 64 }}>
-              <CardHeader icon={Newspaper} title={`Company news (${newsItems.length})`} meta="Last 12 months · important and useful" collapse={newsCollapse} />
-              {newsCollapse.open && (
-                <>
-                  {(client.news?.errors ?? []).length > 0 && (
-                    <div style={{ display: "flex", gap: 6, fontSize: 12, color: COLORS.warn, marginBottom: 10 }}>
-                      <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-                      {client.news?.errors?.join(" · ")}
-                    </div>
-                  )}
-                  {newsItems.length === 0 ? (
-                    <div style={{ fontSize: 13, color: COLORS.ink3 }}>No company news kept so far.</div>
-                  ) : (
-                    newsItems.map((n, i) => <NewsRow key={n.url} n={n} first={i === 0} />)
-                  )}
-                </>
-              )}
-            </Card>
-          </div>
+        <div className="ch-col">
+          <FieldsCard id="k-program" icon={Layers} title="Program scope" refs={PROGRAM_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-program")} />
+          <ContactsCard client={client} onUpdated={onUpdated} collapse={collapse("k-contacts")} />
+          <FieldsCard
+            id="k-planning"
+            icon={Calendar}
+            title="Planning & organization"
+            refs={PLANNING_REFS}
+            fields={fields}
+            clientId={client.id}
+            onUpdated={onUpdated}
+            collapse={collapse("k-planning")}
+          />
+          <CoachBriefPanel
+            brief={client.coach_brief ?? null}
+            generatedAt={client.coach_brief_generated_at ?? null}
+            companyName={client.company_name}
+            clientId={client.id}
+            onUpdated={onUpdated}
+            collapse={collapse("k-brief")}
+          />
+          <Card id="k-news" style={{ scrollMarginTop: 64 }}>
+            <CardHeader icon={Newspaper} title={`Company news (${newsItems.length})`} meta="Last 12 months · important and useful" collapse={newsCollapse} />
+            {newsCollapse.open && (
+              <>
+                {(client.news?.errors ?? []).length > 0 && (
+                  <div style={{ display: "flex", gap: 6, fontSize: 12, color: COLORS.warn, marginBottom: 10 }}>
+                    <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+                    {client.news?.errors?.join(" · ")}
+                  </div>
+                )}
+                {newsItems.length === 0 ? (
+                  <div style={{ fontSize: 13, color: COLORS.ink3 }}>No company news kept so far.</div>
+                ) : (
+                  newsItems.map((n, i) => <NewsRow key={n.url} n={n} first={i === 0} />)
+                )}
+              </>
+            )}
+          </Card>
         </div>
       </div>
     </div>

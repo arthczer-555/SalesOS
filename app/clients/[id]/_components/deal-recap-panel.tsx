@@ -1,19 +1,43 @@
 "use client";
 
-import { Flag } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, Flag } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { DealRecap } from "@/lib/clients/types";
 import { EditableText, EditableStringList, EditableObjectList } from "./editable";
 import { patchContent } from "./content-client";
 import { Card, CardHeader, PendingCard, type Collapse } from "./ui";
 
-function Block({ title, children }: { title: string; children: React.ReactNode }) {
+// Grande catégorie du recap, dépliable (retour CSM : la carte était trop longue
+// d'un bloc). Le compteur reste visible replié. État local, non mémorisé.
+function Block({
+  title,
+  count,
+  defaultOpen = false,
+  first,
+  children,
+}: {
+  title: string;
+  count?: number;
+  defaultOpen?: boolean;
+  first?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
   return (
-    <div>
-      <div style={{ fontSize: 11, fontWeight: 600, color: COLORS.ink3, textTransform: "uppercase", letterSpacing: 0.4, marginBottom: 6 }}>
-        {title}
-      </div>
-      {children}
+    <div style={{ borderTop: first ? "none" : `1px solid ${COLORS.line}`, padding: first ? "0 0 10px" : "10px 0" }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="ch-collapse"
+        style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", background: "none", border: 0, padding: 0, cursor: "pointer", textAlign: "left" }}
+      >
+        <span style={{ fontSize: 11, fontWeight: 600, color: COLORS.ink2, textTransform: "uppercase", letterSpacing: 0.4 }}>{title}</span>
+        {count !== undefined && <span style={{ fontSize: 11.5, color: COLORS.ink3, fontVariantNumeric: "tabular-nums" }}>· {count}</span>}
+        <ChevronDown size={14} style={{ marginLeft: "auto", color: COLORS.ink3, flexShrink: 0, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+      </button>
+      {open && <div style={{ marginTop: 8 }}>{children}</div>}
     </div>
   );
 }
@@ -56,8 +80,13 @@ export function DealRecapPanel({
         collapse={collapse}
       />
       {(!collapse || collapse.open) && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <Block title="Deal timeline">
+        // Le résumé ("How the deal was closed") d'abord et ouvert, le détail replié.
+        <div>
+          <Block title="How the deal was closed" defaultOpen first>
+            <EditableText value={recap.how_closed ?? null} multiline onSave={(v) => save({ how_closed: v ?? undefined })} />
+          </Block>
+
+          <Block title="Deal timeline" count={recap.timeline?.length ?? 0}>
             <EditableObjectList
               items={recap.timeline ?? []}
               schema={[
@@ -70,24 +99,18 @@ export function DealRecapPanel({
             />
           </Block>
 
-          <Block title="How the deal was closed">
-            <EditableText value={recap.how_closed ?? null} multiline onSave={(v) => save({ how_closed: v ?? undefined })} />
+          <Block title="Triggers" count={recap.triggers?.length ?? 0}>
+            <EditableStringList items={recap.triggers} onSave={(v) => save({ triggers: v ?? undefined })} emptyLabel="No triggers identified" />
           </Block>
-
-          <div className="ch-grid-2" style={{ gap: 18 }}>
-            <Block title="Triggers">
-              <EditableStringList items={recap.triggers} onSave={(v) => save({ triggers: v ?? undefined })} emptyLabel="No triggers identified" />
-            </Block>
-            <Block title="Objections">
-              <EditableStringList items={recap.objections} onSave={(v) => save({ objections: v ?? undefined })} emptyLabel="No notable objections" />
-            </Block>
-            <Block title="Sales promises (to honor)">
-              <EditableStringList items={recap.sales_promises} onSave={(v) => save({ sales_promises: v ?? undefined })} emptyLabel="No promises identified" />
-            </Block>
-            <Block title="Onboarding risks">
-              <EditableStringList items={recap.onboarding_risks} onSave={(v) => save({ onboarding_risks: v ?? undefined })} emptyLabel="No risks detected" />
-            </Block>
-          </div>
+          <Block title="Objections" count={recap.objections?.length ?? 0}>
+            <EditableStringList items={recap.objections} onSave={(v) => save({ objections: v ?? undefined })} emptyLabel="No notable objections" />
+          </Block>
+          <Block title="Sales promises (to honor)" count={recap.sales_promises?.length ?? 0}>
+            <EditableStringList items={recap.sales_promises} onSave={(v) => save({ sales_promises: v ?? undefined })} emptyLabel="No promises identified" />
+          </Block>
+          <Block title="Onboarding risks" count={recap.onboarding_risks?.length ?? 0}>
+            <EditableStringList items={recap.onboarding_risks} onSave={(v) => save({ onboarding_risks: v ?? undefined })} emptyLabel="No risks detected" />
+          </Block>
         </div>
       )}
     </Card>

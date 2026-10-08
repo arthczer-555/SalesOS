@@ -1,9 +1,9 @@
 "use client";
 
-import { AlertTriangle, Eye, Newspaper } from "lucide-react";
+import { AlertTriangle, Check, Eye, Newspaper } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { ClientRow, NewsCategory, NewsItem } from "@/lib/clients/types";
-import { Card, CardHeader, Tag, fmtDay } from "./ui";
+import { Card, CardHeader, HEALTH_STYLE, Tag, fmtDay } from "./ui";
 
 // Cartes de la colonne droite de Key insights : Watch points (à côté de la
 // santé) et Company news (importantes seulement). Key dates vit dans
@@ -108,27 +108,99 @@ export function CompanyNewsCard({ client, onSeeAll }: { client: ClientRow; onSee
 }
 
 // Version courte générée par le refresh (insights.watch_points, ~8 mots) ;
-// à défaut, les points de vigilance de la fiche tronqués sur une ligne. La
-// liste complète reste dans Knowledge > Context & history.
+// à défaut, les points de vigilance de la fiche. La liste complète reste dans
+// Knowledge > Context & history. Carte teintée ambre et points numérotés pour
+// qu'elle se voie à côté de la santé, sans virer à l'alerte (pas de rouge).
+const WATCH_BORDER = "#f6dfa4";
+
+function RoundIcon({ children, tone }: { children: React.ReactNode; tone: "warn" | "ok" }) {
+  return (
+    <span
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: 99,
+        background: tone === "warn" ? COLORS.warnBg : COLORS.okBg,
+        color: tone === "warn" ? COLORS.warn : COLORS.ok,
+        display: "grid",
+        placeItems: "center",
+        flexShrink: 0,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
 export function WatchPointsCard({ client }: { client: ClientRow }) {
   const short = (client.insights?.watch_points ?? []).filter((p) => p.trim());
   const raw = client.fields_json?.history?.points_de_vigilance?.value;
   const long = Array.isArray(raw) ? raw.filter((p): p is string => typeof p === "string" && !!p.trim()) : [];
   const points = (short.length > 0 ? short : long).slice(0, 3);
+  const empty = points.length === 0;
   return (
-    <Card>
-      <CardHeader icon={Eye} title="Watch points" style={{ marginBottom: 10 }} />
-      {points.length === 0 ? (
+    <Card style={empty ? undefined : { background: HEALTH_STYLE.yellow.tint, border: `1px solid ${WATCH_BORDER}` }}>
+      <CardHeader
+        title={
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+            <RoundIcon tone={empty ? "ok" : "warn"}>{empty ? <Check size={15} /> : <Eye size={15} />}</RoundIcon>
+            Watch points
+          </span>
+        }
+        right={empty ? undefined : <Tag tone="warn">{points.length} to watch</Tag>}
+        style={{ marginBottom: 12 }}
+      />
+      {empty ? (
         <div style={{ fontSize: 13, color: COLORS.ink3 }}>Nothing to watch right now. The next refresh flags new risks if something comes up.</div>
       ) : (
-        <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 6 }}>
+        <ol style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column" }}>
           {points.map((p, i) => (
-            <li key={i} title={p} style={{ display: "flex", gap: 8, fontSize: 13, lineHeight: 1.45, minWidth: 0 }}>
-              <span style={{ width: 6, height: 6, borderRadius: 99, background: COLORS.warn, marginTop: 7, flexShrink: 0 }} />
-              <span style={{ minWidth: 0, ...ONE_LINE }}>{p}</span>
+            <li
+              key={i}
+              title={p}
+              style={{
+                display: "flex",
+                gap: 10,
+                alignItems: "flex-start",
+                padding: i === 0 ? "0 0 9px" : "9px 0",
+                borderTop: i === 0 ? "none" : `1px solid ${WATCH_BORDER}`,
+                minWidth: 0,
+              }}
+            >
+              <span
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: 99,
+                  background: COLORS.warn,
+                  color: "#fff",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  display: "grid",
+                  placeItems: "center",
+                  flexShrink: 0,
+                }}
+              >
+                {i + 1}
+              </span>
+              <span
+                style={{
+                  fontSize: 13,
+                  fontWeight: 500,
+                  lineHeight: 1.45,
+                  color: COLORS.ink0,
+                  minWidth: 0,
+                  display: "-webkit-box",
+                  WebkitLineClamp: 2,
+                  WebkitBoxOrient: "vertical",
+                  overflow: "hidden",
+                }}
+              >
+                {p}
+              </span>
             </li>
           ))}
-        </ul>
+        </ol>
       )}
     </Card>
   );

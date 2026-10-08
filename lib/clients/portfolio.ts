@@ -21,12 +21,6 @@ export type ClientPortfolioItem = {
   closedwon_at: string;
   enrichment_status: "pending" | "awaiting_meetings" | "running" | "done" | "error";
   am_cs_notified_at: string | null;
-  // Montant du deal : lu en live dans HubSpot quand c'est possible (il suit les
-  // changements de prix faits par l'AM), sinon celui stocké à la signature.
-  contract_value: number | null;
-  contract_value_source: "hubspot" | "stored";
-  // Montant stocké à la signature (vue simple, sans appel HubSpot).
-  deal_amount: number | null;
   // Fin de contrat retenue (resolveContractEnd) : date HubSpot, sinon celle
   // trouvée dans les échanges. null = HubSpot non lu (cf. hubspotError de la réponse).
   contract_end: ContractEnd | null;
@@ -44,7 +38,8 @@ export type ClientPortfolioItem = {
   next_billing_set_at: string | null;
 };
 
-export type DealContractInfo = { amount: number | null; contractEnd: string | null };
+// Pas de montant : la liste affiche le facturé du sheet revenue, pas le deal HubSpot.
+export type DealContractInfo = { contractEnd: string | null };
 
 // Sous-ensemble des colonnes `clients` lues par la route de liste.
 export type PortfolioSourceRow = {
@@ -59,7 +54,6 @@ export type PortfolioSourceRow = {
   cs_email: string | null;
   cs_name: string | null;
   closedwon_at: string;
-  deal_amount: number | null;
   billing: Billing | null;
   health: Health | null;
   insights: Insights | null;
@@ -113,9 +107,6 @@ export function toPortfolioItem(row: PortfolioSourceRow, deal: DealContractInfo 
     closedwon_at: row.closedwon_at,
     enrichment_status: row.enrichment_status,
     am_cs_notified_at: row.am_cs_notified_at,
-    contract_value: deal?.amount ?? row.deal_amount,
-    contract_value_source: deal?.amount != null ? "hubspot" : "stored",
-    deal_amount: row.deal_amount,
     contract_end: deal
       ? resolveContractEnd({ contractEndDate: deal.contractEnd, closedwonAt: row.closedwon_at, conversationsField: row.contract_end_field })
       : null,

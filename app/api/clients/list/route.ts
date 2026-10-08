@@ -7,7 +7,7 @@ import { toPortfolioItem, type PortfolioSourceRow } from "@/lib/clients/portfoli
 export const dynamic = "force-dynamic";
 
 const BASE_COLUMNS =
-  "id, hubspot_deal_id, hubspot_company_id, company_name, owner_email, owner_name, am_email, am_name, cs_email, cs_name, closedwon_at, deal_amount, billing, health, insights, enrichment_status, am_cs_notified_at, " +
+  "id, hubspot_deal_id, hubspot_company_id, company_name, owner_email, owner_name, am_email, am_name, cs_email, cs_name, closedwon_at, billing, health, insights, enrichment_status, am_cs_notified_at, " +
   // Seul field de la fiche lu ici : la fin de contrat trouvée dans les échanges
   // (repli de Contract end quand HubSpot n'a pas de date valable).
   "contract_end_field:fields_json->planning->fin_contrat_le";
@@ -20,9 +20,10 @@ const NEXT_BILLING_COLUMNS = "next_billing_date, next_billing_set_by, next_billi
 // Liste les clients (closed-won) connus de CoachelloHQ, au format compact de la
 // vue portefeuille (cf. lib/clients/portfolio.ts). Par défaut on filtre sur les
 // clients "qui me concernent" : owner du deal OU AM/CS assigné lors du
-// handover. `owner=all` pour tout voir. `hubspot=1` ajoute le montant et la fin
-// de contrat lus en live (un appel batch) ; seule la page /clients le demande,
-// video-studio n'a besoin que des noms.
+// handover. `owner=all` pour tout voir. `hubspot=1` ajoute la fin de contrat
+// lue en live (un appel batch) ; seule la vue avancée de /clients le demande,
+// video-studio n'a besoin que des noms. Les montants viennent du sheet revenue
+// (`billing`), jamais du deal HubSpot.
 export async function GET(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });

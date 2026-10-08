@@ -15,7 +15,7 @@ import { Banner } from "@/components/ui/banner";
 import { daysUntil } from "./[id]/_components/ui";
 
 // Deux vues :
-//  - par défaut, la liste simple (signature, montants, santé, statut) ;
+//  - par défaut, la liste simple (signature, facturé all time, santé, statut) ;
 //  - "Advanced view" (toggle, mémorisé dans le navigateur) : la vue
 //    portefeuille, les infos clés de chaque compte côte à côte pour prioriser
 //    (tri par défaut : santé croissante) et faire les points AM/CSM (filtres AM
@@ -78,6 +78,18 @@ const RENEWAL_WINDOW_DAYS = 120;
 
 function fmtK(n: number): string {
   return `${(n / 1000).toFixed(n >= 10_000 || n === 0 ? 0 : 1)}k€`;
+}
+
+// Facturé all time (sheet revenue) d'un ensemble de comptes. "-" si aucun n'est
+// dans le sheet (jamais un 0 trompeur) ; le titre dit combien en manquent.
+function billedSummary(rows: ClientPortfolioItem[]): { value: string; missing: number } {
+  const matched = rows.filter((c) => c.billing_matched);
+  const total = matched.reduce((s, c) => s + (c.billed_lifetime ?? 0), 0);
+  return { value: matched.length ? fmtK(total) : "-", missing: rows.length - matched.length };
+}
+
+function missingNote(missing: number): string {
+  return missing ? ` ${missing} account${missing > 1 ? "s are" : " is"} not in the sheet.` : "";
 }
 
 function personOptions(rows: ClientPortfolioItem[], role: "am" | "cs", allLabel: string): SelectOption[] {
@@ -152,14 +164,12 @@ export default function ClientsPage() {
 
   const rows = useMemo(() => sortPortfolio(quick ? groups[quick] : scoped, sort), [quick, groups, scoped, sort]);
 
-  // Vue simple : les pastilles d'origine.
-  const signedTotal = scoped.reduce((s, c) => s + (c.deal_amount ?? 0), 0);
+  // Facturé all time (sheet revenue), dans les deux vues : pas de montant HubSpot.
+  const billed = billedSummary(scoped);
+  const atRiskBilled = billedSummary(groups.at_risk);
   const enriched = scoped.filter((c) => c.enrichment_status === "done").length;
   const pending = scoped.filter((c) => c.enrichment_status !== "done" && c.enrichment_status !== "error").length;
 
-  // Vue avancée : bandeau de synthèse.
-  const contractTotal = scoped.reduce((s, c) => s + (c.contract_value ?? 0), 0);
-  const atRiskValue = groups.at_risk.reduce((s, c) => s + (c.contract_value ?? 0), 0);
   const toggleQuick = (f: QuickFilter) => setQuick((cur) => (cur === f ? null : f));
   const alert = (n: number, color: string) => <span style={{ color: n > 0 ? color : COLORS.ink0 }}>{n}</span>;
   const errorMessage = error instanceof Error ? error.message : error ? "Failed to load" : null;
@@ -285,7 +295,7 @@ export default function ClientsPage() {
 
         <label
           style={{ display: "inline-flex", alignItems: "center", gap: 8, fontSize: 12, fontWeight: 500, color: COLORS.ink1, cursor: "pointer" }}
-          title="Compare accounts side by side: health, contract, next step, contract end"
+          title="Compare accounts side by side: phase, health, billed all time, next step, contract end"
         >
           <Switch checked={advanced} onChange={writeAdvancedView} />
           Advanced view
@@ -316,7 +326,7 @@ export default function ClientsPage() {
         {!advanced && (
           <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
             <StatPill label="Clients" value={scoped.length} />
-            <StatPill label="Signed ARR" value={fmtK(signedTotal)} />
+            <StatPill label="Billed all time" value={billed.value} title={`Sum billed since the start, from the revenue sheet.${missingNote(billed.missing)}`} />
             <StatPill label="Enriched" value={`${enriched}/${scoped.length}`} />
             {pending > 0 && <StatPill label="In progress" value={pending} />}
           </div>
@@ -340,21 +350,23 @@ export default function ClientsPage() {
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <StatPill label="Accounts" value={scoped.length} onClick={() => setQuick(null)} active={quick === null} title="Show all accounts of this portfolio" />
               <StatPill
-                label="Contract value"
-                value={fmtK(contractTotal)}
-                title="Sum of the deal amounts (live from HubSpot when available)"
+                label="Billed all time"
+                value={billed.value}
+                title={`Sum billed since the start, from the revenue sheet.${missingNote(billed.missing)}`}
               />
               <StatPill
                 label="At risk"
                 value={
                   <>
                     {alert(groups.at_risk.length, COLORS.err)}
-                    {atRiskValue > 0 && <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink3 }}> · {fmtK(atRiskValue)}</span>}
+                    {groups.at_risk.length > 0 && atRiskBilled.value !== "-" && (
+                      <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink3 }}> · {atRiskBilled.value}</span>
+                    )}
                   </>
                 }
                 onClick={() => toggleQuick("at_risk")}
                 active={quick === "at_risk"}
-                title="Accounts with a red health score, and the contract value they carry"
+                title={`Accounts with a red health score, and what they billed all time.${missingNote(atRiskBilled.missing)}`}
               />
               <StatPill
                 label="Needs attention"
@@ -381,7 +393,7 @@ export default function ClientsPage() {
 
             {data?.hubspotError && (
               <Banner tone="warn" title="HubSpot could not be read">
-                Contract end dates are unavailable and amounts are those at signature. {data.hubspotError}
+                Contract end dates are unavailable. {data.hubspotError}
               </Banner>
             )}
 

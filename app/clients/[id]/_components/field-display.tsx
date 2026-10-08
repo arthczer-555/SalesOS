@@ -164,6 +164,33 @@ function ClampedText({ text }: { text: string }) {
 
 // ── Read-only rendering ──────────────────────────────────────────────────
 
+// Retour CSM : un field à plusieurs points se lit en puces (Add-on offers,
+// KPIs…), pas en pastilles ni en un bloc de texte. Puce explicite comme dans
+// EditableStringList : le reset Tailwind retire le list-style des <ul>.
+function Bullets({ items }: { items: string[] }) {
+  return (
+    <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 4 }}>
+      {items.map((s, i) => (
+        <li key={i} style={{ display: "flex", gap: 8, fontSize: 13, color: COLORS.ink0, lineHeight: 1.45 }}>
+          <span aria-hidden style={{ color: COLORS.ink3, flexShrink: 0 }}>•</span>
+          <span style={{ minWidth: 0 }}>{s}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// Texte écrit comme une liste (plusieurs lignes, ou des points séparés par
+// " • ") : les points, marqueurs "•", "-", "*", "1." retirés. null = texte
+// simple. Pas de découpage sur ";" ni ". " (trop de faux positifs).
+function textPoints(text: string): string[] | null {
+  const points = text
+    .split(/\n|\s•\s/)
+    .map((l) => l.replace(/^\s*(?:[•*-]|\d+[.)])\s+/, "").trim())
+    .filter(Boolean);
+  return points.length > 1 ? points : null;
+}
+
 function renderValue(value: unknown, definition: FieldDefinition): React.ReactNode {
   const kind = definition.kind;
   if (value === null || value === undefined) return <MissingValue />;
@@ -172,9 +199,12 @@ function renderValue(value: unknown, definition: FieldDefinition): React.ReactNo
 
   switch (kind) {
     case "text":
+    case "long_text": {
+      const points = textPoints(String(value));
+      if (points) return <Bullets items={points} />;
+      if (kind === "long_text") return <ClampedText text={String(value)} />;
       return <span style={{ fontSize: 13, color: COLORS.ink0, whiteSpace: "pre-wrap" }}>{String(value)}</span>;
-    case "long_text":
-      return <ClampedText text={String(value)} />;
+    }
     case "number":
       return <span style={{ fontSize: 13, color: COLORS.ink0, fontVariantNumeric: "tabular-nums" }}>{String(value)}</span>;
     case "date": {
@@ -219,16 +249,9 @@ function renderValue(value: unknown, definition: FieldDefinition): React.ReactNo
     }
     case "array_string": {
       const arr = value as string[];
-      if (arr.some((s) => String(s).length > 32)) {
-        return (
-          <ul style={{ margin: 0, paddingLeft: 16, display: "flex", flexDirection: "column", gap: 4 }}>
-            {arr.map((s, i) => (
-              <li key={i} style={{ fontSize: 13, color: COLORS.ink0, lineHeight: 1.45 }}>
-                {s}
-              </li>
-            ))}
-          </ul>
-        );
+      // Pastilles seulement pour les champs "tags" aux valeurs courtes (FR, EN).
+      if (definition.display !== "tags" || arr.some((s) => String(s).length > 32)) {
+        return <Bullets items={arr.map(String)} />;
       }
       return (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -751,8 +774,9 @@ export function FieldDisplay({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(110px, 180px) minmax(0, 1fr) auto",
-          gap: 14,
+          // Libellés étroits (retour CSM) : la valeur, souvent du texte, prend la place.
+          gridTemplateColumns: "minmax(88px, 128px) minmax(0, 1fr) auto",
+          gap: 12,
           padding: "9px 12px",
           margin: "0 -12px",
           borderBottom: `1px solid ${COLORS.line}`,

@@ -135,6 +135,9 @@ export type FieldDefinition = {
   // Champ recommandé pour le handover (non bloquant). Vide -> indice discret +
   // popup de confirmation avant l'envoi (l'AE peut valider quand même).
   recommended?: boolean;
+  // array_string : "tags" = pastilles (valeurs courtes type FR, EN). Par défaut
+  // une liste s'affiche en puces.
+  display?: "tags";
 };
 
 export const SECTION_DEFINITIONS: ReadonlyArray<{
@@ -153,8 +156,8 @@ export const SECTION_DEFINITIONS: ReadonlyArray<{
       { key: "contact_facturation", label: "Billing contact", kind: "contact", required: true },
       { key: "contact_it", label: "IT contact", kind: "contact", required: true },
       { key: "autres_parties_prenantes", label: "Other stakeholders", kind: "array_contact", recommended: true },
-      { key: "langues_requises", label: "Required languages", kind: "array_string", recommended: true },
-      { key: "zones_geographiques", label: "Geographic regions", kind: "array_string" },
+      { key: "langues_requises", label: "Required languages", kind: "array_string", display: "tags", recommended: true },
+      { key: "zones_geographiques", label: "Geographic regions", kind: "array_string", display: "tags" },
     ],
   },
   {

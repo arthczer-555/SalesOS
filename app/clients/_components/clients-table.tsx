@@ -8,10 +8,11 @@ import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
 import { HealthBadge } from "./health-badge";
 
 // Vue par défaut de /clients : la liste simple des comptes (signature,
-// montants, santé, statut du handover). La vue avancée (portfolio-table.tsx)
+// facturé all time, santé, statut du handover). Pas de montant HubSpot : le
+// facturé du sheet revenue fait foi. La vue avancée (portfolio-table.tsx)
 // s'active avec le toggle "Advanced view".
 
-const GRID = "minmax(220px, 2fr) minmax(150px, 1fr) 110px 110px 120px 140px 160px";
+const GRID = "minmax(220px, 2fr) minmax(150px, 1fr) 130px 120px 140px 160px";
 
 function fmtAmount(n: number | null): string {
   if (n == null) return "-";
@@ -116,8 +117,7 @@ export function ClientsTable({ clients }: { clients: ClientPortfolioItem[] }) {
       >
         <div>Account</div>
         <div>Owner</div>
-        <div style={{ textAlign: "right" }}>HubSpot amount</div>
-        <div style={{ textAlign: "right" }}>Billed amount</div>
+        <div style={{ textAlign: "right" }}>Billed all time</div>
         <div>Signed on</div>
         <div>Health</div>
         <div>Status</div>
@@ -170,10 +170,13 @@ export function ClientsTable({ clients }: { clients: ClientPortfolioItem[] }) {
               {c.owner_name || c.owner_email || "-"}
             </span>
           </div>
-          <div style={num}>{fmtAmount(c.deal_amount)}</div>
-          <div style={num} title={c.billing_matched ? "Lifetime billed (revenue sheet)" : "Not in the revenue sheet"}>
-            {fmtAmount(c.billed_lifetime)}
-          </div>
+          {c.billing_matched ? (
+            <div style={num} title="Billed since the start, from the revenue sheet (Total column)">
+              {fmtAmount(c.billed_lifetime)}
+            </div>
+          ) : (
+            <div style={{ ...num, fontSize: 11.5, color: COLORS.warn }}>Not in sheet</div>
+          )}
           <div style={{ fontSize: 12.5, color: COLORS.ink1, fontVariantNumeric: "tabular-nums" }}>{fmtDate(c.closedwon_at)}</div>
           <div>
             <HealthBadge health={c.health} compact />
