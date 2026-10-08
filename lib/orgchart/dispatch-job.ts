@@ -13,7 +13,7 @@ import { db } from "@/lib/db";
 interface DispatchOpts {
   jobId: string;
   fnName: string; // nom de la Netlify Background Function (.netlify/functions/<fnName>)
-  table: "orgchart_import_jobs" | "apollo_enrichment_jobs";
+  table: "orgchart_import_jobs" | "apollo_enrichment_jobs" | "prospecting_jobs";
   origin: string; // repli si URL/SITE_URL absents (req.nextUrl.origin)
   run: () => Promise<{ ok: boolean; error?: string }>; // runner in-process (dev)
 }

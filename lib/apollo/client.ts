@@ -1,5 +1,5 @@
 /**
- * Client Apollo.io — testbed.
+ * Client Apollo.io (testbed).
  *
  * Deux usages :
  * - `searchPeople` : People Search (POST /v1/mixed_people/search), filtré par
@@ -162,6 +162,18 @@ export interface SearchPeopleParams {
   seniorities?: string[];
   /** Pays/villes, ex. ["France"]. */
   locations?: string[];
+  /** Plusieurs domaines d'entreprise (fusionnés avec `domain` dans la même liste). */
+  domains?: string[];
+  /** Tranches d'effectif Apollo, format "201,500". */
+  employeeRanges?: string[];
+  /** Localisation du siège de l'entreprise (≠ localisation de la personne). */
+  organizationLocations?: string[];
+  /** Mots-clés libres (q_keywords). */
+  keywords?: string;
+  /** Mots-clés secteur de l'entreprise (q_organization_keyword_tags). */
+  industryKeywords?: string[];
+  /** Élargit aux titres proches (include_similar_titles). */
+  includeSimilarTitles?: boolean;
   page?: number;
   perPage?: number;
 }
@@ -180,15 +192,24 @@ export async function searchPeople(params: SearchPeopleParams): Promise<SearchPe
     page: params.page ?? 1,
     per_page: perPage,
   };
-  if (params.domain) {
+  // `domain` et `domains` partagent la même liste : un seul paramètre envoyé.
+  const domainList = Array.from(
+    new Set([params.domain, ...(params.domains ?? [])].map((d) => (d ?? "").trim().toLowerCase()).filter(Boolean)),
+  );
+  if (domainList.length) {
     // api_search attend une liste. Ne PAS envoyer aussi q_organization_domains
     // (string) : Apollo rejette les deux ensemble ("cannot be used together").
-    body.q_organization_domains_list = [params.domain];
+    body.q_organization_domains_list = domainList;
   }
-  if (params.organizationName && !params.domain) body.q_organization_name = params.organizationName;
+  if (params.organizationName && !domainList.length) body.q_organization_name = params.organizationName;
   if (params.titles?.length) body.person_titles = params.titles;
+  if (params.titles?.length && params.includeSimilarTitles !== undefined) body.include_similar_titles = params.includeSimilarTitles;
   if (params.seniorities?.length) body.person_seniorities = params.seniorities;
   if (params.locations?.length) body.person_locations = params.locations;
+  if (params.employeeRanges?.length) body.organization_num_employees_ranges = params.employeeRanges;
+  if (params.organizationLocations?.length) body.organization_locations = params.organizationLocations;
+  if (params.keywords?.trim()) body.q_keywords = params.keywords.trim();
+  if (params.industryKeywords?.length) body.q_organization_keyword_tags = params.industryKeywords;
 
   // Endpoint API dédié (mixed_people/search est déprécié pour les appels API).
   const res = await apolloFetch<{ people?: Record<string, unknown>[]; pagination?: { total_entries?: number } }>(
@@ -284,7 +305,7 @@ export async function revealPhone(
 // Enrichit une personne SANS révéler l'email (pas de crédit email). Sert à
 // VALIDER le poste actuel + la société actuelle (People Match renvoie title +
 // organization même sans reveal). À utiliser pour les contacts déjà sur HubSpot
-// (on ne révèle jamais leur email — cf. règle produit).
+// (on ne révèle jamais leur email, cf. règle produit).
 export async function matchPerson(params: RevealPersonParams): Promise<RevealPersonData> {
   const body: Record<string, unknown> = {
     reveal_personal_emails: false,
@@ -299,6 +320,81 @@ export async function matchPerson(params: RevealPersonParams): Promise<RevealPer
   const res = await apolloFetch<{ person?: Record<string, unknown> }>("/people/match", body);
   const data = res.data as { person?: Record<string, unknown> } | null;
   return { person: data?.person ? mapPerson(data.person) : null, raw: res };
+}
+
+export interface BulkRevealInput {
+  /** id Apollo issu du search (matching le plus fiable). */
+  apolloId?: string;
+  firstName?: string;
+  lastName?: string;
+  domain?: string;
+  organizationName?: string;
+  linkedinUrl?: string;
+}
+
+export interface BulkRevealData {
+  /** Même ordre que l'entrée ; null = personne non trouvée par Apollo. */
+  people: (ApolloPerson | null)[];
+  /** Crédits facturés selon Apollo (null si la réponse ne le précise pas). */
+  creditsConsumed: number | null;
+  raw: ApolloResult;
+}
+
+/** Taille max d'un appel /people/bulk_match (limite Apollo). */
+export const BULK_REVEAL_MAX = 10;
+
+/**
+ * Révèle l'email PROFESSIONNEL de 1 à 10 personnes (People Bulk Match).
+ * CONSOMME UN CRÉDIT email par personne trouvée. On ne révèle jamais d'email
+ * personnel (reveal_personal_emails=false) ni de téléphone. Les entrées au-delà
+ * de 10 sont ignorées : c'est à l'appelant de découper en paquets.
+ */
+export async function bulkRevealPeople(people: BulkRevealInput[]): Promise<BulkRevealData> {
+  const batch = people.slice(0, BULK_REVEAL_MAX);
+  const details = batch.map((p) => {
+    const d: Record<string, unknown> = {};
+    if (p.apolloId) d.id = p.apolloId;
+    if (p.firstName) d.first_name = p.firstName;
+    if (p.lastName) d.last_name = p.lastName;
+    if (p.firstName && p.lastName) d.name = `${p.firstName} ${p.lastName}`;
+    if (p.domain) d.domain = p.domain;
+    if (p.organizationName) d.organization_name = p.organizationName;
+    if (p.linkedinUrl) d.linkedin_url = p.linkedinUrl;
+    return d;
+  });
+  if (details.length === 0) {
+    return { people: [], creditsConsumed: 0, raw: { ok: true, status: 200, ms: 0, data: null, rateLimit: {} } };
+  }
+
+  const res = await apolloFetch<{ matches?: (Record<string, unknown> | null)[]; credits_consumed?: number }>("/people/bulk_match", {
+    details,
+    reveal_personal_emails: false,
+    reveal_phone_number: false,
+  });
+  const data = res.data as { matches?: (Record<string, unknown> | null)[]; credits_consumed?: number } | null;
+  const matches = Array.isArray(data?.matches) ? data!.matches : [];
+  // Apollo renvoie les matches dans l'ordre des `details` (null si introuvable).
+  // Si la longueur diffère (introuvables omis), on réaligne par id Apollo,
+  // URL LinkedIn ou prénom + nom pour ne jamais attribuer un email à la
+  // mauvaise personne.
+  const eq = (a: unknown, b: string | undefined) => typeof a === "string" && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
+  const slug = (u: unknown) => (typeof u === "string" ? (u.match(/linkedin\.com\/in\/([^/?#]+)/i)?.[1] ?? "").toLowerCase() : "");
+  const aligned: (Record<string, unknown> | null)[] =
+    matches.length === batch.length
+      ? matches
+      : batch.map(
+          (p) =>
+            matches.find(
+              (m) =>
+                !!m &&
+                ((!!p.apolloId && String(m.id ?? "") === p.apolloId) ||
+                  (!!p.linkedinUrl && !!slug(p.linkedinUrl) && slug(m.linkedin_url) === slug(p.linkedinUrl)) ||
+                  (!p.apolloId && eq(m.first_name, p.firstName) && eq(m.last_name, p.lastName))),
+            ) ?? null,
+        );
+  const out: (ApolloPerson | null)[] = aligned.map((m) => (m && typeof m === "object" ? mapPerson(m) : null));
+  const credits = typeof data?.credits_consumed === "number" ? data.credits_consumed : null;
+  return { people: out, creditsConsumed: credits, raw: res };
 }
 
 export function isApolloConfigured(): boolean {

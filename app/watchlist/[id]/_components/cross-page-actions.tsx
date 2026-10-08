@@ -3,10 +3,9 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { List, Send, Loader2, UserPlus, ArrowRight, ExternalLink } from "lucide-react";
+import { List, Send, UserPlus, ArrowRight, ExternalLink } from "lucide-react";
 import { COLORS, RADIUS, SHADOWS } from "@/lib/design/tokens";
 import type { WatchCompanyDetail } from "@/app/api/watchlist/companies/[id]/route";
-import type { CompanyContactsResponse } from "@/app/api/watchlist/companies/[id]/contacts/route";
 
 export function CrossPageActions({
   company,
@@ -16,42 +15,11 @@ export function CrossPageActions({
   onEnrichApollo?: () => void;
 }) {
   const router = useRouter();
-  const [loadingProspection, setLoadingProspection] = React.useState(false);
-
-  // Charge les contacts HubSpot de la company, les pousse en sessionStorage,
-  // puis ouvre Mass Prospection avec ces prospects déjà sélectionnés.
-  async function goToMassProspection() {
-    if (loadingProspection) return;
-    setLoadingProspection(true);
-    try {
-      let prospects: Array<Record<string, unknown>> = [];
-      try {
-        const res = await fetch(`/api/watchlist/companies/${company.id}/contacts`);
-        if (res.ok) {
-          const data = (await res.json()) as CompanyContactsResponse;
-          prospects = (data.contacts ?? [])
-            .filter((c) => !!c.email)
-            .map((c) => ({
-              hubspot_id: c.id,
-              firstName: c.firstname ?? "",
-              lastName: c.lastname ?? "",
-              email: c.email as string,
-              jobTitle: c.jobtitle ?? undefined,
-              company: company.name,
-              extraData: { source: "watchlist" },
-            }));
-        }
-      } catch {
-        /* on ouvre quand même Mass Prospection, juste sans présélection */
-      }
-      sessionStorage.setItem(
-        "mass-prospection-preload",
-        JSON.stringify({ company: company.name, prospects }),
-      );
-      router.push("/mass-prospection?from=watchlist");
-    } finally {
-      setLoadingProspection(false);
-    }
+  // Ouvre Prospecting avec la création de campagne préremplie : les contacts
+  // HubSpot du compte sont proposés dans la source "Watch List" du tiroir d'ajout.
+  function goToProspecting() {
+    const qs = new URLSearchParams({ new: "1", scopeCompanyId: company.id, name: `${company.name} outreach` });
+    router.push(`/prospecting/campaigns?${qs.toString()}`);
   }
 
   return (
@@ -88,11 +56,10 @@ export function CrossPageActions({
           sub="Create a prospect list"
         />
         <ActionLink
-          onClick={goToMassProspection}
-          icon={loadingProspection ? <Loader2 size={19} className="animate-spin" /> : <Send size={19} />}
-          label="Mass Prospection"
-          sub={loadingProspection ? "Loading contacts…" : "HubSpot contacts preselected"}
-          disabled={loadingProspection}
+          onClick={goToProspecting}
+          icon={<Send size={19} />}
+          label="Prospecting campaign"
+          sub="Sequence for this account's contacts"
         />
       </div>
     </section>

@@ -106,7 +106,8 @@ export interface HubspotCriteria {
   autoResolveLinkedin?: boolean;
 }
 
-/** Résumé de la dernière campagne lancée depuis une liste (pour la carte liste). */
+/** Résumé de la dernière campagne Prospecting créée depuis une liste (carte liste).
+ *  emailCount = prospects inscrits, sentCount = prospects contactés, draftedCount = à revoir. */
 export interface ListLastCampaign {
   id: string;
   name: string | null;

@@ -76,6 +76,11 @@ const FEATURE_DESCRIPTIONS: Record<string, string> = {
   deals_analyze:           "Deals tab - opportunity analysis",
   deals_email:             "Deals tab - deal follow-up email generation",
   deals_score:             "Deals tab - automatic deal scoring",
+  prospecting_research:    "Prospecting - research brief per prospect (LinkedIn, news, jobs, CRM)",
+  prospecting_write:       "Prospecting - full sequence writing per prospect",
+  prospecting_step:        "Prospecting - single step regeneration and quick email",
+  prospecting_propose:     "Prospecting - Build with AI sequence proposal",
+  prospecting_distill:     "Prospecting - persona messaging distilled from Notion",
 };
 
 const MODEL_COLORS: Record<string, { bg: string; text: string }> = {
@@ -161,6 +166,11 @@ const FEATURE_TO_PREF: Record<string, string> = {
   marketing_linkedin_analyze: "marketing",
   rag_insights:               "rag_insights",
   rag_gaps:                   "rag_gaps",
+  prospecting_research:       "prospecting_research",
+  prospecting_write:          "prospecting_write",
+  prospecting_step:           "prospecting_write",
+  prospecting_propose:        "prospecting_write",
+  prospecting_distill:        "prospecting_write",
 };
 
 // Default model per admin pref key (matches model-preferences-admin.tsx)
@@ -177,6 +187,8 @@ const PREF_DEFAULTS: Record<string, string> = {
   marketing:      "claude-sonnet-5-5",
   rag_insights:   "claude-haiku-4-5-20251001",
   rag_gaps:       "claude-sonnet-5-5",
+  prospecting_write:    "claude-sonnet-5-5",
+  prospecting_research: "claude-haiku-4-5-20251001",
 };
 
 export function UsageTabs({

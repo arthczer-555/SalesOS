@@ -95,23 +95,35 @@ Synthèse Claude structurée : objectif, identité contact, insights entreprise/
 - Génération d'email de suivi + envoi Slack
 - LinkedIn lookup par deal
 
-### Prospection (`/prospecting`)
-- Recherche contacts HubSpot avec filtres avancés : pays, statut lead, date dernier contact, taille entreprise, source, lifecycle, owner
-- Recherche en langage naturel (Claude interprète puis filtre HubSpot)
-- Enrichissement Bright Data (profils LinkedIn via SERP + datasets)
-- Carte contact allégée + mini-timeline CRM + popup historique complet
-- Génération d'emails personnalisés par Claude (contexte utilisateur + données CRM)
-- Génération de messages LinkedIn
-- Envoi direct via Gmail (OAuth utilisateur) avec To/CC/BCC et pièces jointes
-- Génération en masse (bulk)
+### Prospecting (`/prospecting`) - refonte v2 (2026-10-02)
 
-### Mass Prospection (`/mass-prospection`)
-Outil de campagne d'emailing en 3 phases :
-- **Setup** : création d'une campagne (type, longueur, tonalité via QCM), import CSV de prospects, ou depuis une liste construite dans la Watch List (onglet Lists)
-- **Review** : génération IA d'emails personnalisés par prospect (Claude), édition manuelle
-- **Detail** : suivi des envois (statut, drafts Gmail, erreurs)
+Une seule app façon lemlist, qui remplace les anciennes pages Prospection (single) et Mass Prospection, ainsi que les stubs `/sequences` et `/followup` (redirections dans [next.config.ts](next.config.ts)). Synthèse de la recherche sur les séquences et règles câblées : [__documentation/prospecting-playbook.md](__documentation/prospecting-playbook.md).
 
-Chaque email envoyé est tracé dans `outreach_log` (mass-prospection + prospection 1-to-1), exposé via `/api/outreach/counts` pour afficher un badge "X échanges" à côté de chaque contact dans les UIs de sélection.
+- **Sections** (barre unique, [app/prospecting/_components/shell/](app/prospecting/_components/shell/)) : **Campaigns**, **Quick email** (emails ponctuels hors campagne), **Prospects** (base perso, toutes campagnes), **Tasks** (étapes manuelles du jour), **Replies** (qui a répondu, lecture seule), **Playbook** (personas, templates, best practices, connaissance Notion, liste "do not contact"). Pastille de santé de la boîte d'envoi (limite du jour, pause, synchro des réponses) et bouton "New campaign".
+- **Quick email** (`/prospecting/quick`) : quelques prospects (25 max) trouvés dans Apollo ou HubSpot, un email personnalisé chacun (recherche + IA, même règle d'or), édité puis envoyé à la main, un par un ou "Send all". Pas de séquence ni de relance. Chaque lot est une campagne `kind = quick` à une seule étape, cachée de la liste des campagnes : l'envoi passe par le moteur (dédup avec les séquences, suppression, mode d'envoi, quota de la boîte, HubSpot, `outreach_log`) et les réponses remontent dans Replies.
+- **Campagne** (`/prospecting/campaigns/[id]?tab=`) : Sequence | Prospects | Review | Settings | Report. Création en 3 temps (persona, point de départ : séquence recommandée / IA / template / vide, nom + objectif).
+- **Sources** (tiroir "Add prospects") : Apollo (presets persona, recherche gratuite, emails pro révélés au crédit après check HubSpot gratuit), HubSpot (filtres + recherche en langage naturel), CSV / Excel (parser robuste, mapping, colonnes custom en `{{custom.x}}`), saisie manuelle et collage (URLs LinkedIn résolues via Bright Data), listes sauvegardées, Watch List. **Precheck** avant ajout : doublons, déjà en séquence chez n'importe quel rep (bloquant), contacté par l'équipe depuis moins de N jours, client existant, liste de suppression, email manquant.
+- **Séquence** : timeline verticale (glisser-déposer, délais en jours d'envoi), étapes Email (nouveau thread ou réponse dans le thread), LinkedIn (visite, invitation, message), appel, tâche. Étapes manuelles = tâches dans Tasks (aucune automatisation LinkedIn). Chaque étape : IA par prospect (angle preset + consignes) ou template à variables. Score **Sequence health** + checks par message ([lib/prospecting/lint.ts](lib/prospecting/lint.ts)). Templates système "Sales leaders, AI roleplay" et "HR & L&D".
+- **Personnalisation IA** : recherche par prospect mise en cache (profil et posts LinkedIn, actus, offres d'emploi sales, historique HubSpot, envois passés), brief Haiku, puis Sonnet écrit **toute la séquence en un appel** (cohérence, nouvel angle à chaque touche). Connaissance Coachello = snapshot des pages Notion (Messaging & prospecting, 2026 positioning, Client case studies, AI coaching & role-play) synchronisé depuis Playbook > Knowledge. **Aucun chiffre ni client inventé** : seuls les proof points du persona, le roster clients et les faits de recherche sourcés sont autorisés.
+- **Review** : file de validation (raccourcis J/K/A), édition inline, régénération d'une étape avec consigne, versions, provenance. Par défaut rien ne part sans approbation.
+- **Envoi** : cron toutes les 10 min, depuis le Gmail du rep (ou une boîte dédiée sur domaine secondaire, recommandé), dans la fenêtre de la campagne (lun-jeu 08:30-17:30 Europe/Paris par défaut), quotas par boîte et par campagne, envois étalés, relances **dans le même thread**, arrêt automatique sur réponse (et sur réponse d'un collègue du même domaine), pause sur absence, bounce guard. Création des contacts manquants + log des emails et réponses dans HubSpot (désactivable).
+- **Personas** : `hr_ld` (CHRO, VP People, L&D) et `sales_leaders` (CRO, VP / Head of Sales, Sales Enablement : offre AI roleplay), éditables dans Playbook et partagés par l'équipe ([lib/prospecting/personas.ts](lib/prospecting/personas.ts) = seed).
+- **Visibilité** : campagnes strictement personnelles ; la dédup des séquences est globale (un prospect ne peut être en séquence active que chez un seul rep, index unique en DB).
+
+**Conventions de mesure (Report, KPIs)** :
+- *Contacted* = au moins un email envoyé. *Reply rate* = réponses humaines / contactés (auto-réponses et bounces exclus). *Bounce rate* = hard bounces / emails envoyés. Une réponse est attribuée au dernier email envoyé avant elle. *Meetings* = outcome "Meeting booked" posé à la main (fiche prospect, tâche).
+- **Pas de tracking d'ouverture ni de clic** (pixel = spam, et Apple Mail Privacy Protection fausse les ouvertures) : le KPI nord est le taux de réponse.
+- Un chiffre dont la source a échoué s'affiche "Error", jamais 0.
+
+**Réponses : aucun traitement, aucune IA (volontairement)**. Toute réponse humaine (le prospect ou un collègue du même domaine), quel que soit son contenu, arrête la séquence et envoie un **DM Slack** au rep (qui, campagne, début du message, lien). Le rep la traite dans Gmail ou la transmet à un sales. Les auto-réponses (absence, détectées par les en-têtes email) mettent la séquence en pause 5 jours d'envoi sans notifier ; les bounces arrêtent la séquence et passent l'adresse en "do not contact". L'onglet **Replies** est une simple vue en lecture seule (qui a répondu, message, emails envoyés avant, lien "Open in Gmail"), badge = réponses depuis la dernière visite. Une demande de désinscription n'est pas détectée automatiquement : "Do not contact" dans la fiche prospect.
+
+**Détection des réponses** (scope `gmail.readonly`) : Gmail History API depuis le dernier curseur, repli par threads si l'historique a expiré (50 threads max par tick + recherche `from:` sur 7 jours). Limites : une réponse envoyée à un autre alias ou sur LinkedIn / par téléphone doit être marquée à la main ("Mark as replied") ; seule l'adresse principale de la boîte compte comme "moi" (un envoi depuis un alias dans le thread est vu comme une réponse) ; latence max ~10 min ("Check now" force la synchro) ; pas de modification de labels Gmail. Une réponse manuelle du rep dans le thread met la séquence en pause.
+
+**Boîte d'envoi dédiée** (`/api/gmail/connect?purpose=sender`, provider `gmail_sender`, state OAuth signé) : l'écran de consentement Google doit être en mode External (ou le compte ajouté en test user) pour accepter un compte d'un autre domaine que coachello.io.
+
+**Mise en route** : appliquer [supabase/migrations/prospecting_v2.sql](supabase/migrations/prospecting_v2.sql), puis "Sync from Notion" dans Playbook > Knowledge, valider les proof points des personas, et passer `PROSPECTING_SEND_MODE` à `allowlist` (test) puis `live`.
+
+Chaque email envoyé est aussi tracé dans `outreach_log` (source `prospecting` pour les séquences et Quick email, `prospecting_quick` pour l'email ponctuel du tiroir prospect), ce qui alimente les badges "X échanges" et l'historique Watch List. Les tables `mass_campaigns` / `mass_campaign_emails` restent en lecture seule (historique).
 
 > **Market Intel (retiré)** : la feature de signaux de marché (`/intel`, table `market_signals`, alertes Slack) a été supprimée. Les pages `/intel` et `/enrichment` n'existent plus. La construction de listes de prospects vit désormais dans la Watch List (onglet **Lists**, voir ci-dessous) et alimente Mass Prospection.
 
@@ -155,6 +167,16 @@ Chaque signal porte son `query_id` : de quoi voir en base quelle requête produi
 ### Clients (`/clients`)
 Suivi des comptes post-signature (AM / Customer Success). À la signature d'un deal (webhook HubSpot closed-won), un client est créé, ses meetings Claap sont confirmés une fois par un humain, puis la fiche est enrichie par Claude à partir de HubSpot + transcripts Claap.
 
+**Liste `/clients`, deux vues** : par défaut la **liste simple** ([clients-table.tsx](app/clients/_components/clients-table.tsx) : owner, montant HubSpot à la signature, facturé lifetime, date de signature, santé, statut du handover ; triée par signature, aucun appel HubSpot) ; le toggle **Advanced view** (mémorisé dans le navigateur) affiche la vue portefeuille ci-dessous.
+
+**Vue portefeuille ("Advanced view", 2026-10-08, demande CSM "Can dreams be true?")** : les infos clés de Key insights côte à côte pour **prioriser** et faire les **points AM/CSM** sur un portefeuille commun.
+- **Filtres** : My clients / Everyone, recherche, et en vue avancée **AM et CSM cumulables** (options tirées des fiches chargées, + "Unassigned").
+- **Bandeau de synthèse** (sur la sélection filtrée), pastilles cliquables qui filtrent le tableau : Accounts, Contract value (somme), At risk (nb + valeur des comptes rouges), Needs attention, Renewal ≤ 120d, Billing ≤ 30d (ou en retard), No AM / CS.
+- **Tableau** ([portfolio-table.tsx](app/clients/_components/portfolio-table.tsx)), **trié par défaut par santé croissante** (pires en haut, fiches non scorées en bas) : Account (phase + statut tant que le handover n'est pas fait), Health (score, tendance, **principal risque** = driver le plus négatif), Contract, Next step (1re action ouverte de la fiche, owner, échéance), Next billing, Contract end, Team (AM / CS).
+- ⚠ **Contract** = montant du deal HubSpot **lu en live** (un appel batch, [fetchDealsContractInfo](lib/clients/hubspot-fields.ts)), donc il suit un changement de prix fait par l'AM ; repli sur `deal_amount` (montant à la signature) si HubSpot échoue. La sous-ligne "Billed <année>" vient du sheet revenue (onglet Historique), "Not in revenue sheet" si la société n'y est pas (jamais 0). HubSpot en échec = bandeau + "HubSpot unreachable" dans Contract end, jamais une colonne vide.
+- ⚠ **Next billing est une saisie manuelle** (`clients.next_billing_date`, avec qui et quand), éditable dans la liste ou dans Key dates : aucune source ne la donne (l'onglet "Factures" du sheet revenue ne contient que des factures émises). Rouge si dépassée, orange à 30 jours ou moins (`nextBillingToneOf`).
+- Pas de "potentiel" de compte ni d'open deals (écarté le 2026-10-08). Logique de mapping pure : [lib/clients/portfolio.ts](lib/clients/portfolio.ts).
+
 **Fiche client v2 (`/clients/[id]`, 2026-10-01)** : header sticky + 4 onglets pleine largeur (`?tab=` dans l'URL). Maquette validée : artifact "Client Page v2".
 - **Header** : avatar, nom, badge santé, chips AE / AM / CS (AM et CS modifiables à tout moment, y compris après le handover), Signed et **Billed** (facturé lifetime, colonne Total du sheet revenue, "unknown" si la société n'y est pas, jamais 0 ; plus le montant du deal, figé à la signature), deux boutons seulement : **Refresh** ("Updated X ago · auto every Monday") et **Options** (Change AM / CS, Draft missing-info email, Create video, Analyzed meetings, Show onboarding checklist, Open in HubSpot ; admin : Re-run enrichment, Delete).
 - **Bandeau handover** : rose plein, sur tous les onglets, tant que l'AM/CS n'ont pas été notifiés ("Do the handover so the CSM is notified and has the data").
@@ -168,16 +190,6 @@ Suivi des comptes post-signature (AM / Customer Success). À la signature d'un d
 - **Fields** : si du nouveau, ré-extraction de **tous** les fields. Règle de merge ([lib/clients/merge-fields.ts](lib/clients/merge-fields.ts), aussi utilisée par le re-run d'enrichissement) : un field IA est remplacé si la nouvelle valeur est non nulle et différente ; **une édition manuelle n'est remplacée que par une source datée après l'édition** (`evidence_at` > `updated_at`, confiance >= 0.7), signalée "replaced a manual edit" dans le report, avec Undo.
 - **Aussi** : health + Next actions recalculés à chaque fois ; coach brief régénéré si périmètre / planning / langues changent (sauf retouche manuelle, `coach_brief_edited_at`) ; suggestions HubSpot régénérées ; billing resynchronisé (en lot côté cron). Le deal recap n'est pas touché.
 - **Retrait d'un meeting Claap** : corbeille dans le popup "Claap meetings analyzed" (bouton info du header, confirmation inline) ou "Not this account" de What's new, tous deux via [decline-meeting](app/api/clients/[id]/decline-meeting/route.ts). Marche aussi pour un meeting analysé par Sales Coach sous le deal (ou un deal lié). Le recording passe dans `declined_claap_recording_ids` : exclu définitivement du contexte (indexés comme discovery, refresh comme re-enrich), de la timeline de la fiche, du popup et de CoachelloAI. Un refresh part aussitôt (`removedRecordingIds`) : **ré-extraction forcée des fields** même sans activité nouvelle, et un field IA dont la source était ce meeting prend la nouvelle valeur **ou se vide** (exception à "on ne blanchit jamais" du merge) ; ses étapes sortent de la timeline du deal recap (le reste du recap n'est pas régénéré). La page suit ce refresh comme le bouton Refresh.
-**Liste `/clients`, deux vues** : par défaut la **liste simple** ([clients-table.tsx](app/clients/_components/clients-table.tsx) : owner, montant HubSpot à la signature, facturé lifetime, date de signature, santé, statut du handover ; triée par signature, aucun appel HubSpot) ; le toggle **Advanced view** (mémorisé dans le navigateur) affiche la vue portefeuille ci-dessous.
-
-**Vue portefeuille ("Advanced view", 2026-10-08, demande CSM "Can dreams be true?")** : les infos clés de Key insights côte à côte pour **prioriser** et faire les **points AM/CSM** sur un portefeuille commun.
-- **Filtres** : My clients / Everyone, recherche, et en vue avancée **AM et CSM cumulables** (options tirées des fiches chargées, + "Unassigned").
-- **Bandeau de synthèse** (sur la sélection filtrée), pastilles cliquables qui filtrent le tableau : Accounts, Contract value (somme), At risk (nb + valeur des comptes rouges), Needs attention, Renewal ≤ 120d, Billing ≤ 30d (ou en retard), No AM / CS.
-- **Tableau** ([portfolio-table.tsx](app/clients/_components/portfolio-table.tsx)), **trié par défaut par santé croissante** (pires en haut, fiches non scorées en bas) : Account (phase + statut tant que le handover n'est pas fait), Health (score, tendance, **principal risque** = driver le plus négatif), Contract, Next step (1re action ouverte de la fiche, owner, échéance), Next billing, Contract end, Team (AM / CS).
-- ⚠ **Contract** = montant du deal HubSpot **lu en live** (un appel batch, [fetchDealsContractInfo](lib/clients/hubspot-fields.ts)), donc il suit un changement de prix fait par l'AM ; repli sur `deal_amount` (montant à la signature) si HubSpot échoue. La sous-ligne "Billed <année>" vient du sheet revenue (onglet Historique), "Not in revenue sheet" si la société n'y est pas (jamais 0). HubSpot en échec = bandeau + "HubSpot unreachable" dans Contract end, jamais une colonne vide.
-- ⚠ **Next billing est une saisie manuelle** (`clients.next_billing_date`, avec qui et quand), éditable dans la liste ou dans Key dates : aucune source ne la donne (l'onglet "Factures" du sheet revenue ne contient que des factures émises). Rouge si dépassée, orange à 30 jours ou moins (`nextBillingToneOf`).
-- Pas de "potentiel" de compte ni d'open deals (écarté le 2026-10-08). Logique de mapping pure : [lib/clients/portfolio.ts](lib/clients/portfolio.ts).
-
 - **Report par source** (`last_refresh_report.sources`) : une source en échec s'affiche "not reachable", jamais comme un 0. Le popup liste aussi les deals HubSpot lus (`sources.hubspot.deals`).
 - ⚠ **Compte = plusieurs companies et deals HubSpot**. Une fiche pointe sur le deal Sales signé, mais le suivi vit ailleurs : le workflow HubSpot du closed won crée un deal **Customer Success** (associé au deal Sales) où passent emails, notes et meetings Claap, et un même client est souvent éclaté sur plusieurs companies (doublon sans nom créé par le domaine email des contacts, ex. Messika / messikagroup.com ; plusieurs companies sur engie.com ; filiales VINCI Construction, Marrel pour Fassi). Enrichissement, refresh et préparation des meetings lisent donc (contacts, engagements, meetings Claap) :
   - **Companies du compte** : celle du deal + `clients.account_companies`. **Au refresh**, [lib/clients/account-discovery.ts](lib/clients/account-discovery.ts) cherche les autres companies du client : même domaine web que la company du deal, domaine email porté par **au moins la moitié** des contacts (une contact Opella encore en @sanofi.com ne fait pas entrer Sanofi), ou nom contenant **tous** les mots distinctifs du compte en mot entier (ENGIE → "ENGIE Impact", "Groupe Engie" ; Allianz Trade → pas "Allianz Partners"). Seules les companies actives sur 180 j, 5 max par refresh. Pas d'IA : le nom se normalise de façon déterministe (mêmes tokens que la discovery Claap) et le signal décisif est souvent le domaine (le doublon Messika n'a pas de nom). Elles sont **ajoutées tout de suite** (statut `pending`, leur historique déclenche une ré-extraction des fields) et listées dans un **panneau en haut à droite** de la fiche : **Keep** (`confirmed`) ou **Remove** (exclue définitivement via `declined_company_ids`, puis refresh sans elle). Retirables aussi plus tard depuis le popup "details".
@@ -201,6 +213,8 @@ Enrichissement auto contrôlé par `CLIENTS_AUTO_ENRICH` / `CLIENTS_ENRICHMENT_D
 > **À appliquer** : migration [clients_account_companies.sql](supabase/migrations/clients_account_companies.sql) (`account_companies`, `declined_company_ids`). Sans elle, les deals liés sont lus mais aucune autre company n'est rattachée au compte et le panneau ne s'affiche pas (Keep / Remove répondent que la mise à jour de la base n'est pas faite).
 
 > **À appliquer** : migration [clients_v2_tabs_refresh.sql](supabase/migrations/clients_v2_tabs_refresh.sql) (`coach_brief_edited_at`). Le code tourne sans elle ; tant qu'elle n'est pas passée, un coach brief retouché à la main peut être régénéré par le refresh.
+>
+> **À appliquer** : migration [clients_next_billing.sql](supabase/migrations/clients_next_billing.sql) (`next_billing_date`, `next_billing_set_by`, `next_billing_set_at`). Sans elle la vue portefeuille s'affiche normalement, mais Next billing n'est pas éditable (bandeau explicite, la route répond que la mise à jour de la base n'est pas faite).
 
 ### Watch List (`/watchlist`)
 Deux onglets :
@@ -214,8 +228,6 @@ Deux onglets :
 
 ### Marketing (`/marketing`)
 Hub marketing avec onglets :
->
-> **À appliquer** : migration [clients_next_billing.sql](supabase/migrations/clients_next_billing.sql) (`next_billing_date`, `next_billing_set_by`, `next_billing_set_at`). Sans elle la vue portefeuille s'affiche normalement, mais Next billing n'est pas éditable (bandeau explicite, la route répond que la mise à jour de la base n'est pas faite).
 - **Overview** : KPIs GA4 (sessions, users, durée, traffic, sources, devices, pays), funnel leads, SEO (Search Console), WordPress
 - **Articles** : liste articles WordPress avec stats GA4 et score SEO technique (/20)
 - **SEO** : audits keywords (clicks, impressions, CTR, position), détection cannibalisation, tendances
@@ -231,8 +243,8 @@ Debriefs automatiques des meetings Claap. Liste filtrable par owner/deal/date, v
 - **Langue de sortie** ([lib/sales-coach/language.ts](lib/sales-coach/language.ts)) : décidée une seule fois en code sur le transcript (FR si le français domine, EN sinon, y compris pour un meeting en espagnol), imposée à l'analyse ET au recap, puis vérifiée sur la sortie. Une sortie dans une autre langue est régénérée (3 tentatives), puis l'analyse passe en `error` plutôt que de partir sur Slack dans la mauvaise langue. Les labels des DM Slack suivent la même langue. Avant (mesuré le 01/10/2026) : 44 analyses et 12 recaps sur 188 n'étaient pas dans la langue du meeting.
 - **Meetings internes** ([lib/sales-coach/internal-meeting.ts](lib/sales-coach/internal-meeting.ts)) : Claap classe "external" des meetings 100 % Coachello (ex. "Product-sales sync", 8 participants @coachello.io). Quand aucun externe n'est confirmé présent dans l'invite, un juge Claude lit le transcript et ne répond "internal" que s'il en est certain ; le meeting est alors ignoré comme un interne Claap (aucune ligne, aucune alerte "Claap meeting with no HubSpot deal", aucune analyse), même si un deal a été résolu. Il reste analysable depuis la modale "Analyze a past meeting". Le flag `attended` de Claap n'est pas fiable (des externes "absents" parlent) et n'est jamais une preuve ; un transcript de moins de 1000 caractères n'est jamais classé interne.
 
-### Scoring (`/scoring`), Search (`/search`), Sequences (`/sequences`), Knowledge (`/knowledge`), Followup (`/followup`), Slack (`/slack`), Health (`/health`)
-Placeholders « Coming Soon ». Réservés pour fonctionnalités à venir.
+### Scoring (`/scoring`), Search (`/search`), Knowledge (`/knowledge`), Slack (`/slack`), Health (`/health`)
+Placeholders « Coming Soon ». Réservés pour fonctionnalités à venir. (`/sequences` et `/followup` redirigent vers Prospecting.)
 
 ### Pokedex (`/pokedex`)
 Répertoire interne Coachello : grille de cartes vers les outils de la plateforme (Mail Agent, CoachelloHQ, Onboarding Checklist, Super Admin, Ticket Mafia) avec descriptions et liens externes.
@@ -435,6 +447,14 @@ WORDPRESS_API_URL=https://coachello.io/wp-json
 CRON_SECRET=                    # protège les endpoints cron
 INTERNAL_SECRET=                # protège les Netlify Functions internes
 
+# Apollo (sourcing Prospecting, Watch List, Signals)
+APOLLO_API_KEY=                 # recherche gratuite, reveal d'email = 1 crédit
+
+# Prospecting (envoi des séquences)
+PROSPECTING_SEND_MODE=          # off (défaut, rien ne part) | allowlist (seuls les destinataires listés) | live
+PROSPECTING_SEND_ALLOWLIST=     # en mode allowlist : emails ou @domaines séparés par des virgules
+NEXT_PUBLIC_HUBSPOT_PORTAL_ID=  # liens vers les fiches HubSpot depuis l'UI
+
 # Slack routing (sales coach + recap + admin alerts)
 SLACK_MODE=                     # "prod" (DM aux sales) | "test" (default, DM Arthur)
 DEALS_AE_DIGEST_MODE=           # "prod" (DM au vrai AE) | "test" (default, DM Arthur). Le digest ne va qu'aux users is_sales=true.
@@ -624,8 +644,7 @@ Voir section 1 pour la description fonctionnelle de chaque module. Cette section
 | `/chat` et `/c/[id]` CoachelloAI | [app/_components/chat-workspace.tsx](app/_components/chat-workspace.tsx) | Outils : [app/api/chat/route.ts](app/api/chat/route.ts) — Prompt : [lib/guides/bot.ts](lib/guides/bot.ts) · Vue partagée : [app/c/[id]/page.tsx](app/c/[id]/page.tsx) |
 | `/briefing` | [app/briefing/page.tsx](app/briefing/page.tsx) | Collecte : [app/api/briefing/gather/route.ts](app/api/briefing/gather/route.ts) — Synthèse : [app/api/briefing/synthesize/route.ts](app/api/briefing/synthesize/route.ts) — Guide : [lib/guides/briefing.ts](lib/guides/briefing.ts) |
 | `/deals` | [app/deals/page.tsx](app/deals/page.tsx) | Scoring : [app/api/deals/score/route.ts](app/api/deals/score/route.ts) — Analyse : [app/api/deals/analyze/route.ts](app/api/deals/analyze/route.ts) — Algo : [lib/deal-scoring.ts](lib/deal-scoring.ts) |
-| `/prospecting` | [app/prospecting/page.tsx](app/prospecting/page.tsx) | Recherche : [app/api/prospection/search/route.ts](app/api/prospection/search/route.ts) — Génération : [app/api/prospection/generate/route.ts](app/api/prospection/generate/route.ts) — Guide : [lib/guides/prospection.ts](lib/guides/prospection.ts) |
-| `/mass-prospection` | [app/mass-prospection/page.tsx](app/mass-prospection/page.tsx) | Campagnes : [app/api/mass-prospection/](app/api/mass-prospection/) |
+| `/prospecting/*` | [app/prospecting/(hq)/](app/prospecting/(hq)/) (layout + sections) | UI : [app/prospecting/_components/](app/prospecting/_components/) - Logique : [lib/prospecting/](lib/prospecting/) (stores, IA, moteur d'envoi, sources) - API : [app/api/prospecting/](app/api/prospecting/) |
 | `/clients` | [app/clients/page.tsx](app/clients/page.tsx) | Enrichissement : [lib/clients/run-enrichment.ts](lib/clients/run-enrichment.ts) — Détail : [app/clients/[id]/page.tsx](app/clients/%5Bid%5D/page.tsx) |
 | `/watchlist` | [app/watchlist/page.tsx](app/watchlist/page.tsx) | Onglets Accounts + Lists. Briefs : [lib/watchlist/briefs.ts](lib/watchlist/briefs.ts). Builder de listes : [app/lists/_components/](app/lists/_components/) |
 | `/marketing` | [app/marketing/page.tsx](app/marketing/page.tsx) | Routes : [app/api/marketing/](app/api/marketing/) — GA4/GSC : [lib/google-analytics.ts](lib/google-analytics.ts), [lib/google-search-console.ts](lib/google-search-console.ts) |
@@ -686,31 +705,44 @@ Voir section 1 pour la description fonctionnelle de chaque module. Cette section
 | `/api/deals/send-slack` | POST | Alerte Slack sur un deal. |
 | `/api/deals/[id]/linkedin` | GET / POST | Infos LinkedIn associées à un deal. |
 
-### Prospection
+### Prospecting (`/api/prospecting/*`)
+
+Toutes scopées sur l'utilisateur (campagnes strictement perso). Erreurs `{ error }` en anglais.
 
 | Route | Méthode | Description |
 |-------|---------|-------------|
-| `/api/prospection/search` | GET | Filtres HubSpot avancés. |
-| `/api/prospection/ai-search` | POST | NL → HubSpot + enrichissement Bright Data. |
-| `/api/prospection/details` | GET | Détail contact + historique CRM. |
-| `/api/prospection/generate` | POST | Génération email Claude. |
-| `/api/prospection/generate-bulk` | POST | Génération bulk. |
-| `/api/prospection/people-search` | POST | Recherche de profils LinkedIn (Bright Data SERP). |
-| `/api/prospection-guide` | GET / POST | Guide prospection personnalisé. |
-| `/api/linkedin/message` | POST | Génération d'un message LinkedIn. |
+| `campaigns` | GET / POST | Liste (+ stats de la vue `prospecting_campaign_stats`) / création (template, étapes IA ou vide). |
+| `campaigns/[id]` | GET / PATCH / DELETE | Détail (étapes, stats, persona, Sequence health) / réglages / archivage (`?hard=1` supprime un draft sans envoi). |
+| `campaigns/[id]/steps` | PUT | Remplace la séquence (ids conservés ; 409 si réordonnancement après lancement). Une modif rend obsolètes les messages non envoyés. |
+| `campaigns/[id]/launch` · `pause` · `resume` · `duplicate` | POST | Cycle de vie. `launch` vérifie la checklist (422 + `blockers`). |
+| `campaigns/[id]/leads` | GET / POST | Prospects paginés / precheck (`dryRun`) ou ajout. |
+| `campaigns/[id]/generate` | POST | Job IA (recherche + séquence complète) pour une sélection ou un scope (`missing`, `outdated`, `errors`, `all`). |
+| `campaigns/[id]/review` | GET | File de Review. |
+| `campaigns/[id]/report` | GET | Rapport (stats, perf par étape, réponses par catégorie, série quotidienne). |
+| `enrollments/[id]` | GET / PATCH | Fiche prospect dans une campagne / actions (approve, pause, resume, stop, remove, mark_replied, meeting_booked, not_interested, skip_step). |
+| `enrollments/bulk` | POST | Actions groupées. |
+| `enrollments/[id]/research` | POST | (Re)lance la recherche du prospect. |
+| `touches/[id]` | PATCH | Édition manuelle d'un message (ou `revert`). |
+| `touches/[id]/regenerate` | POST | Régénère une étape avec consigne. |
+| `sources/apollo/search` · `sources/apollo/reveal` | POST | Recherche Apollo (gratuite) / job de reveal d'emails pro (crédits). |
+| `sources/hubspot/search` · `sources/hubspot/ai-search` | GET / POST | Contacts HubSpot (filtres / langage naturel). |
+| `sources/linkedin` | POST | Job de résolution d'URLs LinkedIn (Bright Data, 50 max). |
+| `sources/lists` · `sources/lists/[id]` · `sources/watchlist` · `sources/watchlist/[id]/contacts` | GET | Listes sauvegardées et comptes Watch List comme sources. |
+| `tasks` · `tasks/[id]/complete` · `skip` · `snooze` | GET / POST | Tâches manuelles (LinkedIn, appels). |
+| `replies` · `replies/[id]` | GET | Qui a répondu (filtres par type : réponses, auto-réponses, bounces ; campagne ; recherche) / détail en lecture seule (message, emails envoyés avant, lien Gmail). |
+| `quick` · `quick/[id]` · `quick/[id]/write` · `quick/[id]/send` | GET / POST | Quick email : lots récents, création d'un lot depuis une sélection, écriture IA d'un email, envoi immédiat. |
+| `mailbox` · `mailbox/sync` | GET / PATCH / POST | Santé et réglages de la boîte d'envoi / synchro des réponses à la demande. |
+| `overview` | GET | Compteurs des onglets (`?repliesSince=` pour le badge Replies) + santé de la boîte. |
+| `personas` · `personas/[id]` | GET / PUT | Personas (partagés par l'équipe). |
+| `templates` · `templates/[id]` | GET / POST / DELETE | Templates système + sauvegardés. |
+| `knowledge` · `knowledge/[id]` · `knowledge/sync` · `knowledge/distill` | GET / POST | Snapshot Notion de la connaissance Coachello, synchro, suggestions de messaging par persona. |
+| `ai/propose-sequence` | POST | Brouillon de séquence par l'IA depuis un objectif. |
+| `prospects` · `prospects/[id]` · `prospects/[id]/quick-email` | GET / PATCH / POST | Base de prospects, correction, email ponctuel. |
+| `suppressions` · `suppressions/[id]` | GET / POST / DELETE | Liste "do not contact" d'équipe. |
+| `jobs/[id]` · `jobs/[id]/cancel` | GET / POST | Suivi / annulation d'un job background. |
+| `admin/tick` | POST | Admin : exécute le tick d'envoi (dev inline, Netlify : déclenche la function). |
 
-### Mass Prospection
-
-| Route | Méthode | Description |
-|-------|---------|-------------|
-| `/api/mass-prospection/campaigns` | GET / POST | Liste / crée campagnes. |
-| `/api/mass-prospection/campaigns/[id]` | GET / PATCH / DELETE | Détails / modifie campagne. |
-| `/api/mass-prospection/campaigns/[id]/prospects` | GET / POST | Liste / ajoute prospects. |
-| `/api/mass-prospection/campaigns/[id]/prospects/[emailId]` | GET / PATCH / DELETE | Prospect individuel. |
-| `/api/mass-prospection/campaigns/[id]/generate` | POST | Génère emails pour tous les prospects. |
-| `/api/mass-prospection/campaigns/[id]/regenerate/[emailId]` | POST | Régénère un email. |
-| `/api/mass-prospection/campaigns/[id]/send/[emailId]` | POST | Envoie un email. |
-| `/api/mass-prospection/csv-parse` | POST | Parse un CSV de prospects. |
+`/api/linkedin/message` (message LinkedIn d'un deal) et `/api/prospection-guide` (house style) restent utilisés hors Prospecting.
 
 ### Outreach
 
@@ -1073,30 +1105,29 @@ CREATE TABLE marketing_events (
 );
 ```
 
-### Mass Prospection
+### Prospecting v2
 
-```sql
-CREATE TABLE mass_campaigns (
-  id UUID PRIMARY KEY,
-  user_id UUID REFERENCES users(id),
-  name TEXT,
-  status TEXT,            -- draft | generating | review | sending | done
-  qcm JSONB,              -- type, longueur, tonalité
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
+Migration [supabase/migrations/prospecting_v2.sql](supabase/migrations/prospecting_v2.sql) (idempotente). Types : [lib/prospecting/types.ts](lib/prospecting/types.ts).
 
-CREATE TABLE mass_campaign_emails (
-  id UUID PRIMARY KEY,
-  campaign_id UUID REFERENCES mass_campaigns(id) ON DELETE CASCADE,
-  hubspot_id TEXT,
-  email TEXT,
-  subject TEXT,
-  body TEXT,
-  status TEXT,            -- pending | generated | edited | sent | error
-  generated_at TIMESTAMPTZ,
-  sent_at TIMESTAMPTZ
-);
-```
+| Table | Rôle |
+|---|---|
+| `prospecting_personas` | Cibles (targeting = presets Apollo, messaging = pains, value props, proof points sourcés, insights, objections). Seed au 1er chargement. |
+| `prospecting_knowledge` | Snapshot des pages Notion / packs RAG utilisés par l'IA. |
+| `prospecting_templates` | Séquences sauvegardées par les users (les templates système sont en code). |
+| `prospecting_mailboxes` | Boîte d'envoi par user : provider (`gmail` / `gmail_sender`), fuseau, limite quotidienne (max 100), statut, curseur Gmail History, lease du tick. |
+| `prospecting_campaigns` | Campagnes (persona, objectif, langue, statut, `settings` JSONB normalisé par `normalizeSettings`). `kind` : `sequence` (campagne) ou `quick` (lot Quick email, caché de la liste). |
+| `prospecting_steps` | Étapes (kind, `delay_days` en jours d'envoi, `thread_mode`, `config`, `version`). |
+| `prospecting_contacts` | Registre d'équipe des prospects, dédupliqué (email, username LinkedIn, id Apollo) ; cache `research`. |
+| `prospecting_company_research` | Cache de recherche entreprise (TTL 14 j). |
+| `prospecting_enrollments` | Prospect x campagne = machine à états. **Index unique partiel : une seule séquence live par contact dans toute l'équipe.** |
+| `prospecting_touches` | Exécution d'une étape pour un prospect (message, statut, claim anti double-envoi, ids Gmail + Message-ID, engagement HubSpot). Unique (enrollment, step). |
+| `prospecting_replies` | Réponses, auto-réponses, bounces (type, message, attribution au dernier email envoyé). Les colonnes de classification (`category` hors bounces, `summary`, `ai`, `classified_at`) et `handled_*` ne sont pas utilisées : aucune IA ni traitement des réponses. |
+| `prospecting_events` | Journal (timeline prospect, reporting). |
+| `prospecting_suppressions` | Liste "do not contact" (emails, domaines). |
+| `prospecting_jobs` | Jobs background (generate, research, apollo_reveal, linkedin_resolve). |
+| vues `prospecting_campaign_stats`, `prospecting_step_stats` | Agrégats du reporting. |
+
+Legacy en lecture seule : `mass_campaigns`, `mass_campaign_emails` (anciennes campagnes Mass Prospection).
 
 ### Sales Coach
 
@@ -1229,7 +1260,7 @@ CREATE TABLE outreach_log (
   email       TEXT NOT NULL,
   email_lower TEXT GENERATED ALWAYS AS (LOWER(email)) STORED,
   hubspot_id  TEXT,
-  source      TEXT NOT NULL,             -- 'mass_prospection' | 'prospection' | 'watchlist'
+  source      TEXT NOT NULL,             -- 'prospecting' | 'prospecting_quick' | 'watchlist' | legacy 'mass_prospection' / 'prospection'
   source_id   UUID,
   subject     TEXT,
   sent_at     TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -1351,6 +1382,7 @@ Implémentées en tant que **Netlify Scheduled / Background Functions** dans [ne
 | `signals-sweep-scheduled.mts` | `0 5 * * *` (tous les jours 5h UTC) | `POST /.netlify/functions/signals-sweep-background` | `Bearer CRON_SECRET` | Sweep **Signals** : scan marché global, scoring Claude, dédup, recherche d'un lead joignable, insert des 10 meilleurs, rétention 14 j. |
 | `marketing-posts-scrape-scheduled.mts` | `0 6 * * 1` (tous les lundis 6h UTC) | `POST /.netlify/functions/marketing-posts-scrape-background` | `Bearer CRON_SECRET` | Scrape les posts LinkedIn des sources `LINKEDIN_OWN_POST_SOURCES` (dataset Bright Data, poll 6 min). |
 | `agents-dispatch-scheduled.mts` | `*/10 * * * *` (toutes les 10 min) | `dispatchDueAgents` ([lib/agents/dispatch.ts](lib/agents/dispatch.ts)) puis `agents-run-background` par agent échu | `X-Internal-Secret` | **Agents** : lance les agents actifs dont `next_run_at` est passé (réservation du créneau par UPDATE conditionnel), clôt les runs et designs bloqués depuis plus de 20 min. |
+| `prospecting-tick-scheduled.mts` | `*/10 * * * *` (toutes les 10 min) | `POST /.netlify/functions/prospecting-tick-background` | `Bearer CRON_SECRET` | **Prospecting** ([lib/prospecting/engine/tick.ts](lib/prospecting/engine/tick.ts)) : pour chaque boîte d'envoi (lease conditionnel, 4 en parallèle, budget 11 min) : récupération des envois bloqués (vérification dans Envoyés, jamais de renvoi aveugle), synchro des réponses / bounces (Gmail History ; une réponse = séquence arrêtée + DM Slack, sans IA), puis envoi des étapes dues dans la fenêtre et les quotas, création des tâches manuelles. `PROSPECTING_SEND_MODE=off` : rien ne part (tâches et synchro continuent). |
 
 #### Ce que le sweep Signals a coûté avant la refonte (juillet 2026)
 
@@ -1390,6 +1422,8 @@ Idempotence : `(owner_id, run_date)` stampé dans `deal_ae_digest_log`. Test man
 | `slack-chat-background.mts` | Coach Slack (mention/message) | `X-Internal-Secret` | Réponse asynchrone du coach Slack. |
 | `agents-design-background.mts` | `POST /api/agents`, `POST /api/agents/[id]/design` | `X-Internal-Secret` | Designer IA d'un agent (création ou "Refine with AI"), puis aperçu réel. |
 | `agents-run-background.mts` | dispatcher, `POST /api/agents/[id]/run` | `X-Internal-Secret` | Un run d'agent (boucle CoachelloAI + livraison Slack). |
+| `prospecting-job-background.mts` | génération IA, recherche, reveal Apollo, résolution LinkedIn (`/api/prospecting/...`) | `Bearer CRON_SECRET` | Jobs Prospecting ([lib/prospecting/jobs/run-job.ts](lib/prospecting/jobs/run-job.ts)), progression dans `prospecting_jobs`, reprise possible. |
+| `prospecting-tick-background.mts` | cron ci-dessus, `POST /api/prospecting/admin/tick` | `Bearer CRON_SECRET` | Le tick d'envoi Prospecting. |
 
 **Variables nécessaires** : `URL` (ou `SITE_URL`), `CRON_SECRET`, `INTERNAL_SECRET`.
 

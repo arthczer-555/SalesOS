@@ -7,15 +7,27 @@ import {
   renderSignaturePlain,
 } from "./email/signature";
 
-export async function getGmailAccessToken(userId: string): Promise<string> {
+/** Connexion Google absente, révoquée ou expirée (à distinguer d'une erreur réseau). */
+export class GmailAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "GmailAuthError";
+  }
+}
+
+/**
+ * provider : "gmail" = connexion Google principale ; "gmail_sender" = boîte
+ * dédiée à la prospection (domaine secondaire), cf. Prospecting > Settings.
+ */
+export async function getGmailAccessToken(userId: string, provider: "gmail" | "gmail_sender" = "gmail"): Promise<string> {
   const { data } = await db
     .from("user_integrations")
     .select("access_token, token_expiry, encrypted_refresh, refresh_iv, refresh_auth_tag, connected")
     .eq("user_id", userId)
-    .eq("provider", "gmail")
+    .eq("provider", provider)
     .single();
 
-  if (!data?.connected) throw new Error("Google not connected. Go to Settings → Connect Google to enable analytics.");
+  if (!data?.connected) throw new GmailAuthError("Google not connected. Go to Settings → Connect Google to enable analytics.");
 
   // Still valid (5 min buffer)
   if (new Date(data.token_expiry).getTime() > Date.now() + 5 * 60 * 1000) {
@@ -40,7 +52,7 @@ export async function getGmailAccessToken(userId: string): Promise<string> {
     }),
   });
 
-  if (!res.ok) throw new Error("Google token expired. Go to Settings → Disconnect Google → Reconnect.");
+  if (!res.ok) throw new GmailAuthError("Google token expired. Go to Settings → Disconnect Google → Reconnect.");
 
   const { access_token, expires_in } = await res.json();
   const tokenExpiry = new Date(Date.now() + (expires_in ?? 3600) * 1000).toISOString();
@@ -49,7 +61,7 @@ export async function getGmailAccessToken(userId: string): Promise<string> {
     .from("user_integrations")
     .update({ access_token, token_expiry: tokenExpiry })
     .eq("user_id", userId)
-    .eq("provider", "gmail");
+    .eq("provider", provider);
 
   return access_token;
 }
@@ -198,6 +210,7 @@ export async function loadUserSignature(
 
 export function buildRawEmail({
   from,
+  fromName,
   to,
   cc,
   bcc,
@@ -205,8 +218,13 @@ export function buildRawEmail({
   body,
   attachments = [],
   signature,
+  inReplyTo,
+  references,
+  quoted,
 }: {
   from: string;
+  /** Nom affiché de l'expéditeur ("Gaspard Dupont" <from>). */
+  fromName?: string | null;
   to: string[];
   cc: string[];
   bcc: string[];
@@ -214,14 +232,26 @@ export function buildRawEmail({
   body: string;
   attachments?: { name: string; type: string; data: Buffer }[];
   signature?: { html: string; plain: string; image?: SignatureImage };
+  /** Threading RFC 5322 : Message-ID du message auquel on répond. */
+  inReplyTo?: string | null;
+  /** Threading : Message-IDs de toute la chaîne. */
+  references?: string[];
+  /** Message précédent cité sous le corps (relances en thread). */
+  quoted?: { html: string; plain: string } | null;
 }): string {
   const encodedSubject = `=?UTF-8?B?${Buffer.from(subject).toString("base64")}?=`;
+  const fromHeader = fromName?.trim()
+    ? `=?UTF-8?B?${Buffer.from(fromName.trim()).toString("base64")}?= <${from}>`
+    : from;
+  const angle = (id: string) => (id.startsWith("<") ? id : `<${id}>`);
   const headers: string[] = [
-    `From: ${from}`,
+    `From: ${fromHeader}`,
     `To: ${to.join(", ")}`,
     ...(cc.length ? [`Cc: ${cc.join(", ")}`] : []),
     ...(bcc.length ? [`Bcc: ${bcc.join(", ")}`] : []),
     `Subject: ${encodedSubject}`,
+    ...(inReplyTo ? [`In-Reply-To: ${angle(inReplyTo)}`] : []),
+    ...(references && references.length ? [`References: ${references.map(angle).join(" ")}`] : []),
     "MIME-Version: 1.0",
   ];
 
@@ -229,7 +259,8 @@ export function buildRawEmail({
   // (texte + HTML) pour que la signature s'affiche mise en forme. Sinon on reste
   // en text/plain comme avant (rétrocompatible).
   const withHtml = Boolean(signature && signature.html);
-  const plainBody = signature?.plain ? `${body}\n\n${signature.plain}` : body;
+  const basePlain = signature?.plain ? `${body}\n\n${signature.plain}` : body;
+  const plainBody = quoted?.plain ? `${basePlain}\n\n${quoted.plain}` : basePlain;
 
   // Content-Type + contenu du "corps" (avant les éventuelles pièces jointes).
   let contentType: string;
@@ -237,7 +268,7 @@ export function buildRawEmail({
   if (withHtml) {
     const htmlBody =
       `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#111;">` +
-      `${textToHtml(body)}</div>${signature!.html}`;
+      `${textToHtml(body)}</div>${signature!.html}${quoted?.html ?? ""}`;
     const altBoundary = `__alt_${Date.now()}__`;
     const altBlock = [
       `--${altBoundary}`,
@@ -315,4 +346,237 @@ export function buildRawEmail({
   ].join("\r\n");
 
   return Buffer.from(msg).toString("base64url");
+}
+
+// ── API bas niveau pour Prospecting (envoi threadé, synchro des réponses) ────
+
+export type GmailProvider = "gmail" | "gmail_sender";
+
+export type GmailSendErrorKind = "auth" | "quota" | "invalid_recipient" | "transient";
+
+/** Erreur d'envoi typée : le moteur de séquences décide pause / retry / échec. */
+export class GmailSendError extends Error {
+  constructor(
+    message: string,
+    public readonly kind: GmailSendErrorKind,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "GmailSendError";
+  }
+}
+
+/** History Gmail expirée (startHistoryId trop ancien) : resynchro par threads. */
+export class GmailHistoryExpiredError extends Error {
+  constructor() {
+    super("Gmail history expired");
+    this.name = "GmailHistoryExpiredError";
+  }
+}
+
+const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
+
+async function gmailApi(
+  userId: string,
+  path: string,
+  init: RequestInit = {},
+  provider: GmailProvider = "gmail",
+): Promise<Response> {
+  const token = await getGmailAccessToken(userId, provider);
+  return fetch(`${GMAIL_API}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(init.headers ?? {}) },
+    signal: init.signal ?? AbortSignal.timeout(20_000),
+  });
+}
+
+function classifySendError(status: number, reason: string, message: string): GmailSendErrorKind {
+  const r = `${reason} ${message}`.toLowerCase();
+  if (status === 401 || r.includes("invalid_grant") || r.includes("insufficient") || r.includes("unauthorized")) return "auth";
+  if (status === 429 || r.includes("ratelimit") || r.includes("dailylimit") || r.includes("quota")) return "quota";
+  if (status === 403 && (r.includes("limit") || r.includes("exceeded"))) return "quota";
+  if (status === 403) return "auth";
+  if (status === 400 && (r.includes("recipient") || r.includes("invalid to") || r.includes("address"))) return "invalid_recipient";
+  return "transient";
+}
+
+/** Envoie un message RFC 2822 encodé (base64url). threadId = relance dans le thread. */
+export async function sendGmailRaw(
+  userId: string,
+  payload: { raw: string; threadId?: string | null },
+  provider: GmailProvider = "gmail",
+): Promise<{ id: string; threadId: string }> {
+  let res: Response;
+  try {
+    res = await gmailApi(
+      userId,
+      "/messages/send",
+      { method: "POST", body: JSON.stringify(payload.threadId ? { raw: payload.raw, threadId: payload.threadId } : { raw: payload.raw }) },
+      provider,
+    );
+  } catch (e) {
+    if (e instanceof GmailAuthError) throw new GmailSendError(e.message, "auth", 401);
+    throw new GmailSendError(e instanceof Error ? e.message : "Network error", "transient", 0);
+  }
+  if (!res.ok) {
+    const json = (await res.json().catch(() => ({}))) as { error?: { message?: string; errors?: { reason?: string }[] } };
+    const message = json.error?.message ?? `Gmail send HTTP ${res.status}`;
+    const reason = json.error?.errors?.[0]?.reason ?? "";
+    throw new GmailSendError(message, classifySendError(res.status, reason, message), res.status);
+  }
+  const data = (await res.json()) as { id: string; threadId: string };
+  return { id: data.id, threadId: data.threadId };
+}
+
+export async function getGmailProfile(
+  userId: string,
+  provider: GmailProvider = "gmail",
+): Promise<{ emailAddress: string; historyId: string }> {
+  const res = await gmailApi(userId, "/profile", {}, provider);
+  if (!res.ok) throw new Error(`Gmail profile HTTP ${res.status}`);
+  const data = (await res.json()) as { emailAddress: string; historyId: string };
+  return { emailAddress: data.emailAddress, historyId: String(data.historyId) };
+}
+
+export interface GmailMessageMeta {
+  id: string;
+  threadId: string;
+  labelIds: string[];
+  internalDate: string | null;
+  snippet: string;
+  headers: Record<string, string>;
+}
+
+/** Métadonnées d'un message (en-têtes demandés, en minuscules). */
+export async function getMessageHeaders(
+  userId: string,
+  messageId: string,
+  names: string[],
+  provider: GmailProvider = "gmail",
+): Promise<GmailMessageMeta> {
+  const qs = names.map((n) => `metadataHeaders=${encodeURIComponent(n)}`).join("&");
+  const res = await gmailApi(userId, `/messages/${messageId}?format=metadata&${qs}`, {}, provider);
+  if (!res.ok) throw new Error(`Gmail message HTTP ${res.status}`);
+  const data = (await res.json()) as {
+    id: string;
+    threadId: string;
+    labelIds?: string[];
+    internalDate?: string;
+    snippet?: string;
+    payload?: { headers?: GmailHeader[] };
+  };
+  const headers: Record<string, string> = {};
+  for (const h of data.payload?.headers ?? []) headers[h.name.toLowerCase()] = h.value;
+  return {
+    id: data.id,
+    threadId: data.threadId,
+    labelIds: data.labelIds ?? [],
+    internalDate: data.internalDate ?? null,
+    snippet: data.snippet ?? "",
+    headers,
+  };
+}
+
+/** Message complet (corps texte) via le provider voulu. */
+export async function getGmailMessageFull(
+  userId: string,
+  messageId: string,
+  provider: GmailProvider = "gmail",
+): Promise<GmailMessageFull & { labelIds: string[]; internalDate: string | null; headers: Record<string, string> }> {
+  const res = await gmailApi(userId, `/messages/${messageId}?format=full`, {}, provider);
+  if (!res.ok) throw new Error(`Gmail message HTTP ${res.status}`);
+  const data = (await res.json()) as {
+    id: string;
+    threadId: string;
+    snippet?: string;
+    labelIds?: string[];
+    internalDate?: string;
+    payload?: GmailPart & { headers?: GmailHeader[] };
+  };
+  const list = data.payload?.headers ?? [];
+  const headers: Record<string, string> = {};
+  for (const h of list) headers[h.name.toLowerCase()] = h.value;
+  return {
+    id: data.id,
+    threadId: data.threadId,
+    from: findHeader(list, "From"),
+    to: findHeader(list, "To"),
+    cc: findHeader(list, "Cc"),
+    subject: findHeader(list, "Subject"),
+    date: findHeader(list, "Date"),
+    snippet: data.snippet ?? "",
+    body: extractBody(data.payload),
+    labelIds: data.labelIds ?? [],
+    internalDate: data.internalDate ?? null,
+    headers,
+  };
+}
+
+export interface GmailHistoryPage {
+  messages: { id: string; threadId: string; labelIds: string[] }[];
+  nextPageToken: string | null;
+  historyId: string | null;
+}
+
+/** Messages ajoutés depuis startHistoryId. Lève GmailHistoryExpiredError sur 404. */
+export async function listGmailHistory(
+  userId: string,
+  startHistoryId: string,
+  pageToken: string | null = null,
+  provider: GmailProvider = "gmail",
+): Promise<GmailHistoryPage> {
+  const qs = new URLSearchParams({ startHistoryId, historyTypes: "messageAdded", maxResults: "500" });
+  if (pageToken) qs.set("pageToken", pageToken);
+  const res = await gmailApi(userId, `/history?${qs.toString()}`, {}, provider);
+  if (res.status === 404) throw new GmailHistoryExpiredError();
+  if (!res.ok) throw new Error(`Gmail history HTTP ${res.status}`);
+  const data = (await res.json()) as {
+    history?: { messagesAdded?: { message: { id: string; threadId: string; labelIds?: string[] } }[] }[];
+    nextPageToken?: string;
+    historyId?: string;
+  };
+  const messages: GmailHistoryPage["messages"] = [];
+  for (const h of data.history ?? []) {
+    for (const m of h.messagesAdded ?? []) {
+      messages.push({ id: m.message.id, threadId: m.message.threadId, labelIds: m.message.labelIds ?? [] });
+    }
+  }
+  return { messages, nextPageToken: data.nextPageToken ?? null, historyId: data.historyId ? String(data.historyId) : null };
+}
+
+/** Liste brute d'ids de messages pour une requête Gmail (q=...). */
+export async function listGmailMessageIds(
+  userId: string,
+  query: string,
+  maxResults = 50,
+  provider: GmailProvider = "gmail",
+): Promise<{ id: string; threadId: string }[]> {
+  const res = await gmailApi(userId, `/messages?q=${encodeURIComponent(query)}&maxResults=${maxResults}`, {}, provider);
+  if (!res.ok) throw new Error(`Gmail list HTTP ${res.status}`);
+  const data = (await res.json()) as { messages?: { id: string; threadId: string }[] };
+  return data.messages ?? [];
+}
+
+/** Messages d'un thread (métadonnées). */
+export async function getGmailThread(
+  userId: string,
+  threadId: string,
+  provider: GmailProvider = "gmail",
+): Promise<{ id: string; messages: GmailMessageMeta[] }> {
+  const names = ["From", "To", "Subject", "Message-ID", "In-Reply-To", "References", "Date", "Auto-Submitted", "X-Autoreply", "X-Autorespond", "Precedence", "X-Failed-Recipients", "Content-Type"];
+  const qs = names.map((n) => `metadataHeaders=${encodeURIComponent(n)}`).join("&");
+  const res = await gmailApi(userId, `/threads/${threadId}?format=metadata&${qs}`, {}, provider);
+  if (!res.ok) throw new Error(`Gmail thread HTTP ${res.status}`);
+  const data = (await res.json()) as {
+    id: string;
+    messages?: { id: string; threadId: string; labelIds?: string[]; internalDate?: string; snippet?: string; payload?: { headers?: GmailHeader[] } }[];
+  };
+  return {
+    id: data.id,
+    messages: (data.messages ?? []).map((m) => {
+      const headers: Record<string, string> = {};
+      for (const h of m.payload?.headers ?? []) headers[h.name.toLowerCase()] = h.value;
+      return { id: m.id, threadId: m.threadId, labelIds: m.labelIds ?? [], internalDate: m.internalDate ?? null, snippet: m.snippet ?? "", headers };
+    }),
+  };
 }

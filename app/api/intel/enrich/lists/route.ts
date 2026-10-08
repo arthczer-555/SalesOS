@@ -21,27 +21,37 @@ export async function GET(_req: NextRequest) {
 
   const lists = data ?? [];
 
-  // Attache la dernière campagne par liste (list_id), avec compteurs d'emails.
+  // Attache la dernière campagne Prospecting créée depuis chaque liste
+  // (source_list_id), avec ses compteurs (vue prospecting_campaign_stats).
   const { data: campaigns } = await db
-    .from("mass_campaigns")
-    .select("id, name, status, created_at, list_id, mass_campaign_emails(status)")
+    .from("prospecting_campaigns")
+    .select("id, name, status, created_at, source_list_id")
     .eq("user_id", user.id)
-    .not("list_id", "is", null)
+    .not("source_list_id", "is", null)
     .order("created_at", { ascending: false });
-
-  const lastByList = new Map<string, unknown>();
+  const latest = new Map<string, Record<string, unknown>>();
   for (const c of (campaigns ?? []) as Array<Record<string, unknown>>) {
-    const listId = c.list_id as string;
-    if (lastByList.has(listId)) continue; // déjà la plus récente (tri desc)
-    const emails = (c.mass_campaign_emails ?? []) as { status: string }[];
+    const listId = c.source_list_id as string;
+    if (!latest.has(listId)) latest.set(listId, c);
+  }
+  const campaignIds = Array.from(latest.values()).map((c) => c.id as string);
+  const { data: stats } = campaignIds.length
+    ? await db.from("prospecting_campaign_stats").select("campaign_id, leads_total, leads_contacted, leads_to_review").in("campaign_id", campaignIds)
+    : { data: [] };
+  const statsById = new Map(
+    ((stats ?? []) as { campaign_id: string; leads_total: number; leads_contacted: number; leads_to_review: number }[]).map((r) => [r.campaign_id, r]),
+  );
+  const lastByList = new Map<string, unknown>();
+  for (const [listId, c] of Array.from(latest.entries())) {
+    const st = statsById.get(c.id as string);
     lastByList.set(listId, {
       id: c.id,
       name: c.name ?? null,
       status: c.status,
       created_at: c.created_at,
-      emailCount: emails.length,
-      sentCount: emails.filter((e) => e.status === "sent").length,
-      draftedCount: emails.filter((e) => ["drafted", "edited"].includes(e.status)).length,
+      emailCount: st?.leads_total ?? 0,
+      sentCount: st?.leads_contacted ?? 0,
+      draftedCount: st?.leads_to_review ?? 0,
     });
   }
 

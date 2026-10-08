@@ -12,7 +12,6 @@ import {
   ArrowRight,
   ArrowLeft,
   Send,
-  RotateCw,
   Loader2,
   CheckCircle2,
 } from "lucide-react";
@@ -34,7 +33,6 @@ export function ListsPanel() {
   const [busy, setBusy] = React.useState(false);
   const [scopeCompanies, setScopeCompanies] = React.useState<ScopeCompanyOption[]>([]);
 
-  const [relaunchingId, setRelaunchingId] = React.useState<string | null>(null);
   const [pushingId, setPushingId] = React.useState<string | null>(null);
 
   // Polling tant qu'un envoi HubSpot est en cours (status "running") pour que le
@@ -106,7 +104,9 @@ export function ListsPanel() {
   }
 
   function useInCampaign(id: string) {
-    router.push(`/mass-prospection?from=lists&listId=${encodeURIComponent(id)}`);
+    const list = lists.find((l) => l.id === id);
+    const qs = new URLSearchParams({ new: "1", listId: id, ...(list ? { name: list.name } : {}) });
+    router.push(`/prospecting/campaigns?${qs.toString()}`);
   }
 
   async function pushToHubspot(list: EnrichmentList) {
@@ -140,28 +140,6 @@ export function ListsPanel() {
     }
   }
 
-  async function relaunch(id: string) {
-    setRelaunchingId(id);
-    setError(null);
-    try {
-      const r = await fetch(`/api/intel/enrich/lists/${id}/relaunch`, { method: "POST" });
-      const j = await r.json();
-      if (!r.ok) {
-        setError(j.error ?? "Relaunch failed");
-        return;
-      }
-      if (!j.campaignId) {
-        setError(j.message ?? "Nothing to relaunch.");
-        return;
-      }
-      router.push(`/mass-prospection?view=review&campaignId=${j.campaignId}&autogen=1`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Relaunch failed");
-    } finally {
-      setRelaunchingId(null);
-    }
-  }
-
   return (
     <div style={{ flex: 1, overflowY: "auto", padding: 24, display: "flex", flexDirection: "column", gap: 16, minHeight: 0 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -175,7 +153,7 @@ export function ListsPanel() {
             <ListIcon size={15} /> List management
           </h2>
           <p style={{ fontSize: 11, color: COLORS.ink3, margin: 0 }}>
-            Build your prospect lists (CSV or HubSpot) and relaunch your campaigns.
+            Build your prospect lists (CSV or HubSpot) and turn them into Prospecting campaigns.
           </p>
         </div>
         {view === "browse" && (
@@ -198,8 +176,6 @@ export function ListsPanel() {
           onCreate={() => setView("create-choose")}
           onDelete={onDeleteList}
           onUse={useInCampaign}
-          onRelaunch={relaunch}
-          relaunchingId={relaunchingId}
           onPushHubspot={pushToHubspot}
           pushingId={pushingId}
         />
@@ -245,8 +221,6 @@ function ListBrowser({
   onCreate,
   onDelete,
   onUse,
-  onRelaunch,
-  relaunchingId,
   onPushHubspot,
   pushingId,
 }: {
@@ -255,8 +229,6 @@ function ListBrowser({
   onCreate: () => void;
   onDelete: (id: string, name: string) => void;
   onUse: (id: string) => void;
-  onRelaunch: (id: string) => void;
-  relaunchingId: string | null;
   onPushHubspot: (list: EnrichmentList) => void;
   pushingId: string | null;
 }) {
@@ -339,7 +311,7 @@ function ListBrowser({
                   Last campaign: {last.name || "Untitled"}
                 </div>
                 <div style={{ color: COLORS.ink3, marginTop: 2 }}>
-                  {fmtDate(last.created_at)} · {last.sentCount} sent / {last.emailCount}
+                  {fmtDate(last.created_at)} · {last.sentCount} contacted / {last.emailCount} prospects
                 </div>
               </div>
             ) : (
@@ -369,17 +341,6 @@ function ListBrowser({
                     <UploadCloud size={13} /> HubSpot
                   </button>
                 )
-              )}
-              {last && (
-                <button
-                  type="button"
-                  onClick={() => onRelaunch(l.id)}
-                  disabled={relaunchingId === l.id}
-                  title="Follow up with contacts who didn't reply"
-                  style={{ ...btnSecondary(), opacity: relaunchingId === l.id ? 0.6 : 1 }}
-                >
-                  <RotateCw size={13} className={relaunchingId === l.id ? "animate-spin" : undefined} /> Relaunch
-                </button>
               )}
               <button type="button" onClick={() => onDelete(l.id, l.name)} style={iconBtn()} aria-label="Delete">
                 <Trash2 size={14} />

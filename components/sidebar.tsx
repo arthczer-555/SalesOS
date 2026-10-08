@@ -44,7 +44,7 @@ const nav: NavEntry[] = [
   { href: "/deals", label: "Deals", icon: Briefcase },
   { href: "/sales-coach", label: "Sales Coach", icon: GraduationCap },
   { href: "/clients", label: "Clients", icon: Handshake },
-  { href: "/prospecting", label: "Prospecting", icon: Crosshair, match: ["/mass-prospection"] },
+  { href: "/prospecting", label: "Prospecting", icon: Crosshair, prefix: true },
   { href: "/watchlist", label: "Watch List", icon: Eye },
   { href: "/signals", label: "Signals", icon: Radar },
   { href: "/orgchart", label: "Org Chart", icon: Network },
