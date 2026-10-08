@@ -285,6 +285,7 @@ export async function runClientEnrichment(
       closedwonAt,
       kickoffDate: typeof kickoff === "string" ? kickoff : null,
       contractEndDate,
+      contractEndField: fieldsForInsights.planning?.fin_contrat_le,
       news: newsForHealth,
       tone: toneRes.tone,
       toneError: toneRes.error,

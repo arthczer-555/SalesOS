@@ -1,4 +1,5 @@
-import type { Billing, Health, HealthLabel, HealthPhase, InsightAction, Insights } from "./types";
+import type { Billing, ClientFieldValue, Health, HealthLabel, HealthPhase, InsightAction, Insights } from "./types";
+import { resolveContractEnd, type ContractEnd } from "./lifecycle";
 
 // Vue portefeuille (/clients) : une ligne compacte par fiche client, calculée
 // côté serveur pour ne pas envoyer les jsonb complets (health, insights) au
@@ -26,8 +27,9 @@ export type ClientPortfolioItem = {
   contract_value_source: "hubspot" | "stored";
   // Montant stocké à la signature (vue simple, sans appel HubSpot).
   deal_amount: number | null;
-  // null = HubSpot non lu (cf. hubspotError de la réponse), "" impossible.
-  contract_end_date: string | null;
+  // Fin de contrat retenue (resolveContractEnd) : date HubSpot, sinon celle
+  // trouvée dans les échanges. null = HubSpot non lu (cf. hubspotError de la réponse).
+  contract_end: ContractEnd | null;
   // Facturé de l'année en cours (onglet "Historique" du sheet revenue).
   billed_current_year: number | null;
   // Facturé lifetime (colonne "Total" du même onglet).
@@ -63,6 +65,8 @@ export type PortfolioSourceRow = {
   insights: Insights | null;
   enrichment_status: ClientPortfolioItem["enrichment_status"];
   am_cs_notified_at: string | null;
+  // fields_json.planning.fin_contrat_le, lu seul (cf. route de liste).
+  contract_end_field?: ClientFieldValue | null;
   next_billing_date?: string | null;
   next_billing_set_by?: string | null;
   next_billing_set_at?: string | null;
@@ -112,7 +116,9 @@ export function toPortfolioItem(row: PortfolioSourceRow, deal: DealContractInfo 
     contract_value: deal?.amount ?? row.deal_amount,
     contract_value_source: deal?.amount != null ? "hubspot" : "stored",
     deal_amount: row.deal_amount,
-    contract_end_date: deal?.contractEnd ?? null,
+    contract_end: deal
+      ? resolveContractEnd({ contractEndDate: deal.contractEnd, closedwonAt: row.closedwon_at, conversationsField: row.contract_end_field })
+      : null,
     billed_current_year: row.billing?.matched ? row.billing.current_year_revenue ?? null : null,
     billed_lifetime: row.billing?.matched ? row.billing.total_contract_value ?? null : null,
     billing_matched: !!row.billing?.matched,

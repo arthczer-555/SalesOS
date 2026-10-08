@@ -1,5 +1,6 @@
 import { db } from "../db";
 import { hubspotFetch, hubspotBatchAssociations } from "../hubspot";
+import { parseHubspotDate } from "./lifecycle";
 
 // Backfill des closed-won historiques côté HubSpot vers la table `clients`.
 // L'admin choisit explicitement la liste des deals à importer via le dropdown
@@ -131,8 +132,8 @@ export async function backfillClosedWonDeals(opts: BackfillOpts): Promise<Backfi
 
   const rows = dealsToImport.map((d) => {
     const p = d.properties ?? {};
-    const closedateMs = p.closedate ? Number(p.closedate) : null;
-    const closedwonAt = closedateMs ? new Date(closedateMs).toISOString() : new Date().toISOString();
+    const closedateMs = parseHubspotDate(p.closedate);
+    const closedwonAt = closedateMs !== null ? new Date(closedateMs).toISOString() : new Date().toISOString();
     if (closedateMs) {
       if (!oldestClosedAt || closedwonAt < oldestClosedAt) oldestClosedAt = closedwonAt;
       if (!newestClosedAt || closedwonAt > newestClosedAt) newestClosedAt = closedwonAt;

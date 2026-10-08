@@ -7,7 +7,10 @@ import { toPortfolioItem, type PortfolioSourceRow } from "@/lib/clients/portfoli
 export const dynamic = "force-dynamic";
 
 const BASE_COLUMNS =
-  "id, hubspot_deal_id, hubspot_company_id, company_name, owner_email, owner_name, am_email, am_name, cs_email, cs_name, closedwon_at, deal_amount, billing, health, insights, enrichment_status, am_cs_notified_at";
+  "id, hubspot_deal_id, hubspot_company_id, company_name, owner_email, owner_name, am_email, am_name, cs_email, cs_name, closedwon_at, deal_amount, billing, health, insights, enrichment_status, am_cs_notified_at, " +
+  // Seul field de la fiche lu ici : la fin de contrat trouvée dans les échanges
+  // (repli de Contract end quand HubSpot n'a pas de date valable).
+  "contract_end_field:fields_json->planning->fin_contrat_le";
 // Colonnes de la migration clients_next_billing.sql : la liste doit rester
 // lisible tant qu'elle n'est pas appliquée.
 const NEXT_BILLING_COLUMNS = "next_billing_date, next_billing_set_by, next_billing_set_at";

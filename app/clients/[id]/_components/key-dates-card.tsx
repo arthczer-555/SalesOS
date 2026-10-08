@@ -6,12 +6,17 @@ import { COLORS } from "@/lib/design/tokens";
 import type { ClientRow } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { saveNextBilling } from "../../_components/next-billing-api";
-import { Card, CardHeader, Tag, contractEndTone, daysUntil, fmtDay, nextBillingToneOf, parseLooseDate, relativeDays } from "./ui";
+import { resolveContractEnd } from "@/lib/clients/lifecycle";
+import { Card, CardHeader, ContractEndOrigin, InvalidContractEnd, Tag, contractEndTone, daysUntil, fmtDay, nextBillingToneOf, parseLooseDate, relativeDays } from "./ui";
 
 // Carte "Key dates" de Key insights : jalons factuels dans l'ordre
 // chronologique (Signed, Kickoff, Last touch, Next billing, Contract end),
 // éditables sur place. Contract end passe en orange puis rouge à l'approche
-// (contractEndTone), Next billing de même (nextBillingToneOf).
+// (contractEndTone), Next billing de même (nextBillingToneOf). Sans date
+// HubSpot valable, Contract end reprend celle trouvée dans les échanges (marquée
+// "from conversations", source au survol) et l'édition part de cette date pour
+// l'écrire dans HubSpot. Une date HubSpot antérieure à la signature s'affiche
+// "Invalid in HubSpot".
 //  - Kickoff : field de la fiche (planning.kickoff_envisage_le, source manuelle) ;
 //  - Contract end / Signed : écrits dans le deal HubSpot (contract_end_date,
 //    closedate), la source de vérité ; la route synchronise aussi
@@ -167,7 +172,17 @@ export function KeyDatesCard({ client, onUpdated }: { client: ClientRow; onUpdat
   const toKickoff = daysUntil(kickoff);
   const dealFields = client.hubspot_deal_fields;
   const hubspotOk = dealFields != null;
-  const contractEnd = parseLooseDate(dealFields?.contract_end_date);
+  // Date HubSpot, ou estimée (prochain anniversaire de la signature) si absente ou incohérente.
+  // HubSpot injoignable : on ne sait pas s'il a une date, donc pas de repli sur
+  // les échanges (l'état d'erreur reste visible).
+  const end = hubspotOk
+    ? resolveContractEnd({
+        contractEndDate: dealFields?.contract_end_date,
+        closedwonAt: client.closedwon_at,
+        conversationsField: client.fields_json?.planning?.fin_contrat_le,
+      })
+    : null;
+  const contractEnd = end?.date ?? null;
   const toEnd = daysUntil(contractEnd);
   const endTone = contractEndTone(toEnd);
   const lastContact = client.health?.last_contact_at ?? null;
@@ -245,10 +260,15 @@ export function KeyDatesCard({ client, onUpdated }: { client: ClientRow; onUpdat
         <DateRow
           label="Contract end"
           value={
-            !hubspotOk ? (
+            !end ? (
               <span style={{ color: COLORS.warn }}>HubSpot unreachable</span>
             ) : contractEnd ? (
-              <span style={{ color: endTone === "err" ? COLORS.err : endTone === "warn" ? COLORS.warn : undefined }}>{fmtDay(contractEnd, true)}</span>
+              <span style={{ color: endTone === "err" ? COLORS.err : endTone === "warn" ? COLORS.warn : undefined }}>
+                {fmtDay(contractEnd, true)}
+                <ContractEndOrigin end={end} />
+              </span>
+            ) : end.rejected ? (
+              <InvalidContractEnd end={end} />
             ) : (
               <span style={{ color: COLORS.warn }}>Missing in HubSpot</span>
             )
@@ -261,7 +281,7 @@ export function KeyDatesCard({ client, onUpdated }: { client: ClientRow; onUpdat
           editable={hubspotOk}
           requireValue
           note="Saved to the HubSpot deal"
-          initial={toInputDate(contractEnd)}
+          initial={toInputDate(contractEnd ?? end?.rejected ?? null)}
           onSave={saver({ kind: "hubspot", property: "contract_end_date" }, "Contract end")}
         />
       </div>

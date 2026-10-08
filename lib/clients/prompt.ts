@@ -53,8 +53,15 @@ Sections à remplir :
    si dispo), contraintes organisationnelles (zones horaires, validation interne...).
 5. history : relation commerciale (nouveau / renouvellement / upsell), initiatives RH
    parallèles, points de vigilance détectés pendant le deal.
-6. planning : date de kickoff envisagée, suivi CS attendu (QBR, adoption call M+1...),
-   engagements pris par le sales pendant le deal (promesses contractuelles ou non).
+6. planning : date de kickoff envisagée, date de fin du contrat, suivi CS attendu (QBR,
+   adoption call M+1...), engagements pris par le sales pendant le deal (promesses
+   contractuelles ou non).
+   fin_contrat_le : UNIQUEMENT une fin de contrat dite ou écrite dans un échange (meeting,
+   email, note, message Slack) : date de fin, "licences valables jusqu'au...", "crédits à
+   consommer avant...", ou une durée ET une date de départ toutes deux explicites ("12 mois
+   à partir du 1er janvier 2026"). Jamais déduite d'une durée habituelle, de la date de
+   signature ou d'une hypothèse ("contrat d'un an en général") : dans ce cas value=null.
+   Confidence >= 0.9 seulement si la date (ou durée + départ) est littéralement écrite.
 
 - evidence_date : pour chaque field rempli, la date (YYYY-MM-DD) de la source la plus
   récente qui appuie la valeur (date du meeting, de l'email, de la note, du message Slack).
@@ -247,10 +254,11 @@ export const CLIENT_FIELDS_TOOL: Anthropic.Tool = {
         type: "object",
         properties: {
           kickoff_envisage_le: field({ type: "date" }),
+          fin_contrat_le: field({ type: "date", description: "Fin du contrat dite ou écrite explicitement dans un échange, jamais déduite d'une durée habituelle" }),
           suivi_cs_attendu: field({ type: "array_string", description: "Cadence CS attendue (ex: 1 mois adoption call, QBR T+3 mois)" }),
           engagements_sales: field({ type: "array_string", description: "Promesses faites par le sales pendant le deal — à vérifier par le CS" }),
         },
-        required: ["kickoff_envisage_le", "suivi_cs_attendu", "engagements_sales"],
+        required: ["kickoff_envisage_le", "fin_contrat_le", "suivi_cs_attendu", "engagements_sales"],
       },
     },
     required: ["general_info", "program_scope", "goals", "org", "history", "planning"],

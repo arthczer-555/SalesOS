@@ -181,9 +181,10 @@ function phaseFacts(p: HealthPhase): string {
   const s = p.days_since_signature;
   if (s !== null) parts.push(s < 60 ? `signed ${s} days ago` : `signed ${Math.round(s / 30)} months ago`);
   const e = p.days_to_contract_end;
-  if (e === null) parts.push("contract end date not in HubSpot");
-  else if (e >= 0) parts.push(`contract ends in ${e} days`);
-  else parts.push(`contract ended ${-e} days ago`);
+  const est = p.contract_end_from === "conversations" ? " (not in HubSpot, found in the conversations)" : "";
+  if (e === null) parts.push("contract end date not in HubSpot nor in the conversations");
+  else if (e >= 0) parts.push(`contract ends in ${e} days${est}`);
+  else parts.push(`contract ended ${-e} days ago${est}`);
   const text = parts.join(", ");
   return text.charAt(0).toUpperCase() + text.slice(1) + ".";
 }

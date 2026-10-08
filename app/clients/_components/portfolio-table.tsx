@@ -7,7 +7,7 @@ import { COLORS } from "@/lib/design/tokens";
 import { DataTable, type Column, type SortDir } from "@/components/ui/data-table";
 import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
 import { HealthBadge } from "./health-badge";
-import { Tag, contractEndTone, daysUntil, fmtDay, fmtEur, parseLooseDate } from "../[id]/_components/ui";
+import { ContractEndOrigin, InvalidContractEnd, Tag, contractEndTone, daysUntil, fmtDay, fmtEur } from "../[id]/_components/ui";
 import { DUE_LABEL } from "../[id]/_components/next-actions-card";
 
 // Tableau de la vue avancée (/clients, toggle "Advanced view") : une ligne par fiche, les infos
@@ -53,7 +53,7 @@ function sortValue(c: ClientPortfolioItem, key: string): number | string | null 
     case "contract":
       return c.contract_value;
     case "contract_end":
-      return parseLooseDate(c.contract_end_date);
+      return c.contract_end?.date ?? null;
     default:
       return null;
   }
@@ -76,14 +76,17 @@ export function sortPortfolio(rows: ClientPortfolioItem[], sort: PortfolioSort):
 function ContractEndCell({ client, hubspot }: { client: ClientPortfolioItem; hubspot: HubspotState }) {
   if (hubspot === "loading") return <span style={{ fontSize: 12, color: COLORS.ink4 }}>…</span>;
   if (hubspot === "error") return <span style={{ fontSize: 12, color: COLORS.warn }}>HubSpot unreachable</span>;
-  const end = parseLooseDate(client.contract_end_date);
-  if (!end) return <span style={{ fontSize: 12, color: COLORS.warn }}>Missing in HubSpot</span>;
+  const contractEnd = client.contract_end;
+  const end = contractEnd?.date ?? null;
+  if (contractEnd?.rejected && !end) return <span style={{ fontSize: 12 }}><InvalidContractEnd end={contractEnd} /></span>;
+  if (!contractEnd || !end) return <span style={{ fontSize: 12, color: COLORS.warn }}>Missing in HubSpot</span>;
   const days = daysUntil(end);
   const tone = contractEndTone(days);
   return (
     <div>
-      <div style={{ fontSize: 12.5, color: tone === "err" ? COLORS.err : COLORS.ink0, fontWeight: 500, fontVariantNumeric: "tabular-nums" }}>
+      <div style={{ fontSize: 12.5, color: tone === "err" ? COLORS.err : COLORS.ink0, fontWeight: 500, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
         {fmtDay(end, true)}
+        <ContractEndOrigin end={contractEnd} compact />
       </div>
       {days !== null && (
         <div style={{ marginTop: 2 }}>

@@ -94,6 +94,9 @@ export type HistoryFields = {
 // ── 2.6 Planning & prochaines étapes ─────────────────────────────────────
 export type PlanningFields = {
   kickoff_envisage_le: ClientFieldValue<string>; // ISO date
+  // Fin de contrat dite ou écrite dans les échanges (ISO date). Ne sert que si
+  // le deal HubSpot n'a pas de contract_end_date valable (cf. resolveContractEnd).
+  fin_contrat_le: ClientFieldValue<string>;
   suivi_cs_attendu: ClientFieldValue<string[]>;
   engagements_sales: ClientFieldValue<string[]>;
 };
@@ -213,6 +216,7 @@ export const SECTION_DEFINITIONS: ReadonlyArray<{
     label: "Planning & next steps",
     fields: [
       { key: "kickoff_envisage_le", label: "Planned kickoff date", kind: "date", required: true },
+      { key: "fin_contrat_le", label: "Contract end (from conversations)", kind: "date" },
       { key: "suivi_cs_attendu", label: "Expected CS follow-up", kind: "array_string", recommended: true },
       { key: "engagements_sales", label: "Sales commitments", kind: "array_string" },
     ],
@@ -308,6 +312,9 @@ export type HealthPhase = {
   key: "onboarding" | "running" | "renewal";
   days_since_signature: number | null;
   days_to_contract_end: number | null;
+  // Origine de la fin de contrat retenue (cf. resolveContractEnd) : deal
+  // HubSpot ou échanges. Absent sur les anciens calculs.
+  contract_end_from?: "hubspot" | "conversations" | null;
 };
 // Ton des derniers meetings, jugé par IA (Haiku) : une phrase de justification
 // et les meetings lus, pour que le driver soit vérifiable.

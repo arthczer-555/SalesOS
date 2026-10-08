@@ -9,6 +9,7 @@ import type {
   HealthRuleTier,
   HealthSignal,
   HealthTone,
+  ClientFieldValue,
   InsightAction,
   Insights,
   News,
@@ -69,6 +70,9 @@ export type HealthInputs = {
   closedwonAt: string | null;
   kickoffDate: string | null;
   contractEndDate: string | null;
+  // Fin de contrat trouvée dans les échanges (field planning.fin_contrat_le),
+  // utilisée seulement sans date HubSpot valable.
+  contractEndField?: ClientFieldValue | null;
   news: News | null;
   // null = rien à juger (aucun meeting récent) ou jugement en échec (toneError).
   tone: HealthTone | null;
@@ -359,10 +363,11 @@ function labelFromScore(score: number): HealthLabel {
 export function computeHealth(ctx: ClientEnrichmentContext, previousScore: number | null, inputs: HealthInputs): Health {
   const now = Date.now();
   const signals = extractSignals(ctx, now);
-  const { phase, daysSinceSignature, daysToContractEnd } = computeAccountPhase({
+  const { phase, daysSinceSignature, daysToContractEnd, contractEnd } = computeAccountPhase({
     closedwonAt: inputs.closedwonAt,
     kickoffDate: inputs.kickoffDate,
     contractEndDate: inputs.contractEndDate,
+    contractEndField: inputs.contractEndField,
     now,
   });
   const breakdown = buildBreakdown(signals, ctx, phase, inputs, now);
@@ -395,7 +400,12 @@ export function computeHealth(ctx: ClientEnrichmentContext, previousScore: numbe
     drivers_detail: driversDetail,
     breakdown,
     baseline: BASELINE,
-    phase: { key: phase, days_since_signature: daysSinceSignature, days_to_contract_end: daysToContractEnd },
+    phase: {
+      key: phase,
+      days_since_signature: daysSinceSignature,
+      days_to_contract_end: daysToContractEnd,
+      contract_end_from: contractEnd.from,
+    },
     data_gaps: dataGaps,
     tone: inputs.tone,
     computed_at: new Date(now).toISOString(),

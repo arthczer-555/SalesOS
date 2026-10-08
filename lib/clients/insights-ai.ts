@@ -164,10 +164,11 @@ export async function generateInsightsAI(input: GenerateInsightsInput): Promise<
   const company = deal?.company?.name ?? deal?.name ?? "the account";
 
   const kickoff = fieldValue(fields, "planning", "kickoff_envisage_le");
-  const { phase, daysSinceSignature, daysToContractEnd } = computeAccountPhase({
+  const { phase, daysSinceSignature, daysToContractEnd, contractEnd } = computeAccountPhase({
     closedwonAt: input.closedwonAt,
     kickoffDate: typeof kickoff === "string" ? kickoff : null,
     contractEndDate: input.contractEndDate,
+    contractEndField: fields.planning?.fin_contrat_le,
   });
 
   // ── Activité récente ────────────────────────────────────────────────────
@@ -241,7 +242,7 @@ export async function generateInsightsAI(input: GenerateInsightsInput): Promise<
 ACCOUNT
 - Phase: ${PHASE_GUIDANCE[phase]}
 - Signed: ${input.closedwonAt?.slice(0, 10) ?? "unknown"}${daysSinceSignature !== null ? ` (${daysSinceSignature} days ago)` : ""} · Amount: ${deal?.amount != null ? `${deal.amount}€` : "unknown"}
-- Contract end: ${input.contractEndDate?.slice(0, 10) ?? "unknown"}${daysToContractEnd !== null ? ` (in ${daysToContractEnd} days)` : ""}
+- Contract end: ${contractEnd.date?.slice(0, 10) ?? "unknown"}${daysToContractEnd !== null ? ` (in ${daysToContractEnd} days)` : ""}${contractEnd.from === "conversations" ? " (not in HubSpot, found in the conversations)" : ""}
 - Health: ${health.score}/100, ${labelEn}. Drivers: ${health.drivers?.join("; ") || "(none)"}
 - HubSpot next step: ${input.hubspotNextStep?.trim() || "(none)"}
 

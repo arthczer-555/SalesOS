@@ -35,7 +35,14 @@ function PhaseTag({ health }: { health: Health }) {
   if (p.key === "renewal") {
     const d = p.days_to_contract_end;
     return (
-      <Tag tone="warn" title="The contract ends within 120 days">
+      <Tag
+        tone="warn"
+        title={
+          p.contract_end_from === "conversations"
+            ? "The contract ends within 120 days (end date not in HubSpot, found in the conversations)"
+            : "The contract ends within 120 days"
+        }
+      >
         {d !== null ? `Renewal in ${d}d` : "Renewal"}
       </Tag>
     );

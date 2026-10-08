@@ -57,7 +57,10 @@ export async function generateHubspotSuggestions(
   userId: string | null,
 ): Promise<{ suggestions: HubspotFieldSuggestions; dealFields: HubspotDealFields | null }> {
   const dealFields = await fetchHubspotDealFields(dealId);
-  const missing = getMissingHubspotFields(dealFields);
+  // contract_end_date : jamais demandée à l'IA ici, elle la déduisait d'une durée
+  // "habituelle" (close date + 1 an). La fin de contrat vient de HubSpot ou
+  // des échanges (field planning.fin_contrat_le, proposé par le panneau cleaner).
+  const missing = getMissingHubspotFields(dealFields).filter((f) => f.property !== "contract_end_date");
 
   // Aucun champ vide : rien a suggerer.
   if (missing.length === 0) {

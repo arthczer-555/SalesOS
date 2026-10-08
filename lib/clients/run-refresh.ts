@@ -403,6 +403,7 @@ export async function runClientRefresh(
       closedwonAt: row.closedwon_at,
       kickoffDate: typeof kickoff === "string" ? kickoff : null,
       contractEndDate: dealFields?.contract_end_date ?? null,
+      contractEndField: fieldsNow.planning?.fin_contrat_le,
       news: newsForInsights,
       tone: toneRes.tone,
       toneError: toneRes.error,

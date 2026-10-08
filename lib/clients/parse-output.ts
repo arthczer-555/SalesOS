@@ -127,7 +127,7 @@ export function parseClientFieldsFromClaude(raw: unknown): Partial<ClientFields>
     "residence_donnees", "whitelisting_email",
   ]);
   mapSection("history", ["relation_commerciale", "initiatives_rh_paralleles", "points_de_vigilance"]);
-  mapSection("planning", ["kickoff_envisage_le", "suivi_cs_attendu", "engagements_sales"]);
+  mapSection("planning", ["kickoff_envisage_le", "fin_contrat_le", "suivi_cs_attendu", "engagements_sales"]);
 
   return out;
 }

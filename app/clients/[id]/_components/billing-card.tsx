@@ -3,23 +3,29 @@
 import { useState } from "react";
 import { Loader2, Receipt, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
-import type { Billing, HubspotDealFields } from "@/lib/clients/types";
-import { Card, CardHeader, Eyebrow, Tag, contractEndTone, daysUntil, fmtDay, fmtEur, parseLooseDate } from "./ui";
+import type { Billing, ClientFieldValue, HubspotDealFields } from "@/lib/clients/types";
+import { resolveContractEnd } from "@/lib/clients/lifecycle";
+import { Card, CardHeader, ContractEndOrigin, Eyebrow, InvalidContractEnd, Tag, contractEndTone, daysUntil, fmtDay, fmtEur, parseLooseDate } from "./ui";
 
 // Carte "Billing" de Key insights, à côté de la santé : CA de l'année (sheet
 // revenue, source de vérité), YoY, lifetime, barres par année, et le contrat
-// (dates HubSpot lues en live). Société absente du sheet : état explicite.
+// (dates HubSpot lues en live ; sans fin de contrat HubSpot valable, celle
+// trouvée dans les échanges). Société absente du sheet : état explicite.
 
 export function BillingCard({
   billing,
   refreshedAt,
   dealFields,
+  closedwonAt,
+  contractEndField,
   clientId,
   onUpdated,
 }: {
   billing: Billing | null;
   refreshedAt: string | null;
   dealFields: HubspotDealFields | null | undefined;
+  closedwonAt: string | null;
+  contractEndField: ClientFieldValue | null | undefined;
   clientId: string;
   onUpdated: () => void;
 }) {
@@ -51,7 +57,8 @@ export function BillingCard({
   );
 
   const contractStart = parseLooseDate(dealFields?.contract_start_date);
-  const contractEnd = parseLooseDate(dealFields?.contract_end_date);
+  const end = resolveContractEnd({ contractEndDate: dealFields?.contract_end_date, closedwonAt, conversationsField: contractEndField });
+  const contractEnd = dealFields == null ? null : end.date;
   const toEnd = daysUntil(contractEnd);
   const contractRows = (
     <dl
@@ -69,8 +76,13 @@ export function BillingCard({
       <dd style={{ margin: 0, textAlign: "right", fontWeight: 500 }}>
         {dealFields == null
           ? <span style={{ color: COLORS.warn }}>HubSpot unreachable</span>
-          : contractStart || contractEnd
-            ? `${fmtDay(contractStart, true)} → ${fmtDay(contractEnd, true)}`
+          : contractStart || contractEnd || end.rejected
+            ? (
+              <>
+                {fmtDay(contractStart, true)} → {contractEnd ? fmtDay(contractEnd, true) : end.rejected ? <InvalidContractEnd end={end} /> : "-"}
+                <ContractEndOrigin end={end} compact />
+              </>
+            )
             : <span style={{ color: COLORS.warn }}>Dates missing in HubSpot</span>}
       </dd>
       {toEnd !== null && (

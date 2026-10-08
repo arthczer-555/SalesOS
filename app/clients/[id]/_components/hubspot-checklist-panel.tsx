@@ -10,7 +10,8 @@ import {
   type ClientRow,
   type HubspotChecklistFieldDef,
 } from "@/lib/clients/types";
-import { Card, CardHeader, Tag } from "./ui";
+import { resolveContractEnd } from "@/lib/clients/lifecycle";
+import { Card, CardHeader, Tag, contractEndOriginText } from "./ui";
 
 const GROUP_LABELS: Record<HubspotChecklistFieldDef["group"], string> = {
   qualification: "Qualification",
@@ -46,7 +47,26 @@ export function HubspotChecklistPanel({
   if (!dealFields) return null;
   if (missing.length === 0) return null;
 
-  const suggestionByProp = new Map((suggestions?.fields ?? []).map((s) => [s.property, s]));
+  // contract_end_date n'est jamais devinée par l'IA du cleaner (elle déduisait
+  // des durées "habituelles") : seule la date trouvée dans les échanges est
+  // proposée, s'il y en a une (field planning.fin_contrat_le). Les anciennes
+  // suggestions stockées pour ce champ sont ignorées.
+  const suggestionByProp = new Map(
+    (suggestions?.fields ?? []).filter((s) => s.property !== "contract_end_date").map((s) => [s.property, s]),
+  );
+  const endFromConversations = resolveContractEnd({
+    contractEndDate: null,
+    closedwonAt: client.closedwon_at,
+    conversationsField: client.fields_json?.planning?.fin_contrat_le,
+  });
+  if (endFromConversations.date) {
+    suggestionByProp.set("contract_end_date", {
+      property: "contract_end_date",
+      label: "Contract End Date",
+      suggestion: endFromConversations.date.slice(0, 10),
+      rationale: contractEndOriginText(endFromConversations.field),
+    });
+  }
 
   // Group missing fields by their HubSpot card group, preserving config order.
   const groups: Array<{ key: HubspotChecklistFieldDef["group"]; fields: HubspotChecklistFieldDef[] }> = [];

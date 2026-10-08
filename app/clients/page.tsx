@@ -12,7 +12,7 @@ import { StatPill } from "@/components/ui/stat-pill";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Banner } from "@/components/ui/banner";
-import { daysUntil, parseLooseDate } from "./[id]/_components/ui";
+import { daysUntil } from "./[id]/_components/ui";
 
 // Deux vues :
 //  - par défaut, la liste simple (signature, montants, santé, statut) ;
@@ -100,7 +100,7 @@ function matchesPerson(email: string | null, filter: string): boolean {
 }
 
 function endDays(c: ClientPortfolioItem): number | null {
-  return daysUntil(parseLooseDate(c.contract_end_date));
+  return daysUntil(c.contract_end?.date);
 }
 
 export default function ClientsPage() {

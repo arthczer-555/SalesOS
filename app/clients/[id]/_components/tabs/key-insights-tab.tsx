@@ -4,15 +4,15 @@ import type { ClientRow } from "@/lib/clients/types";
 import { HealthHero } from "../health-hero";
 import { BillingCard } from "../billing-card";
 import { NextActionsCard } from "../next-actions-card";
-import { WhatsNewCard } from "../whats-new-card";
 import { CompanyNewsCard, WatchPointsCard } from "../side-cards";
 import { KeyDatesCard } from "../key-dates-card";
 
 // Onglet Key insights : la lecture en un coup d'œil, l'actionnable en haut
 // (retour CSM), sur les mêmes deux colonnes :
 //  1. "je suis alerté" : Client health (énorme) + Watch points ;
-//  2. "j'agis" : à gauche Next actions, What's new puis Company news ; à
-//     droite Billing (hauteur naturelle) puis Key dates juste dessous.
+//  2. "j'agis" : à gauche Next actions puis Company news ; à droite Billing
+//     (hauteur naturelle) puis Key dates juste dessous.
+// Plus de What's new ici (doublon avec Knowledge > Recent activity).
 
 export type ClientTabKey = "insights" | "knowledge" | "todo" | "hubspot";
 
@@ -46,15 +46,6 @@ export function KeyInsightsTab({
       <div className="ch-grid-2-1">
         <div className="ch-col ch-col-fill">
           <NextActionsCard insights={client.insights} clientId={client.id} onUpdated={onUpdated} />
-          <WhatsNewCard
-            variant="compact"
-            insights={client.insights}
-            report={client.last_refresh_report}
-            news={client.news}
-            clientId={client.id}
-            onUpdated={onUpdated}
-            onSeeAll={() => goTo("knowledge", "k-activity")}
-          />
           <CompanyNewsCard client={client} onSeeAll={() => goTo("knowledge", "k-news")} />
         </div>
         <div className="ch-col ch-col-fill">
@@ -62,6 +53,8 @@ export function KeyInsightsTab({
             billing={client.billing}
             refreshedAt={client.billing_refreshed_at}
             dealFields={client.hubspot_deal_fields}
+            closedwonAt={client.closedwon_at}
+            contractEndField={client.fields_json?.planning?.fin_contrat_le}
             clientId={client.id}
             onUpdated={onUpdated}
           />

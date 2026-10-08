@@ -4,6 +4,7 @@ import * as React from "react";
 import { ChevronDown } from "lucide-react";
 import { COLORS, RADIUS, SHADOWS } from "@/lib/design/tokens";
 import type { HealthLabel } from "@/lib/clients/types";
+import type { ContractEnd } from "@/lib/clients/lifecycle";
 
 // Primitives visuelles de la fiche client v2 : une seule façon de faire une
 // carte, un titre de carte, un tag de statut. Les cartes n'ont plus de bandeau
@@ -285,6 +286,55 @@ export function contractEndTone(days: number | null): Extract<TagTone, "neutral"
   if (days <= 30) return "err";
   if (days <= 120) return "warn";
   return "neutral";
+}
+
+// "Found in a Claap meeting dated 3 Mar 2026." / "Entered on this page." : d'où
+// vient une fin de contrat hors HubSpot (Key dates, Billing, HubSpot cleaner).
+export function contractEndOriginText(field: ContractEnd["field"]): string {
+  const src = field?.source;
+  if (src?.kind === "manual") return "Entered on this page (Knowledge > Planning).";
+  const where = src?.kind === "claap" ? "a Claap meeting" : src?.kind === "hubspot" ? `a HubSpot ${src.entity}` : "the conversations";
+  const when = field?.evidence_at ? ` dated ${fmtDay(field.evidence_at, true)}` : "";
+  return `Found in ${where}${when}.`;
+}
+
+function rejectedNote(end: ContractEnd): string {
+  return end.rejected ? `HubSpot says ${fmtDay(end.rejected, true)}, which is before the signature date. ` : "";
+}
+
+// Fin de contrat hors HubSpot (resolveContractEnd) : d'où vient la date, au
+// survol. Rien quand elle vient de HubSpot. Orange quand HubSpot a en plus une
+// date incohérente (avant la signature) : c'est une saisie à corriger.
+export function ContractEndOrigin({ end, compact }: { end: ContractEnd; compact?: boolean }) {
+  if (end.from !== "conversations") return null;
+  const manual = end.field?.source?.kind === "manual";
+  const title = `${rejectedNote(end)}Not in HubSpot. ${contractEndOriginText(end.field)} Edit the date in Key dates to save it to HubSpot.`;
+  return (
+    <span
+      title={title}
+      style={{
+        marginLeft: 6,
+        fontSize: 10.5,
+        fontWeight: 600,
+        color: end.rejected ? COLORS.warn : COLORS.ink3,
+        borderBottom: `1px dotted currentColor`,
+        cursor: "help",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {manual ? (compact ? "page" : "entered on this page") : compact ? "conv." : "from conversations"}
+    </span>
+  );
+}
+
+// Aucune date valable, mais HubSpot en a une antérieure à la signature :
+// affichée comme une erreur de saisie, jamais comme une vraie date.
+export function InvalidContractEnd({ end }: { end: ContractEnd }) {
+  return (
+    <span style={{ color: COLORS.warn }} title={`${rejectedNote(end)}Fix it in HubSpot.`}>
+      Invalid in HubSpot
+    </span>
+  );
 }
 
 // Ton de la prochaine facturation (Key dates, vue portefeuille) : rouge si la

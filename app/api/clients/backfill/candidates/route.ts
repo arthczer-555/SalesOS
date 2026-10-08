@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hubspotSearchAll, hubspotFetch } from "@/lib/hubspot";
+import { parseHubspotDate } from "@/lib/clients/lifecycle";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -66,12 +67,12 @@ export async function GET(_req: NextRequest) {
       .filter((d) => !alreadyImported.has(d.id))
       .map((d) => {
         const p = d.properties ?? {};
-        const closeMs = p.closedate ? Number(p.closedate) : null;
+        const closeMs = parseHubspotDate(p.closedate);
         return {
           id: d.id,
           name: p.dealname || "Sans nom",
           amount: p.amount ? Number(p.amount) : null,
-          closedate: closeMs ? new Date(closeMs).toISOString() : null,
+          closedate: closeMs !== null ? new Date(closeMs).toISOString() : null,
           owner_name: p.hubspot_owner_id ? ownerNameById.get(p.hubspot_owner_id) ?? null : null,
         };
       });
