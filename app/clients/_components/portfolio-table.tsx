@@ -6,16 +6,18 @@ import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { DataTable, type Column, type SortDir } from "@/components/ui/data-table";
 import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
+import type { ClientTier } from "@/lib/clients/tier";
 import { HealthBadge } from "./health-badge";
+import { TierSelect } from "./tier-select";
 import { ContractEndOrigin, InvalidContractEnd, Tag, contractEndTone, daysUntil, fmtDay, fmtEur } from "../[id]/_components/ui";
 import { DUE_LABEL } from "../[id]/_components/next-actions-card";
 
 // Tableau de la vue avancée (/clients, toggle "Advanced view") : une ligne par fiche, les infos
 // clés de Key insights pour comparer les comptes et prioriser. Couleurs
 // neutres par défaut ; orange/rouge réservés à la santé, la fin de contrat
-// proche et les infos manquantes. La phase du compte a sa colonne. Next
-// billing (saisie manuelle) n'est plus une colonne : il reste dans Key dates
-// sur la fiche.
+// proche et les infos manquantes. Le tier (modifiable en place) et la phase du
+// compte ont leur colonne. Next billing (saisie manuelle) n'est plus une
+// colonne : il reste dans Key dates sur la fiche.
 
 export type HubspotState = "loading" | "ok" | "error";
 export type PortfolioSort = { key: string; dir: SortDir };
@@ -56,6 +58,8 @@ function sortValue(c: ClientPortfolioItem, key: string): number | string | null 
   switch (key) {
     case "account":
       return c.company_name.toLowerCase();
+    case "tier":
+      return c.tier;
     case "health":
       return c.health?.score ?? null;
     case "phase":
@@ -129,6 +133,7 @@ export function PortfolioTable({
   sort,
   onSortChange,
   hubspot,
+  onTierSaved,
 }: {
   clients: ClientPortfolioItem[];
   loading: boolean;
@@ -137,6 +142,7 @@ export function PortfolioTable({
   sort: PortfolioSort;
   onSortChange: (s: PortfolioSort) => void;
   hubspot: HubspotState;
+  onTierSaved: (clientId: string, tier: ClientTier | null) => void;
 }) {
   const router = useRouter();
 
@@ -159,6 +165,13 @@ export function PortfolioTable({
           </div>
         </div>
       ),
+    },
+    {
+      key: "tier",
+      header: "Tier",
+      sortable: true,
+      width: 96,
+      render: (c) => <TierSelect clientId={c.id} tier={c.tier} onSaved={(tier) => onTierSaved(c.id, tier)} />,
     },
     {
       key: "phase",
@@ -277,7 +290,7 @@ export function PortfolioTable({
         sort={sort}
         onSortChange={onSortChange}
         onRowClick={(c) => router.push(`/clients/${c.id}`)}
-        style={{ minWidth: 1180 }}
+        style={{ minWidth: 1280 }}
         empty={
           <div style={{ padding: 40, textAlign: "center" }}>
             <div style={{ fontSize: 14, color: COLORS.ink2 }}>No clients match these filters.</div>

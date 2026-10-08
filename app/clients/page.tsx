@@ -1,10 +1,11 @@
 "use client";
 
-import useSWR from "swr";
-import { useMemo, useState, useSyncExternalStore } from "react";
+import useSWR, { useSWRConfig } from "swr";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Search, RefreshCw, UserPlus } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
+import { CLIENT_TIERS, toClientTier, type ClientTier } from "@/lib/clients/tier";
 import { ClientsTable } from "./_components/clients-table";
 import { PortfolioTable, sortPortfolio, type HubspotState, type PortfolioSort } from "./_components/portfolio-table";
 import { BackfillModal } from "./_components/backfill-modal";
@@ -20,6 +21,7 @@ import { daysUntil } from "./[id]/_components/ui";
 //    portefeuille, les infos clés de chaque compte côte à côte pour prioriser
 //    (tri par défaut : santé croissante) et faire les points AM/CSM (filtres AM
 //    et CSM cumulables). Seule celle-ci lit HubSpot en live.
+// Dans les deux : colonne Tier modifiable en place et filtre par tier.
 
 // Le fetcher SWR doit throw sur non-2xx, sinon le body d'erreur devient
 // `data` et l'UI affiche "Aucun client" alors qu'on a une 500. Voir mémoire
@@ -74,6 +76,12 @@ function subscribeAdvancedView(listener: () => void) {
   };
 }
 const UNASSIGNED = "__unassigned";
+const NO_TIER = "__no_tier";
+const TIER_OPTIONS: SelectOption[] = [
+  { value: "", label: "All tiers" },
+  ...CLIENT_TIERS.map((n) => ({ value: String(n), label: `Tier ${n}` })),
+  { value: NO_TIER, label: "No tier" },
+];
 const RENEWAL_WINDOW_DAYS = 120;
 
 function fmtK(n: number): string {
@@ -111,6 +119,12 @@ function matchesPerson(email: string | null, filter: string): boolean {
   return (email ?? "").toLowerCase() === filter;
 }
 
+function matchesTier(tier: ClientTier | null, filter: string): boolean {
+  if (!filter) return true;
+  if (filter === NO_TIER) return tier === null;
+  return tier === toClientTier(filter);
+}
+
 function endDays(c: ClientPortfolioItem): number | null {
   return daysUntil(c.contract_end?.date);
 }
@@ -121,6 +135,7 @@ export default function ClientsPage() {
   const [query, setQuery] = useState("");
   const [amFilter, setAmFilter] = useState("");
   const [csFilter, setCsFilter] = useState("");
+  const [tierFilter, setTierFilter] = useState("");
   const [quick, setQuick] = useState<QuickFilter | null>(null);
   const [sort, setSort] = useState<PortfolioSort>({ key: "health", dir: "asc" });
   const [backfillOpen, setBackfillOpen] = useState(false);
@@ -132,21 +147,37 @@ export default function ClientsPage() {
     // Garde la liste affichée pendant le rechargement quand on change de vue.
     keepPreviousData: true,
   });
+  const { mutate: mutateCache } = useSWRConfig();
+
+  // Tier enregistré : mise à jour locale de toutes les listes en cache (vue
+  // simple et avancée, mes clients et tous), sans relecture : revalider
+  // relancerait l'appel batch HubSpot de la vue avancée à chaque changement.
+  const onTierSaved = useCallback(
+    (clientId: string, tier: ClientTier | null) => {
+      void mutateCache<ListResponse>(
+        (key) => typeof key === "string" && key.startsWith("/api/clients/list"),
+        (cur) => cur && { ...cur, clients: cur.clients.map((c) => (c.id === clientId ? { ...c, tier } : c)) },
+        { revalidate: false },
+      );
+    },
+    [mutateCache],
+  );
 
   const all = useMemo(() => data?.clients ?? [], [data]);
   const hubspot: HubspotState = data?.hubspotLoaded ? "ok" : data?.hubspotError ? "error" : "loading";
   const amOptions = useMemo(() => personOptions(all, "am", "All AMs"), [all]);
   const csOptions = useMemo(() => personOptions(all, "cs", "All CSMs"), [all]);
 
-  // Recherche (+ AM et CSM en vue avancée) : base des deux vues et du bandeau.
+  // Recherche et tier (+ AM et CSM en vue avancée) : base des deux vues et du bandeau.
   const scoped = useMemo(() => {
     const q = query.trim().toLowerCase();
     return all.filter(
       (c) =>
         (!q || c.company_name.toLowerCase().includes(q)) &&
+        matchesTier(c.tier, tierFilter) &&
         (!advanced || (matchesPerson(c.am_email, amFilter) && matchesPerson(c.cs_email, csFilter))),
     );
-  }, [all, query, advanced, amFilter, csFilter]);
+  }, [all, query, tierFilter, advanced, amFilter, csFilter]);
 
   const groups = useMemo(() => {
     const atRisk = scoped.filter((c) => c.health?.label === "red");
@@ -254,6 +285,15 @@ export default function ClientsPage() {
           />
         </div>
 
+        <Select
+          size="sm"
+          options={TIER_OPTIONS}
+          value={tierFilter}
+          onChange={(e) => setTierFilter(e.target.value)}
+          aria-label="Filter by tier"
+          style={{ width: 120 }}
+        />
+
         {advanced && (
           <>
             <Select
@@ -343,7 +383,7 @@ export default function ClientsPage() {
           ) : errorMessage ? (
             <div style={{ color: COLORS.err, fontSize: 13 }}>{errorMessage}</div>
           ) : (
-            <ClientsTable clients={scoped} />
+            <ClientsTable clients={scoped} onTierSaved={onTierSaved} />
           )
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -405,6 +445,7 @@ export default function ClientsPage() {
               sort={sort}
               onSortChange={setSort}
               hubspot={hubspot}
+              onTierSaved={onTierSaved}
             />
           </div>
         )}

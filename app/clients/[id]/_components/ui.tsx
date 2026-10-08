@@ -113,7 +113,7 @@ export const HEALTH_STYLE: Record<HealthLabel, { fg: string; bg: string; label: 
 
 export type TagTone = "neutral" | "ok" | "warn" | "err" | "brand" | "info" | "solid";
 
-const TAG_TONES: Record<TagTone, { bg: string; fg: string; border: string }> = {
+export const TAG_TONES: Record<TagTone, { bg: string; fg: string; border: string }> = {
   neutral: { bg: COLORS.bgSoft, fg: COLORS.ink1, border: COLORS.line },
   ok: { bg: COLORS.okBg, fg: COLORS.ok, border: "#c4ecd9" },
   warn: { bg: COLORS.warnBg, fg: COLORS.warn, border: "#f6dfa4" },

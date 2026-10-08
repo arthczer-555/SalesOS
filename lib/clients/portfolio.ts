@@ -1,5 +1,6 @@
 import type { Billing, ClientFieldValue, Health, HealthLabel, HealthPhase, InsightAction, Insights } from "./types";
 import { resolveContractEnd, type ContractEnd } from "./lifecycle";
+import { toClientTier, type ClientTier } from "./tier";
 
 // Vue portefeuille (/clients) : une ligne compacte par fiche client, calculée
 // côté serveur pour ne pas envoyer les jsonb complets (health, insights) au
@@ -36,6 +37,8 @@ export type ClientPortfolioItem = {
   next_billing_date: string | null;
   next_billing_set_by: string | null;
   next_billing_set_at: string | null;
+  // Importance du compte fixée par l'équipe (cf. lib/clients/tier.ts).
+  tier: ClientTier | null;
 };
 
 // Pas de montant : la liste affiche le facturé du sheet revenue, pas le deal HubSpot.
@@ -64,6 +67,7 @@ export type PortfolioSourceRow = {
   next_billing_date?: string | null;
   next_billing_set_by?: string | null;
   next_billing_set_at?: string | null;
+  tier?: number | null;
 };
 
 // Anciennes fiches : drivers en texte seul, sans points. Même heuristique que
@@ -123,5 +127,6 @@ export function toPortfolioItem(row: PortfolioSourceRow, deal: DealContractInfo 
     next_billing_date: row.next_billing_date ?? null,
     next_billing_set_by: row.next_billing_set_by ?? null,
     next_billing_set_at: row.next_billing_set_at ?? null,
+    tier: toClientTier(row.tier),
   };
 }

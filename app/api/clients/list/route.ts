@@ -14,6 +14,8 @@ const BASE_COLUMNS =
 // Colonnes de la migration clients_next_billing.sql : la liste doit rester
 // lisible tant qu'elle n'est pas appliquée.
 const NEXT_BILLING_COLUMNS = "next_billing_date, next_billing_set_by, next_billing_set_at";
+// Idem pour la migration clients_tier.sql.
+const TIER_COLUMNS = "tier";
 
 // GET /api/clients/list?owner=<email|all>&hubspot=1
 //
@@ -46,12 +48,22 @@ export async function GET(req: NextRequest) {
     return query;
   };
 
+  // Colonnes de migrations peut-être pas encore appliquées : on retire celle que
+  // l'erreur nomme et on relit, la liste reste lisible sans elles.
   let nextBillingAvailable = true;
-  let { data, error } = await run(`${BASE_COLUMNS}, ${NEXT_BILLING_COLUMNS}`);
-  if (error && /next_billing/i.test(error.message)) {
-    console.warn("[clients/list] next_billing columns missing (migration clients_next_billing.sql applied?)");
-    nextBillingAvailable = false;
-    ({ data, error } = await run(BASE_COLUMNS));
+  let tierAvailable = true;
+  const columns = () =>
+    [BASE_COLUMNS, nextBillingAvailable ? NEXT_BILLING_COLUMNS : null, tierAvailable ? TIER_COLUMNS : null].filter(Boolean).join(", ");
+  let { data, error } = await run(columns());
+  for (let i = 0; error && i < 2; i++) {
+    if (nextBillingAvailable && /next_billing/i.test(error.message)) {
+      console.warn("[clients/list] next_billing columns missing (migration clients_next_billing.sql applied?)");
+      nextBillingAvailable = false;
+    } else if (tierAvailable && /tier/i.test(error.message)) {
+      console.warn("[clients/list] tier column missing (migration clients_tier.sql applied?)");
+      tierAvailable = false;
+    } else break;
+    ({ data, error } = await run(columns()));
   }
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -71,5 +83,5 @@ export async function GET(req: NextRequest) {
     toPortfolioItem(r, deals?.ok ? deals.deals.get(r.hubspot_deal_id) ?? null : null),
   );
 
-  return NextResponse.json({ clients, hubspotLoaded: withHubspot && !hubspotError, hubspotError, nextBillingAvailable });
+  return NextResponse.json({ clients, hubspotLoaded: withHubspot && !hubspotError, hubspotError, nextBillingAvailable, tierAvailable });
 }

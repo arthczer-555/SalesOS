@@ -16,13 +16,14 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { db } from "@/lib/db";
 import { normalizeCompany, pickBestFuzzy } from "@/lib/fuzzy-match";
 import { SECTION_DEFINITIONS, mergeOnboardingItems, type ClientFields, type ClientRow } from "@/lib/clients/types";
+import { toClientTier } from "@/lib/clients/tier";
 import { getClientTodo } from "@/lib/clients/todo";
 import type { ToolContext, ToolModule } from "./types";
 
 // Colonnes de la liste : jamais select("*") ici, fields_json et health_history
 // pèsent lourd et n'ont aucun intérêt dans une liste.
 const LIST_COLUMNS =
-  "id, hubspot_deal_id, company_name, owner_email, owner_name, am_email, am_name, cs_email, cs_name, closedwon_at, deal_amount, billing, health, enrichment_status, last_enriched_at, last_refreshed_at";
+  "id, hubspot_deal_id, company_name, tier, owner_email, owner_name, am_email, am_name, cs_email, cs_name, closedwon_at, deal_amount, billing, health, enrichment_status, last_enriched_at, last_refreshed_at";
 
 // Colonnes de la fiche : tout ce que get_client peut rendre, section par
 // section. Explicite plutôt que "*" pour ne pas embarquer les colonnes de
@@ -102,7 +103,7 @@ const LOW_CONFIDENCE = 0.5;
 
 type ListRow = Pick<
   ClientRow,
-  | "id" | "hubspot_deal_id" | "company_name" | "owner_email" | "owner_name"
+  | "id" | "hubspot_deal_id" | "company_name" | "tier" | "owner_email" | "owner_name"
   | "am_email" | "am_name" | "cs_email" | "cs_name" | "closedwon_at"
   | "deal_amount" | "billing" | "health" | "enrichment_status"
   | "last_enriched_at" | "last_refreshed_at"
@@ -308,7 +309,8 @@ const defs: Anthropic.Tool[] = [
   {
     name: "search_clients",
     description:
-      "Liste les clients ayant une FICHE CLIENT dans CoachelloHQ (table clients, un compte par deal closed-won). Utilise-le pour toute question de portefeuille : 'mes clients', 'les comptes en risque', 'qui gère X', 'les derniers clients signés'. Renvoie par compte : société, owner du deal, AM et CS assignés, date de signature, montant, santé (score + label vert/jaune/rouge) et CA total facturé. Passe 'mine_only' pour ne garder que les comptes de l'utilisateur connecté (owner, AM ou CS). Passe 'query' pour cibler une société (matching flou : 'Adyen' matche 'ADYEN N.V.'). " +
+      "Liste les clients ayant une FICHE CLIENT dans CoachelloHQ (table clients, un compte par deal closed-won). Utilise-le pour toute question de portefeuille : 'mes clients', 'les comptes en risque', 'qui gère X', 'les derniers clients signés'. Renvoie par compte : société, tier, owner du deal, AM et CS assignés, date de signature, montant, santé (score + label vert/jaune/rouge) et CA total facturé. Passe 'mine_only' pour ne garder que les comptes de l'utilisateur connecté (owner, AM ou CS). Passe 'query' pour cibler une société (matching flou : 'Adyen' matche 'ADYEN N.V.'). " +
+      "TIER = importance du compte fixée à la main par l'équipe : 1 = stratégique (priorité maximale), 2 = important, 3 = standard, null = pas encore classé. Passe 'tier' pour ne garder qu'un niveau ('mes comptes prioritaires', 'les Tier 1'). Quand tu listes, classes ou résumes plusieurs comptes, traite les Tier 1 en premier, et un Tier 1 en risque passe avant tout le reste. " +
       "COUVERTURE PARTIELLE, à ne jamais oublier : cette table ne contient que les deals signés depuis la mise en place de la fiche client. De nombreux clients historiques n'y sont PAS. L'absence d'un compte ici ne prouve rien : enchaîne sur HubSpot (search_deals, get_companies) et sur get_billing_revenue, dont le sheet liste tous les clients facturés. Pour un total de clients ou un classement, c'est le sheet revenue qui fait foi, pas cette table. " +
       "Si le résultat contient un champ commençant par 'warning' (fiches dont les meetings Claap restent à confirmer, ou jamais enrichies), relaie-le à l'utilisateur : leur contexte est vide tant qu'il n'a pas fait l'action.",
     input_schema: {
@@ -317,6 +319,7 @@ const defs: Anthropic.Tool[] = [
         query: { type: "string", description: "Nom de société à chercher. Omets pour lister tous les clients." },
         mine_only: { type: "boolean", description: "true = seulement les comptes où l'utilisateur connecté est owner, AM ou CS." },
         health: { type: "string", enum: ["green", "yellow", "red"], description: "Filtre sur la santé du compte." },
+        tier: { type: "integer", enum: [1, 2, 3], description: "Filtre sur le tier du compte (1 = stratégique, 2 = important, 3 = standard)." },
         limit: { type: "number", description: "Nombre max de clients renvoyés (défaut 50)." },
       },
       required: [],
@@ -356,6 +359,7 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
 
   const query = (input.query as string | undefined)?.trim();
   const limit = typeof input.limit === "number" ? input.limit : 50;
+  const tier = toClientTier(input.tier);
 
   let q = db.from("clients").select(LIST_COLUMNS).order("closedwon_at", { ascending: false, nullsFirst: false });
 
@@ -366,6 +370,7 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
     q = q.or(mineFilter(ctx.userEmail));
   }
   if (typeof input.health === "string") q = q.eq("health->>label", input.health);
+  if (tier) q = q.eq("tier", tier);
   if (query) q = q.ilike("company_name", `%${query}%`);
 
   const { data, error } = await q;
@@ -374,8 +379,8 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
   let rows = (data as ListRow[] | null) ?? [];
 
   // Repêchage flou seulement si le "contient" SQL n'a rien donné. Il repart
-  // d'une requête sans filtre : on ré-applique mine_only et health à la main,
-  // sinon le fallback les contournerait silencieusement.
+  // d'une requête sans filtre : on ré-applique mine_only, health et tier à la
+  // main, sinon le fallback les contournerait silencieusement.
   if (rows.length === 0 && query) {
     let fuzzy = await resolveByCompany(query, LIST_COLUMNS);
     if (input.mine_only === true && ctx.userEmail) {
@@ -383,6 +388,7 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
       fuzzy = fuzzy.filter((r) => r.owner_email === me || r.am_email === me || r.cs_email === me);
     }
     if (typeof input.health === "string") fuzzy = fuzzy.filter((r) => r.health?.label === input.health);
+    if (tier) fuzzy = fuzzy.filter((r) => r.tier === tier);
     if (fuzzy.length === 0) return notFound(query);
     rows = fuzzy;
   }
@@ -418,6 +424,7 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
     clients: capped.map((r) => ({
       client_id: r.id,
       company: r.company_name,
+      tier: r.tier ?? null,
       owner: r.owner_name ?? r.owner_email,
       am: r.am_name ?? r.am_email,
       cs: r.cs_name ?? r.cs_email,
@@ -464,6 +471,7 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
         .map((r) => ({
           client_id: r.id,
           company: r.company_name,
+          tier: r.tier ?? null,
           closedwon_at: r.closedwon_at,
           deal_amount: r.deal_amount,
           owner: r.owner_name ?? r.owner_email,
@@ -495,6 +503,8 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
     page_links: pageLinks,
     page_links_note:
       "Termine ta réponse par un lien markdown vers la section de la fiche qui contient l'info citée, URL prise telle quelle dans page_links (overview si la réponse couvre plusieurs sections), libellé dans la langue de l'utilisateur.",
+    tier: row.tier ?? null,
+    tier_note: "Importance du compte fixée par l'équipe : 1 = stratégique, 2 = important, 3 = standard, null = pas encore classé.",
     hubspot_deal_id: row.hubspot_deal_id,
     closedwon_at: row.closedwon_at,
     deal_amount: row.deal_amount,

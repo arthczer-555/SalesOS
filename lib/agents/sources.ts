@@ -40,7 +40,7 @@ export const AGENT_SOURCES: AgentSourceDef[] = [
   {
     key: "clients",
     label: "Client accounts",
-    description: "CoachelloHQ client files: health score, program scope, contacts, goals, next actions, key dates.",
+    description: "CoachelloHQ client files: account tier (Tier 1 = most important), health score, program scope, contacts, goals, next actions, key dates.",
     logo: "coachello",
   },
   {

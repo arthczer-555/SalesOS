@@ -322,6 +322,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             onDelete: () => void deleteClient(client.company_name),
             onConfirmMeetings: () => setConfirmOpen(true),
             onOpenReport: () => setReportOpen(true),
+            onTierSaved: reload,
           }}
         />
         {enriched && (

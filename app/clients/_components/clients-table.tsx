@@ -5,14 +5,16 @@ import { COLORS } from "@/lib/design/tokens";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { PersonAvatar } from "@/components/ui/person-avatar";
 import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
+import type { ClientTier } from "@/lib/clients/tier";
 import { HealthBadge } from "./health-badge";
+import { TierSelect } from "./tier-select";
 
 // Vue par défaut de /clients : la liste simple des comptes (signature,
 // facturé all time, santé, statut du handover). Pas de montant HubSpot : le
 // facturé du sheet revenue fait foi. La vue avancée (portfolio-table.tsx)
 // s'active avec le toggle "Advanced view".
 
-const GRID = "minmax(220px, 2fr) minmax(150px, 1fr) 130px 120px 140px 160px";
+const GRID = "minmax(220px, 2fr) 96px minmax(150px, 1fr) 130px 120px 140px 160px";
 
 function fmtAmount(n: number | null): string {
   if (n == null) return "-";
@@ -66,7 +68,13 @@ function StatusPill({
   );
 }
 
-export function ClientsTable({ clients }: { clients: ClientPortfolioItem[] }) {
+export function ClientsTable({
+  clients,
+  onTierSaved,
+}: {
+  clients: ClientPortfolioItem[];
+  onTierSaved: (clientId: string, tier: ClientTier | null) => void;
+}) {
   if (clients.length === 0) {
     return (
       <div
@@ -116,6 +124,7 @@ export function ClientsTable({ clients }: { clients: ClientPortfolioItem[] }) {
         }}
       >
         <div>Account</div>
+        <div>Tier</div>
         <div>Owner</div>
         <div style={{ textAlign: "right" }}>Billed all time</div>
         <div>Signed on</div>
@@ -163,6 +172,9 @@ export function ClientsTable({ clients }: { clients: ClientPortfolioItem[] }) {
               </div>
               <div style={{ fontSize: 11, color: COLORS.ink4, marginTop: 1 }}>deal #{c.hubspot_deal_id}</div>
             </div>
+          </div>
+          <div>
+            <TierSelect clientId={c.id} tier={c.tier} onSaved={(tier) => onTierSaved(c.id, tier)} />
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
             {(c.owner_name || c.owner_email) && <PersonAvatar name={c.owner_name || c.owner_email} size={22} />}

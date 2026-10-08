@@ -28,10 +28,11 @@ import { TabBar, type TabItem } from "@/components/ui/tab-bar";
 import { DropdownMenu } from "@/components/ui/dropdown-menu";
 import { HEALTH_STYLE } from "./health-hero";
 import { fmtDay, fmtEur, relativeDays } from "./ui";
+import { TIER_HINT, TierSelect } from "../../_components/tier-select";
 import type { ClientTabKey } from "./tabs/key-insights-tab";
 
-// Header sticky de la fiche : identité (avatar, nom, santé), chips AE / AM / CS
-// (AM et CS modifiables), deux actions seulement (Refresh + Options) et la
+// Header sticky de la fiche : identité (avatar, nom, santé), tier et chips
+// AE / AM / CS (tier, AM et CS modifiables), deux actions seulement (Refresh + Options) et la
 // barre d'onglets. Toutes les actions secondaires vivent dans Options.
 
 function Chip({ label, value, onClick, warn, title }: { label: string; value: string; onClick?: () => void; warn?: boolean; title?: string }) {
@@ -77,6 +78,7 @@ export type HeaderActions = {
   onDelete: () => void;
   onConfirmMeetings: () => void;
   onOpenReport: () => void;
+  onTierSaved: () => void;
 };
 
 export function ClientHeader({
@@ -112,6 +114,11 @@ export function ClientHeader({
   // Facturé lifetime (sheet revenue, source de vérité) plutôt que le montant du
   // deal, figé à la signature. Société absente du sheet : "unknown", pas 0.
   const billed = client.billing?.matched ? (client.billing.total_contract_value ?? null) : null;
+  const tier = client.tier ?? null;
+  const tierTitle =
+    tier && client.tier_set_by
+      ? `${TIER_HINT} Set by ${client.tier_set_by}${client.tier_set_at ? ` on ${fmtDay(client.tier_set_at, true)}` : ""}.`
+      : TIER_HINT;
 
   const tabs: TabItem[] = [
     { key: "insights", label: "Key insights", icon: Zap },
@@ -177,6 +184,7 @@ export function ClientHeader({
               )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
+              <TierSelect clientId={client.id} tier={tier} onSaved={actions.onTierSaved} size="md" title={tierTitle} />
               <Chip label="AE" value={client.owner_name || client.owner_email || "No owner"} />
               {handedOver ? (
                 <>

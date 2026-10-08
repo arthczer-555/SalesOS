@@ -5,6 +5,8 @@
 // recording, ou édition manuelle). L'UI peut ainsi cliquer sur un field
 // pour voir d'où il vient et afficher une pastille de confiance.
 
+import type { ClientTier } from "./tier";
+
 export type ClientFieldSource =
   | { kind: "hubspot"; entity: "note" | "email" | "meeting" | "call" | "deal" | "company"; id?: string }
   | { kind: "claap"; recordingId?: string }
@@ -824,6 +826,11 @@ export type ClientRow = {
   next_billing_date?: string | null; // YYYY-MM-DD
   next_billing_set_by?: string | null;
   next_billing_set_at?: string | null;
+  // Tier du compte (1 à 3), saisi à la main (cf. migration clients_tier.sql).
+  // Absentes tant que la migration n'est pas appliquée.
+  tier?: ClientTier | null;
+  tier_set_by?: string | null;
+  tier_set_at?: string | null;
   // Checklists colonne gauche (cf. migration clients_checklists.sql).
   hubspot_field_suggestions: HubspotFieldSuggestions | null;
   onboarding_checklist: OnboardingChecklist | null;
