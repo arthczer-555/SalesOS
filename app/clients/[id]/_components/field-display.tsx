@@ -7,20 +7,24 @@ import type { ClientFieldSource, ClientFieldValue, FieldDefinition } from "@/lib
 
 // ── Confidence dot ───────────────────────────────────────────────────────
 
+// Explication fixe du pourcentage au survol, calée sur l'échelle de confiance
+// du prompt d'extraction (lib/clients/prompt.ts). La source reste en 2e ligne.
+const CONFIDENCE_HINT =
+  "Reliability: how sure we are that this value is backed by the sources. " +
+  "90%+ = written as is in a source, 60-80% = rephrased or cross-checked across sources, " +
+  "50% or less = inferred from indirect clues. Manual edits = 100%.";
+
 function ConfidenceDot({ confidence, source }: { confidence: number; source: ClientFieldSource | null }) {
   let color: string = COLORS.err;
-  let label = "Low";
   if (confidence >= 0.7) {
     color = COLORS.ok;
-    label = "High";
   } else if (confidence >= 0.4) {
     color = COLORS.warn;
-    label = "Medium";
   }
   const sourceLabel = renderSourceLabel(source);
   return (
     <span
-      title={`${label} confidence (${Math.round(confidence * 100)}%) · Source: ${sourceLabel}`}
+      title={`${CONFIDENCE_HINT}\nSource: ${sourceLabel}`}
       style={{
         display: "inline-flex",
         alignItems: "center",
