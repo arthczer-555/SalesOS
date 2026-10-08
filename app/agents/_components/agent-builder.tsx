@@ -6,7 +6,6 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, Lock, Sparkles, Wand2 } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { agentsApi } from "@/lib/hooks/use-agents";
-import { useUserMe } from "@/lib/hooks/use-user-me";
 import { useToast } from "@/components/ui/toast";
 import type { AgentSchedule } from "@/lib/agents/schedule";
 import type { AgentDestination } from "@/lib/agents/types";
@@ -30,13 +29,13 @@ export function AgentBuilder() {
   const params = useSearchParams();
   const { toast } = useToast();
   const template = findTemplate(params.get("template"));
-  const { isAdmin } = useUserMe();
 
   const [request, setRequest] = React.useState(template?.request ?? "");
   const [mustInclude, setMustInclude] = React.useState("");
   const [name, setName] = React.useState(template?.name ?? "");
   const [schedule, setSchedule] = React.useState<AgentSchedule | null>(template?.schedule ?? null);
-  const [destination, setDestination] = React.useState<AgentDestination>({ type: "dm" });
+  // Modèle d'envoi à un groupe : l'audience est pré-remplie.
+  const [destination, setDestination] = React.useState<AgentDestination>(template?.audience ?? { type: "dm" });
   // Personnel par défaut : partager avec l'équipe est un choix explicite.
   const [shared, setShared] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
@@ -45,15 +44,6 @@ export function AgentBuilder() {
   React.useEffect(() => {
     textareaRef.current?.focus();
   }, []);
-
-  // Modèle d'envoi à un groupe : l'audience est pré-remplie pour un admin
-  // (connu après le chargement du profil). Un non-admin garde son DM.
-  const audienceApplied = React.useRef(false);
-  React.useEffect(() => {
-    if (audienceApplied.current || !isAdmin || !template?.audience) return;
-    audienceApplied.current = true;
-    setDestination(template.audience);
-  }, [isAdmin, template]);
 
   // En dessous, le designer n'a pas de quoi travailler. Le minimum est dit à
   // l'écran (sous la zone de texte et dans la barre d'action) : un bouton grisé
@@ -183,7 +173,7 @@ export function AgentBuilder() {
           <SchedulePicker value={schedule} onChange={setSchedule} allowSuggest />
         </Section>
 
-        <Section num={3} title="Where" description={isAdmin ? "Where the message is posted in Slack: your DMs, a channel, or each person of a group." : "Where the message is posted in Slack."}>
+        <Section num={3} title="Where" description="Where the message is posted in Slack: your DMs, a channel, or each person of a group.">
           <DestinationPicker value={destination} onChange={setDestination} />
         </Section>
 

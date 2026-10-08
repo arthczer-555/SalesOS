@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { loadAgent } from "@/lib/agents/access";
+import { canSeeOthersRuns, loadAgent } from "@/lib/agents/access";
 import { triggerAgentRun } from "@/lib/agents/trigger";
 import { fanOutAudience } from "@/lib/agents/fanout";
 import { resolveAudience } from "@/lib/agents/audience";
@@ -47,6 +47,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
   let previewAs: string | null = null;
   if (audience && access.canEdit && typeof body.as_user_id === "string" && body.as_user_id !== access.agent.owner_id) {
+    // L'aperçu "en tant que" montre le message construit avec les données du
+    // membre : admins seulement (lib/agents/access.ts).
+    if (!canSeeOthersRuns(user)) {
+      return NextResponse.json({ error: "Only admins can preview an agent as someone else: the message is built with their data." }, { status: 403 });
+    }
     const members = await resolveAudience(audience);
     if (!members.some((m) => m.id === body.as_user_id)) {
       return NextResponse.json({ error: "This person is not in the agent's audience." }, { status: 400 });

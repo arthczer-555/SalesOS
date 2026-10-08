@@ -18,9 +18,9 @@ export type AgentDestination =
   | { type: "dm" }
   | { type: "channel"; channelId: string; channelName: string }
   /**
-   * "Send to a group" (admins) : groupes combinables + personnes ajoutées /
-   * exclues. personalize = un run par destinataire avec SES données ; sinon un
-   * seul run, le même message en DM à chacun.
+   * "Send to a group" (tout utilisateur) : groupes combinables + personnes
+   * ajoutées / exclues. personalize = un run par destinataire avec SES
+   * données ; sinon un seul run, le même message en DM à chacun.
    */
   | { type: "audience"; groups: AudienceGroup[]; include: string[]; exclude: string[]; personalize: boolean };
 
@@ -86,6 +86,9 @@ export type AgentRunRow = {
   recap_line?: string | null;
   /** Envoi identique à une audience : résultat par destinataire. */
   deliveries?: { user_id: string; ok: boolean; error?: string | null; permalink?: string | null }[] | null;
+  /** Calculé, jamais en base : run d'un collègue vu par un créateur non admin,
+   *  contenu retiré (lib/agents/access.ts, redactRun). */
+  redacted?: boolean;
   output: string | null;
   error: string | null;
   tool_steps: AgentToolStep[];

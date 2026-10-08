@@ -16,7 +16,7 @@ export type AgentTemplate = {
   tagline: string;
   request: string;
   schedule: AgentSchedule;
-  /** Envoi à un groupe (admins) : destination pré-remplie dans le builder. */
+  /** Envoi à un groupe : destination pré-remplie dans le builder. */
   audience?: AudienceDestination;
 };
 

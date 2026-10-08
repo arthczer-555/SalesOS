@@ -144,12 +144,12 @@ RÈGLES DE LA SPEC
 - skip_when_empty : true pour une ALERTE (prévenir seulement si quelque chose correspond), false pour un DIGEST (rendez-vous régulier attendu même vide).
 - assumptions : 0 à 4 hypothèses que tu as dû faire et que l'utilisateur devrait vérifier, en anglais, une phrase chacune.
 - missing_tools : ce que l'agent NE PEUT PAS faire avec les sources ci-dessus, alors que la demande l'exige. Ne fais JAMAIS semblant et ne remplace pas en silence par autre chose : conçois l'agent pour tout ce qui est faisable, et liste chaque manque. Exemples typiques : l'agenda (aucune source Google Calendar), envoyer un email, écrire ou modifier quoi que ce soit (HubSpot, Notion, Drive : un agent est en lecture seule, sa seule sortie est son message Slack), une donnée qu'aucune source ne contient. Envoyer à un groupe de personnes n'est PAS un manque (voir audience_suggestion). need = le besoin, en anglais, 3 à 8 mots (ex : "Today's meetings from Google Calendar") ; reason = pourquoi aucune source ne le couvre, en anglais, une phrase. Liste vide si tout est couvert : n'invente pas de manque.
-- audience_suggestion : les admins peuvent envoyer un agent à un GROUPE, recalculé à chaque exécution. Groupes : ${AUDIENCE_GROUPS.map((g) => `${g.key} (${g.hint})`).join(", ")}.
-  - Remplis-le seulement si l'utilisateur est admin (indiqué plus bas), que la demande vise un groupe de personnes ("tous les AM", "chaque AE", "toute l'équipe", "les sales") et que la destination n'est pas un canal Slack. Si la destination est déjà un groupe, renvoie ses groupes actuels, sauf si la demande les change.
+- audience_suggestion : tout utilisateur peut envoyer un agent à un GROUPE, recalculé à chaque exécution. Groupes : ${AUDIENCE_GROUPS.map((g) => `${g.key} (${g.hint})`).join(", ")}.
+  - Remplis-le seulement si la demande vise un groupe de personnes ("tous les AM", "chaque AE", "toute l'équipe", "les sales") et que la destination n'est pas un canal Slack. Si la destination est déjà un groupe, renvoie ses groupes actuels, sauf si la demande les change.
   - groups : le plus petit ensemble qui couvre la demande ("toute l'équipe" = everyone, "les commerciaux" = sales). personalize : true si chacun doit recevoir SES données ("leurs clients", "leurs deals") ; false si c'est le même message pour tous (annonce, récap société, chiffres globaux).
   - personalize true : écris consignes et template pour UN destinataire ("my clients" = les siens). personalize false : message neutre à l'échelle de l'entreprise, sans "my", une seule exécution pour tout le monde. Gmail est interdit dans les deux cas.
   - Les personnes citées nommément ne vont pas dans groups : l'utilisateur les ajoute dans l'interface (dis-le dans assumptions).
-  - Sinon : groups vide, personalize false. Si un non-admin demande un envoi à un groupe, conçois l'agent pour son propre DM et ajoute dans assumptions : "Sending to a group is reserved to admins: this version goes to your DM."
+  - Sinon : groups vide, personalize false.
 
 ${NO_EM_DASH_RULE}`;
 
@@ -167,7 +167,7 @@ async function describeDestination(agent: AgentRow): Promise<string> {
 
 function buildUserPrompt(
   agent: AgentRow,
-  opts: { feedback?: string; keepName: boolean; keepSchedule: boolean; ownerName: string; isAdmin: boolean; destination: string },
+  opts: { feedback?: string; keepName: boolean; keepSchedule: boolean; ownerName: string; destination: string },
 ): string {
   const lines: string[] = [];
   if (opts.feedback) {
@@ -203,7 +203,6 @@ function buildUserPrompt(
   }
   lines.push(
     `Destination : ${opts.destination}.`,
-    opts.isAdmin ? "L'utilisateur est admin : il peut envoyer l'agent à un groupe." : "L'utilisateur n'est pas admin : pas d'envoi à un groupe.",
     `Date du jour : ${new Date().toISOString().slice(0, 10)}.`,
   );
   return lines.join("\n");
@@ -260,13 +259,12 @@ const stripDashes = (s: string) => stripEmDashes(s);
 export async function designAgentSpec(
   agent: AgentRow,
   opts: { feedback?: string; keepName?: boolean; keepSchedule?: boolean } = {},
-): Promise<{ spec: DesignedSpec; isAdmin: boolean }> {
+): Promise<{ spec: DesignedSpec }> {
   const { data: owner } = await db
     .from("users")
-    .select("name, email, is_admin")
+    .select("name, email")
     .eq("id", agent.owner_id)
-    .single<{ name: string | null; email: string; is_admin: boolean | null }>();
-  const isAdmin = !!owner?.is_admin;
+    .single<{ name: string | null; email: string }>();
   const [client, model] = await Promise.all([agentClient(agent.owner_id, "Agents designer"), agentsModel()]);
   const { spec, usage } = await callDesigner(
     client,
@@ -276,12 +274,11 @@ export async function designAgentSpec(
       keepName: !!opts.keepName,
       keepSchedule: !!opts.keepSchedule,
       ownerName: owner?.name ?? owner?.email ?? "un collègue",
-      isAdmin,
       destination: await describeDestination(agent),
     }),
   );
   logUsage(agent.owner_id, model, usage.input_tokens, usage.output_tokens, "agents_design");
-  return { spec, isAdmin };
+  return { spec };
 }
 
 /**
@@ -298,7 +295,7 @@ export async function runAgentDesign(
 
   let previewRunId: string | null = null;
   try {
-    const { spec, isAdmin } = await designAgentSpec(agent, opts);
+    const { spec } = await designAgentSpec(agent, opts);
 
     // Audience proposée par le designer. Jamais sur un canal (choix explicite),
     // et jamais en silence sur un agent déjà actif en DM : il partirait à tout
@@ -306,7 +303,7 @@ export async function runAgentDesign(
     const suggestedGroups = normalizeAudience({ groups: spec.audience_suggestion?.groups ?? [] }).groups;
     let destination: AgentDestination = agent.destination;
     let audienceSuggested = false;
-    if (isAdmin && suggestedGroups.length > 0 && agent.destination.type !== "channel" && (agent.status === "draft" || agent.destination.type === "audience")) {
+    if (suggestedGroups.length > 0 && agent.destination.type !== "channel" && (agent.status === "draft" || agent.destination.type === "audience")) {
       const prev = agent.destination.type === "audience" ? agent.destination : null;
       destination = normalizeAudience({
         groups: suggestedGroups,

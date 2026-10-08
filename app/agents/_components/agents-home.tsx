@@ -5,7 +5,6 @@ import Link from "next/link";
 import { AlertTriangle, Bot, Plus, Search, Sparkles, Users } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { agentsApi, useAgents } from "@/lib/hooks/use-agents";
-import { useUserMe } from "@/lib/hooks/use-user-me";
 import { useToast } from "@/components/ui/toast";
 import type { AgentSummary } from "@/lib/agents/types";
 import { AgentCard } from "./agent-card";
@@ -108,7 +107,6 @@ function EmptyHero() {
 
 export function AgentsHome() {
   const { mine, team, error, isLoading, mutate } = useAgents();
-  const { isAdmin } = useUserMe();
   const { toast } = useToast();
   const onSubscribe = async (agent: AgentSummary, active: boolean) => {
     try {
@@ -239,8 +237,7 @@ export function AgentsHome() {
           <span style={{ fontSize: 12.5, color: COLORS.ink3 }}>Pick one, adjust it in plain words.</span>
         </div>
         <div className="ag-grid-templates">
-          {/* Les modèles d'envoi à un groupe ne servent qu'aux admins. */}
-          {AGENT_TEMPLATES.filter((t) => !t.audience || isAdmin).map((t) => (
+          {AGENT_TEMPLATES.map((t) => (
             <Link key={t.key} href={`/agents/new?template=${t.key}`} className="ag-template">
               <AgentAvatar emoji={t.emoji} color={t.color} size={38} />
               <span style={{ minWidth: 0 }}>

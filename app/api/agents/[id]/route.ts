@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { buildAgentPatch, loadAgent } from "@/lib/agents/access";
+import { buildAgentPatch, canSeeOthersRuns, loadAgent, redactRun } from "@/lib/agents/access";
 import { getSubscription, subscriberCounts } from "@/lib/agents/subscriptions";
 import { resolveAudience } from "@/lib/agents/audience";
 import type { AgentDetail, AgentRow, AgentRunRow } from "@/lib/agents/types";
@@ -66,9 +66,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // Owner d'un agent à audience : ses runs, ceux des envois groupés et ses
   // "Preview as" d'un membre. Pas les runs d'un abonné hors audience (agent
   // partagé) : ils restent privés, comme sur tout agent.
+  // Créateur non admin : les runs des destinataires restent privés (statut
+  // seulement), ils portent leurs données.
   const memberIds = new Set((members ?? []).map((m) => m.id));
   const runs = managesAudience
-    ? fetchedRuns.filter((r) => !r.run_as_user_id || !!r.batch_id || (r.kind === "preview" && memberIds.has(r.run_as_user_id)))
+    ? fetchedRuns
+        .filter((r) => !r.run_as_user_id || !!r.batch_id || (r.kind === "preview" && memberIds.has(r.run_as_user_id)))
+        .map((r) => (r.run_as_user_id && r.run_as_user_id !== user.id && !canSeeOthersRuns(user) ? redactRun(r) : r))
     : fetchedRuns;
 
   // Noms des destinataires des runs affichés (historique d'un envoi groupé).
@@ -105,7 +109,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!access.canEdit) return NextResponse.json({ error: "Only the agent's owner can edit it." }, { status: 403 });
 
   const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
-  const result = buildAgentPatch(access.agent, body, { isAdmin: user.is_admin });
+  const result = buildAgentPatch(access.agent, body);
   if ("error" in result) return NextResponse.json({ error: result.error }, { status: 400 });
 
   const { data, error } = await db.from("agents").update(result.patch).eq("id", id).select("*").single<AgentRow>();

@@ -1,5 +1,5 @@
 /**
- * Envoi groupé d'un agent à audience ("Send to a group", admins).
+ * Envoi groupé d'un agent à audience ("Send to a group", tout utilisateur).
  *
  *  - Personnalisé : un run par destinataire (run_as_user_id), chacun dans sa
  *    Background Function, exécuté avec SES données et livré dans SON DM.

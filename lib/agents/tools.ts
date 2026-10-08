@@ -45,8 +45,8 @@ const MODULES_BY_SOURCE: Record<AgentSourceKey, ToolModule[]> = {
 
 /**
  * Définitions d'outils pour un agent (load_guide en tête, ordre stable).
- * `noGmail` : agent envoyé à une audience, un admin ne doit pas faire lire la
- * boîte d'un collègue.
+ * `noGmail` : agent envoyé à une audience, son créateur ne doit pas faire lire
+ * la boîte d'un collègue.
  */
 export function toolsForSources(sources: AgentSourceKey[], opts: { noGmail?: boolean } = {}): Anthropic.Tool[] {
   const allowed = opts.noGmail ? sources.filter((s) => s !== "gmail") : sources;

@@ -7,13 +7,18 @@
  *    activé, tout collègue le voit (onglet Team), peut l'essayer pour lui,
  *    s'y abonner et le dupliquer, mais ne voit jamais les runs de l'owner : un
  *    message peut contenir des données de sa boîte Gmail ou de ses deals.
+ *  - Tout utilisateur peut envoyer un agent à un groupe ("Send to a group").
+ *    Envoi personnalisé : chaque message est construit avec les données du
+ *    destinataire, donc seul un créateur ADMIN en voit le contenu (runs,
+ *    "Preview as", lignes du récap). Un créateur non admin voit qui l'a reçu,
+ *    pas ce qu'il a reçu (canSeeOthersRuns).
  */
 
 import { db } from "@/lib/db";
 import type { DbUser } from "@/lib/auth";
 import { computeNextRun, normalizeSchedule } from "./schedule";
 import { normalizeSources } from "./sources";
-import { isAgentColor, type AgentDestination, type AgentRow } from "./types";
+import { isAgentColor, type AgentDestination, type AgentRow, type AgentRunRow } from "./types";
 import { normalizeAudience } from "./audience-label";
 
 export type AgentAccess = { agent: AgentRow; canEdit: boolean };
@@ -25,6 +30,21 @@ export async function loadAgent(id: string, user: DbUser): Promise<AgentAccess |
   // Un collègue (non admin) n'accède qu'aux agents partagés et activés.
   if (!canEdit && (data.status === "draft" || data.shared !== true)) return null;
   return { agent: data, canEdit };
+}
+
+/**
+ * Voir le contenu des runs exécutés pour d'autres (envoi groupé personnalisé,
+ * "Preview as") : réservé aux admins. Un run pour un collègue tourne avec SES
+ * accès (ex : un admin destinataire voit les objectifs de toute l'équipe dans
+ * l'outil revenue plan) : le montrer à un créateur non admin les ferait fuiter.
+ */
+export function canSeeOthersRuns(user: Pick<DbUser, "is_admin">): boolean {
+  return !!user.is_admin;
+}
+
+/** Run d'un collègue vu par un créateur non admin : statut et coût, sans le contenu. */
+export function redactRun(run: AgentRunRow): AgentRunRow {
+  return { ...run, output: null, sources: [], recap_line: null, slack_permalink: null, redacted: true };
 }
 
 export function normalizeDestination(input: unknown): AgentDestination {
@@ -45,11 +65,7 @@ const str = (v: unknown, max: number): string | undefined => (typeof v === "stri
  * activé, repris, ou que son planning change pendant qu'il est actif.
  * Renvoie une erreur lisible si l'activation est impossible.
  */
-export function buildAgentPatch(
-  agent: AgentRow,
-  body: Record<string, unknown>,
-  opts: { isAdmin: boolean },
-): { patch: Record<string, unknown> } | { error: string } {
+export function buildAgentPatch(agent: AgentRow, body: Record<string, unknown>): { patch: Record<string, unknown> } | { error: string } {
   const patch: Record<string, unknown> = {};
 
   const name = str(body.name, 60);
@@ -66,15 +82,7 @@ export function buildAgentPatch(
   if ("sources" in body) patch.sources = normalizeSources(body.sources);
   if (body.language === "en" || body.language === "fr") patch.language = body.language;
   if ("schedule" in body) patch.schedule = normalizeSchedule(body.schedule);
-  if ("destination" in body) {
-    const destination = normalizeDestination(body.destination);
-    // Envoyer à un groupe (et donc faire tourner l'agent pour des collègues,
-    // avec leurs données) est réservé aux admins.
-    if (destination.type === "audience" && !opts.isAdmin && JSON.stringify(destination) !== JSON.stringify(agent.destination)) {
-      return { error: "Only admins can send an agent to a group." };
-    }
-    patch.destination = destination;
-  }
+  if ("destination" in body) patch.destination = normalizeDestination(body.destination);
   if (typeof body.skip_when_empty === "boolean") patch.skip_when_empty = body.skip_when_empty;
   // N'écrit `shared` que s'il change : avant la migration agents_sharing.sql la
   // colonne n'existe pas, l'envoyer à chaque sauvegarde casserait l'éditeur.

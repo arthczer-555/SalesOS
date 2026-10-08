@@ -4,7 +4,6 @@ import * as React from "react";
 import { AlertTriangle, Check, Hash, Lock, MessageSquare, Search, Users } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { useSlackChannels } from "@/lib/hooks/use-agents";
-import { useUserMe } from "@/lib/hooks/use-user-me";
 import type { AudienceDestination } from "@/lib/agents/audience-label";
 import type { AgentDestination } from "@/lib/agents/types";
 import { AudiencePicker } from "./audience-picker";
@@ -53,8 +52,8 @@ function OptionCard({
 const EMPTY_AUDIENCE: AudienceDestination = { type: "audience", groups: [], include: [], exclude: [], personalize: true };
 
 /**
- * Destination Slack : DM de l'owner, canal (avec recherche) ou, pour un admin,
- * un groupe ("Send to a group") recalculé à chaque exécution.
+ * Destination Slack : DM de l'owner, canal (avec recherche) ou un groupe
+ * ("Send to a group") recalculé à chaque exécution.
  */
 export function DestinationPicker({
   value,
@@ -65,7 +64,6 @@ export function DestinationPicker({
   onChange: (d: AgentDestination) => void;
   disabled?: boolean;
 }) {
-  const { isAdmin } = useUserMe();
   const isChannel = value.type === "channel";
   const isAudience = value.type === "audience";
   // Repasser par DM ou canal puis revenir au groupe retrouve l'audience composée.
@@ -122,25 +120,23 @@ export function DestinationPicker({
             setOpen(true);
           }}
         />
-        {(isAdmin || isAudience) && (
-          <OptionCard
-            selected={isAudience && !picking}
-            icon={Users}
-            title="Send to a group"
-            text="In each person's DMs"
-            disabled={disabled || !isAdmin}
-            onClick={() => {
-              setPicking(false);
-              setOpen(false);
-              onChange(lastAudience.current);
-            }}
-          />
-        )}
+        <OptionCard
+          selected={isAudience && !picking}
+          icon={Users}
+          title="Send to a group"
+          text="In each person's DMs"
+          disabled={disabled}
+          onClick={() => {
+            setPicking(false);
+            setOpen(false);
+            onChange(lastAudience.current);
+          }}
+        />
       </div>
 
       {isAudience && !picking && (
         <div className="ag-fade" style={{ borderTop: `1px solid ${COLORS.line}`, paddingTop: 16, marginTop: 2 }}>
-          <AudiencePicker value={value} onChange={onChange} disabled={disabled || !isAdmin} />
+          <AudiencePicker value={value} onChange={onChange} disabled={disabled} />
         </div>
       )}
 

@@ -1,5 +1,5 @@
 /**
- * Audience d'un agent ("Send to a group", admins) : groupes, normalisation,
+ * Audience d'un agent ("Send to a group", tout utilisateur) : groupes, normalisation,
  * calcul des membres et libellés. Isomorphe : l'éditeur calcule la liste des
  * destinataires en direct avec la même fonction que le dispatcher
  * (lib/agents/audience.ts), donc ce qu'on voit est ce qui sera envoyé.

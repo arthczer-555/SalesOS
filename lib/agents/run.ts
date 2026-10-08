@@ -26,6 +26,7 @@ import { stampSubscription } from "./subscriptions";
 import { resolveAudience } from "./audience";
 import { maybeSendBatchRecap } from "./fanout";
 import { SKIP_MARKER, type AgentRow, type AgentRunRow, type AgentRunSource, type AgentToolStep } from "./types";
+import { canSeeOthersRuns } from "./access";
 
 const MIN_FLUSH_MS = 1200;
 const HEARTBEAT_MS = 10_000;
@@ -90,12 +91,19 @@ export async function runAgentJob(runId: string): Promise<{ ok: boolean; error?:
     type UserCtx = { name: string | null; email: string; hubspot_owner_id: string | null };
     const [{ data: owner }, { data: creator }, lastDelivered] = await Promise.all([
       db.from("users").select("name, email, hubspot_owner_id").eq("id", runAs).single<UserCtx>(),
-      db.from("users").select("name, email").eq("id", agent.owner_id).maybeSingle<Pick<UserCtx, "name" | "email">>(),
+      db.from("users").select("name, email, is_admin").eq("id", agent.owner_id).maybeSingle<Pick<UserCtx, "name" | "email"> & { is_admin: boolean | null }>(),
       isOwnerRun ? Promise.resolve(null) : lastDeliveryFor(agent.id, runAs),
     ]);
     if (!owner) throw new Error(isOwnerRun ? "The agent's owner no longer exists." : "The user this run is for no longer exists.");
     const ownerName = creator?.name ?? creator?.email ?? "a teammate";
     creatorName = isOwnerRun ? null : ownerName;
+    // Ce que le modèle écrit ici à partir des données de runAs peut-il
+    // remonter au créateur (récap, outils manquants) ? Oui pour son propre run
+    // ou un créateur admin (lib/agents/access.ts, canSeeOthersRuns).
+    const creatorMaySee = isOwnerRun || canSeeOthersRuns({ is_admin: !!creator?.is_admin });
+    // Envoi groupé personnalisé : résumé d'une ligne pour le récap du créateur
+    // (sinon le récap dit juste "sent").
+    const wantsRecap = isBatch && !!audience?.personalize && creatorMaySee;
 
     const [client, model] = await Promise.all([agentClient(runAs, `Agent "${agent.name}"`), agentsModel()]);
     const now = new Date();
@@ -104,8 +112,7 @@ export async function runAgentJob(runId: string): Promise<{ ok: boolean; error?:
       owner: { name: owner.name, email: owner.email, hubspotOwnerId: owner.hubspot_owner_id },
       now,
       ...(isOwnerRun ? {} : { creatorName, forceDm: true, lastDeliveredAt: lastDelivered }),
-      // Envoi groupé personnalisé : résumé d'une ligne pour le récap du créateur.
-      ...(isBatch && audience?.personalize ? { batchRecapFor: ownerName } : {}),
+      ...(wantsRecap ? { batchRecapFor: ownerName } : {}),
     });
     // Agent envoyé à une audience : jamais la boîte Gmail d'un collègue.
     const tools = toolsForSources(agent.sources, { noGmail: !!audience });
@@ -169,10 +176,11 @@ export async function runAgentJob(runId: string): Promise<{ ok: boolean; error?:
     // Un run "rien à signaler" n'a pas forcément tout parcouru : il ne
     // tranche pas sur les manques connus. Un run pour un collègue (abonné) peut
     // buter sur SES accès : il ne touche pas la liste. Un run d'envoi groupé
-    // ajoute ses manques ; l'owner, ou un admin en "Preview as", la tient.
+    // ajoute ses manques (si le créateur peut voir ce run) ; l'owner, ou un
+    // admin en "Preview as", la tient.
     if (!skipped) {
-      if (isBatch) await syncMissingTools(agent.id, missing, { replace: false });
-      else if (isOwnerRun || (audience && claimed.kind === "preview")) await syncMissingTools(agent.id, missing, { replace: true });
+      if (isBatch && creatorMaySee) await syncMissingTools(agent.id, missing, { replace: false });
+      else if (!isBatch && (isOwnerRun || (audience && claimed.kind === "preview"))) await syncMissingTools(agent.id, missing, { replace: true });
     }
 
     let delivery: Awaited<ReturnType<typeof deliverAgentMessage>> | null = null;
@@ -219,7 +227,9 @@ export async function runAgentJob(runId: string): Promise<{ ok: boolean; error?:
       delivered_at: delivery ? finishedAt : null,
       finished_at: finishedAt,
       // Champs de la migration agents_audience.sql : seulement pour un envoi groupé.
-      ...(isBatch ? { recap_line: skipped ? null : recap, ...(deliveries ? { deliveries } : {}) } : {}),
+      // recap_line ignorée si elle n'a pas été demandée : des consignes ne
+      // peuvent pas la forcer pour faire sortir des données vers le créateur.
+      ...(isBatch ? { recap_line: skipped || !wantsRecap ? null : recap, ...(deliveries ? { deliveries } : {}) } : {}),
     });
     // Un envoi groupé met l'agent à jour une fois, avec le récap.
     if (isBatch) await maybeSendBatchRecap(claimed.batch_id!);

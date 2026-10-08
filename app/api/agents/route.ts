@@ -91,10 +91,8 @@ export async function POST(req: NextRequest) {
   const keepSchedule = !!body.schedule && typeof body.schedule === "object";
   const schedule = keepSchedule ? normalizeSchedule(body.schedule) : DEFAULT_SCHEDULE;
 
+  // Tout utilisateur peut envoyer un agent à un groupe (lib/agents/access.ts).
   const destination = normalizeDestination(body.destination);
-  if (destination.type === "audience" && !user.is_admin) {
-    return NextResponse.json({ error: "Only admins can send an agent to a group." }, { status: 403 });
-  }
 
   const { data, error } = await db
     .from("agents")

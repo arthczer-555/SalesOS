@@ -4,11 +4,12 @@ import * as React from "react";
 import { AlertTriangle, Plus, Search, Sparkles, UserMinus, UserPlus, Users, X } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { useTeamUsers } from "@/lib/hooks/use-agents";
+import { useUserMe } from "@/lib/hooks/use-user-me";
 import { AUDIENCE_GROUPS, matchAudience, type AudienceDestination, type AudienceUser } from "@/lib/agents/audience-label";
 import type { AudienceGroup } from "@/lib/agents/types";
 import { Callout, Switch } from "./ui";
 
-// Audience d'un agent ("Send to a group", admins) : groupes combinables,
+// Audience d'un agent ("Send to a group", tout utilisateur) : groupes combinables,
 // personnes ajoutées ou exclues, personnalisation, et la liste résolue en
 // direct avec la même fonction que le dispatcher (matchAudience).
 
@@ -164,6 +165,7 @@ export function AudiencePicker({
   disabled?: boolean;
 }) {
   const { users, isLoading, error } = useTeamUsers(true);
+  const { isAdmin } = useUserMe();
   const byId = React.useMemo(() => new Map(users.map((u) => [u.id, u])), [users]);
   const members = React.useMemo(() => matchAudience(value, users), [value, users]);
   const groupCounts = React.useMemo(
@@ -240,7 +242,7 @@ export function AudiencePicker({
           <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0 }}>Personalize for each person</div>
           <div className="ag-hint">
             {value.personalize
-              ? "Each person gets their own message, built with their own data (\"my clients\" are theirs). One run per person."
+              ? `Each person gets their own message, built with their own data ("my clients" are theirs). One run per person.${isAdmin ? "" : " Their messages stay private: you see who got one, not what it says."}`
               : "Everyone gets the same message. One run, then the message is sent to each person by DM."}
           </div>
         </div>

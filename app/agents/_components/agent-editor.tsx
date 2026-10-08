@@ -38,6 +38,7 @@ import {
 import { COLORS } from "@/lib/design/tokens";
 import { useToast } from "@/components/ui/toast";
 import { agentsApi, useAgent } from "@/lib/hooks/use-agents";
+import { useUserMe } from "@/lib/hooks/use-user-me";
 import { describeSchedule, runsPerMonth } from "@/lib/agents/schedule";
 import type { AgentSourceKey } from "@/lib/agents/sources";
 import type { AgentRow, AgentRunRow } from "@/lib/agents/types";
@@ -274,6 +275,7 @@ export function AgentEditor({ id }: { id: string }) {
   const searchParams = useSearchParams();
   const { toast } = useToast();
   const { data, error, isLoading, mutate } = useAgent(id);
+  const { isAdmin } = useUserMe();
 
   const [tab, setTab] = React.useState<"setup" | "runs">(searchParams.get("tab") === "runs" ? "runs" : "setup");
   const [draft, setDraft] = React.useState<Editable | null>(null);
@@ -430,6 +432,9 @@ export function AgentEditor({ id }: { id: string }) {
   const members = data.audience ?? [];
   const destinationSaved = JSON.stringify(draft.destination) === JSON.stringify(agent.destination);
   const personalizedGroup = !forMe && !!savedAudience?.personalize && members.length > 0;
+  // "Preview as" un membre : admins seulement, le message est construit avec
+  // ses données. Un créateur non admin prévisualise avec les siennes.
+  const canPreviewAs = personalizedGroup && isAdmin;
   const lastPreview = runs.find((r) => r.kind === "preview");
   const lastPreviewAs = lastPreview ? (lastPreview.run_as_user_id ?? agent.owner_id) : null;
   const defaultPreviewAs =
@@ -438,7 +443,11 @@ export function AgentEditor({ id }: { id: string }) {
       : members.some((m) => m.id === agent.owner_id)
         ? agent.owner_id
         : (members[0]?.id ?? agent.owner_id);
-  const previewAs = personalizedGroup && previewAsChoice && members.some((m) => m.id === previewAsChoice) ? previewAsChoice : defaultPreviewAs;
+  const previewAs = !canPreviewAs
+    ? agent.owner_id
+    : previewAsChoice && members.some((m) => m.id === previewAsChoice)
+      ? previewAsChoice
+      : defaultPreviewAs;
   // L'aperçu montre le dernier run de la personne choisie (aperçu ou envoi réel).
   const panelRun = personalizedGroup ? (runs.find((r) => (r.run_as_user_id ?? agent.owner_id) === previewAs) ?? null) : latestRun;
   const audienceEmpty = !!draftAudience && draftAudience.groups.length === 0 && draftAudience.include.length === 0;
@@ -965,7 +974,7 @@ export function AgentEditor({ id }: { id: string }) {
               onSend={onSend}
               sending={busy === "send"}
               starting={busy === "preview"}
-              previewAs={personalizedGroup ? { options: members, value: previewAs, onChange: setPreviewAsChoice, ownerId: agent.owner_id } : undefined}
+              previewAs={canPreviewAs ? { options: members, value: previewAs, onChange: setPreviewAsChoice, ownerId: agent.owner_id } : undefined}
             />
 
             {!forMe && (

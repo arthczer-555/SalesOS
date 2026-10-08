@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangle, ChevronDown, ExternalLink, History, Users } from "lucide-react";
+import { AlertTriangle, ChevronDown, ExternalLink, History, Lock, Users } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { ToolLogo, logoKeyForTool } from "@/app/_components/tool-logo";
 import type { AgentRunRow } from "@/lib/agents/types";
@@ -45,6 +45,11 @@ function RunDetails({ run, nameOf }: { run: AgentRunRow; nameOf: (id: string | n
       {run.status === "skipped" && (
         <Callout tone="info">Nothing matched the instructions, so no message was sent.</Callout>
       )}
+      {run.redacted && run.status === "success" && (
+        <Callout tone="info" icon={Lock}>
+          Only {nameOf(run.run_as_user_id)} can see this message: it was built with their own data.
+        </Callout>
+      )}
       {run.output && (
         <div style={{ border: `1px solid ${COLORS.line}`, borderRadius: 12, padding: "14px 16px", background: "#fff" }}>
           <SlackMarkdown markdown={run.output} />
@@ -75,8 +80,9 @@ function RunDetails({ run, nameOf }: { run: AgentRunRow; nameOf: (id: string | n
 
 /**
  * Historique des runs. `recipients` (agent envoyé à un groupe, vu par son
- * owner ou un admin) : chaque run dit pour qui il a tourné, et les runs d'un
- * même envoi groupé sont regroupés sous un en-tête.
+ * owner) : chaque run dit pour qui il a tourné, et les runs d'un même envoi
+ * groupé sont regroupés sous un en-tête. Owner non admin : les runs des
+ * autres arrivent sans contenu (`redacted`).
  */
 export function RunsList({ runs, recipients, ownerName }: { runs: AgentRunRow[]; recipients?: Record<string, string>; ownerName?: string }) {
   const [openId, setOpenId] = React.useState<string | null>(runs[0]?.id ?? null);
