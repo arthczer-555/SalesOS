@@ -50,6 +50,29 @@ Code : [lib/chat/run-agent.ts](lib/chat/run-agent.ts) (orchestration), [lib/chat
 
 Env requises en plus : `NOTION_TOKEN` (intégration interne partagée sur `🧭 DATABASE`), `GITHUB_TOKEN` + `COACHELLO_RAG_REPO` (lecture du repo cerveau privé).
 
+### Agents (`/agents`) : agents récurrents façon Dust (2026-10-02)
+N'importe quel membre crée un agent en décrivant en langage naturel ce qu'il veut recevoir et quand ("chaque lundi, mes deals sans activité depuis 14 jours avec une next step"). Un agent = des **consignes** + un **template de message** + des **sources** (familles d'outils de CoachelloAI) + un **planning** + une **destination Slack** (DM de son créateur, canal, ou, pour un admin, le DM de chaque membre d'un groupe).
+
+- **Création** (`/agents/new`) : description, contenu attendu (optionnel), nom (optionnel), planning ("Let AI decide" ou fixé), destination. Le **designer IA** ([lib/agents/design.ts](lib/agents/design.ts), structured outputs, pas de `tool_choice` forcé) produit la spec complète : nom, emoji, couleur, tagline, consignes opérationnelles (seuils explicites), template markdown avec `{{placeholders}}`, sources minimales avec leur raison, planning, langue, et les **hypothèses** qu'il a dû faire (affichées pour vérification). Un **aperçu réel** est calculé dans la foulée (run `preview`, vraies données, rien n'est posté).
+- **Validation** (`/agents/[id]`) : l'agent reste en **brouillon** tant que l'utilisateur ne clique pas "Activate". Tout est éditable (consignes, template avec rendu, sources, planning, destination, "Skip when there's nothing new", langue), "Refine with AI" applique une demande de modification en langage naturel puis relance l'aperçu. L'aperçu est rendu **exactement comme Slack** : même conversion `toSlackMrkdwn` que l'envoi réel, puis rendu mrkdwn. "Send this to Slack" poste un aperçu déjà calculé sans le recalculer.
+- **Exécution** ([lib/agents/run.ts](lib/agents/run.ts)) : la **même boucle agentique que CoachelloAI** ([lib/chat/loop.ts](lib/chat/loop.ts)) avec le même cerveau (socle + guides via `load_guide`), mais seulement les outils des sources cochées ([lib/agents/tools.ts](lib/agents/tools.ts), liste blanche `allowedTools` appliquée dans la boucle). `send_slack_message` est toujours exclu : l'agent ne poste jamais lui-même, la livraison ([lib/agents/slack.ts](lib/agents/slack.ts)) se fait à la seule destination choisie. Identité = l'owner ("mes deals" = ses deals HubSpot, Gmail = sa boîte). Clé Claude de l'owner, sinon clé globale. Le prompt donne la date du dernier envoi pour borner "depuis la dernière fois". Rien à signaler : un message d'une ligne, ou aucun message si "Skip" est activé (run `skipped`). Watchdog à 9 min, heartbeat, étapes d'outils écrites en direct pour l'éditeur.
+- **Planification** : **un seul cron** (`agents-dispatch-scheduled`, toutes les 10 min) lance les agents actifs dont `next_run_at` est passé ; aucun cron n'est créé par agent. Le créneau est réservé par un UPDATE conditionnel (jamais deux runs pour le même créneau), un créneau manqué est rattrapé une seule fois. Fréquences : quotidien, jours ouvrés, hebdo (jours au choix), mensuel (1 à 28), au quart d'heure, fuseau au choix (heure d'été gérée, [lib/agents/schedule.ts](lib/agents/schedule.ts)). Pas d'horaire infra-quotidien, volontairement (coût).
+- **Outil manquant** ([lib/agents/missing-tools.ts](lib/agents/missing-tools.ts)) : quand l'agent ne peut pas faire exactement ce qui est demandé (aucune source pour la donnée, ex. l'agenda ; une granularité qu'aucun outil ne donne ; une action d'écriture), il ne bricole pas. Au design, le designer liste ces manques (`design_notes.missing_tools`) et construit l'agent pour le reste. En run, le modèle écrit "Not available yet (missing tool)" à l'endroit concerné et pose un marqueur `[[MISSING_TOOL: besoin | raison]]` que le moteur retire, remplace par une ligne "Missing tool: … Ask Arthur to add it to CoachelloHQ." en pied du message Slack, et ajoute à la liste de l'agent. L'éditeur affiche un encart "A tool is missing" (avec "trouvé au design" ou "pendant un run") et un bouton **Ask Arthur to build it** ([app/api/agents/[id]/request-tool](app/api/agents/[id]/request-tool/route.ts)) qui dépose la demande dans la **boîte à idées** (`/admin/ideas`) avec le DM Slack habituel, puis la marque demandée. Badge "Missing tool" sur la carte de l'agent. **Résolution automatique** : à chaque run, l'agent revérifie les manques connus avec ses outils du moment ; un manque qu'il ne resignale pas (un outil a été ajouté depuis) disparaît de la liste. Un run "rien à signaler" ne tranche pas.
+- **Historique** (onglet Runs) : chaque run (planifié, manuel, aperçu) avec son message, ses étapes, sa durée, son coût, le lien Slack, et l'erreur en clair (ex. bot pas invité dans le canal : "/invite @CoachelloAI"). Coût moyen par run et estimation mensuelle affichés sur l'agent.
+- **Droits** : l'owner et les admins modifient. Un agent qui lit Gmail et poste dans un canal affiche un avertissement.
+- **Partage (onglet Team)** ([lib/agents/subscriptions.ts](lib/agents/subscriptions.ts)) : **opt-in**. Un agent est **personnel par défaut** (invisible des collègues, ni lançable ni abonnable par eux, un admin garde l'accès par URL). Son owner l'ouvre à l'équipe avec l'interrupteur **"Share with the team"** (builder, section Sharing de l'éditeur, colonne `agents.shared`) ; un agent partagé apparaît dans l'onglet Team une fois activé. Le repasser en personnel coupe l'accès et les runs des abonnés (avertissement dans l'éditeur). Une copie ("Duplicate") est toujours personnelle. Un collègue peut **"Try it now"** (un essai ponctuel, résultat dans la page, rien n'est envoyé sauf s'il clique "Send to my DMs") ou **"Subscribe"** (le recevoir automatiquement dans son DM à chaque échéance du planning de l'agent). Dans les deux cas l'agent tourne **pour lui** : son identité ("mes deals" = ses deals, sa boîte Gmail, ses comptes), sa clé Claude et son coût, livraison dans **son DM** (même si l'owner poste dans un canal), "depuis la dernière fois" calculé sur **ses** livraisons. La config reste celle de l'owner : ses modifications valent pour les abonnés (contrairement à "Duplicate", qui crée une copie indépendante). Runs cloisonnés (`agent_runs.run_as_user_id`) : l'owner ne voit pas les messages de ses abonnés et réciproquement. Le dispatcher lance un run pour l'owner puis un par abonné ; un agent en pause ne tourne pour personne. Seuls les runs de l'owner tiennent la liste des outils manquants. Cartes : badge "Subscribed", nombre d'abonnés ; section "Subscribed" dans My agents.
+- **Envoi à un groupe ("Send to a group", admins)** ([lib/agents/audience-label.ts](lib/agents/audience-label.ts), [lib/agents/fanout.ts](lib/agents/fanout.ts)) : 3e destination, réservée aux admins (refusée côté API sinon). L'audience est **libre** : groupes combinables (Everyone = tous les comptes CoachelloHQ, Sales team = `is_sales` ou un rôle sales, AE, AM, CSM, Admins, lus dans `users.sales_roles` / `is_sales` / `is_admin`), plus des personnes ajoutées ("Also send to") ou exclues ("Except"). Elle est **recalculée à chaque échéance** depuis `users` : un nouvel AM coché dans l'admin reçoit l'agent sans qu'on y touche. L'éditeur affiche la liste des destinataires en direct, avec la même fonction (`matchAudience`) que le dispatcher. Interrupteur **Personalize for each person** :
+  - **allumé** : un run par destinataire (`run_as_user_id`, une Background Function chacun), exécuté **pour** cette personne ("my clients" = les siens, sa clé Claude) et livré dans **son** DM. "Skip when there's nothing new" s'applique par personne. Coût × nombre de destinataires (affiché dans le résumé) ;
+  - **éteint** : **un seul run** (pour le créateur), message neutre, envoyé en DM à chaque destinataire (résultat par personne dans `agent_runs.deliveries`).
+  - Le créateur ne reçoit le message que s'il fait partie de l'audience. Un envoi = un **lot** (`agent_batches`) ; quand plus aucun run du lot ne tourne, le créateur reçoit **une fois** un **récap en DM** (UPDATE conditionnel sur `recap_sent_at`) : une ligne par personne en personnalisé ("Magdalena: 3 clients at risk", "nothing to report", "failed: …", résumé tiré d'un marqueur `[[RECAP: …]]` retiré du message), ou "Sent to 27/28 people" + les échecs nommés en identique. Le dispatcher rattrape les lots dont un run a été tué.
+  - **Gmail interdit** (un agent ne lit jamais la boîte d'un collègue) : source grisée dans l'éditeur, retirée à l'enregistrement et filtrée à l'exécution.
+  - **Aperçu "Preview as"** : le créateur choisit un membre, l'aperçu tourne pour lui avec ses données, sans rien envoyer. Après le design, l'aperçu tourne pour le premier membre si le créateur n'en fait pas partie. "Send now" (et "Send to the group now" sur un brouillon) déclenche l'envoi groupé après confirmation. L'historique du créateur montre tous les runs du groupe, regroupés par envoi, avec le nom du destinataire (pas ceux des abonnés hors audience, qui restent privés).
+  - **Langage naturel** : le designer reçoit le statut admin du créateur. Pour un admin dont la demande vise un groupe ("envoie à tous les AM…", "un message à toute l'équipe…"), il propose l'audience (`audience_suggestion` : groupes + personnalisation) et écrit les consignes pour un destinataire ("my" = lui) ou neutres. La proposition s'applique à un brouillon (jamais sur un canal, jamais en silence sur un agent actif en DM), avec un encart "Review the audience" ; les personnes nommées s'ajoutent dans l'UI. Pour un non-admin, l'agent part dans son DM avec une hypothèse qui le dit. Modèles "AM Health Check" (AM, personnalisé) et "Friday Wins" (Everyone, identique), visibles des seuls admins.
+  - Un compte sans Slack (ex. un compte de test en @gmail.com) compte dans "Everyone" et échoue à chaque envoi : l'exclure avec "Except" ou supprimer le compte.
+- **Modèle** : clé `agents` dans /admin > Modèles IA (défaut Sonnet 5.5), pour le designer et les runs. Usage loggué sous `agents` / `agents_design`.
+
+> **À appliquer** : migration [agents.sql](supabase/migrations/agents.sql) (tables `agents`, `agent_runs`). Sans elle la page `/agents` affiche une erreur explicite. Puis [agents_subscriptions.sql](supabase/migrations/agents_subscriptions.sql) (`agent_runs.run_as_user_id`, table `agent_subscriptions`) : sans elle tout fonctionne pour l'owner, mais "Try it now" et "Subscribe" répondent que la mise à jour de la base n'est pas faite. Puis [agents_sharing.sql](supabase/migrations/agents_sharing.sql) (`agents.shared`) : sans elle tous les agents restent personnels et l'onglet Team est vide ; avec elle, les agents existants deviennent personnels (à repartager à la main). Puis [agents_audience.sql](supabase/migrations/agents_audience.sql) (`agent_runs.batch_id`, `recap_line`, `deliveries`, table `agent_batches`) : sans elle, "Send to a group" s'enregistre et l'aperçu fonctionne, mais l'envoi groupé répond que la mise à jour de la base n'est pas faite.
+
 ### Briefing Meetings (`/briefing`)
 Prépare automatiquement les meetings à venir en croisant 5 sources :
 - **Google Calendar** : 7 prochains jours (max 50 événements)
@@ -228,7 +251,7 @@ Un seul écran, **trois couches qui se cumulent** selon le profil (un Head of Sa
   - Les **rôles sales** (`users.sales_roles`, valeurs `ae` / `am` / `csm`, cumulables) pilotent le contenu de la page d'accueil personnelle : un AE y voit son New, un AM son Renew, un CSM le Renew delivery. Le Sheet revenue les cumule déjà (le même prénom apparaît comme AE et comme AM), d'où des cases à cocher et non un rôle unique.
   - ⚠ **`is_sales` et `sales_roles` sont indépendants**, volontairement. Le **deal digest Slack part aux seuls porteurs du rôle `ae`** ([lib/deals/ae-digest.ts](lib/deals/ae-digest.ts)) : c'est une revue de deals de prospection, un AM qui ne fait que du renouvellement ou un CSM n'en ont pas l'usage. `sales_roles` porte aussi les objectifs de revenu, donc le dashboard et la ligne dans les vues manager. Le roster des dashboards ([lib/ae-activity/reps.ts](lib/ae-activity/reps.ts)) retient `is_sales = true` **OU** un rôle non vide — un CSM comme Julie a donc ses chiffres sans recevoir le digest.
   - Dans AE Sales Activity, les personnes qui n'ont QUE le rôle CSM sont **séparées des AE** (sélecteur distinct, exclues de l'agrégat « Tous ») : elles ne prospectent pas, leurs zéros d'appels tireraient les moyennes vers le bas, et leur Renew ferait doublon avec celui de l'AM.
-- **Modèles IA** : modèle Claude par fonctionnalité, appliqué à tous (clé `model_preferences` dans `guide_defaults`). Features pilotables : chat, briefing, prospection, mass_prospection, deals_score, deals_analyze, deals_email, sales_coach, meeting_recap, clients, marketing, rag_insights, rag_gaps.
+- **Modèles IA** : modèle Claude par fonctionnalité, appliqué à tous (clé `model_preferences` dans `guide_defaults`). Features pilotables : chat, briefing, prospection, mass_prospection, deals_score, deals_analyze, deals_email, sales_coach, meeting_recap, clients, marketing, rag_insights, rag_gaps, agents.
 - **Guides IA** : guides par défaut (bot, prospection, briefing) + reset.
 - **Logs & Usage** (`/admin/logs`) : consommation par user / par feature, catalogue des modèles utilisés.
 - **Idea box** (`/admin/ideas`) : toutes les idées déposées depuis le dashboard, la plus récente en premier — auteur, texte intégral, date, et une corbeille par ligne. Le texte n'est jamais tronqué (sinon il faudrait ouvrir la base pour le lire) et il n'y a **pas de statut ni de vote** : une colonne de workflow qu'on n'entretient pas ment plus qu'elle n'informe. Le dépôt notifiant déjà par DM Slack, cette page sert la relecture à froid, pas la veille. Code : [lib/ideas/](lib/ideas/).
@@ -1235,6 +1258,59 @@ CREATE TABLE rag_gap_reports (
 CREATE TABLE rag_insights_meta (id INT PRIMARY KEY DEFAULT 1, status TEXT NOT NULL DEFAULT 'idle', ...);
 ```
 
+### Agents (`/agents`)
+
+Migration : [agents.sql](supabase/migrations/agents.sql).
+
+```sql
+CREATE TABLE agents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT, emoji TEXT, color TEXT, tagline TEXT,
+  request TEXT NOT NULL,             -- demande d'origine en langage naturel
+  must_include TEXT,                 -- "le message doit contenir" (optionnel)
+  instructions TEXT, template TEXT,  -- écrits par le designer IA, éditables
+  sources TEXT[],                    -- clés de lib/agents/sources.ts
+  language TEXT,                     -- en | fr
+  schedule JSONB,                    -- { frequency, days, dayOfMonth, time, timezone }
+  destination JSONB,                 -- { type: "dm" } | { type: "channel", channelId, channelName }
+                                     -- | { type: "audience", groups[], include[], exclude[], personalize } (admins)
+  skip_when_empty BOOLEAN,
+  status TEXT,                       -- draft | active | paused
+  design_status TEXT, design_error TEXT, design_notes JSONB, -- hypothèses + raison de chaque source
+  next_run_at TIMESTAMPTZ,           -- NULL si non actif ; lu par le dispatcher
+  last_run_at TIMESTAMPTZ, last_run_status TEXT, last_delivered_at TIMESTAMPTZ, run_count INT,
+  created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ
+);
+
+CREATE TABLE agent_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT,                         -- scheduled | manual | preview
+  status TEXT,                       -- queued | running | success | skipped | error
+  deliver BOOLEAN,                   -- false = aperçu
+  output TEXT, error TEXT,
+  tool_steps JSONB, sources JSONB,   -- progression affichée en direct dans l'éditeur
+  slack_channel TEXT, slack_ts TEXT, slack_permalink TEXT, delivered_at TIMESTAMPTZ,
+  model TEXT, input_tokens INT, output_tokens INT, cost_usd NUMERIC,
+  started_at TIMESTAMPTZ, finished_at TIMESTAMPTZ, created_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ,            -- heartbeat
+  run_as_user_id UUID,               -- run pour un collègue (abonné, Try it now, membre d'une audience)
+  batch_id UUID, recap_line TEXT,    -- envoi groupé : lot + ligne du récap créateur
+  deliveries JSONB                   -- envoi identique : [{ user_id, ok, error, permalink }]
+);
+
+CREATE TABLE agent_batches (         -- un envoi à un groupe (agents_audience.sql)
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  kind TEXT,                         -- scheduled | manual
+  personalized BOOLEAN, recipients INT,
+  recap_sent_at TIMESTAMPTZ,         -- posé une seule fois (UPDATE conditionnel) quand le récap part
+  created_at TIMESTAMPTZ
+);
+```
+
 Migrations complètes : [supabase/migrations/](supabase/migrations/).
 
 ---
@@ -1255,6 +1331,7 @@ Implémentées en tant que **Netlify Scheduled / Background Functions** dans [ne
 | `rag-insights-scheduled.mts` | `0 7 * * 1` (tous les lundis 7h UTC) | `POST /.netlify/functions/rag-insights-background` | `Bearer CRON_SECRET` | Analyse les nouveaux tours de CoachelloAI (**RAG Insights**), reconstruit le rapport de trous Notion et envoie le **recap Slack hebdo** (DM Arthur en test, + `RAG_INSIGHTS_RECIPIENTS` en prod). Aussi déclenchable via les boutons "Refresh analysis" / "Send Slack recap" de `/admin/rag` (`X-Internal-Secret`). |
 | `signals-sweep-scheduled.mts` | `0 5 * * *` (tous les jours 5h UTC) | `POST /.netlify/functions/signals-sweep-background` | `Bearer CRON_SECRET` | Sweep **Signals** : scan marché global, scoring Claude, dédup, recherche d'un lead joignable, insert des 10 meilleurs, rétention 14 j. |
 | `marketing-posts-scrape-scheduled.mts` | `0 6 * * 1` (tous les lundis 6h UTC) | `POST /.netlify/functions/marketing-posts-scrape-background` | `Bearer CRON_SECRET` | Scrape les posts LinkedIn des sources `LINKEDIN_OWN_POST_SOURCES` (dataset Bright Data, poll 6 min). |
+| `agents-dispatch-scheduled.mts` | `*/10 * * * *` (toutes les 10 min) | `dispatchDueAgents` ([lib/agents/dispatch.ts](lib/agents/dispatch.ts)) puis `agents-run-background` par agent échu | `X-Internal-Secret` | **Agents** : lance les agents actifs dont `next_run_at` est passé (réservation du créneau par UPDATE conditionnel), clôt les runs et designs bloqués depuis plus de 20 min. |
 
 #### Ce que le sweep Signals a coûté avant la refonte (juillet 2026)
 
@@ -1292,6 +1369,8 @@ Idempotence : `(owner_id, run_date)` stampé dans `deal_ae_digest_log`. Test man
 | `lists-push-hubspot-background.mts` | `/api/intel/enrich/lists/[id]/push-hubspot` | `X-Internal-Secret` | Push d'une liste vers HubSpot (création contacts, dédup email). |
 | `watchlist-ae-analysis-background.mts` | `/api/watchlist/companies/[id]/briefs/ae-analysis` | `X-Internal-Secret` | Génère le brief AE Analysis d'un compte Watch List. |
 | `slack-chat-background.mts` | Coach Slack (mention/message) | `X-Internal-Secret` | Réponse asynchrone du coach Slack. |
+| `agents-design-background.mts` | `POST /api/agents`, `POST /api/agents/[id]/design` | `X-Internal-Secret` | Designer IA d'un agent (création ou "Refine with AI"), puis aperçu réel. |
+| `agents-run-background.mts` | dispatcher, `POST /api/agents/[id]/run` | `X-Internal-Secret` | Un run d'agent (boucle CoachelloAI + livraison Slack). |
 
 **Variables nécessaires** : `URL` (ou `SITE_URL`), `CRON_SECRET`, `INTERNAL_SECRET`.
 
@@ -1400,6 +1479,27 @@ Clic "Régénérer" sur la page détail
 → Dashboard Recharts
 ```
 
+### Flux Agents
+```
+/agents/new → POST /api/agents (brouillon, design_status=designing)
+→ agents-design-background : designer IA (structured outputs) → spec + hypothèses
+   → crée le run "preview" AVANT de repasser le design à idle (l'éditeur ne cesse jamais de poller)
+   → runAgentJob(preview) : boucle CoachelloAI, outils des sources cochées, rien n'est posté
+→ /agents/[id] poll GET /api/agents/[id] (1,5 s tant qu'un design ou un run tourne)
+→ "Activate" : PATCH status=active → next_run_at = computeNextRun(schedule)
+
+Toutes les 10 min : agents-dispatch-scheduled → dispatchDueAgents
+→ agents actifs avec next_run_at <= now → UPDATE conditionnel (réserve le créneau, avance next_run_at)
+→ insert agent_runs (scheduled) → agents-run-background → runAgentJob
+→ toSlackMrkdwn → chat.postMessage (DM owner ou canal) → stamp run + agent (last_delivered_at)
+
+Agent "Send to a group" : à l'échéance (ou "Send now") → fanOutAudience
+→ resolveAudience (users : groupes + include - exclude) → insert agent_batches
+→ personnalisé : un run par membre (run_as_user_id, batch_id) | identique : un run owner (batch_id)
+→ chaque run : runAgentJob → DM du membre (ou DM de chacun en identique, deliveries)
+→ fin du dernier run du lot → maybeSendBatchRecap → DM récap au créateur, une seule fois
+```
+
 ---
 
 ## 13. Lancer en local
@@ -1465,6 +1565,9 @@ Via `/settings` → Préférences de modèle, ou directement dans `guide_default
 3. Label : une seule entrée `{ emoji, label }` dans [lib/chat/tool-labels.ts](lib/chat/tool-labels.ts), en anglais et sans ponctuation finale. `chatToolLabel` (web) ajoute l'ellipse, `slackToolLabel` (Slack) préfixe l'emoji. Les deux surfaces affichent donc le même libellé.
 4. Si l'outil émet une source (`ctx.onSource`) d'un nouveau `kind` : élargir `ChatSource` ([lib/chat/tools/types.ts](lib/chat/tools/types.ts)), puis `logoKeyForTool` / `logoKeyForSourceKind` ([app/_components/tool-logo.tsx](app/_components/tool-logo.tsx)) et `SOURCE_KIND_LABELS` ([app/_components/chat-message.tsx](app/_components/chat-message.tsx)).
 5. Arbitrage entre outils (quand privilégier celui-ci plutôt qu'un autre) : dans les descriptions d'abord, et si l'enjeu le mérite dans `coachellohq/socle.md` du repo `Coachello.RAG` (à pousser pour prendre effet, cache 5 min).
+
+### Ajouter une source aux Agents
+Un nouvel outil ajouté à un module existant de [lib/chat/tools/](lib/chat/tools/) est disponible pour les agents sans rien faire. Pour une **nouvelle famille** (ex. Google Calendar, absent aujourd'hui) : l'entrée du catalogue dans [lib/agents/sources.ts](lib/agents/sources.ts) (libellé, description lue par le designer IA, logo) et la correspondance source -> module dans `MODULES_BY_SOURCE` de [lib/agents/tools.ts](lib/agents/tools.ts). Un outil qui écrit quelque part (envoi, création) n'a rien à faire dans un agent : la seule sortie d'un agent est son message Slack.
 
 ### Rendre une feature IA pilotable depuis l'admin (modèle Claude)
 1. Ajouter la feature dans `FEATURES` de [app/admin/_components/model-preferences-admin.tsx](app/admin/_components/model-preferences-admin.tsx) (clé + label + `defaultModel`)

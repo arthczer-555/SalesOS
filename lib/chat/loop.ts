@@ -43,7 +43,7 @@ function pricingFor(model: string): { input: number; output: number } {
   return { input: 3, output: 15 }; // sonnet 4.x et défaut
 }
 
-function estimateCost(
+export function estimateCost(
   model: string,
   t: { input: number; cacheWrite: number; cacheRead: number; output: number }
 ): number {
@@ -111,8 +111,14 @@ export async function runLoop(args: {
   messages: Anthropic.MessageParam[];
   toolContext: Omit<ToolContext, "onProgress" | "onSource">;
   emit: (event: ChatEvent) => void;
+  /**
+   * Liste blanche d'outils exécutables (agents planifiés, lib/agents/run.ts) :
+   * un outil hors liste n'est jamais exécuté, même si le modèle l'appelle.
+   * Absent = tout le registre (chat web et Slack).
+   */
+  allowedTools?: ReadonlySet<string>;
 }): Promise<ChatResult> {
-  const { client, model, system, tools, toolContext, emit } = args;
+  const { client, model, system, tools, toolContext, emit, allowedTools } = args;
 
   let currentMessages: Anthropic.MessageParam[] = args.messages;
   let totalInputTokens = 0;
@@ -227,6 +233,14 @@ export async function runLoop(args: {
       const results: Anthropic.ToolResultBlockParam[] = await Promise.all(
         toolBlocks.map(async (tool, idx): Promise<Anthropic.ToolResultBlockParam> => {
           const input = tool.input as Record<string, unknown>;
+          if (allowedTools && !allowedTools.has(tool.name)) {
+            return {
+              type: "tool_result",
+              tool_use_id: tool.id,
+              content: `Outil "${tool.name}" non disponible pour cette exécution.`,
+              is_error: true,
+            };
+          }
           try {
             let result = await executeTool(tool.name, input, ctx);
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Sparkles,
+  Bot,
   LayoutDashboard,
   CalendarDays,
   Briefcase,
@@ -32,11 +33,13 @@ import { useUserMe } from "@/lib/hooks/use-user-me";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/sidebar/sidebar-context";
 
-type NavEntry = { href: string; label: string; icon: LucideIcon; match?: string[] };
+// prefix : l'entrée reste active sur les sous-pages (/agents/new, /agents/[id]).
+type NavEntry = { href: string; label: string; icon: LucideIcon; match?: string[]; prefix?: boolean };
 
 const nav: NavEntry[] = [
   { href: "/dashboard", label: "My dashboard", icon: LayoutDashboard },
   { href: "/chat", label: "CoachelloAI", icon: Sparkles },
+  { href: "/agents", label: "Agents", icon: Bot, prefix: true },
   { href: "/briefing", label: "Briefing", icon: CalendarDays },
   { href: "/deals", label: "Deals", icon: Briefcase },
   { href: "/sales-coach", label: "Sales Coach", icon: GraduationCap },
@@ -204,8 +207,11 @@ function SidebarBody({
         style={{ padding: collapsed ? "16px 6px" : "16px 8px" }}
         aria-label="Main navigation"
       >
-        {nav.map(({ href, label, icon: Icon, match }) => {
-          const active = pathname === href || (match?.includes(pathname ?? "") ?? false);
+        {nav.map(({ href, label, icon: Icon, match, prefix }) => {
+          const active =
+            pathname === href ||
+            (prefix && !!pathname?.startsWith(`${href}/`)) ||
+            (match?.includes(pathname ?? "") ?? false);
           return (
             <NavLink
               key={href}
