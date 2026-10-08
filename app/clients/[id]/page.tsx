@@ -20,6 +20,7 @@ import { MeetingConfirmationModal } from "./_components/meeting-confirmation-mod
 import { AnalyzedMeetingsModal } from "./_components/analyzed-meetings-modal";
 import { MissingInfoEmailModal } from "./_components/missing-info-email-modal";
 import { RefreshReportModal } from "./_components/whats-new-card";
+import { AccountCompaniesPanel } from "./_components/account-companies-panel";
 
 // Fiche client v2 : header (identité, Refresh, Options, onglets) + 4 onglets
 // pleine largeur. Ce fichier ne fait que l'orchestration (données, polling du
@@ -203,10 +204,16 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     }
   }
 
-  async function triggerRefresh() {
+  // Suit un refresh lancé côté serveur (bouton Refresh, ou retrait d'une
+  // company du compte) : bandeau + polling jusqu'au nouveau report.
+  function watchRefresh() {
     refreshBaselineRef.current = data?.client.last_refresh_report?.refreshed_at ?? null;
     refreshDeadlineRef.current = Date.now() + 5 * 60_000;
     setRefreshing(true);
+  }
+
+  async function triggerRefresh() {
+    watchRefresh();
     try {
       const res = await fetch(`/api/clients/${id}/refresh`, { method: "POST" });
       if (!res.ok) {
@@ -274,31 +281,48 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", background: COLORS.bgPage }}>
-      <ClientHeader
-        client={client}
-        isAdmin={isAdmin}
-        refreshing={refreshing}
-        triggering={triggering}
-        deleting={deleting}
-        tab={tab}
-        onTab={(t) => goTo(t)}
-        todoCount={todo.count}
-        hubspotState={hubspot}
-        hubspotUrl={hubspotUrl}
-        actions={{
-          onRefresh: () => void triggerRefresh(),
-          onChangeAssignees: () => setAssigneesMode("change"),
-          onOpenHandover: () => setAssigneesMode("handover"),
-          onDraftEmail: () => setEmailModalOpen(true),
-          onCreateVideo: () => router.push(`/video-studio?clientId=${client.id}`),
-          onAnalyzedMeetings: () => setAnalyzedMeetingsOpen(true),
-          onShowOnboarding: () => void restoreOnboarding(),
-          onEnrich: () => void triggerEnrich(),
-          onDelete: () => void deleteClient(client.company_name),
-          onConfirmMeetings: () => setConfirmOpen(true),
-          onOpenReport: () => setReportOpen(true),
-        }}
-      />
+      {/* Wrapper relatif : le panneau des companies ajoutées au compte flotte
+          sous le header, à droite, au-dessus du contenu. */}
+      <div style={{ position: "relative", flexShrink: 0, zIndex: 20 }}>
+        <ClientHeader
+          client={client}
+          isAdmin={isAdmin}
+          refreshing={refreshing}
+          triggering={triggering}
+          deleting={deleting}
+          tab={tab}
+          onTab={(t) => goTo(t)}
+          todoCount={todo.count}
+          hubspotState={hubspot}
+          hubspotUrl={hubspotUrl}
+          actions={{
+            onRefresh: () => void triggerRefresh(),
+            onChangeAssignees: () => setAssigneesMode("change"),
+            onOpenHandover: () => setAssigneesMode("handover"),
+            onDraftEmail: () => setEmailModalOpen(true),
+            onCreateVideo: () => router.push(`/video-studio?clientId=${client.id}`),
+            onAnalyzedMeetings: () => setAnalyzedMeetingsOpen(true),
+            onShowOnboarding: () => void restoreOnboarding(),
+            onEnrich: () => void triggerEnrich(),
+            onDelete: () => void deleteClient(client.company_name),
+            onConfirmMeetings: () => setConfirmOpen(true),
+            onOpenReport: () => setReportOpen(true),
+          }}
+        />
+        {enriched && (
+          <div style={{ position: "absolute", top: "calc(100% + 10px)", right: 32 }}>
+            <AccountCompaniesPanel
+              client={client}
+              portalId={HUBSPOT_PORTAL_ID}
+              onKept={reload}
+              onRemoved={() => {
+                watchRefresh();
+                reload();
+              }}
+            />
+          </div>
+        )}
+      </div>
 
       <StatusBanner client={client} onConfirmMeetings={() => setConfirmOpen(true)} />
       {enriched && todo.handoverPending && <HandoverBanner onOpen={() => setAssigneesMode("handover")} />}
@@ -332,7 +356,9 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           report={client.last_refresh_report}
           fields={client.fields_json ?? {}}
           clientId={client.id}
+          accountCompanies={client.account_companies}
           onUpdated={reload}
+          onRefreshStarted={watchRefresh}
           onClose={() => setReportOpen(false)}
         />
       )}

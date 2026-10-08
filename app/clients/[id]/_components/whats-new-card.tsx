@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Activity, AlertTriangle, Loader2, Newspaper, Undo2, Video, X } from "lucide-react";
 import { COLORS, SHADOWS } from "@/lib/design/tokens";
-import type { ClientFields, Insights, News, RefreshReport, RefreshSourceStat } from "@/lib/clients/types";
+import type { AccountCompany, ClientFields, Insights, News, RefreshReport, RefreshSourceStat } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { SourceLabel } from "./next-actions-card";
 import { Card, CardHeader, Eyebrow, Tag, fmtDay } from "./ui";
@@ -234,17 +234,47 @@ export function RefreshReportModal({
   report,
   fields,
   clientId,
+  accountCompanies,
   onUpdated,
+  onRefreshStarted,
   onClose,
 }: {
   report: RefreshReport | null;
   fields: Partial<ClientFields>;
   clientId: string;
+  // Companies rattachées au compte : retirables d'ici (même route que le
+  // panneau de la fiche), y compris après un Keep.
+  accountCompanies?: AccountCompany[] | null;
   onUpdated: () => void;
+  onRefreshStarted?: () => void;
   onClose: () => void;
 }) {
   const { toast } = useToast();
   const [busy, setBusy] = useState<string | null>(null);
+  const accountIds = new Set((accountCompanies ?? []).map((c) => c.id));
+
+  async function removeCompany(c: { id: string; name: string | null; domain: string | null }) {
+    setBusy(`co:${c.id}`);
+    try {
+      const res = await fetch(`/api/clients/${clientId}/account-company`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company_id: c.id, action: "remove" }),
+      });
+      if (!res.ok) {
+        const b = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(b.error ?? `HTTP ${res.status}`);
+      }
+      toast(`${c.name || c.domain || "Company"} removed. Refreshing without it.`, "success");
+      onRefreshStarted?.();
+      onUpdated();
+      onClose();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not remove the company", "error");
+    } finally {
+      setBusy(null);
+    }
+  }
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -331,6 +361,39 @@ export function RefreshReportModal({
             </div>
             {report.sources?.slack?.channel && (
               <div style={{ marginTop: 6, fontSize: 12, color: COLORS.ink3 }}>Slack channels read: {report.sources.slack.channel}, #12-everything-clients</div>
+            )}
+            {!!report.sources?.hubspot?.deals?.length && (
+              <div style={{ marginTop: 6, fontSize: 12, color: COLORS.ink3 }}>
+                {`HubSpot deals read: ${report.sources.hubspot.deals
+                  .map((d) => `${d.name || d.id}${d.pipeline_label ? ` (${d.pipeline_label})` : ""}`)
+                  .join(", ")}`}
+              </div>
+            )}
+            {!!report.sources?.hubspot?.companies?.length && (
+              <div style={{ marginTop: 6, fontSize: 12, color: COLORS.ink3 }}>
+                HubSpot companies read:{" "}
+                {report.sources.hubspot.companies.map((c, i) => (
+                  <span key={c.id}>
+                    {i > 0 && ", "}
+                    {c.name || c.domain || c.id}
+                    {accountIds.has(c.id) && (
+                      <>
+                        {" ("}
+                        <button
+                          type="button"
+                          className="ch-link"
+                          style={{ fontSize: 12 }}
+                          disabled={busy !== null}
+                          onClick={() => void removeCompany(c)}
+                        >
+                          {busy === `co:${c.id}` ? "removing…" : "remove"}
+                        </button>
+                        {")"}
+                      </>
+                    )}
+                  </span>
+                ))}
+              </div>
             )}
 
             <div style={{ marginTop: 16 }}>

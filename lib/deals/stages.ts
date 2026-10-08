@@ -40,6 +40,13 @@ export function isWonDeal(deal: {
   return false;
 }
 
+// Pipeline Customer Success : le workflow HubSpot y crée un deal de suivi à
+// chaque closed won. Heuristique par label comme isNurtureLabel (l'id du
+// pipeline n'est pas stable d'un portail à l'autre).
+export function isCustomerSuccessPipeline(label: string | null | undefined): boolean {
+  return !!label && label.toLowerCase().includes("customer success");
+}
+
 // Résout les IDs de stages "nurture" sur tous les pipelines de deals. Utilisé
 // par les chemins de scoring (qui ne fetchent pas les labels de stage par
 // ailleurs) pour ajouter un filtre `dealstage NOT_IN` à la recherche HubSpot.

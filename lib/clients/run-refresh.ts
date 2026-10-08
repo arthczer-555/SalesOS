@@ -3,8 +3,9 @@ import { logUsage } from "../log-usage";
 import { withAnthropicRetry } from "../anthropic-retry";
 import { fetchDealContext } from "../hubspot";
 import { getBillingForClient } from "../billing/google-sheet";
-import { loadClientContext, loadClaapMeetingsForDeal, renderClientContextForPrompt } from "./context";
+import { contextDealIds, loadClientContext, loadClaapMeetingsForDeals, renderClientContextForPrompt } from "./context";
 import { discoverClaapMeetingCandidates } from "./claap-discovery";
+import { discoverAccountCompanies } from "./account-discovery";
 import {
   CLIENT_EXTRACTION_MODEL,
   CLIENT_EXTRACTION_SYSTEM_PROMPT,
@@ -25,6 +26,7 @@ import { generateHubspotSuggestions } from "./hubspot-suggestions";
 import { fetchHubspotDealFields } from "./hubspot-fields";
 import { fetchClientSlackActivity } from "./slack-context";
 import type {
+  AccountCompany,
   ClientFields,
   ConfirmedRecording,
   Insights,
@@ -39,7 +41,10 @@ import { withForcedTool } from "../models/compat";
 //   - Claap : nouveaux meetings détectés (domaine / titre) RETENUS
 //     AUTOMATIQUEMENT, plus de popup de confirmation. Ils sont listés dans le
 //     report (auto_added_meetings) avec un "Not this account" pour les retirer ;
-//   - HubSpot : engagements deal + company ;
+//   - Companies du compte : détection des companies HubSpot du même compte
+//     (account-discovery.ts), ajoutées en "pending" et confirmées ou retirées
+//     depuis le panneau de la fiche ;
+//   - HubSpot : engagements deal + deals liés + companies du compte ;
 //   - Slack : canal dédié au client + mentions ailleurs (slack-context.ts) ;
 //   - News : Tavily + Google News, triées "important pour le compte".
 // S'il y a du nouveau, ré-extrait TOUS les fields et fusionne (merge-fields.ts :
@@ -79,6 +84,10 @@ type ClientRefreshRow = {
   declined_claap_recording_ids: string[] | null;
   coach_brief_generated_at: string | null;
   coach_brief_edited_at?: string | null;
+  // undefined tant que la migration clients_account_companies.sql n'est pas
+  // appliquée (select("*") ne renvoie pas la colonne).
+  account_companies?: AccountCompany[] | null;
+  declined_company_ids?: string[] | null;
 };
 
 // Sections dont un changement rend le coach brief obsolète.
@@ -127,16 +136,41 @@ export async function runClientRefresh(
     const notes: string[] = [];
 
     // ── Nouveaux meetings Claap : retenus automatiquement ─────────────────────
-    // "Connu" = indexé sous ce deal, déjà confirmé, déjà découvert ou retiré à la
-    // main. Tout recording qui matche par domaine/titre en dehors de cet ensemble
-    // est nouveau, quelle que soit sa date (ex. meeting lié à un autre deal).
-    const [indexedMeetings, dealForDiscovery] = await Promise.all([
-      loadClaapMeetingsForDeal(row.hubspot_deal_id),
-      fetchDealContext(row.hubspot_deal_id).catch((e) => {
-        console.warn(`[clients/refresh/${clientId}] deal fetch for meeting discovery failed:`, e instanceof Error ? e.message : e);
-        return null;
-      }),
-    ]);
+    // "Connu" = indexé sous ce deal ou un de ses deals liés (deal Customer
+    // Success), déjà confirmé, déjà découvert ou retiré à la main. Tout recording
+    // qui matche par domaine/titre en dehors de cet ensemble est nouveau, quelle
+    // que soit sa date (ex. meeting lié à un autre deal).
+    const declinedCompanyIds = new Set(row.declined_company_ids ?? []);
+    const accountCompanies: AccountCompany[] = (row.account_companies ?? []).filter((c) => !declinedCompanyIds.has(c.id));
+    const dealForDiscovery = await fetchDealContext(row.hubspot_deal_id, {
+      includeLinkedDeals: true,
+      accountCompanyIds: accountCompanies.map((c) => c.id),
+      withEngagements: false,
+    }).catch((e) => {
+      console.warn(`[clients/refresh/${clientId}] deal fetch for meeting discovery failed:`, e instanceof Error ? e.message : e);
+      return null;
+    });
+
+    // ── Companies du compte : détection des autres companies HubSpot du client ──
+    // Ajoutées tout de suite (leur activité compte dès ce refresh) en "pending",
+    // confirmées ou retirées depuis le panneau de la fiche. Ignoré tant que la
+    // migration clients_account_companies.sql n'est pas appliquée.
+    let addedCompanies: AccountCompany[] = [];
+    if (row.account_companies !== undefined && dealForDiscovery) {
+      const known = new Set([
+        ...(dealForDiscovery.company ? [dealForDiscovery.company.id] : []),
+        ...accountCompanies.map((c) => c.id),
+        ...declinedCompanyIds,
+      ]);
+      const res = await discoverAccountCompanies(dealForDiscovery, known);
+      if (res.error) {
+        console.warn(`[clients/refresh/${clientId}] account check failed:`, res.error);
+        notes.push(`The check for other HubSpot companies of this account failed: ${res.error}.`);
+      }
+      addedCompanies = res.companies;
+      accountCompanies.push(...addedCompanies);
+    }
+    const indexedMeetings = await loadClaapMeetingsForDeals(contextDealIds(row.hubspot_deal_id, dealForDiscovery));
     const knownIds = new Set([
       ...indexedMeetings.map((m) => m.recording_id),
       ...(row.confirmed_claap_recordings ?? []).map((r) => r.recording_id),
@@ -161,6 +195,7 @@ export async function runClientRefresh(
 
     const ctx = await loadClientContext(row.hubspot_deal_id, {
       excludeRecordingIds: declinedIds.length > 0 ? declinedIds : undefined,
+      accountCompanyIds: accountCompanies.map((c) => c.id),
     });
     const companyName = ctx.deal?.company?.name ?? ctx.deal?.name ?? row.company_name ?? "";
 
@@ -213,9 +248,23 @@ export async function runClientRefresh(
     }
     // Ancien flux de confirmation : on purge les candidats restés en attente.
     updatePayload.pending_refresh_meeting_candidates = null;
+    if (addedCompanies.length > 0) {
+      // Relu juste avant l'écriture : un Keep / Remove cliqué pendant le refresh
+      // ne doit pas être écrasé par la liste lue au départ.
+      const { data: latest } = await db.from("clients").select("account_companies, declined_company_ids").eq("id", clientId).single();
+      const latestList = (latest?.account_companies as AccountCompany[] | null) ?? [];
+      const latestDeclined = new Set((latest?.declined_company_ids as string[] | null) ?? []);
+      const latestIds = new Set(latestList.map((c) => c.id));
+      updatePayload.account_companies = [
+        ...latestList,
+        ...addedCompanies.filter((c) => !latestIds.has(c.id) && !latestDeclined.has(c.id)),
+      ];
+    }
 
     // ── Fields (tous) : ré-extraction seulement s'il y a du nouveau ───────────
-    const contextPrompt = newActivityCount > 0 ? renderClientContextForPrompt(ctx) : null;
+    // Une company ajoutée au compte compte comme du nouveau : son historique
+    // (antérieur au dernier refresh) n'a jamais été lu.
+    const contextPrompt = newActivityCount > 0 || addedCompanies.length > 0 ? renderClientContextForPrompt(ctx) : null;
     if (contextPrompt) {
       const client = anthropicClient({ timeout: 600_000 });
       const msg = await withAnthropicRetry(
@@ -385,7 +434,20 @@ export async function runClientRefresh(
       changed_fields: changedFields,
       sources: {
         claap: { new: claapNew, error: claapError },
-        hubspot: { new: hubspotNew, error: ctx.deal ? null : "HubSpot deal could not be read" },
+        hubspot: {
+          new: hubspotNew,
+          error: ctx.deal ? null : "HubSpot deal could not be read",
+          deals: ctx.deal
+            ? [
+                { id: ctx.deal.id, name: ctx.deal.name, pipeline_label: ctx.deal.pipeline_label },
+                ...(ctx.deal.linked_deals ?? []),
+              ]
+            : [],
+          companies: [
+            ...(ctx.deal?.company ? [{ id: ctx.deal.company.id, name: ctx.deal.company.name, domain: ctx.deal.company.domain }] : []),
+            ...accountCompanies.map((c) => ({ id: c.id, name: c.name, domain: c.domain })),
+          ],
+        },
         slack: {
           new: slackNew,
           // Une erreur partielle (un canal illisible) n'invalide pas le reste : la

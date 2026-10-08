@@ -22,7 +22,7 @@ import { generateInsightsAI } from "./insights-ai";
 import { notifyOwnerOfEnrichedClient } from "./notify-owner";
 import { generateHubspotSuggestions } from "./hubspot-suggestions";
 import { fetchHubspotDealFields } from "./hubspot-fields";
-import type { ClientFields, News } from "./types";
+import type { AccountCompany, ClientFields, News } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { withForcedTool } from "../models/compat";
 
@@ -56,9 +56,11 @@ export async function runClientEnrichment(
   clientId: string,
   userId: string | null = null,
 ): Promise<RunEnrichmentResult> {
+  // select("*") : la colonne account_companies (migration
+  // clients_account_companies.sql) peut ne pas exister encore.
   const { data: row, error: rowErr } = await db
     .from("clients")
-    .select("id, hubspot_deal_id, closedwon_at, enrichment_status, updated_at, health, health_history, confirmed_claap_recordings, fields_json, news")
+    .select("*")
     .eq("id", clientId)
     .single();
 
@@ -94,10 +96,11 @@ export async function runClientEnrichment(
           .map((r) => r.recording_id)
           .filter((id): id is string => !!id)
       : null;
-    const ctx = await loadClientContext(
-      row.hubspot_deal_id,
-      confirmed && confirmed.length > 0 ? { confirmedRecordingIds: confirmed } : undefined,
-    );
+    const accountCompanyIds = ((row.account_companies as AccountCompany[] | null | undefined) ?? []).map((c) => c.id);
+    const ctx = await loadClientContext(row.hubspot_deal_id, {
+      confirmedRecordingIds: confirmed && confirmed.length > 0 ? confirmed : undefined,
+      accountCompanyIds,
+    });
     const contextPrompt = renderClientContextForPrompt(ctx);
 
     if (!process.env.ANTHROPIC_API_KEY) {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
+import type { RefreshReport } from "@/lib/clients/types";
 
 export const dynamic = "force-dynamic";
 
@@ -22,9 +23,9 @@ type AnalyzedMeeting = {
 // GET /api/clients/[id]/analyzed-meetings
 //
 // Liste TOUS les meetings Claap qui ont contribué aux données de ce client :
-// analysés par sales-coach (matchés par hubspot_deal_id OU hubspot_company_id
-// — un deal HubSpot différent peut avoir été créé après le closed-won, cf.
-// notes internes) + ceux inclus via la discovery mais sans recap. Sert le
+// analysés par sales-coach (matchés par hubspot_deal_id, deals liés lus au
+// dernier refresh compris (deal Customer Success créé après le closed-won), OU
+// hubspot_company_id) + ceux inclus via la discovery mais sans recap. Sert le
 // bouton "info" de la fiche, pour vérifier ce que le refresh a réellement pris
 // en compte.
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -35,7 +36,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
   const { data: client, error: clientErr } = await db
     .from("clients")
-    .select("id, hubspot_deal_id, hubspot_company_id, confirmed_claap_recordings, discovered_claap_recordings")
+    .select("id, hubspot_deal_id, hubspot_company_id, confirmed_claap_recordings, discovered_claap_recordings, last_refresh_report")
     .eq("id", id)
     .single();
   if (clientErr || !client) {
@@ -46,9 +47,13 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .from("sales_coach_analyses")
     .select("claap_recording_id, meeting_title, meeting_started_at, meeting_kind, audience, hubspot_deal_id")
     .eq("status", "done");
+  const report = client.last_refresh_report as RefreshReport | null;
+  const dealIds = [...new Set([client.hubspot_deal_id as string, ...(report?.sources?.hubspot?.deals ?? []).map((d) => d.id)])]
+    .filter((d) => /^\d+$/.test(d));
+  const dealFilter = `hubspot_deal_id.in.(${dealIds.join(",")})`;
   query = client.hubspot_company_id
-    ? query.or(`hubspot_deal_id.eq.${client.hubspot_deal_id},hubspot_company_id.eq.${client.hubspot_company_id}`)
-    : query.eq("hubspot_deal_id", client.hubspot_deal_id);
+    ? query.or(`${dealFilter},hubspot_company_id.eq.${client.hubspot_company_id}`)
+    : query.or(dealFilter);
 
   const { data: analyzed, error: analyzedErr } = await query.order("meeting_started_at", { ascending: false });
   if (analyzedErr) {

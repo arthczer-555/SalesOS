@@ -437,7 +437,15 @@ export type RefreshReport = {
   // éventuelle : une source KO s'affiche comme telle, jamais comme un 0.
   sources?: {
     claap?: RefreshSourceStat;
-    hubspot?: RefreshSourceStat;
+    // deals : deals dont l'activité a été lue (celui du client + ses deals liés,
+    // ex. le deal Customer Success). Affiché dans le popup, et relu par la route
+    // analyzed-meetings pour lister les meetings indexés sous ces deals.
+    // companies : companies dont l'activité a été lue (celle du deal + celles
+    // rattachées au compte).
+    hubspot?: RefreshSourceStat & {
+      deals?: Array<{ id: string; name: string; pipeline_label: string | null }>;
+      companies?: Array<{ id: string; name: string | null; domain: string | null }>;
+    };
     slack?: RefreshSourceStat & { channel?: string | null };
     news?: RefreshSourceStat;
   };
@@ -489,6 +497,24 @@ export type MeetingCandidate = {
   meeting_started_at: string | null;
   claap_url: string | null;
   source: "indexed" | "discovered";
+};
+
+// Company HubSpot rattachée au compte en plus de celle du deal (cf.
+// lib/clients/account-discovery.ts, migration clients_account_companies.sql).
+// "pending" = ajoutée par le refresh, à confirmer dans le panneau de la fiche ;
+// "confirmed" = gardée par un humain. Les deux comptent dans les données.
+export type AccountCompanyReason = "same_domain" | "contact_domain" | "name";
+export type AccountCompany = {
+  id: string;
+  name: string | null;
+  domain: string | null;
+  reason: AccountCompanyReason;
+  // Phrase affichée telle quelle dans le panneau (en anglais).
+  detail: string;
+  status: "pending" | "confirmed";
+  added_at: string;
+  confirmed_at?: string | null;
+  last_activity_at?: string | null;
 };
 
 // Recording validé par l'humain (gardé depuis les candidats ou ajouté à la
@@ -760,6 +786,11 @@ export type ClientRow = {
   // Recordings retirés à la main ("Not this account") : exclus définitivement
   // de la discovery pour ce client.
   declined_claap_recording_ids: string[] | null;
+  // Companies rattachées au compte / retirées à la main (cf. AccountCompany).
+  // Absentes tant que la migration clients_account_companies.sql n'est pas
+  // appliquée.
+  account_companies?: AccountCompany[] | null;
+  declined_company_ids?: string[] | null;
   last_enriched_at: string | null;
   last_health_run_at: string | null;
   last_news_run_at: string | null;

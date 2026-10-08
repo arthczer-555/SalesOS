@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { fetchDealContext } from "../hubspot";
-import { loadClaapMeetingsForDeal } from "./context";
+import { contextDealIds, loadClaapMeetingsForDeals } from "./context";
 import { discoverClaapMeetingCandidates } from "./claap-discovery";
 import { notifyOwnerToConfirmMeetings } from "./notify-confirm-meetings";
 import type { MeetingCandidate } from "./types";
@@ -34,8 +34,11 @@ export async function prepareMeetingConfirmation(clientId: string): Promise<Prep
   }
 
   try {
-    const deal = await fetchDealContext(row.hubspot_deal_id);
-    const indexed = await loadClaapMeetingsForDeal(row.hubspot_deal_id);
+    // Deals liés inclus : le deal Customer Success créé au closed won porte ses
+    // propres contacts et meetings analysés. Pas d'engagements : la discovery
+    // ne lit que la company et les contacts.
+    const deal = await fetchDealContext(row.hubspot_deal_id, { includeLinkedDeals: true, withEngagements: false });
+    const indexed = await loadClaapMeetingsForDeals(contextDealIds(row.hubspot_deal_id, deal));
     const alreadyIndexed = new Set(indexed.map((m) => m.recording_id));
     const discovered = await discoverClaapMeetingCandidates(deal, alreadyIndexed).catch((e) => {
       console.warn(

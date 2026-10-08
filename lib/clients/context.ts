@@ -4,8 +4,10 @@ import { discoverExtraClaapMeetings, fetchClaapRecordingsByIds } from "./claap-d
 import { renderSlackForPrompt, type ClientSlackMessage } from "./slack-context";
 
 // Charge et rend le contexte d'un closed-won pour l'extraction des fields :
-//  - snapshot HubSpot complet du deal (engagements, contacts, company),
-//  - meetings Claap analysés liés à ce deal (transcript + meeting_recap),
+//  - snapshot HubSpot complet du deal (engagements, contacts, company, deals
+//    liés),
+//  - meetings Claap analysés liés à ce deal ou à ses deals liés (deal
+//    Customer Success) (transcript + meeting_recap),
 //  - meetings Claap NON indexés dans sales_coach_analyses mais matchables
 //    via domaine participant / titre (anciens deals, meetings ratés par le
 //    webhook Claap),
@@ -37,14 +39,22 @@ export type ClaapMeetingForClient = {
 const MAX_TRANSCRIPT_CHARS_PER_MEETING = 35_000;
 const MAX_TOTAL_TRANSCRIPT_CHARS = 120_000;
 
-export async function loadClaapMeetingsForDeal(dealId: string): Promise<ClaapMeetingForClient[]> {
-  return (await queryClaapMeetingsForDeal(dealId)).meetings;
+// Meetings analysés sous le deal du client ET ses deals liés (deal Customer
+// Success, cf. resolveLinkedDeals dans lib/hubspot.ts) : le webhook Claap
+// rattache les meetings post-signature au deal CS.
+export async function loadClaapMeetingsForDeals(dealIds: string[]): Promise<ClaapMeetingForClient[]> {
+  return (await queryClaapMeetingsForDeals(dealIds)).meetings;
+}
+
+// Ids à interroger pour un contexte : le deal du client + ses deals liés.
+export function contextDealIds(dealId: string, deal: DealSnapshot | null): string[] {
+  return [...new Set([dealId, ...(deal?.linked_deals ?? []).map((d) => d.id)])];
 }
 
 // Variante qui remonte l'erreur au lieu de la confondre avec "aucun meeting" :
 // le health ne doit pas pénaliser un compte parce que la base n'a pas répondu.
-async function queryClaapMeetingsForDeal(
-  dealId: string,
+async function queryClaapMeetingsForDeals(
+  dealIds: string[],
 ): Promise<{ meetings: ClaapMeetingForClient[]; error: string | null }> {
   type Row = {
     id: string;
@@ -62,14 +72,22 @@ async function queryClaapMeetingsForDeal(
     .select(
       "id, claap_recording_id, meeting_title, meeting_started_at, meeting_kind, audience, meeting_recap, transcript_text, participants",
     )
-    .eq("hubspot_deal_id", dealId)
+    .in("hubspot_deal_id", dealIds)
     .eq("status", "done")
     .order("meeting_started_at", { ascending: true, nullsFirst: false });
   if (error) {
-    console.warn(`[clients/context] failed to load Claap meetings for deal ${dealId}: ${error.message}`);
+    console.warn(`[clients/context] failed to load Claap meetings for deals ${dealIds.join(",")}: ${error.message}`);
     return { meetings: [], error: error.message };
   }
-  const meetings = (data as Row[] | null ?? []).map((r) => ({
+  // Dédup par recording : un même meeting peut avoir été analysé sous deux
+  // deals du compte.
+  const seen = new Set<string>();
+  const rows = (data as Row[] | null ?? []).filter((r) => {
+    if (seen.has(r.claap_recording_id)) return false;
+    seen.add(r.claap_recording_id);
+    return true;
+  });
+  const meetings = rows.map((r) => ({
     recording_id: r.claap_recording_id,
     meeting_title: r.meeting_title,
     meeting_started_at: r.meeting_started_at,
@@ -102,16 +120,22 @@ export type ClientEnrichmentContext = {
 
 export async function loadClientContext(
   dealId: string,
-  opts?: { confirmedRecordingIds?: string[]; excludeRecordingIds?: string[] },
+  opts?: { confirmedRecordingIds?: string[]; excludeRecordingIds?: string[]; accountCompanyIds?: string[] },
 ): Promise<ClientEnrichmentContext> {
-  const [deal, indexedRes] = await Promise.all([
-    // includeCompanyActivities : on compte aussi l'activité associée à la
-    // company (emails/meetings d'intro logués au niveau compte ou contacts mais
-    // pas au deal), sinon le health rate ces touchpoints et sur-estime le
-    // silence. Dédup deal/company gérée dans fetchDealContext.
-    fetchDealContext(dealId, { includeCompanyActivities: true }),
-    queryClaapMeetingsForDeal(dealId),
-  ]);
+  // includeCompanyActivities : on compte aussi l'activité associée à la
+  // company (emails/meetings d'intro logués au niveau compte ou contacts mais
+  // pas au deal), sinon le health rate ces touchpoints et sur-estime le
+  // silence. includeLinkedDeals : idem pour le deal Customer Success où vit le
+  // suivi post-signature et les autres deals du compte. accountCompanyIds :
+  // companies rattachées au compte (clients.account_companies). Dédup
+  // deal/company/liés gérée dans fetchDealContext. Les meetings Claap attendent
+  // la liste des deals liés (requête rapide).
+  const deal = await fetchDealContext(dealId, {
+    includeCompanyActivities: true,
+    includeLinkedDeals: true,
+    accountCompanyIds: opts?.accountCompanyIds,
+  });
+  const indexedRes = await queryClaapMeetingsForDeals(contextDealIds(dealId, deal));
   const indexed = indexedRes.meetings;
   const sourceErrors: NonNullable<ClientEnrichmentContext["sourceErrors"]> = {};
   if (!deal) sourceErrors.hubspot = "HubSpot deal could not be read";

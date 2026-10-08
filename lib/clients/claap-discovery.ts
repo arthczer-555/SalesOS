@@ -59,7 +59,7 @@ const OWN_EMAIL_DOMAINS = new Set(["coachello.io"]);
 // seul le token distinctif "fassi" peut servir au match par titre. Si le nom de
 // company ne contient QUE des tokens génériques, on retombe sur le match par
 // domaine email uniquement (aucun match par titre).
-const GENERIC_NAME_TOKENS = new Set([
+export const GENERIC_NAME_TOKENS = new Set([
   // formes juridiques (FR / EN / DE / intl)
   "group", "groupe", "holding", "holdings", "company", "compagnie",
   "corp", "corporation", "inc", "incorporated", "ltd", "limited", "llc",
@@ -87,7 +87,7 @@ const DEAL_LIFECYCLE_TOKENS = new Set([
   "onboarding", "qbr", "followup", "follow", "intro", "introduction", "sync",
   "checkin", "strategic", "alliance", "project", "projet", "phase", "round",
 ]);
-const DEAL_NAME_NOISE_TOKENS = new Set([...GENERIC_NAME_TOKENS, ...DEAL_LIFECYCLE_TOKENS]);
+export const DEAL_NAME_NOISE_TOKENS = new Set([...GENERIC_NAME_TOKENS, ...DEAL_LIFECYCLE_TOKENS]);
 
 // Normalise pour comparaison : minuscules + suppression des accents.
 function normalizeText(s: string): string {
@@ -95,13 +95,18 @@ function normalizeText(s: string): string {
 }
 
 // Découpe une chaîne en mots normalisés (séparateurs = tout sauf alphanumérique).
-function tokenizeWords(s: string): string[] {
+export function tokenizeWords(s: string): string[] {
   return normalizeText(s).split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+// Domaine email non distinctif : messagerie grand public ou notre propre domaine.
+export function isExcludedEmailDomain(d: string): boolean {
+  return PUBLIC_EMAIL_DOMAINS.has(d) || OWN_EMAIL_DOMAINS.has(d);
 }
 
 function extractDomainsFromDeal(deal: DealSnapshot): Set<string> {
   const domains = new Set<string>();
-  const isExcluded = (d: string) => PUBLIC_EMAIL_DOMAINS.has(d) || OWN_EMAIL_DOMAINS.has(d);
+  const isExcluded = isExcludedEmailDomain;
 
   const companyDomain = deal.company?.domain?.toLowerCase().trim();
   if (companyDomain && !isExcluded(companyDomain)) domains.add(companyDomain);

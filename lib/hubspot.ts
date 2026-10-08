@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { logUsage } from "./log-usage";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { isCustomerSuccessPipeline } from "./deals/stages";
 
 export type HubspotObjectType = "contacts" | "deals" | "companies" | "leads";
 
@@ -303,6 +304,12 @@ export type DealCompanySnapshot = {
   domain: string | null;
 };
 
+export type LinkedDealSnapshot = {
+  id: string;
+  name: string;
+  pipeline_label: string | null;
+};
+
 export type DealSnapshot = {
   id: string;
   name: string;
@@ -322,6 +329,9 @@ export type DealSnapshot = {
   contacts: DealContactSnapshot[];
   engagements: DealEngagementSnapshot[];
   company: DealCompanySnapshot | null;
+  // Deals dont l'activité a été lue en plus de celui-ci (option
+  // includeLinkedDeals). Absent des snapshots persistés avant cette option.
+  linked_deals?: LinkedDealSnapshot[];
 };
 
 const DEAL_PROPS = [
@@ -340,27 +350,76 @@ const DEAL_PROPS = [
 type DealGetResponse = { properties?: Record<string, string> };
 type AssocResponse = { results?: { id: string }[] };
 type OwnersResponse = { results?: { id: string; firstName?: string; lastName?: string; email?: string }[] };
-type PipelinesResponse = { results?: { label?: string; stages: { id: string; label: string }[] }[] };
+type PipelinesResponse = { results?: { id?: string; label?: string; stages: { id: string; label: string }[] }[] };
 type SearchResultRow = { id?: string; properties?: Record<string, string> };
+type DealBatchReadResponse = { results?: { id: string; properties: Record<string, string> }[] };
+
+const MAX_LINKED_DEALS = 10;
+
+// Deals "frères" d'un deal client, dont l'activité appartient au même compte :
+//  - les deals associés à ce deal (lien deal-à-deal posé par le workflow
+//    HubSpot qui crée le deal Customer Success au closed won), quel que soit
+//    leur pipeline ;
+//  - tous les autres deals des companies du compte (celle du deal + celles
+//    rattachées au compte, cf. lib/clients/account-discovery.ts).
+// Une seule profondeur. Au-delà de MAX_LINKED_DEALS, priorité aux liens
+// explicites, puis au pipeline Customer Success, puis aux plus récents.
+async function resolveLinkedDeals(
+  dealId: string,
+  explicitIds: string[],
+  companyIds: string[],
+  pipelines: NonNullable<PipelinesResponse["results"]>,
+): Promise<LinkedDealSnapshot[]> {
+  const explicit = new Set(explicitIds.filter((id) => id !== dealId));
+  const byCompany = companyIds.length > 0 ? await hubspotBatchAssociations("companies", "deals", companyIds) : new Map<string, string[]>();
+  const candidates = [...new Set([...explicit, ...[...byCompany.values()].flat()])].filter((id) => id !== dealId).slice(0, 100);
+  if (candidates.length === 0) return [];
+
+  const read = await hubspotFetch<DealBatchReadResponse>("/crm/v3/objects/deals/batch/read", "POST", {
+    properties: ["dealname", "pipeline", "hs_lastmodifieddate"],
+    inputs: candidates.map((id) => ({ id })),
+  });
+  const pipelineLabel = new Map(pipelines.map((pl) => [pl.id, pl.label ?? null]));
+  const rank = (d: { id: string; label: string | null }) => (explicit.has(d.id) ? 0 : isCustomerSuccessPipeline(d.label) ? 1 : 2);
+  return (read.results ?? [])
+    .map((d) => ({
+      id: d.id,
+      label: pipelineLabel.get(d.properties.pipeline) ?? null,
+      name: d.properties.dealname ?? "",
+      modified: Date.parse(d.properties.hs_lastmodifieddate ?? "") || 0,
+    }))
+    .sort((a, b) => rank(a) - rank(b) || b.modified - a.modified)
+    .slice(0, MAX_LINKED_DEALS)
+    .map((d) => ({ id: d.id, name: d.name, pipeline_label: d.label }));
+}
 
 /**
  * Fetch a full context snapshot for a HubSpot deal: properties, associated
  * contacts (top 5), engagement timeline (meetings/calls/notes), owner name,
  * and pipeline stage label. Returns null if the deal can't be fetched.
+ * includeLinkedDeals : ajoute l'activité et les contacts des deals liés (cf.
+ * resolveLinkedDeals), listés dans `linked_deals`. accountCompanyIds : companies
+ * rattachées au compte en plus de celle du deal ; leurs deals deviennent des
+ * deals liés et leur activité est lue avec includeCompanyActivities.
+ * withEngagements: false : ne lit aucun engagement (contacts, company et deals
+ * liés seulement), pour les appels qui ne servent qu'à la discovery.
  */
 export async function fetchDealContext(
   dealId: string,
-  opts?: { includeCompanyActivities?: boolean },
+  opts?: { includeCompanyActivities?: boolean; includeLinkedDeals?: boolean; accountCompanyIds?: string[]; withEngagements?: boolean },
 ): Promise<DealSnapshot | null> {
   if (!dealId || !process.env.HUBSPOT_ACCESS_TOKEN) return null;
 
-  const [dealRes, contactAssoc, engagementAssoc, companyAssoc, ownersRes, pipelinesRes] = await Promise.allSettled([
+  const [dealRes, contactAssoc, engagementAssoc, companyAssoc, ownersRes, pipelinesRes, linkedAssoc] = await Promise.allSettled([
     hubspotFetch<DealGetResponse>(`/crm/v3/objects/deals/${dealId}?properties=${DEAL_PROPS.join(",")}`),
     hubspotFetch<AssocResponse>(`/crm/v3/objects/deals/${dealId}/associations/contacts`),
     hubspotFetch<AssocResponse>(`/crm/v3/objects/deals/${dealId}/associations/engagements`),
     hubspotFetch<AssocResponse>(`/crm/v3/objects/deals/${dealId}/associations/companies`),
     hubspotFetch<OwnersResponse>("/crm/v3/owners?limit=200"),
     hubspotFetch<PipelinesResponse>("/crm/v3/pipelines/deals"),
+    opts?.includeLinkedDeals
+      ? hubspotFetch<AssocResponse>(`/crm/v3/objects/deals/${dealId}/associations/deals`)
+      : Promise.resolve<AssocResponse>({ results: [] }),
   ]);
 
   if (dealRes.status !== "fulfilled") return null;
@@ -389,13 +448,44 @@ export async function fetchDealContext(
     }
   }
 
+  // companyId remonté tôt : sert à la résolution des deals liés, au fetch des
+  // activités niveau company (option includeCompanyActivities) et au snapshot
+  // company plus bas. accountIds = toutes les companies du compte.
+  const companyId = companyAssoc.status === "fulfilled"
+    ? (companyAssoc.value.results ?? [])[0]?.id ?? null
+    : null;
+  const accountIds = [...new Set([...(companyId ? [companyId] : []), ...(opts?.accountCompanyIds ?? [])])];
+
+  // Deals liés (option includeLinkedDeals). Un échec ne casse pas le contexte :
+  // le deal principal reste lu, comme avant l'option.
+  let linkedDeals: LinkedDealSnapshot[] = [];
+  let linkedContactIds: string[] = [];
+  if (opts?.includeLinkedDeals) {
+    try {
+      if (linkedAssoc.status !== "fulfilled") throw linkedAssoc.reason;
+      linkedDeals = await resolveLinkedDeals(
+        dealId,
+        (linkedAssoc.value.results ?? []).map((r) => String(r.id)),
+        accountIds,
+        pipelinesRes.status === "fulfilled" ? pipelinesRes.value.results ?? [] : [],
+      );
+      if (linkedDeals.length > 0) {
+        const byDeal = await hubspotBatchAssociations("deals", "contacts", linkedDeals.map((d) => d.id));
+        linkedContactIds = [...byDeal.values()].flat();
+      }
+    } catch (e) {
+      console.warn(`[hubspot] linked deals for ${dealId} failed:`, e instanceof Error ? e.message : e);
+    }
+  }
+
   let contacts: DealContactSnapshot[] = [];
   if (contactAssoc.status === "fulfilled") {
-    // TOUS les contacts associés au deal (plus de limite à 5). L'attribution des
-    // meetings Claap se fait sur le domaine email des participants : rater un
-    // contact = rater ses meetings (cf. lib/clients/claap-discovery.ts). On lit
-    // par batch (100 = max HubSpot/appel) plutôt qu'un GET par contact.
-    const ids = (contactAssoc.value.results ?? []).map((r) => r.id);
+    // TOUS les contacts associés au deal (plus de limite à 5) et à ses deals
+    // liés. L'attribution des meetings Claap se fait sur le domaine email des
+    // participants : rater un contact = rater ses meetings (cf.
+    // lib/clients/claap-discovery.ts). On lit par batch (100 = max
+    // HubSpot/appel) plutôt qu'un GET par contact.
+    const ids = [...new Set([...(contactAssoc.value.results ?? []).map((r) => r.id), ...linkedContactIds])];
     if (ids.length > 0) {
       const CONTACT_PROPS = [
         "firstname", "lastname", "jobtitle", "email",
@@ -426,12 +516,6 @@ export async function fetchDealContext(
         }));
     }
   }
-
-  // companyId remonté tôt : sert à la fois au fetch des activités niveau
-  // company (option includeCompanyActivities) et au snapshot company plus bas.
-  const companyId = companyAssoc.status === "fulfilled"
-    ? (companyAssoc.value.results ?? [])[0]?.id ?? null
-    : null;
 
   const engagements: DealEngagementSnapshot[] = [];
   const engIds = engagementAssoc.status === "fulfilled"
@@ -537,15 +621,25 @@ export async function fetchDealContext(
     }
   };
 
+  const withEngagements = opts?.withEngagements !== false;
+
   // Activités niveau deal (comportement historique).
-  if (engIds.length > 0) {
+  if (withEngagements && engIds.length > 0) {
     ingest(await fetchEngagementRows("associations.deal", dealId));
   }
 
   // Activités niveau company (opt-in) : capte les threads associés à la company
-  // / aux contacts mais pas au deal (ex. email d'intro). Dédup vs le deal.
-  if (opts?.includeCompanyActivities && companyId) {
-    ingest(await fetchEngagementRows("associations.company", companyId));
+  // / aux contacts mais pas au deal (ex. email d'intro). Dédup vs le deal. Une
+  // recherche par company du compte, en séquence (limite de débit).
+  if (withEngagements && opts?.includeCompanyActivities) {
+    for (const id of accountIds) ingest(await fetchEngagementRows("associations.company", id));
+  }
+
+  // Activités des deals liés (option includeLinkedDeals) : le suivi post-
+  // signature vit sur le deal Customer Success, pas sur le deal Sales signé.
+  // En séquence, pour rester sous la limite de débit de l'API search.
+  for (const linked of withEngagements ? linkedDeals : []) {
+    ingest(await fetchEngagementRows("associations.deal", linked.id));
   }
 
   engagements.sort((a, b) => {
@@ -602,6 +696,7 @@ export async function fetchDealContext(
     // un email récent au profit d'un meeting ancien (ou inversement).
     engagements,
     company,
+    linked_deals: linkedDeals,
   };
 }
 
@@ -620,6 +715,10 @@ export function renderDealContextForPrompt(snapshot: DealSnapshot | null): strin
   if (snapshot.owner_name) lines.push(`- Owner : ${snapshot.owner_name}`);
   if (snapshot.deal_type) lines.push(`- Type : ${snapshot.deal_type}`);
   if (snapshot.description) lines.push(`- Description : ${snapshot.description.slice(0, 500)}`);
+  if (snapshot.linked_deals?.length) {
+    const linked = snapshot.linked_deals.map((d) => `${d.name || d.id}${d.pipeline_label ? ` (pipeline ${d.pipeline_label})` : ""}`);
+    lines.push(`- Deals liés (contacts et engagements inclus ci-dessous) : ${linked.join(", ")}`);
+  }
 
   if (snapshot.company) {
     const c = snapshot.company;
