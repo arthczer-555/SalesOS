@@ -131,16 +131,24 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     if (t && TAB_KEYS.includes(t)) setTab(t);
   }, []);
 
+  // Ancre de Knowledge à ouvrir puis viser : les sections y sont repliables,
+  // c'est KnowledgeTab qui ouvre la section avant de scroller.
+  const [knowledgeFocus, setKnowledgeFocus] = useState<{ id: string; seq: number } | null>(null);
+
   const goTo = useCallback((t: ClientTabKey, anchor?: string) => {
     setTab(t);
     const url = new URL(window.location.href);
     if (t === "insights") url.searchParams.delete("tab");
     else url.searchParams.set("tab", t);
     window.history.replaceState(null, "", url.toString());
-    if (anchor) {
-      setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
-    } else {
+    // Ancre de Knowledge : KnowledgeTab ouvre la section puis scrolle. Remis à
+    // null sinon, pour qu'un retour sur Knowledge ne re-vise pas l'ancre.
+    const knowledgeAnchor = anchor && t === "knowledge" ? anchor : null;
+    setKnowledgeFocus(knowledgeAnchor ? { id: knowledgeAnchor, seq: Date.now() } : null);
+    if (!anchor) {
       scrollRef.current?.scrollTo({ top: 0 });
+    } else if (!knowledgeAnchor) {
+      setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
     }
   }, []);
 
@@ -164,7 +172,14 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     if (!data || hashScrolled.current) return;
     hashScrolled.current = true;
     const anchor = decodeURIComponent(window.location.hash.slice(1));
-    if (anchor) setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ block: "start" }), 60);
+    if (!anchor) return;
+    // Section de Knowledge (?tab=knowledge#k-contacts) : peut être repliée,
+    // KnowledgeTab l'ouvre puis scrolle.
+    if (anchor.startsWith("k-") && new URLSearchParams(window.location.search).get("tab") === "knowledge") {
+      setKnowledgeFocus({ id: anchor, seq: Date.now() });
+      return;
+    }
+    setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ block: "start" }), 60);
   }, [data]);
 
   // Fin d'un refresh : nouveau report écrit, ou timeout de sécurité. Piloté par
@@ -338,7 +353,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "0 32px 56px" }}>
         <div style={{ paddingTop: 24 }}>
         {tab === "insights" && <KeyInsightsTab client={client} hubspotUrl={hubspotUrl} onUpdated={reload} goTo={goTo} />}
-        {tab === "knowledge" && <KnowledgeTab client={client} meetings={meetings} onUpdated={reload} />}
+        {tab === "knowledge" && <KnowledgeTab client={client} meetings={meetings} onUpdated={reload} focus={knowledgeFocus} />}
         {tab === "todo" && (
           <TodoTab
             client={client}
