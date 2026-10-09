@@ -3,7 +3,7 @@
 import * as React from "react";
 import { SECTION_DEFINITIONS, type ClientFields, type FieldDefinition, type SectionKey } from "@/lib/clients/types";
 import { FieldDisplay } from "./field-display";
-import { Card, CardHeader, type Collapse } from "./ui";
+import { Card, CardHeader } from "./ui";
 
 // Cartes de fields de la fiche. Au lieu d'itérer bêtement sur les 6 sections,
 // chaque carte de Knowledge (et chaque groupe de To do) liste les fields qu'elle
@@ -40,6 +40,17 @@ function isFilled(v: unknown): boolean {
   if (Array.isArray(v)) return v.length > 0;
   if (typeof v === "string") return !!v.trim();
   return true;
+}
+
+// Un champ clé (required ou recommended) encore vide parmi ces refs : pastille
+// de la section dans la sidebar de Knowledge.
+export function hasMissingKeyField(refs: FieldRef[], fields: Partial<ClientFields>): boolean {
+  return refs.some((ref) => {
+    const def = resolveFieldDef(ref);
+    if (!def || (!def.required && !def.recommended)) return false;
+    const v = ((fields[ref.section] ?? {}) as Record<string, { value?: unknown } | undefined>)[ref.key]?.value;
+    return !isFilled(v);
+  });
 }
 
 export function FieldRows({
@@ -98,7 +109,6 @@ export function FieldsCard({
   clientId,
   onUpdated,
   children,
-  collapse,
   nestDetails,
 }: {
   id?: string;
@@ -110,18 +120,13 @@ export function FieldsCard({
   clientId: string;
   onUpdated: () => void;
   children?: React.ReactNode;
-  collapse?: Collapse;
   nestDetails?: boolean;
 }) {
   return (
-    <Card id={id} style={{ scrollMarginTop: 64 }}>
-      <CardHeader icon={icon} title={title} meta={meta} style={{ marginBottom: 6 }} collapse={collapse} />
-      {(!collapse || collapse.open) && (
-        <>
-          {children}
-          <FieldRows refs={refs} fields={fields} clientId={clientId} onUpdated={onUpdated} nestDetails={nestDetails} />
-        </>
-      )}
+    <Card id={id}>
+      <CardHeader icon={icon} title={title} meta={meta} style={{ marginBottom: 6 }} />
+      {children}
+      <FieldRows refs={refs} fields={fields} clientId={clientId} onUpdated={onUpdated} nestDetails={nestDetails} />
     </Card>
   );
 }

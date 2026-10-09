@@ -3,25 +3,21 @@
 import Link from "next/link";
 import {
   ArrowLeft,
-  BookOpen,
   CheckCircle2,
-  ChevronDown,
-  Database,
   ExternalLink,
+  History,
   Info,
   ListChecks,
   Loader2,
   MailPlus,
-  Pencil,
+  MoreHorizontal,
   RefreshCw,
-  SlidersHorizontal,
   Sparkles,
   Trash2,
   UserCheck,
   Video,
-  Zap,
 } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { ClientRow } from "@/lib/clients/types";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { TabBar, type TabItem } from "@/components/ui/tab-bar";
@@ -31,40 +27,45 @@ import { fmtDay, fmtEur, relativeDays } from "./ui";
 import { TIER_HINT, TierSelect } from "../../_components/tier-select";
 import type { ClientTabKey } from "./tabs/key-insights-tab";
 
-// Header sticky de la fiche : identité (avatar, nom, santé), tier et chips
-// AE / AM / CS (tier, AM et CS modifiables), deux actions seulement (Refresh + Options) et la
-// barre d'onglets. Toutes les actions secondaires vivent dans Options.
+// Header de la fiche : identité (avatar, nom, santé, tier), une ligne de texte
+// "AE … · AM … · CS … · Signed … · Billed …" (AM et CS cliquables pour les
+// changer, rôles fusionnés quand c'est la même personne), deux actions (Refresh
+// et le menu ⋯) et la barre d'onglets. Les actions secondaires vivent dans ⋯.
 
-function Chip({ label, value, onClick, warn, title }: { label: string; value: string; onClick?: () => void; warn?: boolean; title?: string }) {
-  const style: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 5,
-    fontSize: 12,
-    padding: "3px 9px",
-    borderRadius: 999,
-    background: warn ? COLORS.warnBg : COLORS.bgSoft,
-    border: `1px solid ${warn ? "#f6dfa4" : COLORS.line}`,
-    color: warn ? COLORS.warn : COLORS.ink1,
-    whiteSpace: "nowrap",
-    fontFamily: "inherit",
-  };
-  const inner = (
-    <>
-      <b style={{ fontWeight: 600, fontSize: 11, color: warn ? COLORS.warn : COLORS.ink3, letterSpacing: "0.02em" }}>{label}</b>
-      {value}
-      {onClick ? <Pencil size={11} style={{ color: COLORS.ink4 }} /> : null}
-    </>
-  );
-  if (onClick) {
-    return (
-      <button type="button" onClick={onClick} title={`Change ${label}`} style={{ ...style, cursor: "pointer" }}>
-        {inner}
-      </button>
-    );
+type Role = "AE" | "AM" | "CS";
+type Person = { roles: Role[]; name: string; email: string | null; editable: boolean; missing: boolean };
+
+// Une personne par email : "AE/AM Mehdi Bruneau" plutôt que deux fois le même nom.
+function peopleOf(client: ClientRow, done: boolean, handedOver: boolean): Person[] {
+  const raw: Array<{ role: Role; name: string | null; email: string | null }> = [
+    { role: "AE", name: client.owner_name, email: client.owner_email },
+  ];
+  if (handedOver || done) {
+    raw.push({ role: "AM", name: client.am_name, email: client.am_email });
+    raw.push({ role: "CS", name: client.cs_name, email: client.cs_email });
   }
-  return <span style={style} title={title}>{inner}</span>;
+  const people: Person[] = [];
+  for (const r of raw) {
+    const label = r.name || r.email;
+    const key = r.email?.toLowerCase() ?? null;
+    const same = key ? people.find((p) => p.email?.toLowerCase() === key) : undefined;
+    if (same) {
+      same.roles.push(r.role);
+      same.editable = same.editable || r.role !== "AE";
+      continue;
+    }
+    people.push({
+      roles: [r.role],
+      name: label || (r.role === "AE" ? "No owner" : handedOver ? "Not set" : "Not assigned"),
+      email: r.email,
+      editable: r.role !== "AE",
+      missing: !label && r.role !== "AE",
+    });
+  }
+  return people;
 }
+
+const SEP = <span style={{ color: COLORS.ink4 }}>·</span>;
 
 export type HeaderActions = {
   onRefresh: () => void;
@@ -119,21 +120,21 @@ export function ClientHeader({
     tier && client.tier_set_by
       ? `${TIER_HINT} Set by ${client.tier_set_by}${client.tier_set_at ? ` on ${fmtDay(client.tier_set_at, true)}` : ""}.`
       : TIER_HINT;
+  const people = peopleOf(client, done, handedOver);
+  const onPerson = handedOver ? actions.onChangeAssignees : actions.onOpenHandover;
 
   const tabs: TabItem[] = [
-    { key: "insights", label: "Key insights", icon: Zap },
-    { key: "knowledge", label: "Knowledge", icon: BookOpen },
+    { key: "insights", label: "Key insights" },
+    { key: "knowledge", label: "Knowledge" },
     {
       key: "todo",
       label: "To do",
-      icon: ListChecks,
       tone: todoCount > 0 ? "alert" : undefined,
       count: todoCount > 0 ? todoCount : undefined,
     },
     {
       key: "hubspot",
       label: "HubSpot cleaner",
-      icon: Database,
       tone: hubspotState.status === "error" ? "warn" : hubspotState.count > 0 ? "alert" : undefined,
       count: hubspotState.status === "error" ? "!" : hubspotState.count > 0 ? hubspotState.count : undefined,
     },
@@ -146,11 +147,11 @@ export function ClientHeader({
         flexShrink: 0,
         background: COLORS.bgCard,
         borderBottom: `1px solid ${COLORS.line}`,
-        padding: "14px 32px 0",
+        padding: "18px 32px 0",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ display: "flex", gap: 12, alignItems: "center", minWidth: 0, flex: "1 1 420px" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 14, alignItems: "center", minWidth: 0, flex: "1 1 420px" }}>
           <Link
             href="/clients"
             title="Back to clients"
@@ -160,10 +161,10 @@ export function ClientHeader({
           >
             <ArrowLeft size={16} />
           </Link>
-          <CompanyAvatar name={client.company_name} size={40} />
+          <CompanyAvatar name={client.company_name} size={42} override={{ background: COLORS.sand, color: COLORS.ink1 }} />
           <div style={{ minWidth: 0 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, letterSpacing: "-0.015em", color: COLORS.ink0 }}>{client.company_name}</h1>
+              <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em", color: COLORS.ink0 }}>{client.company_name}</h1>
               {health && hs && (
                 <span
                   style={{
@@ -182,34 +183,55 @@ export function ClientHeader({
                   {hs.label} · {health.score}
                 </span>
               )}
+              <TierSelect clientId={client.id} tier={tier} onSaved={actions.onTierSaved} title={tierTitle} />
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 5 }}>
-              <TierSelect clientId={client.id} tier={tier} onSaved={actions.onTierSaved} size="md" title={tierTitle} />
-              <Chip label="AE" value={client.owner_name || client.owner_email || "No owner"} />
-              {handedOver ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 5, fontSize: 12.5, color: COLORS.ink1 }}>
+              {people.map((p, i) => (
+                <span key={p.roles.join("/")} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  {i > 0 && SEP}
+                  <span style={{ fontSize: 11, fontWeight: 600, color: p.missing ? COLORS.warn : COLORS.ink3 }}>{p.roles.join("/")}</span>
+                  {p.editable ? (
+                    <button
+                      type="button"
+                      className="ch-name-btn"
+                      onClick={onPerson}
+                      title={handedOver ? "Change the AM or CS" : "Do the handover"}
+                      style={p.missing ? { color: COLORS.warn, fontWeight: 600 } : undefined}
+                    >
+                      {p.name}
+                    </button>
+                  ) : (
+                    <span title={p.email ?? undefined}>{p.name}</span>
+                  )}
+                </span>
+              ))}
+              {SEP}
+              <span>Signed {fmtDay(client.closedwon_at, true)}</span>
+              {billed != null ? (
                 <>
-                  <Chip label="AM" value={client.am_name || client.am_email || "Not set"} onClick={actions.onChangeAssignees} />
-                  <Chip label="CS" value={client.cs_name || client.cs_email || "Not set"} onClick={actions.onChangeAssignees} />
+                  {SEP}
+                  <span title="Billed since the start (lifetime), from the revenue sheet">
+                    Billed {billed >= 1000 ? `€${Math.round(billed / 1000)}k` : fmtEur(billed)}
+                  </span>
                 </>
               ) : (
                 done && (
                   <>
-                    <Chip label="AM" value="Not assigned" warn onClick={actions.onOpenHandover} />
-                    <Chip label="CS" value="Not assigned" warn onClick={actions.onOpenHandover} />
+                    {SEP}
+                    <span
+                      title="Company not found in the revenue sheet, so billed revenue is unknown (not zero)"
+                      style={{ fontSize: 11.5, fontWeight: 600, padding: "1px 8px", borderRadius: 999, background: COLORS.warnBg, color: COLORS.warn }}
+                    >
+                      Billed unknown
+                    </span>
                   </>
                 )
-              )}
-              <Chip label="Signed" value={fmtDay(client.closedwon_at, true)} />
-              {billed != null ? (
-                <Chip label="Billed" value={billed >= 1000 ? `€${Math.round(billed / 1000)}k` : fmtEur(billed)} title="Billed since the start (lifetime), from the revenue sheet" />
-              ) : (
-                done && <Chip label="Billed" value="unknown" warn title="Company not found in the revenue sheet, so billed revenue is unknown (not zero)" />
               )}
             </div>
           </div>
         </div>
 
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginLeft: "auto" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginLeft: "auto" }}>
           {client.enrichment_status === "awaiting_meetings" && (
             <button type="button" className="ch-btn ch-btn-primary" onClick={actions.onConfirmMeetings}>
               <CheckCircle2 size={14} />
@@ -217,7 +239,22 @@ export function ClientHeader({
             </button>
           )}
           {done && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+            <>
+              {client.last_refresh_report ? (
+                <button
+                  type="button"
+                  className="ch-name-btn"
+                  onClick={actions.onOpenReport}
+                  title="See what the last refresh read and changed"
+                  style={{ fontSize: 12, color: COLORS.ink3, whiteSpace: "nowrap" }}
+                >
+                  {lastUpdate ? `Updated ${relativeDays(lastUpdate)}` : "Last refresh"}
+                </button>
+              ) : (
+                <span style={{ fontSize: 12, color: COLORS.ink3, whiteSpace: "nowrap" }}>
+                  {lastUpdate ? `Updated ${relativeDays(lastUpdate)}` : "Never refreshed"}
+                </span>
+              )}
               <button
                 type="button"
                 className="ch-btn"
@@ -228,25 +265,21 @@ export function ClientHeader({
                 {refreshing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
                 {refreshing ? "Refreshing…" : "Refresh"}
               </button>
-              <span style={{ fontSize: 11, color: COLORS.ink3, whiteSpace: "nowrap" }}>
-                {lastUpdate ? `Updated ${relativeDays(lastUpdate)}` : "Never refreshed"}
-                {client.last_refresh_report && (
-                  <>
-                    {" · "}
-                    <button type="button" className="ch-link" style={{ fontSize: 11, fontWeight: 500, color: COLORS.ink2 }} onClick={actions.onOpenReport}>
-                      details
-                    </button>
-                  </>
-                )}
-              </span>
-            </div>
+            </>
           )}
           <DropdownMenu
             trigger={({ open, toggle, ref }) => (
-              <button ref={ref} type="button" className="ch-btn ch-btn-options" onClick={toggle} aria-haspopup="menu" aria-expanded={open}>
-                <SlidersHorizontal size={15} />
-                Options
-                <ChevronDown size={14} />
+              <button
+                ref={ref}
+                type="button"
+                className="ch-btn ch-btn-icon-only"
+                onClick={toggle}
+                aria-haspopup="menu"
+                aria-expanded={open}
+                aria-label="More actions"
+                title="More actions"
+              >
+                <MoreHorizontal size={16} />
               </button>
             )}
             groups={[
@@ -259,6 +292,7 @@ export function ClientHeader({
                   { key: "email", label: "Draft missing-info email", description: "Ask the client for the fields still missing", icon: MailPlus, onSelect: actions.onDraftEmail, hidden: !done },
                   { key: "video", label: "Create video", description: "Personalized avatar video for this account", icon: Video, onSelect: actions.onCreateVideo, hidden: !done },
                   { key: "meetings", label: "Analyzed meetings", description: "Every Claap meeting that fed this page", icon: Info, onSelect: actions.onAnalyzedMeetings, hidden: !done },
+                  { key: "report", label: "Last refresh details", description: "What the last refresh read and changed, with Undo", icon: History, onSelect: actions.onOpenReport, hidden: !done || !client.last_refresh_report },
                   {
                     key: "onboarding",
                     label: "Show onboarding checklist",

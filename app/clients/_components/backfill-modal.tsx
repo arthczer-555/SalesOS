@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { X, Download, Loader2, Search, Check } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import { MeetingConfirmationModal } from "../[id]/_components/meeting-confirmation-modal";
 
 // Modal admin pour importer des closed-won historiques HubSpot vers la table
@@ -274,7 +274,7 @@ export function BackfillModal({
                 marginLeft: "auto",
                 background: "none",
                 border: "none",
-                color: COLORS.brand,
+                color: COLORS.primary,
                 fontSize: 11,
                 fontWeight: 500,
                 cursor: "pointer",
@@ -359,8 +359,8 @@ export function BackfillModal({
                       width: 16,
                       height: 16,
                       borderRadius: 4,
-                      border: `1px solid ${isSel ? COLORS.brand : COLORS.lineStrong}`,
-                      background: isSel ? COLORS.brand : "white",
+                      border: `1px solid ${isSel ? COLORS.primary : COLORS.lineStrong}`,
+                      background: isSel ? COLORS.primary : "white",
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
@@ -468,8 +468,8 @@ export function BackfillModal({
                 fontSize: 13,
                 fontWeight: 500,
                 borderRadius: 8,
-                border: `1px solid ${COLORS.brand}`,
-                background: importing || selected.size === 0 ? COLORS.bgSoft : COLORS.brand,
+                border: `1px solid ${COLORS.primary}`,
+                background: importing || selected.size === 0 ? COLORS.bgSoft : COLORS.primary,
                 color: importing || selected.size === 0 ? COLORS.ink3 : "white",
                 cursor: importing || selected.size === 0 ? "not-allowed" : "pointer",
               }}

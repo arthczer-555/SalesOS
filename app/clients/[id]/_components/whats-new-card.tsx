@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { Activity, AlertTriangle, Loader2, Undo2, Video, X } from "lucide-react";
-import { COLORS, SHADOWS } from "@/lib/design/tokens";
+import { COLORS, SHADOWS } from "@/app/clients/_components/theme";
 import type { AccountCompany, ClientFields, Insights, RefreshReport, RefreshSourceStat } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { SourceLabel } from "./next-actions-card";
-import { Card, CardHeader, Eyebrow, Tag, fmtDay, type Collapse } from "./ui";
+import { Card, CardHeader, Eyebrow, Tag, fmtDay } from "./ui";
 
 // Knowledge > Recent activity : ce qui a changé récemment (faits clés tirés
 // par l'IA, meetings Claap ajoutés tout seuls), avec la source. Activité
@@ -109,27 +109,24 @@ export function WhatsNewCard({
   clientId,
   onUpdated,
   id,
-  collapse,
 }: {
   insights: Insights | null;
   report: RefreshReport | null;
   clientId: string;
   onUpdated: () => void;
   id?: string;
-  collapse?: Collapse;
 }) {
   const decline = useDeclineMeeting(clientId, onUpdated);
   const feed = buildFeed(insights, report, decline);
 
   return (
-    <Card id={id} style={{ scrollMarginTop: 64 }}>
+    <Card id={id}>
       <CardHeader
         icon={Activity}
         title="Recent activity"
         meta={report?.refreshed_at ? `Since ${fmtDay(report.refreshed_at)}` : undefined}
-        collapse={collapse}
       />
-      {collapse && !collapse.open ? null : feed.length === 0 ? (
+      {feed.length === 0 ? (
         <div style={{ fontSize: 13, color: COLORS.ink3 }}>Nothing new yet. The weekly refresh fills this every Monday.</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column" }}>

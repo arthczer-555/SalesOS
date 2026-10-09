@@ -1,4 +1,4 @@
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 
 export default function Loading() {
   return (

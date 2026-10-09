@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Building2, ChevronUp, ExternalLink, Loader2 } from "lucide-react";
-import { COLORS, SHADOWS } from "@/lib/design/tokens";
+import { COLORS, SHADOWS } from "@/app/clients/_components/theme";
 import type { AccountCompany, ClientRow } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { relativeDays } from "./ui";

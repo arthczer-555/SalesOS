@@ -2,15 +2,28 @@
 
 import * as React from "react";
 import { ChevronDown } from "lucide-react";
-import { COLORS, RADIUS, SHADOWS } from "@/lib/design/tokens";
+import { COLORS, RADIUS, SHADOWS } from "@/app/clients/_components/theme";
 import type { HealthLabel } from "@/lib/clients/types";
 import type { ContractEnd } from "@/lib/clients/lifecycle";
 
 // Primitives visuelles de la fiche client v2 : une seule façon de faire une
 // carte, un titre de carte, un tag de statut. Les cartes n'ont plus de bandeau
-// de titre gris : titre inline (icône 15 px + titre 14/700 + méta à droite).
+// de titre gris : titre inline (titre 15/700, icône optionnelle, méta à droite).
 
 type IconType = React.ComponentType<{ size?: number | string; style?: React.CSSProperties }>;
+
+// Knowledge affiche une section à la fois, en pleine page : sous <BareCards>,
+// les cartes perdent leur cadre et leur repli, leur titre devient celui de la
+// page. Les panneaux (recap, meetings, brief…) restent les mêmes composants.
+const BareContext = React.createContext(false);
+
+export function BareCards({ children }: { children: React.ReactNode }) {
+  return <BareContext.Provider value={true}>{children}</BareContext.Provider>;
+}
+
+export function useBareCards(): boolean {
+  return React.useContext(BareContext);
+}
 
 export function Card({
   children,
@@ -23,6 +36,14 @@ export function Card({
   style?: React.CSSProperties;
   padding?: string | number;
 }) {
+  const bare = useBareCards();
+  if (bare) {
+    return (
+      <section id={id} style={{ minWidth: 0 }}>
+        {children}
+      </section>
+    );
+  }
   return (
     <section
       id={id}
@@ -62,10 +83,24 @@ export function CardHeader({
   // reste visible repliée et sert de résumé.
   collapse?: Collapse;
 }) {
+  const bare = useBareCards();
+  if (bare) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", ...style, marginBottom: 18 }}>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: COLORS.ink0, letterSpacing: "-0.015em" }}>{title}</h2>
+        {(meta || right) && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+            {meta ? <span style={{ fontSize: 12, color: COLORS.ink3 }}>{meta}</span> : null}
+            {right}
+          </div>
+        )}
+      </div>
+    );
+  }
   const heading = (
     <>
       {Icon ? <Icon size={15} style={{ color: COLORS.ink2, flexShrink: 0 }} /> : null}
-      <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: COLORS.ink0, letterSpacing: "-0.005em" }}>{title}</h3>
+      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: COLORS.ink0, letterSpacing: "-0.01em" }}>{title}</h3>
     </>
   );
   return (
@@ -104,17 +139,18 @@ export function CardHeader({
   );
 }
 
-// Couleurs et libellés des trois niveaux de santé (carte, header, popup du score).
-export const HEALTH_STYLE: Record<HealthLabel, { fg: string; bg: string; label: string; tint: string }> = {
-  green: { fg: COLORS.ok, bg: COLORS.okBg, label: "Healthy", tint: "#f2fbf7" },
-  yellow: { fg: COLORS.warn, bg: COLORS.warnBg, label: "Needs attention", tint: "#fffaf0" },
-  red: { fg: COLORS.err, bg: COLORS.errBg, label: "At risk", tint: "#fff6f6" },
+// Couleurs et libellés des trois niveaux de santé (carte, header, popup du
+// score). tint / border : fond et bord de la carte Client health.
+export const HEALTH_STYLE: Record<HealthLabel, { fg: string; bg: string; label: string; tint: string; border: string }> = {
+  green: { fg: COLORS.ok, bg: COLORS.okBg, label: "Healthy", tint: "#f0f7f2", border: "#d3e9da" },
+  yellow: { fg: COLORS.warn, bg: COLORS.warnBg, label: "Needs attention", tint: COLORS.warnTint, border: COLORS.warnLine },
+  red: { fg: COLORS.err, bg: COLORS.errBg, label: "At risk", tint: "#fdf3f3", border: "#f5d0d0" },
 };
 
 export type TagTone = "neutral" | "ok" | "warn" | "err" | "brand" | "info" | "solid";
 
 export const TAG_TONES: Record<TagTone, { bg: string; fg: string; border: string }> = {
-  neutral: { bg: COLORS.bgSoft, fg: COLORS.ink1, border: COLORS.line },
+  neutral: { bg: COLORS.sand, fg: COLORS.ink1, border: COLORS.sand },
   ok: { bg: COLORS.okBg, fg: COLORS.ok, border: "#c4ecd9" },
   warn: { bg: COLORS.warnBg, fg: COLORS.warn, border: "#f6dfa4" },
   err: { bg: COLORS.errBg, fg: COLORS.err, border: "#fbcaca" },
@@ -214,6 +250,15 @@ export function EmptyState({
 
 // Carte pointillée "pas encore disponible" (bloc IA pas encore généré).
 export function PendingCard({ icon: Icon, title, text, id }: { icon: IconType; title: string; text: string; id?: string }) {
+  const bare = useBareCards();
+  if (bare) {
+    return (
+      <section id={id}>
+        <CardHeader title={title} />
+        <div style={{ fontSize: 13, color: COLORS.ink3, lineHeight: 1.55, maxWidth: "70ch" }}>{text}</div>
+      </section>
+    );
+  }
   return (
     <section
       id={id}

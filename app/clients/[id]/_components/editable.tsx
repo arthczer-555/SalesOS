@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pencil, Check, X } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 
 // Éditeurs inline self-contained pour les blocs IA (recap deal, brief coachs,
 // phrase health). Chacun gère son propre toggle d'édition et appelle
@@ -13,7 +13,7 @@ const inputStyle: React.CSSProperties = {
   fontSize: 13,
   padding: "4px 8px",
   borderRadius: 6,
-  border: `1px solid ${COLORS.brand}`,
+  border: `1px solid ${COLORS.primary}`,
   outline: "none",
   background: "white",
   color: COLORS.ink0,
@@ -29,8 +29,8 @@ const btnPrimary: React.CSSProperties = {
   fontSize: 11,
   padding: "3px 8px",
   borderRadius: 6,
-  border: `1px solid ${COLORS.brand}`,
-  background: COLORS.brand,
+  border: `1px solid ${COLORS.primary}`,
+  background: COLORS.primary,
   color: "white",
   cursor: "pointer",
 };
@@ -59,7 +59,7 @@ function PencilBtn({ onClick }: { onClick: () => void }) {
       title="Edit"
       style={{ background: "none", border: "none", padding: 2, cursor: "pointer", color: COLORS.ink4, flexShrink: 0 }}
       onMouseEnter={(e) => {
-        e.currentTarget.style.color = COLORS.brand;
+        e.currentTarget.style.color = COLORS.primary;
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.color = COLORS.ink4;
@@ -83,6 +83,32 @@ function Actions({ saving, onSave, onCancel }: { saving: boolean; onSave: () => 
   );
 }
 
+// Texte coupé à `lines` lignes, "Show more" seulement s'il déborde vraiment.
+function ClampedValue({ text, lines, style }: { text: string; lines: number; style: React.CSSProperties }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [open, setOpen] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (el && !open) setOverflows(el.scrollHeight > el.clientHeight + 1);
+  }, [text, open]);
+  return (
+    <div>
+      <div
+        ref={ref}
+        style={{ ...style, ...(open ? {} : { display: "-webkit-box", WebkitLineClamp: lines, WebkitBoxOrient: "vertical", overflow: "hidden" }) }}
+      >
+        {text}
+      </div>
+      {(overflows || open) && (
+        <button type="button" className="ch-link" onClick={() => setOpen((o) => !o)} style={{ fontSize: 12, fontWeight: 500, color: COLORS.ink2, marginTop: 4 }}>
+          {open ? "Show less" : "Show more"}
+        </button>
+      )}
+    </div>
+  );
+}
+
 // ── EditableText ──────────────────────────────────────────────────────────
 export function EditableText({
   value,
@@ -90,6 +116,7 @@ export function EditableText({
   multiline = false,
   placeholder,
   textStyle,
+  clamp,
 }: {
   value: string | null | undefined;
   onSave: (v: string | null) => Promise<void>;
@@ -97,6 +124,8 @@ export function EditableText({
   placeholder?: string;
   // Surcharge du style du texte affiché (ex : phrase health en 15 px).
   textStyle?: React.CSSProperties;
+  // Coupe le texte affiché à N lignes, avec "Show more".
+  clamp?: number;
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(value ?? "");
@@ -154,10 +183,19 @@ export function EditableText({
     );
   }
 
+  const shownStyle: React.CSSProperties = { fontSize: 13, color: COLORS.ink0, lineHeight: 1.5, whiteSpace: "pre-wrap", ...textStyle };
   return (
     <div style={{ display: "flex", alignItems: "flex-start", gap: 6 }}>
-      <div style={{ flex: 1, fontSize: 13, color: COLORS.ink0, lineHeight: 1.5, whiteSpace: "pre-wrap", ...textStyle }}>
-        {value && value.trim() ? value : <EmptyVal />}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {!value || !value.trim() ? (
+          <div style={shownStyle}>
+            <EmptyVal />
+          </div>
+        ) : clamp ? (
+          <ClampedValue text={value} lines={clamp} style={shownStyle} />
+        ) : (
+          <div style={shownStyle}>{value}</div>
+        )}
       </div>
       <PencilBtn onClick={() => { setVal(value ?? ""); setEditing(true); }} />
     </div>

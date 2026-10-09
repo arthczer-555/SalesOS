@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { Loader2, Send, X } from "lucide-react";
-import { COLORS, SHADOWS } from "@/lib/design/tokens";
+import { COLORS, SHADOWS } from "@/app/clients/_components/theme";
 import { getMissingRecommendedFields, getMissingRequiredFields, type ClientRow } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 
@@ -169,7 +169,7 @@ export function AssigneesModal({
           <UserSelect id="cs-select" label="Customer Success" value={csEmail} onChange={setCsEmail} users={users} preferRole="csm" disabled={saving} />
           {mode === "change" && (
             <label htmlFor="notify-new" style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: COLORS.ink1 }}>
-              <input id="notify-new" type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} style={{ accentColor: COLORS.brand }} />
+              <input id="notify-new" type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} style={{ accentColor: COLORS.primary }} />
               Notify the new assignee on Slack
             </label>
           )}

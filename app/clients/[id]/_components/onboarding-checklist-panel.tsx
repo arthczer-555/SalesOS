@@ -1,14 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { ListChecks, Loader2 } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { Loader2 } from "lucide-react";
+import { COLORS } from "@/app/clients/_components/theme";
 import { mergeOnboardingItems, type ClientRow, type OnboardingItem } from "@/lib/clients/types";
 import { Card, CardHeader } from "./ui";
 
 // Checklist d'onboarding (onglet To do). 100 % manuelle : items du template
-// groupés par catégorie / section, cochés par l'équipe. La carte disparaît quand
-// tout est coché, ou quand le CSM la masque (compte onboardé depuis longtemps).
+// groupés par catégorie / section, cochés par l'équipe. Repliée par défaut (le
+// compteur reste visible). La carte disparaît quand tout est coché, ou quand
+// le CSM la masque (compte onboardé depuis longtemps).
 export function OnboardingChecklistPanel({ client, onUpdated }: { client: ClientRow; onUpdated: () => void }) {
   // Etat optimiste : la case bascule instantanement (override local par key),
   // le PATCH part en arriere-plan. Sans ca, la case attend le refetch complet
@@ -17,6 +18,7 @@ export function OnboardingChecklistPanel({ client, onUpdated }: { client: Client
   const [error, setError] = useState<string | null>(null);
   const [confirmDismiss, setConfirmDismiss] = useState(false);
   const [dismissing, setDismissing] = useState(false);
+  const [open, setOpen] = useState(false);
 
   // Masquee par le CSM pour ce compte.
   if (client.onboarding_checklist?.dismissed) return null;
@@ -112,24 +114,86 @@ export function OnboardingChecklistPanel({ client, onUpdated }: { client: Client
   return (
     <Card>
       <CardHeader
-        icon={ListChecks}
-        title={`Onboarding checklist · ${pending.length} to do`}
+        title="Onboarding checklist"
         meta={`${doneCount} of ${items.length} done`}
+        collapse={{ open, onToggle: () => setOpen((o) => !o) }}
         right={
-          <button type="button" className="ch-link" style={{ fontSize: 12, fontWeight: 500 }} onClick={() => setConfirmDismiss(true)}>
-            Hide for this account
-          </button>
+          open ? (
+            <button type="button" className="ch-link" style={{ fontSize: 12, fontWeight: 500 }} onClick={() => setConfirmDismiss(true)}>
+              Hide for this account
+            </button>
+          ) : undefined
         }
       />
 
-      <div className="ch-grid-2" style={{ gap: "18px 28px" }}>
-        {error && <div style={{ fontSize: 12, color: COLORS.err, gridColumn: "1 / -1" }}>{error}</div>}
+      {open && (
+        <div className="ch-grid-2" style={{ gap: "18px 28px" }}>
+          {error && <div style={{ fontSize: 12, color: COLORS.err, gridColumn: "1 / -1" }}>{error}</div>}
 
-        {categories.map((category) => {
-          const total = category.sections.reduce((n, s) => n + s.items.length, 0);
-          const left = category.sections.reduce((n, s) => n + s.items.filter((i) => !i.done).length, 0);
-          return (
-            <div key={category.name} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {categories.map((category) => {
+            const total = category.sections.reduce((n, s) => n + s.items.length, 0);
+            const left = category.sections.reduce((n, s) => n + s.items.filter((i) => !i.done).length, 0);
+            return (
+              <div key={category.name} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    paddingBottom: 6,
+                    borderBottom: `1px solid ${COLORS.line}`,
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink0 }}>
+                    {category.name}
+                  </span>
+                  <span style={{ fontSize: 11, color: COLORS.ink3, marginLeft: "auto" }}>
+                    {total - left}/{total}
+                  </span>
+                </div>
+                {category.sections.map((section) => (
+                  <div key={section.name} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 700,
+                        color: COLORS.ink3,
+                        textTransform: "uppercase",
+                        letterSpacing: 0.4,
+                      }}
+                    >
+                      {section.name}
+                    </div>
+                    {section.items.map((item) => (
+                      <label
+                        key={item.key}
+                        style={{
+                          display: "flex",
+                          alignItems: "flex-start",
+                          gap: 9,
+                          cursor: "pointer",
+                          fontSize: 13,
+                          color: item.done ? COLORS.ink3 : COLORS.ink0,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={item.done}
+                          onChange={() => toggle(item)}
+                          style={{ marginTop: 2, width: 15, height: 15, accentColor: COLORS.ok, cursor: "pointer", flexShrink: 0 }}
+                        />
+                        <span style={{ lineHeight: 1.4, textDecoration: item.done ? "line-through" : "none" }}>{item.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+
+          {/* Hybride : la checklist humaine + un 3e onglet "AI Coaching" a venir. */}
+          {isHybrid && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div
                 style={{
                   display: "flex",
@@ -140,75 +204,17 @@ export function OnboardingChecklistPanel({ client, onUpdated }: { client: Client
                 }}
               >
                 <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink0 }}>
-                  {category.name}
+                  AI Coaching
                 </span>
-                <span style={{ fontSize: 11, color: COLORS.ink3, marginLeft: "auto" }}>
-                  {total - left}/{total}
-                </span>
+                <span style={{ fontSize: 11, color: COLORS.ink3, marginLeft: "auto" }}>Coming soon</span>
               </div>
-              {category.sections.map((section) => (
-                <div key={section.name} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      color: COLORS.ink3,
-                      textTransform: "uppercase",
-                      letterSpacing: 0.4,
-                    }}
-                  >
-                    {section.name}
-                  </div>
-                  {section.items.map((item) => (
-                    <label
-                      key={item.key}
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: 9,
-                        cursor: "pointer",
-                        fontSize: 13,
-                        color: item.done ? COLORS.ink3 : COLORS.ink0,
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={item.done}
-                        onChange={() => toggle(item)}
-                        style={{ marginTop: 2, width: 15, height: 15, accentColor: COLORS.ok, cursor: "pointer", flexShrink: 0 }}
-                      />
-                      <span style={{ lineHeight: 1.4, textDecoration: item.done ? "line-through" : "none" }}>{item.label}</span>
-                    </label>
-                  ))}
-                </div>
-              ))}
+              <div style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.5 }}>
+                The AI coaching onboarding checklist is on the way.
+              </div>
             </div>
-          );
-        })}
-
-        {/* Hybride : la checklist humaine + un 3e onglet "AI Coaching" a venir. */}
-        {isHybrid && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                paddingBottom: 6,
-                borderBottom: `1px solid ${COLORS.line}`,
-              }}
-            >
-              <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink0 }}>
-                AI Coaching
-              </span>
-              <span style={{ fontSize: 11, color: COLORS.ink3, marginLeft: "auto" }}>Coming soon</span>
-            </div>
-            <div style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.5 }}>
-              The AI coaching onboarding checklist is on the way.
-            </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {confirmDismiss && (
         <div
@@ -241,7 +247,7 @@ export function OnboardingChecklistPanel({ client, onUpdated }: { client: Client
             <h4 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: COLORS.ink0 }}>Remove onboarding checklist?</h4>
             <p style={{ margin: 0, fontSize: 13, color: COLORS.ink1, lineHeight: 1.5 }}>
               This hides the onboarding checklist for this account (e.g. already onboarded long ago, or not needed). You
-              can bring it back anytime from <strong style={{ fontWeight: 600 }}>Options, Show onboarding checklist</strong>.
+              can bring it back anytime from the <strong style={{ fontWeight: 600 }}>⋯ menu, Show onboarding checklist</strong>.
             </p>
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button
@@ -274,7 +280,7 @@ export function OnboardingChecklistPanel({ client, onUpdated }: { client: Client
                   padding: "7px 14px",
                   borderRadius: 8,
                   border: "none",
-                  background: dismissing ? COLORS.bgSoft : COLORS.brand,
+                  background: dismissing ? COLORS.bgSoft : COLORS.primary,
                   color: dismissing ? COLORS.ink3 : "#fff",
                   cursor: dismissing ? "not-allowed" : "pointer",
                 }}
@@ -295,7 +301,7 @@ export function OnboardingChecklistPanel({ client, onUpdated }: { client: Client
 function OnboardingInfoCard({ message }: { message: string }) {
   return (
     <Card>
-      <CardHeader icon={ListChecks} title="Onboarding checklist" style={{ marginBottom: 6 }} />
+      <CardHeader title="Onboarding checklist" style={{ marginBottom: 6 }} />
       <div style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.5 }}>{message}</div>
     </Card>
   );

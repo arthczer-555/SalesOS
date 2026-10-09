@@ -1,7 +1,7 @@
 "use client";
 
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { ClientRow } from "@/lib/clients/types";
 import type { HubspotCleanerState } from "@/lib/clients/todo";
 import { HubspotChecklistPanel } from "../hubspot-checklist-panel";
@@ -29,7 +29,7 @@ export function HubspotCleanerTab({
   }
   if (state.status === "error") {
     return (
-      <Card style={{ borderColor: "#f6dfa4", background: "#fffbeb", display: "flex", gap: 14, alignItems: "flex-start" }}>
+      <Card style={{ borderColor: COLORS.warnLine, background: COLORS.warnTint, display: "flex", gap: 14, alignItems: "flex-start" }}>
         <span style={{ width: 36, height: 36, borderRadius: 10, display: "grid", placeItems: "center", background: COLORS.warnBg, color: COLORS.warn, flexShrink: 0 }}>
           <AlertTriangle size={18} />
         </span>

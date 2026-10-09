@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { Loader2, Search, Plus, ExternalLink, Check, Trash2 } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { ClientRow, MeetingCandidate } from "@/lib/clients/types";
 
 type Resp = { client: ClientRow };
@@ -451,9 +451,9 @@ export function MeetingConfirmationModal({
                             fontWeight: 600,
                             padding: "5px 10px",
                             borderRadius: 7,
-                            border: `1px solid ${active ? COLORS.brand : COLORS.line}`,
+                            border: `1px solid ${active ? COLORS.primary : COLORS.line}`,
                             background: active ? COLORS.brandTint : COLORS.bgCard,
-                            color: active ? COLORS.brand : COLORS.ink2,
+                            color: active ? COLORS.primary : COLORS.ink2,
                             cursor: "pointer",
                           }}
                         >
@@ -671,7 +671,7 @@ export function MeetingConfirmationModal({
                           alignItems: "flex-start",
                           cursor: "pointer",
                           background: isChecked ? COLORS.brandTint : "transparent",
-                          border: `1px solid ${isChecked ? COLORS.brand : COLORS.line}`,
+                          border: `1px solid ${isChecked ? COLORS.primary : COLORS.line}`,
                           marginBottom: 6,
                         }}
                       >
@@ -829,9 +829,9 @@ export function MeetingConfirmationModal({
                               fontSize: 11,
                               padding: "5px 9px",
                               borderRadius: 7,
-                              border: `1px solid ${alreadyAdded ? COLORS.line : COLORS.brand}`,
+                              border: `1px solid ${alreadyAdded ? COLORS.line : COLORS.primary}`,
                               background: alreadyAdded ? COLORS.bgSoft : COLORS.brandTint,
-                              color: alreadyAdded ? COLORS.ink3 : COLORS.brand,
+                              color: alreadyAdded ? COLORS.ink3 : COLORS.primary,
                               cursor: alreadyAdded ? "default" : "pointer",
                             }}
                           >
@@ -946,8 +946,8 @@ export function MeetingConfirmationModal({
               fontWeight: 600,
               padding: "8px 16px",
               borderRadius: 8,
-              border: `1px solid ${COLORS.brand}`,
-              background: discovering || confirming ? COLORS.bgSoft : COLORS.brand,
+              border: `1px solid ${COLORS.primary}`,
+              background: discovering || confirming ? COLORS.bgSoft : COLORS.primary,
               color: discovering || confirming ? COLORS.ink3 : "#fff",
               cursor: discovering || confirming ? "not-allowed" : "pointer",
             }}

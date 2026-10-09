@@ -4,7 +4,7 @@ import { use, useCallback, useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowRight, Clock, Loader2, Search, UserCheck } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { ClientRow } from "@/lib/clients/types";
 import { getClientTodo, getHubspotCleanerState } from "@/lib/clients/todo";
 import { useUserMe } from "@/lib/hooks/use-user-me";
@@ -63,9 +63,9 @@ function StatusBanner({ client, onConfirmMeetings }: { client: ClientRow; onConf
   }
   if (client.enrichment_status === "pending") {
     return (
-      <div style={{ ...base, background: COLORS.bgSoft, color: COLORS.ink2 }}>
+      <div style={{ ...base, background: COLORS.sand, color: COLORS.ink2 }}>
         <Clock size={14} />
-        Waiting for enrichment. An admin can start it from Options, then Run enrichment.
+        Waiting for enrichment. An admin can start it from the ⋯ menu, then Run enrichment.
       </div>
     );
   }
@@ -131,8 +131,8 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     if (t && TAB_KEYS.includes(t)) setTab(t);
   }, []);
 
-  // Ancre de Knowledge à ouvrir puis viser : les sections y sont repliables,
-  // c'est KnowledgeTab qui ouvre la section avant de scroller.
+  // Section de Knowledge à afficher (#k-contacts…) : KnowledgeTab n'en montre
+  // qu'une à la fois.
   const [knowledgeFocus, setKnowledgeFocus] = useState<{ id: string; seq: number } | null>(null);
 
   const goTo = useCallback((t: ClientTabKey, anchor?: string) => {
@@ -140,15 +140,17 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     const url = new URL(window.location.href);
     if (t === "insights") url.searchParams.delete("tab");
     else url.searchParams.set("tab", t);
-    window.history.replaceState(null, "", url.toString());
-    // Ancre de Knowledge : KnowledgeTab ouvre la section puis scrolle. Remis à
-    // null sinon, pour qu'un retour sur Knowledge ne re-vise pas l'ancre.
+    // L'ancre ne reste dans l'URL que pour une section de Knowledge (lien
+    // partageable). Focus remis à null sinon, pour qu'un retour sur Knowledge
+    // ne re-vise pas l'ancre.
     const knowledgeAnchor = anchor && t === "knowledge" ? anchor : null;
+    url.hash = knowledgeAnchor ?? "";
+    window.history.replaceState(null, "", url.toString());
     setKnowledgeFocus(knowledgeAnchor ? { id: knowledgeAnchor, seq: Date.now() } : null);
-    if (!anchor) {
-      scrollRef.current?.scrollTo({ top: 0 });
-    } else if (!knowledgeAnchor) {
+    if (anchor && !knowledgeAnchor) {
       setTimeout(() => document.getElementById(anchor)?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+    } else {
+      scrollRef.current?.scrollTo({ top: 0 });
     }
   }, []);
 
@@ -173,8 +175,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     hashScrolled.current = true;
     const anchor = decodeURIComponent(window.location.hash.slice(1));
     if (!anchor) return;
-    // Section de Knowledge (?tab=knowledge#k-contacts) : peut être repliée,
-    // KnowledgeTab l'ouvre puis scrolle.
+    // Section de Knowledge (?tab=knowledge#k-contacts) : KnowledgeTab l'affiche.
     if (anchor.startsWith("k-") && new URLSearchParams(window.location.search).get("tab") === "knowledge") {
       setKnowledgeFocus({ id: anchor, seq: Date.now() });
       return;
@@ -343,14 +344,14 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       <StatusBanner client={client} onConfirmMeetings={() => setConfirmOpen(true)} />
       {enriched && todo.handoverPending && <HandoverBanner onOpen={() => setAssigneesMode("handover")} />}
       {refreshing && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 32px", background: COLORS.brandTintSoft, borderBottom: `1px solid ${COLORS.line}`, color: COLORS.brandDark, fontSize: 12, fontWeight: 500, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 32px", background: COLORS.sand, borderBottom: `1px solid ${COLORS.line}`, color: COLORS.ink1, fontSize: 12, fontWeight: 500, flexShrink: 0 }}>
           <Loader2 size={13} className="animate-spin" />
           Refreshing from Claap, HubSpot, Slack and the news. The page updates by itself, usually in under a minute.
         </div>
       )}
 
-      {/* Pas de padding haut sur le conteneur de scroll : les barres collantes
-          (ancres de Knowledge) se calent pile sous le header. */}
+      {/* Pas de padding haut sur le conteneur de scroll : la sidebar collante de
+          Knowledge se cale à 24 px sous le header. */}
       <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "0 32px 56px" }}>
         <div style={{ paddingTop: 24 }}>
         {tab === "insights" && <KeyInsightsTab client={client} hubspotUrl={hubspotUrl} onUpdated={reload} goTo={goTo} />}

@@ -2,24 +2,26 @@
 
 import { useState } from "react";
 import { Activity, AlertTriangle, Info, TrendingDown, TrendingUp } from "lucide-react";
-import { COLORS, RADIUS, SHADOWS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { Health, HealthDriver, HealthSnapshot } from "@/lib/clients/types";
 import { EditableText } from "./editable";
 import { patchContent } from "./content-client";
-import { Eyebrow, HEALTH_STYLE, PendingCard, Tag, fmtDay } from "./ui";
+import { Eyebrow, HEALTH_STYLE, Tag, fmtDay } from "./ui";
 import { HealthBreakdownModal, sourceHref } from "./health-breakdown-modal";
 
-// Carte "Client health" : la donnée la plus mise en avant de Key insights.
-// Fond teinté de la couleur du statut, score en 52 px (cliquable : popup du
-// détail du calcul), phase du compte, delta depuis le snapshot précédent,
-// phrase de synthèse éditable, drivers (vert / rouge, source cliquable), et
-// courbe des derniers refresh (health_history). Une source illisible au calcul
-// est signalée ici (data_gaps), jamais confondue avec une absence d'activité.
+// Carte "Client health" en tête de Key insights, teintée de la couleur du
+// statut. À gauche : phase du compte, score en 56 px (cliquable : popup du
+// détail du calcul), delta depuis le snapshot précédent, courbe des derniers
+// refresh (health_history), phrase de synthèse éditable (2 lignes, "Show
+// more") et les signaux en une ligne (rouge = ceux qui coûtent des points,
+// source cliquable). À droite (`aside`) : les watch points. Une source
+// illisible au calcul est signalée ici (data_gaps), jamais confondue avec une
+// absence d'activité.
 
 // Réexporté pour client-header (le badge santé du header).
 export { HEALTH_STYLE };
 
-const MAX_CHIPS = 5;
+const MAX_DRIVERS = 5;
 
 // Anciennes fiches : drivers en texte seul, sans sens. On devine le signe à
 // partir du libellé (les règles de health.ts produisaient des formulations fixes).
@@ -47,42 +49,28 @@ function PhaseTag({ health }: { health: Health }) {
       </Tag>
     );
   }
-  if (p.key === "onboarding") return <Tag tone="info" title="The program is being set up">Onboarding</Tag>;
-  return <Tag title="The program is live">Running</Tag>;
+  const white: React.CSSProperties = { background: COLORS.bgCard, borderColor: COLORS.lineStrong };
+  if (p.key === "onboarding") return <Tag title="The program is being set up" style={white}>Onboarding</Tag>;
+  return <Tag title="The program is live" style={white}>Running</Tag>;
 }
 
-function DriverChip({ d, hubspotUrl }: { d: HealthDriver; hubspotUrl: string | null }) {
-  const pos = d.impact === "positive";
+// Un signal du score, en texte : rouge s'il coûte des points, lien vers sa
+// source quand elle en a une (le détail des points est dans le popup).
+function DriverText({ d, hubspotUrl }: { d: HealthDriver; hubspotUrl: string | null }) {
   const href = sourceHref(d.source, hubspotUrl);
   const internal = href?.startsWith("/");
   const title = d.source
     ? `${d.source.label ?? d.source.kind}${d.source.date ? ` · ${fmtDay(d.source.date)}` : ""}${href ? " (open)" : ""}`
     : undefined;
   const style: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    gap: 6,
-    fontSize: 12,
-    fontWeight: 500,
-    padding: "4px 10px",
-    borderRadius: 999,
-    background: pos ? COLORS.okBg : COLORS.errBg,
-    color: pos ? COLORS.ok : COLORS.err,
+    color: d.impact === "negative" ? COLORS.err : COLORS.ink2,
+    fontWeight: d.impact === "negative" ? 600 : 400,
     textDecoration: "none",
   };
-  // Couleur seule (vert / rouge) : les points sont dans le popup "How is this computed?".
-  const body = d.label;
-  if (!href) return <span style={style} title={title}>{body}</span>;
+  if (!href) return <span style={style} title={title}>{d.label}</span>;
   return (
-    <a
-      href={href}
-      target={internal ? undefined : "_blank"}
-      rel={internal ? undefined : "noreferrer"}
-      title={title}
-      className="ch-health-chip"
-      style={style}
-    >
-      {body}
+    <a href={href} target={internal ? undefined : "_blank"} rel={internal ? undefined : "noreferrer"} title={title} className="ch-health-chip" style={style}>
+      {d.label}
     </a>
   );
 }
@@ -119,12 +107,12 @@ function Sparkline({ history, color }: { history: HealthSnapshot[]; color: strin
   }
 
   return (
-    <div style={{ marginLeft: "auto", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flex: "0 1 240px", minWidth: 140 }}>
+    <div style={{ marginLeft: "auto", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flex: "0 1 210px", minWidth: 130 }}>
       <svg
         viewBox="0 0 320 58"
         role="img"
         aria-label={`Health score over the last ${values.length} refreshes, from ${values[0]} to ${values[last]}`}
-        style={{ width: "100%", height: 46, display: "block", cursor: "crosshair" }}
+        style={{ width: "100%", height: 44, display: "block", cursor: "crosshair" }}
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
       >
@@ -154,121 +142,131 @@ export function HealthHero({
   clientId,
   hubspotUrl,
   onUpdated,
+  aside,
 }: {
   health: Health | null;
   history: HealthSnapshot[];
   clientId: string;
   hubspotUrl: string | null;
   onUpdated: () => void;
+  // Panneau de droite de la carte (watch points).
+  aside?: React.ReactNode;
 }) {
   const [breakdownOpen, setBreakdownOpen] = useState(false);
+  const st = health ? HEALTH_STYLE[health.label] : null;
 
-  if (!health) {
-    return (
-      <PendingCard
-        icon={Activity}
-        title="Client health"
-        text="Computed at the next enrichment from HubSpot activity and Claap meetings."
-      />
+  const shell = (left: React.ReactNode) => (
+    <section
+      aria-label="Client health"
+      className="ch-hero"
+      style={
+        {
+          background: st?.tint ?? COLORS.bgCard,
+          border: `1px solid ${st?.border ?? COLORS.line}`,
+          borderRadius: 14,
+          "--ch-hero-line": st?.border ?? COLORS.line,
+        } as React.CSSProperties
+      }
+    >
+      <div style={{ padding: "20px 24px", minWidth: 0, display: "flex", flexDirection: "column" }}>{left}</div>
+      {aside && (
+        <div className="ch-hero-aside" style={{ padding: "20px 24px", minWidth: 0 }}>
+          {aside}
+        </div>
+      )}
+    </section>
+  );
+
+  if (!health || !st) {
+    return shell(
+      <>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+          <Activity size={15} style={{ color: COLORS.ink3 }} />
+          <Eyebrow>Client health</Eyebrow>
+        </div>
+        <div style={{ fontSize: 13, color: COLORS.ink3, lineHeight: 1.5 }}>
+          Computed at the next enrichment from HubSpot activity and Claap meetings.
+        </div>
+      </>,
     );
   }
 
-  const st = HEALTH_STYLE[health.label];
   // Delta vs le snapshot précédent (le dernier de l'historique est le courant).
   const prev = history.length >= 2 ? history[history.length - 2]?.score : null;
   const delta = prev != null ? health.score - prev : null;
-  const drivers = inferDrivers(health).slice(0, MAX_CHIPS);
+  const drivers = inferDrivers(health).slice(0, MAX_DRIVERS);
   const gaps = health.data_gaps ?? [];
 
-  return (
-    <section
-      aria-label="Client health"
-      style={{
-        position: "relative",
-        background: `linear-gradient(120deg, ${st.bg} 0%, ${st.tint} 30%, ${COLORS.bgCard} 62%)`,
-        border: `1px solid ${COLORS.line}`,
-        borderLeft: `4px solid ${st.fg}`,
-        borderRadius: RADIUS.lg,
-        boxShadow: SHADOWS.card,
-        padding: "18px 22px 16px",
-        minWidth: 0,
-        display: "flex",
-        flexDirection: "column",
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-        <Eyebrow>Client health</Eyebrow>
-        <PhaseTag health={health} />
-        <button
-          type="button"
-          className="ch-link"
-          onClick={() => setBreakdownOpen(true)}
-          style={{ marginLeft: "auto", display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 500, color: COLORS.ink2 }}
-        >
-          <Info size={13} />
-          How is this computed?
-        </button>
-      </div>
-
-      <div style={{ display: "flex", alignItems: "flex-end", gap: 18, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          onClick={() => setBreakdownOpen(true)}
-          title="See how this score is computed"
-          className="ch-health-score"
-          style={{
-            background: "none",
-            border: 0,
-            padding: 0,
-            cursor: "pointer",
-            fontFamily: "inherit",
-            fontSize: 52,
-            fontWeight: 800,
-            lineHeight: 0.9,
-            letterSpacing: "-0.035em",
-            color: st.fg,
-            fontVariantNumeric: "tabular-nums",
-          }}
-        >
-          {health.score}
-          <span style={{ fontSize: 18, fontWeight: 600, color: COLORS.ink3, letterSpacing: 0, marginLeft: 2 }}>/100</span>
-        </button>
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, paddingBottom: 4 }}>
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 6,
-              fontSize: 12,
-              fontWeight: 600,
-              padding: "3px 10px",
-              borderRadius: 999,
-              background: st.bg,
-              color: st.fg,
-              width: "fit-content",
-            }}
-          >
-            <span style={{ width: 7, height: 7, borderRadius: 99, background: st.fg }} />
-            {st.label}
-          </span>
-          {delta !== null && delta !== 0 && (
-            <span
+  return shell(
+    <>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <Eyebrow>Client health</Eyebrow>
+            <PhaseTag health={health} />
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, marginTop: 12, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => setBreakdownOpen(true)}
+              title="See how this score is computed"
+              className="ch-health-score"
               style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4,
-                fontSize: 12,
-                fontWeight: 600,
-                color: delta > 0 ? COLORS.ok : COLORS.err,
+                background: "none",
+                border: 0,
+                padding: 0,
+                cursor: "pointer",
+                fontFamily: "inherit",
+                fontSize: 56,
+                fontWeight: 700,
+                lineHeight: 0.9,
+                letterSpacing: "-0.04em",
+                color: st.fg,
+                fontVariantNumeric: "tabular-nums",
               }}
             >
-              {delta > 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-              {delta > 0 ? `+${delta}` : delta} since last refresh
-            </span>
-          )}
-          {delta === 0 && <span style={{ fontSize: 12, color: COLORS.ink3 }}>Stable since last refresh</span>}
+              {health.score}
+              <span style={{ fontSize: 17, fontWeight: 600, color: COLORS.ink3, letterSpacing: 0, marginLeft: 2 }}>/100</span>
+            </button>
+            <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: st.fg }}>{st.label}</span>
+                <button
+                  type="button"
+                  onClick={() => setBreakdownOpen(true)}
+                  aria-label="How is this computed?"
+                  title="How is this computed?"
+                  style={{ background: "none", border: 0, padding: 2, cursor: "pointer", color: COLORS.ink3, display: "inline-flex" }}
+                >
+                  <Info size={14} />
+                </button>
+              </span>
+              {delta !== null && delta !== 0 ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 12.5, fontWeight: 600, color: delta > 0 ? COLORS.ok : COLORS.err }}>
+                  {delta > 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                  {delta > 0 ? `+${delta}` : delta} since last refresh
+                </span>
+              ) : delta === 0 ? (
+                <span style={{ fontSize: 12.5, color: COLORS.ink3 }}>Stable since last refresh</span>
+              ) : null}
+            </div>
+          </div>
         </div>
         <Sparkline history={history} color={st.fg} />
+      </div>
+
+      <div style={{ marginTop: 16, maxWidth: "78ch" }}>
+        <EditableText
+          value={health.summary ?? null}
+          multiline
+          clamp={2}
+          placeholder="One sentence explaining the score, based on the latest exchanges"
+          textStyle={{ fontSize: 14, lineHeight: 1.55, color: COLORS.ink1 }}
+          onSave={async (v) => {
+            await patchContent(clientId, "health", { ...health, summary: v });
+            onUpdated();
+          }}
+        />
       </div>
 
       {gaps.length > 0 && (
@@ -280,28 +278,18 @@ export function HealthHero({
         </div>
       )}
 
-      <div style={{ marginTop: 12, maxWidth: "72ch" }}>
-        <EditableText
-          value={health.summary ?? null}
-          multiline
-          placeholder="One sentence explaining the score, based on the latest exchanges"
-          textStyle={{ fontSize: 14.5, lineHeight: 1.5, color: COLORS.ink1 }}
-          onSave={async (v) => {
-            await patchContent(clientId, "health", { ...health, summary: v });
-            onUpdated();
-          }}
-        />
-      </div>
-
       {drivers.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 12 }}>
+        <div style={{ marginTop: "auto", paddingTop: 14, fontSize: 12, lineHeight: 1.6 }}>
           {drivers.map((d, i) => (
-            <DriverChip key={i} d={d} hubspotUrl={hubspotUrl} />
+            <span key={i}>
+              {i > 0 && <span style={{ color: COLORS.ink4, margin: "0 7px" }}>·</span>}
+              <DriverText d={d} hubspotUrl={hubspotUrl} />
+            </span>
           ))}
         </div>
       )}
 
       {breakdownOpen && <HealthBreakdownModal health={health} hubspotUrl={hubspotUrl} onClose={() => setBreakdownOpen(false)} />}
-    </section>
+    </>,
   );
 }

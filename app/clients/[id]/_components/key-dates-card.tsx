@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Calendar, Check, Loader2, Pencil, X } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { Check, Loader2, Pencil, X } from "lucide-react";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { ClientRow } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { saveNextBilling } from "../../_components/next-billing-api";
@@ -63,6 +63,7 @@ function DateRow({
   onSave,
   requireValue,
   note,
+  first,
 }: {
   label: string;
   value: React.ReactNode;
@@ -72,6 +73,7 @@ function DateRow({
   onSave?: (v: string) => Promise<void>;
   requireValue?: boolean;
   note?: string;
+  first?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [val, setVal] = useState(initial ?? "");
@@ -101,7 +103,7 @@ function DateRow({
     <div
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
-      style={{ padding: "8px 0", borderTop: `1px solid ${COLORS.line}`, fontSize: 13 }}
+      style={{ padding: "9px 0", borderTop: first ? "none" : `1px solid ${COLORS.line}`, fontSize: 13 }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 10, minHeight: 26 }}>
         <span style={{ color: COLORS.ink3, width: 100, flexShrink: 0 }}>{label}</span>
@@ -147,7 +149,7 @@ function DateRow({
                     border: 0,
                     padding: 2,
                     cursor: "pointer",
-                    color: hover ? COLORS.brand : COLORS.ink4,
+                    color: hover ? COLORS.primary : COLORS.ink4,
                     opacity: hover ? 1 : 0.5,
                     display: "inline-flex",
                   }}
@@ -201,9 +203,10 @@ export function KeyDatesCard({ client, onUpdated }: { client: ClientRow; onUpdat
 
   return (
     <Card>
-      <CardHeader icon={Calendar} title="Key dates" style={{ marginBottom: 6 }} />
-      <div style={{ marginTop: -8 }}>
+      <CardHeader title="Key dates" style={{ marginBottom: 4 }} />
+      <div>
         <DateRow
+          first
           label="Signed"
           value={fmtDay(client.closedwon_at, true)}
           hint={relativeDays(client.closedwon_at)}
@@ -215,7 +218,7 @@ export function KeyDatesCard({ client, onUpdated }: { client: ClientRow; onUpdat
         />
         <DateRow
           label="Kickoff"
-          value={kickoff ? fmtDay(kickoff, true) : <span style={{ color: COLORS.warn }}>Not set</span>}
+          value={kickoff ? fmtDay(kickoff, true) : <Tag tone="warn">Not set</Tag>}
           hint={toKickoff === null ? null : toKickoff <= 0 ? <Tag tone="ok">Done</Tag> : `in ${toKickoff} days`}
           editable
           initial={toInputDate(kickoff)}
@@ -236,7 +239,7 @@ export function KeyDatesCard({ client, onUpdated }: { client: ClientRow; onUpdat
             nextBilling ? (
               <span style={{ color: nextBillingTone === "err" ? COLORS.err : undefined }}>{fmtDay(nextBilling, true)}</span>
             ) : (
-              <span style={{ color: COLORS.warn }}>Not set</span>
+              <Tag tone="warn">Not set</Tag>
             )
           }
           hint={

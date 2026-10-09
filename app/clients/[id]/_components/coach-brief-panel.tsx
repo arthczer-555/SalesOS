@@ -1,19 +1,19 @@
 "use client";
 
 import { useState } from "react";
-import { Copy, Check, Users, ChevronDown } from "lucide-react";
-import { COLORS, SHADOWS } from "@/lib/design/tokens";
+import { Copy, Check, Users } from "lucide-react";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { CoachBrief } from "@/lib/clients/types";
 import { EditableText, EditableObjectList } from "./editable";
 import { patchContent } from "./content-client";
-import type { Collapse } from "./ui";
+import { Card, CardHeader, PendingCard } from "./ui";
 
 // Brief client à destination des coachs Coachello.
 //  - Champs éditables inline (le CS corrige ce que l'IA a produit).
 //  - Bouton "Copier pour Slack" qui produit la version markdown/texte prête à
 //    coller dans le canal #coaches.
 // Le refresh hebdo le régénère quand le périmètre change, sauf s'il a été retouché
-// à la main depuis (coach_brief_edited_at). Replié par défaut dans Knowledge.
+// à la main depuis (coach_brief_edited_at). Section Tools > Coach brief de Knowledge.
 
 function fmtDate(iso: string | null | undefined): string | null {
   if (!iso) return null;
@@ -123,55 +123,23 @@ export function CoachBriefPanel({
   companyName,
   clientId,
   onUpdated,
-  collapse,
 }: {
   brief: CoachBrief | null;
   generatedAt: string | null;
   companyName: string;
   clientId?: string;
   onUpdated?: () => void;
-  // Fourni par Knowledge (état des sections mémorisé) ; sinon état local, replié.
-  collapse?: Collapse;
 }) {
   const [copied, setCopied] = useState(false);
-  const [localOpen, setLocalOpen] = useState(false);
-  const open = collapse ? collapse.open : localOpen;
-  const toggle = collapse ? collapse.onToggle : () => setLocalOpen((o) => !o);
 
   if (!brief) {
     return (
-      <div
+      <PendingCard
         id="k-brief"
-        style={{
-          scrollMarginTop: 64,
-          background: COLORS.bgCard,
-          border: `1px dashed ${COLORS.lineStrong}`,
-          borderRadius: 12,
-          padding: 20,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-          <Users size={14} style={{ color: COLORS.ink3 }} />
-          <h3 style={{ margin: 0, fontSize: 13, fontWeight: 700, color: COLORS.ink2 }}>Coach brief</h3>
-          <span
-            style={{
-              fontSize: 10,
-              padding: "1px 6px",
-              borderRadius: 4,
-              background: COLORS.bgSoft,
-              color: COLORS.ink3,
-              fontWeight: 600,
-              letterSpacing: 0.3,
-            }}
-          >
-            not generated yet
-          </span>
-        </div>
-        <div style={{ fontSize: 12, color: COLORS.ink3, lineHeight: 1.5 }}>
-          Created by the AI enrichment (Options, then Re-run enrichment, for admins). It follows the
-          format of the standard Slack message sent to coaches at staffing.
-        </div>
-      </div>
+        icon={Users}
+        title="Coach brief"
+        text="Not generated yet. Created by the AI enrichment (menu ⋯, then Re-run enrichment, for admins). It follows the format of the standard Slack message sent to coaches at staffing."
+      />
     );
   }
 
@@ -199,42 +167,26 @@ export function CoachBriefPanel({
   }
 
   return (
-    <div
-      id="k-brief"
-      style={{
-        background: COLORS.bgCard,
-        border: `1px solid ${COLORS.line}`,
-        borderRadius: 12,
-        boxShadow: SHADOWS.card,
-        padding: "16px 20px",
-        scrollMarginTop: 64,
-      }}
-    >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          onClick={toggle}
-          aria-expanded={open}
-          style={{ display: "inline-flex", alignItems: "center", gap: 8, background: "none", border: 0, padding: 0, cursor: "pointer", color: COLORS.ink0 }}
-        >
-          <Users size={15} style={{ color: COLORS.ink2 }} />
-          <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700 }}>Coach brief</h3>
-          <ChevronDown size={15} style={{ color: COLORS.ink3, transform: open ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
-        </button>
-        {generatedAt && <span style={{ fontSize: 12, color: COLORS.ink3 }}>Generated {new Date(generatedAt).toLocaleDateString("en-GB")}</span>}
-        <button
-          type="button"
-          onClick={copyToClipboard}
-          className="ch-btn ch-btn-sm"
-          style={{ marginLeft: "auto", ...(copied ? { borderColor: COLORS.ok, background: COLORS.okBg, color: COLORS.ok } : {}) }}
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-          {copied ? "Copied" : "Copy for Slack"}
-        </button>
-      </div>
+    <Card id="k-brief">
+      <CardHeader
+        icon={Users}
+        title="Coach brief"
+        meta={generatedAt ? `Generated ${new Date(generatedAt).toLocaleDateString("en-GB")}` : undefined}
+        right={
+          <button
+            type="button"
+            onClick={copyToClipboard}
+            className="ch-btn ch-btn-sm"
+            style={copied ? { borderColor: COLORS.ok, background: COLORS.okBg, color: COLORS.ok } : undefined}
+          >
+            {copied ? <Check size={12} /> : <Copy size={12} />}
+            {copied ? "Copied" : "Copy for Slack"}
+          </button>
+        }
+        style={{ marginBottom: 4 }}
+      />
 
-      {open && (
-      <div style={{ paddingTop: 8 }}>
+      <div>
         {text("Intro", brief.intro, "intro", true)}
         {text("Industry", brief.industry, "industry")}
         {text("Website", brief.website, "website")}
@@ -322,7 +274,6 @@ export function CoachBriefPanel({
         {text("Program end date", brief.program_end_date, "program_end_date")}
         {text("Program duration", brief.program_duration, "program_duration")}
       </div>
-      )}
-    </div>
+    </Card>
   );
 }

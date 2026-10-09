@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { AlertTriangle, Clock, ExternalLink, Flag, Mail, Newspaper, Smile, Users, Video, X } from "lucide-react";
-import { COLORS, SHADOWS } from "@/lib/design/tokens";
+import { COLORS, SHADOWS } from "@/app/clients/_components/theme";
 import type { Health, HealthDriver, HealthDriverSource, HealthPhase, HealthSignal } from "@/lib/clients/types";
 import { SourceLabel } from "./next-actions-card";
 import { Eyebrow, HEALTH_STYLE } from "./ui";

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { Loader2, Video, ExternalLink, FileText, Trash2 } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import { useToast } from "@/components/ui/toast";
 
 type AnalyzedMeeting = {
@@ -126,7 +126,7 @@ export function AnalyzedMeetingsModal({
             gap: 10,
           }}
         >
-          <Video size={16} style={{ color: COLORS.brand, marginTop: 2, flexShrink: 0 }} />
+          <Video size={16} style={{ color: COLORS.primary, marginTop: 2, flexShrink: 0 }} />
           <div style={{ flex: 1 }}>
             <h2 style={{ margin: 0, fontSize: 15, fontWeight: 700, color: COLORS.ink0 }}>
               Claap meetings analyzed ({meetings.length})
@@ -179,7 +179,7 @@ export function AnalyzedMeetingsModal({
                         padding: "1px 6px",
                         borderRadius: 4,
                         background: COLORS.brandTint,
-                        color: COLORS.brand,
+                        color: COLORS.primary,
                         fontWeight: 600,
                       }}
                     >

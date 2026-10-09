@@ -3,30 +3,31 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ArrowDownRight, ArrowUpRight } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import { DataTable, type Column, type SortDir } from "@/components/ui/data-table";
 import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
 import type { ClientTier } from "@/lib/clients/tier";
 import { HealthBadge } from "./health-badge";
 import { TierSelect } from "./tier-select";
-import { ContractEndOrigin, InvalidContractEnd, Tag, contractEndTone, daysUntil, fmtDay, fmtEur } from "../[id]/_components/ui";
+import { ContractEndOrigin, InvalidContractEnd, Tag, contractEndTone, daysAgo, daysUntil, fmtDay, fmtEur } from "../[id]/_components/ui";
 import { DUE_LABEL } from "../[id]/_components/next-actions-card";
 
-// Tableau de la vue avancée (/clients, toggle "Advanced view") : une ligne par fiche, les infos
-// clés de Key insights pour comparer les comptes et prioriser. Couleurs
-// neutres par défaut ; orange/rouge réservés à la santé, la fin de contrat
-// proche et les infos manquantes. Le tier (modifiable en place) et la phase du
-// compte ont leur colonne. Next billing (saisie manuelle) n'est plus une
-// colonne : il reste dans Key dates sur la fiche.
+// Tableau de la vue avancée (/clients, case "Advanced view") : une ligne par
+// fiche, les infos clés de Key insights pour comparer les comptes et
+// prioriser. Couleurs neutres par défaut ; ambre/rouge réservés à la santé, la
+// fin de contrat proche et les infos manquantes, rose à l'échéance "This
+// week". Le tier (modifiable en place) et la phase du compte ont leur colonne.
+// Next billing (saisie manuelle) n'est pas une colonne : il reste dans Key
+// dates sur la fiche.
 
 export type HubspotState = "loading" | "ok" | "error";
 export type PortfolioSort = { key: string; dir: SortDir };
 
 // Phase du compte (computeAccountPhase, stockée dans la santé) : colonne à part
-// entière. Pas d'orange/rouge ici (réservés au signal) ; ordre de tri = cycle de vie.
-type PhaseKey = NonNullable<NonNullable<ClientPortfolioItem["health"]>["phase"]>["key"];
-const PHASE: Record<PhaseKey, { label: string; tone: "info" | "neutral" | "brand"; order: number }> = {
-  onboarding: { label: "Onboarding", tone: "info", order: 0 },
+// entière et filtre de la liste. Ordre de tri = cycle de vie.
+export type PhaseKey = NonNullable<NonNullable<ClientPortfolioItem["health"]>["phase"]>["key"];
+export const PHASE: Record<PhaseKey, { label: string; tone: "neutral" | "brand"; order: number }> = {
+  onboarding: { label: "Onboarding", tone: "neutral", order: 0 },
   running: { label: "Running", tone: "neutral", order: 1 },
   renewal: { label: "Renewal", tone: "brand", order: 2 },
 };
@@ -98,6 +99,8 @@ function sortValue(c: ClientPortfolioItem, key: string): number | string | null 
       return c.billed_lifetime;
     case "next_step":
       return c.next_action ? (c.next_action.due ? DUE_ORDER[c.next_action.due] : 3) : null;
+    case "last_touch":
+      return c.last_contact?.at ?? null;
     case "contract_end":
       return c.contract_end?.date ?? null;
     case "team":
@@ -122,6 +125,8 @@ export function sortPortfolio(rows: ClientPortfolioItem[], sort: PortfolioSort):
   });
 }
 
+const SUB: React.CSSProperties = { fontSize: 11.5, color: COLORS.ink3, marginTop: 3, whiteSpace: "nowrap" };
+
 function ContractEndCell({ client, hubspot }: { client: ClientPortfolioItem; hubspot: HubspotState }) {
   if (hubspot === "loading") return <span style={{ fontSize: 12, color: COLORS.ink4 }}>…</span>;
   if (hubspot === "error") return <span style={{ fontSize: 12, color: COLORS.warn }}>HubSpot unreachable</span>;
@@ -133,19 +138,40 @@ function ContractEndCell({ client, hubspot }: { client: ClientPortfolioItem; hub
   const tone = contractEndTone(days);
   return (
     <div>
-      <div style={{ fontSize: 12.5, color: tone === "err" ? COLORS.err : COLORS.ink0, fontWeight: 500, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+      <div style={{ fontSize: 13, color: tone === "err" ? COLORS.err : COLORS.ink0, fontWeight: 600, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
         {fmtDay(end, true)}
         <ContractEndOrigin end={contractEnd} compact />
       </div>
-      {days !== null && (
-        <div style={{ marginTop: 2 }}>
-          {tone && tone !== "neutral" ? (
+      {days !== null &&
+        (tone && tone !== "neutral" ? (
+          <div style={{ marginTop: 3 }}>
             <Tag tone={tone}>{days < 0 ? "Ended" : relDays(days)}</Tag>
-          ) : (
-            <span style={{ fontSize: 11, color: COLORS.ink3 }}>{relDays(days)}</span>
-          )}
-        </div>
-      )}
+          </div>
+        ) : (
+          <div style={SUB}>{relDays(days)}</div>
+        ))}
+    </div>
+  );
+}
+
+// Dernier contact (HubSpot ou Claap), calculé avec la santé.
+function LastTouchCell({ client }: { client: ClientPortfolioItem }) {
+  const last = client.last_contact;
+  if (!last) {
+    return (
+      <span style={{ fontSize: 12, color: COLORS.ink4 }} title={client.health ? "No dated HubSpot or Claap activity" : "Computed with the health score, not available yet"}>
+        {client.health ? "No activity" : "-"}
+      </span>
+    );
+  }
+  const ago = daysAgo(last.at);
+  return (
+    <div title="Latest HubSpot activity or Claap meeting">
+      <div style={{ fontSize: 13, color: COLORS.ink0, fontWeight: 500, whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+        {fmtDay(last.at)}
+        {ago !== null && <span style={{ color: COLORS.ink3, fontWeight: 400 }}> · {ago <= 0 ? "today" : `${ago}d ago`}</span>}
+      </div>
+      {last.source && <div style={SUB}>via {last.source === "claap" ? "Claap" : "HubSpot"}</div>}
     </div>
   );
 }
@@ -153,9 +179,9 @@ function ContractEndCell({ client, hubspot }: { client: ClientPortfolioItem; hub
 function Person({ role, name, email }: { role: "AM" | "CS"; name: string | null; email: string | null }) {
   const label = name || email;
   return (
-    <div style={{ fontSize: 12, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={email ?? undefined}>
-      <span style={{ color: COLORS.ink3, fontWeight: 600, fontSize: 10.5, marginRight: 4 }}>{role}</span>
-      {label ? <span style={{ color: COLORS.ink1 }}>{label}</span> : <span style={{ color: COLORS.warn }}>Unassigned</span>}
+    <div style={{ fontSize: 12.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", lineHeight: 1.6 }} title={email ?? undefined}>
+      <span style={{ color: COLORS.ink3, fontWeight: 600, fontSize: 10.5, marginRight: 5 }}>{role}</span>
+      {label ? <span style={{ color: COLORS.ink0 }}>{label}</span> : <span style={{ color: COLORS.warn }}>Unassigned</span>}
     </div>
   );
 }
@@ -180,6 +206,7 @@ export function PortfolioTable({
   onTierSaved: (clientId: string, tier: ClientTier | null) => void;
 }) {
   const router = useRouter();
+  const year = new Date().getFullYear();
 
   const columns: Column<ClientPortfolioItem>[] = [
     {
@@ -187,16 +214,17 @@ export function PortfolioTable({
       header: "Account",
       sortable: true,
       sortFirstDir: "asc",
+      width: 190,
       render: (c) => (
         <div style={{ minWidth: 0 }}>
           <Link
             href={`/clients/${c.id}`}
             onClick={(e) => e.stopPropagation()}
-            style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, textDecoration: "none" }}
+            style={{ fontSize: 13.5, fontWeight: 700, color: COLORS.ink0, textDecoration: "none", lineHeight: 1.35 }}
           >
             {c.company_name}
           </Link>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 3, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, flexWrap: "wrap" }}>
             <StatusPill status={c.enrichment_status} amCsNotifiedAt={c.am_cs_notified_at} />
           </div>
         </div>
@@ -207,7 +235,7 @@ export function PortfolioTable({
       header: "Tier",
       sortable: true,
       sortFirstDir: "asc",
-      width: 96,
+      width: 92,
       render: (c) => <TierSelect clientId={c.id} tier={c.tier} onSaved={(tier) => onTierSaved(c.id, tier)} />,
     },
     {
@@ -215,7 +243,7 @@ export function PortfolioTable({
       header: "Phase",
       sortable: true,
       sortFirstDir: "asc",
-      width: 110,
+      width: 104,
       render: (c) => {
         const phase = c.health?.phase ? PHASE[c.health.phase.key] : null;
         return phase ? (
@@ -232,7 +260,7 @@ export function PortfolioTable({
       header: "Health",
       sortable: true,
       sortFirstDir: "asc",
-      width: 200,
+      width: 190,
       render: (c) => (
         <div>
           <div style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
@@ -241,7 +269,7 @@ export function PortfolioTable({
             {c.health?.trend === "down" && <ArrowDownRight size={13} style={{ color: COLORS.err }} aria-label="Declining" />}
           </div>
           {c.top_risk && (
-            <div style={{ fontSize: 11, color: COLORS.ink2, marginTop: 3, lineHeight: 1.35 }} title="Main signal pulling the score down">
+            <div style={{ fontSize: 11.5, color: COLORS.ink2, marginTop: 4, lineHeight: 1.35 }} title="Main signal pulling the score down">
               {c.top_risk}
             </div>
           )}
@@ -252,17 +280,19 @@ export function PortfolioTable({
       // Facturé lifetime (colonne Total du sheet revenue), pas le montant du deal
       // HubSpot. Jamais 0 quand la société n'est pas dans le sheet.
       key: "billed",
-      header: "Billed all time",
+      header: "Billed",
       sortable: true,
-      width: 140,
+      width: 130,
       render: (c) =>
         c.billing_matched ? (
-          <span
-            style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}
-            title="Billed since the start, from the revenue sheet (Total column)"
-          >
-            {fmtEur(c.billed_lifetime)}
-          </span>
+          <div title="Billed since the start, from the revenue sheet (Total column)">
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: COLORS.ink0, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+              {fmtEur(c.billed_lifetime)}
+            </div>
+            <div style={SUB}>
+              All time{c.billed_current_year != null ? ` · ${fmtEur(c.billed_current_year)} in ${year}` : ""}
+            </div>
+          </div>
         ) : (
           <span style={{ fontSize: 12, color: COLORS.warn, whiteSpace: "nowrap" }}>Not in revenue sheet</span>
         ),
@@ -277,7 +307,7 @@ export function PortfolioTable({
           <div style={{ minWidth: 200 }}>
             <div
               style={{
-                fontSize: 12.5,
+                fontSize: 13,
                 color: COLORS.ink0,
                 lineHeight: 1.4,
                 display: "-webkit-box",
@@ -289,10 +319,10 @@ export function PortfolioTable({
             >
               {c.next_action.title}
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
               {c.next_action.owner && <Tag>{c.next_action.owner}</Tag>}
-              {c.next_action.due && <Tag tone={c.next_action.due === "this_week" ? "err" : "neutral"}>{DUE_LABEL[c.next_action.due]}</Tag>}
-              {c.open_actions > 1 && <span style={{ fontSize: 11, color: COLORS.ink3 }}>+{c.open_actions - 1} more</span>}
+              {c.next_action.due && <Tag tone={c.next_action.due === "this_week" ? "brand" : "neutral"}>{DUE_LABEL[c.next_action.due]}</Tag>}
+              {c.open_actions > 1 && <span style={{ fontSize: 11.5, color: COLORS.ink3 }}>+{c.open_actions - 1} more</span>}
             </div>
           </div>
         ) : (
@@ -300,11 +330,18 @@ export function PortfolioTable({
         ),
     },
     {
+      key: "last_touch",
+      header: "Last touch",
+      sortable: true,
+      width: 120,
+      render: (c) => <LastTouchCell client={c} />,
+    },
+    {
       key: "contract_end",
       header: "Contract end",
       sortable: hubspot === "ok",
       sortFirstDir: "asc",
-      width: 130,
+      width: 120,
       render: (c) => <ContractEndCell client={c} hubspot={hubspot} />,
     },
     {
@@ -312,9 +349,9 @@ export function PortfolioTable({
       header: "Team",
       sortable: true,
       sortFirstDir: "asc",
-      width: 150,
+      width: 160,
       render: (c) => (
-        <div style={{ maxWidth: 150 }}>
+        <div style={{ maxWidth: 160 }}>
           <Person role="AM" name={c.am_name} email={c.am_email} />
           <Person role="CS" name={c.cs_name} email={c.cs_email} />
         </div>
@@ -323,7 +360,7 @@ export function PortfolioTable({
   ];
 
   return (
-    <div className="ds-card" style={{ overflowX: "auto" }}>
+    <div className="ds-card" style={{ overflowX: "auto", borderRadius: 14 }}>
       <DataTable<ClientPortfolioItem>
         columns={columns}
         rows={clients}
@@ -334,7 +371,7 @@ export function PortfolioTable({
         sort={sort}
         onSortChange={onSortChange}
         onRowClick={(c) => router.push(`/clients/${c.id}`)}
-        style={{ minWidth: 1280 }}
+        style={{ minWidth: 1320 }}
         empty={
           <div style={{ padding: 40, textAlign: "center" }}>
             <div style={{ fontSize: 14, color: COLORS.ink2 }}>No clients match these filters.</div>

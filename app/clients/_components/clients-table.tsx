@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { PersonAvatar } from "@/components/ui/person-avatar";
 import { SortButton, type SortDir } from "@/components/ui/data-table";
@@ -47,8 +47,8 @@ function StatusPill({
   amCsNotifiedAt: string | null;
 }) {
   const map: Record<ClientPortfolioItem["enrichment_status"], { fg: string; bg: string; label: string }> = {
-    pending: { fg: COLORS.ink2, bg: COLORS.bgSoft, label: "Pending" },
-    awaiting_meetings: { fg: COLORS.ink1, bg: COLORS.bgSoft, label: "Meetings to confirm" },
+    pending: { fg: COLORS.ink2, bg: COLORS.sand, label: "Pending" },
+    awaiting_meetings: { fg: COLORS.ink1, bg: COLORS.sand, label: "Meetings to confirm" },
     running: { fg: COLORS.info, bg: COLORS.infoBg, label: "Enriching…" },
     // Une fois enrichi, l'étape suivante est la validation par l'AE (remplir les
     // champs requis + assigner/notifier l'AM et le CS). On reflète ce sous-état :
@@ -100,12 +100,12 @@ export function ClientsTable({
           textAlign: "center",
           background: COLORS.bgCard,
           border: `1px dashed ${COLORS.line}`,
-          borderRadius: 12,
+          borderRadius: 14,
           color: COLORS.ink2,
           fontSize: 14,
         }}
       >
-        No clients to display.
+        No clients match these filters.
         <div style={{ fontSize: 12, color: COLORS.ink3, marginTop: 6 }}>
           Clients are created automatically when a HubSpot deal moves to closed-won.
         </div>
@@ -120,9 +120,9 @@ export function ClientsTable({
       style={{
         background: COLORS.bgCard,
         border: `1px solid ${COLORS.line}`,
-        borderRadius: 12,
+        borderRadius: 14,
         overflow: "hidden",
-        boxShadow: "0 1px 3px rgba(0, 0, 0, 0.04)",
+        boxShadow: "0 1px 3px rgba(40, 30, 20, 0.04)",
       }}
     >
       <div
@@ -130,10 +130,10 @@ export function ClientsTable({
           display: "grid",
           gridTemplateColumns: GRID,
           gap: 12,
-          padding: "10px 16px",
-          background: COLORS.bgSoft,
+          padding: "12px 16px",
+          background: COLORS.bgCard,
           borderBottom: `1px solid ${COLORS.line}`,
-          fontSize: 11,
+          fontSize: 10.5,
           fontWeight: 600,
           color: COLORS.ink3,
           textTransform: "uppercase",
@@ -156,7 +156,7 @@ export function ClientsTable({
             display: "grid",
             gridTemplateColumns: GRID,
             gap: 12,
-            padding: "11px 16px",
+            padding: "12px 16px",
             borderBottom: `1px solid ${COLORS.line}`,
             color: "inherit",
             textDecoration: "none",
@@ -172,12 +172,12 @@ export function ClientsTable({
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
-            <CompanyAvatar name={c.company_name} size={32} rounded="md" />
+            <CompanyAvatar name={c.company_name} size={32} rounded="md" override={{ background: COLORS.sand, color: COLORS.ink1 }} />
             <div style={{ minWidth: 0 }}>
               <div
                 style={{
-                  fontSize: 13,
-                  fontWeight: 600,
+                  fontSize: 13.5,
+                  fontWeight: 700,
                   color: COLORS.ink0,
                   overflow: "hidden",
                   textOverflow: "ellipsis",

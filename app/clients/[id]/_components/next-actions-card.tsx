@@ -1,16 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { Calendar, Check, CheckCircle2, Database, Hash, Newspaper, RotateCcw, Video, Zap, FileText } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { Check, CheckCircle2, Database, Hash, Newspaper, RotateCcw, Video, FileText } from "lucide-react";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { InsightAction, InsightSource, Insights } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { Card, CardHeader, Tag, daysAgo, fmtDay } from "./ui";
 
-// "Next actions" de Key insights : 1 à 3 actions, toutes en neutre (le rouge
-// est réservé à l'échéance "This week"). Chacune : titre impératif, owner,
-// échéance, "Why" avec la source datée. "Done" la masque (PATCH /insights) ;
-// les actions faites restent consultables ("N done") avec Reopen.
+// "Next actions" de Key insights : 1 à 3 actions, en neutre (le rose est
+// réservé à l'échéance "This week"). Chacune : case ronde (cocher = fait,
+// PATCH /insights), titre impératif, "why", source datée, owner et échéance à
+// droite. Les actions faites restent consultables ("N done") avec Reopen.
 
 export const DUE_LABEL: Record<NonNullable<InsightAction["due"]>, string> = {
   this_week: "This week",
@@ -26,11 +26,12 @@ const SOURCE_ICON = {
   fiche: FileText,
 } as const;
 
+const SOURCE_FALLBACK: Record<InsightSource["kind"], string> = { claap: "Claap", hubspot: "HubSpot", slack: "Slack", news: "News", fiche: "Account page" };
+
 export function SourceLabel({ source }: { source: InsightSource | null | undefined }) {
   if (!source) return null;
   const Icon = SOURCE_ICON[source.kind] ?? FileText;
-  const fallback = { claap: "Claap", hubspot: "HubSpot", slack: "Slack", news: "News", fiche: "Account page" }[source.kind];
-  const label = source.label || fallback;
+  const label = source.label || SOURCE_FALLBACK[source.kind];
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: COLORS.ink1, fontWeight: 500 }}>
       <Icon size={12} style={{ color: COLORS.ink3 }} />
@@ -104,71 +105,50 @@ export function NextActionsCard({
   }
 
   return (
-    <Card>
+    <Card padding="18px 20px 8px">
       <CardHeader
-        icon={Zap}
         title="Next actions"
         meta={insights?.generated_at ? `Last 45 days · ${fmtDay(insights.generated_at)}` : undefined}
-        style={{ marginBottom: 10 }}
+        style={{ marginBottom: 4 }}
       />
 
       {open.length === 0 ? (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: COLORS.ink3, padding: "4px 0" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: COLORS.ink3, padding: "10px 0 12px" }}>
           <CheckCircle2 size={14} style={{ color: COLORS.ok }} />
           No open action. The next refresh suggests new ones if something comes up.
         </div>
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ margin: "0 -20px" }}>
           {open.map((a, i) => {
             const why = a.why ?? a.rationale;
+            const src = a.source;
             return (
               <div
                 key={a.id ?? i}
                 className="ch-act"
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "28px minmax(0, 1fr) auto",
-                  gap: 12,
+                  gridTemplateColumns: "20px minmax(0, 1fr) auto",
+                  gap: 14,
                   alignItems: "start",
-                  padding: "11px 12px",
-                  border: `1px solid ${COLORS.line}`,
-                  borderRadius: 10,
-                  background: COLORS.bgCard,
+                  padding: "14px 20px",
+                  borderTop: i === 0 ? "none" : `1px solid ${COLORS.line}`,
                 }}
               >
-                <span
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 99,
-                    display: "grid",
-                    placeItems: "center",
-                    fontWeight: 700,
-                    fontSize: 13,
-                    background: COLORS.ink0,
-                    color: "#fff",
-                  }}
-                >
-                  {i + 1}
-                </span>
+                {a.id ? (
+                  <button type="button" className="ch-check" onClick={() => void markDone(a)} aria-label={`Mark "${a.title}" as done`} title="Mark as done" style={{ marginTop: 1 }}>
+                    <Check size={12} strokeWidth={3} />
+                  </button>
+                ) : (
+                  <span />
+                )}
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: COLORS.ink0 }}>{a.title}</div>
-                  {(a.owner || a.due) && (
-                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>
-                      {a.owner && <Tag>{a.owner}</Tag>}
-                      {a.due && (
-                        <Tag tone={a.due === "this_week" ? "err" : "neutral"}>
-                          <Calendar size={11} />
-                          {DUE_LABEL[a.due]}
-                        </Tag>
-                      )}
-                    </div>
-                  )}
-                  {(why || a.source) && (
+                  {why && (
                     <div
-                      title={why ?? undefined}
+                      title={why}
                       style={{
-                        marginTop: 6,
+                        marginTop: 4,
                         fontSize: 12.5,
                         color: COLORS.ink2,
                         lineHeight: 1.45,
@@ -178,23 +158,20 @@ export function NextActionsCard({
                         overflow: "hidden",
                       }}
                     >
-                      {why && (
-                        <>
-                          <b style={{ color: COLORS.ink1, fontWeight: 600 }}>Why:</b> {why}{" "}
-                        </>
-                      )}
-                      <SourceLabel source={a.source} />
+                      {why}
+                    </div>
+                  )}
+                  {src && (
+                    <div style={{ marginTop: 4, fontSize: 11.5, color: COLORS.ink3 }}>
+                      {src.label || SOURCE_FALLBACK[src.kind]}
+                      {src.date ? ` · ${fmtDay(src.date)}` : ""}
                     </div>
                   )}
                 </div>
-                {a.id ? (
-                  <button type="button" className="ch-btn ch-btn-sm ch-btn-done" onClick={() => void markDone(a)}>
-                    <Check size={13} />
-                    Done
-                  </button>
-                ) : (
-                  <span />
-                )}
+                <div style={{ display: "flex", gap: 6, alignItems: "center", paddingTop: 1 }}>
+                  {a.owner && <Tag>{a.owner}</Tag>}
+                  {a.due && <Tag tone={a.due === "this_week" ? "brand" : "neutral"}>{DUE_LABEL[a.due]}</Tag>}
+                </div>
               </div>
             );
           })}
@@ -202,7 +179,7 @@ export function NextActionsCard({
       )}
 
       {done.length > 0 && (
-        <div style={{ marginTop: 12, fontSize: 12, color: COLORS.ink3 }}>
+        <div style={{ margin: "0 -20px", padding: "10px 20px 8px", borderTop: `1px solid ${COLORS.line}`, fontSize: 12, color: COLORS.ink3 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <CheckCircle2 size={13} />
             {doneThisWeek > 0 ? `${doneThisWeek} done this week` : `${done.length} done recently`} ·{" "}

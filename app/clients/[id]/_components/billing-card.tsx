@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Receipt, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { Loader2, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { Billing, ClientFieldValue, HubspotDealFields } from "@/lib/clients/types";
 import { resolveContractEnd } from "@/lib/clients/lifecycle";
 import { Card, CardHeader, ContractEndOrigin, Eyebrow, InvalidContractEnd, Tag, contractEndTone, daysUntil, fmtDay, fmtEur, parseLooseDate } from "./ui";
@@ -50,9 +50,9 @@ export function BillingCard({
   }
 
   const reloadBtn = (
-    <button type="button" className="ch-btn ch-btn-sm ch-btn-ghost" onClick={reload} disabled={reloading} title="Reload from the revenue file">
-      {reloading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+    <button type="button" className="ch-btn ch-btn-sm ch-btn-ghost" onClick={reload} disabled={reloading} title="Reload from the revenue file" style={{ marginRight: -8 }}>
       {reloading ? "Reloading…" : "Reload"}
+      {reloading ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
     </button>
   );
 
@@ -60,6 +60,7 @@ export function BillingCard({
   const end = resolveContractEnd({ contractEndDate: dealFields?.contract_end_date, closedwonAt, conversationsField: contractEndField });
   const contractEnd = dealFields == null ? null : end.date;
   const toEnd = daysUntil(contractEnd);
+  const endTone = contractEndTone(toEnd);
   const contractRows = (
     <dl
       style={{
@@ -68,18 +69,18 @@ export function BillingCard({
         gap: "8px 14px",
         margin: 0,
         paddingTop: 14,
-        borderTop: `1px dashed ${COLORS.lineStrong}`,
-        fontSize: 12.5,
+        borderTop: `1px solid ${COLORS.line}`,
+        fontSize: 13,
       }}
     >
       <dt style={{ color: COLORS.ink3 }}>Contract</dt>
-      <dd style={{ margin: 0, textAlign: "right", fontWeight: 500 }}>
+      <dd style={{ margin: 0, textAlign: "right", fontWeight: 600 }}>
         {dealFields == null
           ? <span style={{ color: COLORS.warn }}>HubSpot unreachable</span>
           : contractStart || contractEnd || end.rejected
             ? (
               <>
-                {fmtDay(contractStart, true)} → {contractEnd ? fmtDay(contractEnd, true) : end.rejected ? <InvalidContractEnd end={end} /> : "-"}
+                {contractStart ? `${fmtDay(contractStart, true)} ` : ""}→ {contractEnd ? fmtDay(contractEnd, true) : end.rejected ? <InvalidContractEnd end={end} /> : "-"}
                 <ContractEndOrigin end={end} compact />
               </>
             )
@@ -88,17 +89,15 @@ export function BillingCard({
       {toEnd !== null && (
         <>
           <dt style={{ color: COLORS.ink3 }}>{toEnd >= 0 ? "Renewal in" : "Contract ended"}</dt>
-          <dd style={{ margin: 0, textAlign: "right" }}>
-            <Tag tone={contractEndTone(toEnd) ?? "neutral"}>
-              {toEnd >= 0 ? `${toEnd} days` : `${-toEnd} days ago`}
-            </Tag>
+          <dd style={{ margin: 0, textAlign: "right", fontWeight: 600, color: endTone === "err" ? COLORS.err : endTone === "warn" ? COLORS.warn : undefined }}>
+            {toEnd >= 0 ? `${toEnd} days` : `${-toEnd} days ago`}
           </dd>
         </>
       )}
       {dealFields?.billing && (
         <>
           <dt style={{ color: COLORS.ink3 }}>Billing</dt>
-          <dd style={{ margin: 0, textAlign: "right", fontWeight: 500 }}>{dealFields.billing}</dd>
+          <dd style={{ margin: 0, textAlign: "right", fontWeight: 600 }}>{dealFields.billing}</dd>
         </>
       )}
     </dl>
@@ -107,10 +106,12 @@ export function BillingCard({
   if (!billing?.matched) {
     return (
       <Card style={{ display: "flex", flexDirection: "column" }}>
-        <CardHeader icon={Receipt} title="Billing" right={reloadBtn} />
-        <div style={{ fontSize: 13, color: COLORS.warn, fontWeight: 600 }}>No match in the revenue sheet</div>
-        <div style={{ fontSize: 12.5, color: COLORS.ink3, marginTop: 4, lineHeight: 1.5 }}>
-          The company name was not found in the revenue file, so billed revenue is unknown (not zero).
+        <CardHeader title="Billing" right={reloadBtn} />
+        <div style={{ padding: "12px 14px", borderRadius: 10, background: COLORS.warnTint, border: `1px solid ${COLORS.warnLine}` }}>
+          <div style={{ fontSize: 13, color: COLORS.warn, fontWeight: 700 }}>No match in the revenue sheet</div>
+          <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 3, lineHeight: 1.5 }}>
+            The company name was not found in the revenue file, so billed revenue is unknown (not zero).
+          </div>
         </div>
         {error && <div style={{ fontSize: 12, color: COLORS.err, marginTop: 6 }}>{error}</div>}
         <div style={{ marginTop: "auto", paddingTop: 16 }}>{contractRows}</div>
@@ -127,7 +128,7 @@ export function BillingCard({
 
   return (
     <Card style={{ display: "flex", flexDirection: "column" }}>
-      <CardHeader icon={Receipt} title="Billing" meta={refreshedAt ? `Revenue sheet · ${fmtDay(refreshedAt)}` : "Revenue sheet"} right={reloadBtn} />
+      <CardHeader title="Billing" meta={refreshedAt ? `Revenue sheet · ${fmtDay(refreshedAt)}` : "Revenue sheet"} right={reloadBtn} />
       <Eyebrow>{currentYear} revenue</Eyebrow>
       <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.1, fontVariantNumeric: "tabular-nums" }}>

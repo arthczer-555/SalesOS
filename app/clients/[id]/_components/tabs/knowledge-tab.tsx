@@ -1,31 +1,28 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useRef, useState } from "react";
 import useSWR from "swr";
-import { Check, Copy, History, Layers, Linkedin, Newspaper, Pencil, Shield, Target, Users, Calendar, AlertTriangle } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { Check, Copy, Linkedin, Pencil } from "lucide-react";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { ClientRow, ClientFieldValue, DiscoveredRecording, SectionKey } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { DealRecapPanel } from "../deal-recap-panel";
 import { CoachBriefPanel } from "../coach-brief-panel";
-import { TimelinePanel, type ClientMeeting } from "../timeline-panel";
-import { FieldRows, FieldsCard, sectionRefs, type FieldRef } from "../fields-section";
-import { NewsRow } from "../side-cards";
+import { TimelinePanel, meetingCount, type ClientMeeting } from "../timeline-panel";
+import { FieldRows, FieldsCard, hasMissingKeyField, sectionRefs, type FieldRef } from "../fields-section";
+import { NewsErrors, NewsRow } from "../side-cards";
 import { WhatsNewCard } from "../whats-new-card";
-import { Card, CardHeader, type Collapse } from "../ui";
+import { BareCards, Card, CardHeader } from "../ui";
 
 // Onglet Knowledge : la référence du compte (qui, quoi, comment, historique).
-// Mise en page voulue par les CSM, 2 colonnes indépendantes coupées au milieu
-// (une carte ouverte d'un côté ne décale pas l'autre colonne) :
-//  - gauche : Goals & expectations, IT & access, activité récente, deal recap,
-//    contexte, meetings ;
-//  - droite : Program scope, Contacts, planning, brief coachs, news.
-// Dans chaque carte, ordre "entonnoir" : valeurs courtes en haut (enums,
-// Yes/No, dates), listes et textes longs en bas, champs liés gardés ensemble.
-// Chaque section se replie (les deux premières rangées ouvertes par défaut,
-// choix mémorisé par utilisateur) ; dans les sections, la valeur clé reste
-// visible et le détail se déplie au clic (cf. field-display). Barre d'ancres
-// collée sous le header : une ancre ouvre sa section avant d'y scroller.
+// Sidebar à gauche (Account / History / Tools), une section affichée à la
+// fois à droite, en pleine page (<BareCards> : les cartes perdent leur cadre).
+// Pastille orange = un champ clé de la section est vide ; compteurs sur
+// Meetings et Company news. La section choisie est dans l'ancre de l'URL
+// (?tab=knowledge#k-contacts), que CoachelloAI met dans ses liens.
+// Dans chaque section, ordre "entonnoir" : valeurs courtes en haut (enums,
+// Yes/No, dates), listes et textes longs en bas, champs liés gardés ensemble ;
+// la valeur clé reste visible et le détail se déplie au clic (cf. field-display).
 
 const HUBSPOT_PORTAL_ID = process.env.NEXT_PUBLIC_HUBSPOT_PORTAL_ID;
 
@@ -37,15 +34,22 @@ const CONTACT_ROLES: Array<{ key: string; role: string }> = [
   { key: "contact_it", role: "IT" },
 ];
 
-// Ordre explicite par carte (pas celui de SECTION_DEFINITIONS) : un field
+// Ordre explicite par section (pas celui de SECTION_DEFINITIONS) : un field
 // ajouté à SECTION_DEFINITIONS doit aussi être placé ici pour apparaître.
 const refsOf = (section: SectionKey, keys: string[]): FieldRef[] => keys.map((key) => ({ section, key }));
+
+const GOALS_REFS: FieldRef[] = sectionRefs("goals");
 
 const PROGRAM_REFS: FieldRef[] = refsOf("program_scope", [
   "nom_programme", "type_coaching", "nb_coaches_estime", "population_accompagnee",
   "auto_assessment", "flash_feedback", "tripartite", "quadripartite",
   "cohortes_format", "offres_associees",
 ]);
+
+const CONTACT_REFS: FieldRef[] = [
+  ...CONTACT_ROLES.map((c) => ({ section: "general_info" as const, key: c.key })),
+  { section: "general_info", key: "autres_parties_prenantes" },
+];
 
 // Paramétrage d'abord, puis conformité, puis le contact IT et les notes.
 const IT_REFS: FieldRef[] = [
@@ -69,62 +73,41 @@ const PLANNING_REFS: FieldRef[] = [
   ...refsOf("org", ["referentiels_documents", "contraintes_organisationnelles"]),
 ];
 
-// Ordre de lecture de la page (rangées, puis colonne gauche, puis droite).
-const ANCHORS: Array<{ id: string; label: string }> = [
-  { id: "k-goals", label: "Goals" },
-  { id: "k-program", label: "Program" },
-  { id: "k-it", label: "IT & access" },
-  { id: "k-contacts", label: "Contacts" },
-  { id: "k-activity", label: "Recent activity" },
-  { id: "k-recap", label: "Deal recap" },
-  { id: "k-history", label: "History" },
-  { id: "k-meetings", label: "Meetings" },
-  { id: "k-planning", label: "Planning" },
-  { id: "k-brief", label: "Coach brief" },
-  { id: "k-news", label: "News" },
+// Les ids (k-…) sont aussi les ancres des liens CoachelloAI : ne pas les renommer.
+type SectionId =
+  | "k-goals" | "k-program" | "k-contacts" | "k-it" | "k-planning"
+  | "k-recap" | "k-history" | "k-meetings" | "k-activity" | "k-news"
+  | "k-brief";
+
+const NAV: Array<{ group: string; items: Array<{ id: SectionId; label: string; refs?: FieldRef[] }> }> = [
+  {
+    group: "Account",
+    items: [
+      { id: "k-goals", label: "Goals & expectations", refs: GOALS_REFS },
+      { id: "k-program", label: "Program scope", refs: PROGRAM_REFS },
+      { id: "k-contacts", label: "Contacts", refs: CONTACT_REFS },
+      { id: "k-it", label: "IT & access", refs: IT_REFS },
+      { id: "k-planning", label: "Planning", refs: PLANNING_REFS },
+    ],
+  },
+  {
+    group: "History",
+    items: [
+      { id: "k-recap", label: "Deal recap" },
+      { id: "k-history", label: "Context & history", refs: HISTORY_REFS },
+      { id: "k-meetings", label: "Meetings" },
+      { id: "k-activity", label: "Recent activity" },
+      { id: "k-news", label: "Company news" },
+    ],
+  },
+  { group: "Tools", items: [{ id: "k-brief", label: "Coach brief" }] },
 ];
 
-// ── Sections repliables ─────────────────────────────────────────────────
-// Mémorisé dans localStorage (confort par utilisateur, même réglage pour tous
-// les clients). Stockage indisponible : on retombe sur les défauts, sans erreur.
+const SECTION_IDS = new Set<string>(NAV.flatMap((g) => g.items.map((i) => i.id)));
+const DEFAULT_SECTION: SectionId = "k-goals";
 
-const SECTIONS_KEY = "coachellohq.clients.knowledge.sections";
-const DEFAULT_OPEN = new Set(["k-goals", "k-program", "k-it", "k-contacts"]);
-
-function readSavedSections(): Record<string, boolean> {
-  try {
-    const raw = window.localStorage.getItem(SECTIONS_KEY);
-    const parsed: unknown = raw ? JSON.parse(raw) : null;
-    return parsed && typeof parsed === "object" ? (parsed as Record<string, boolean>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function useSections() {
-  const [open, setOpen] = useState<Record<string, boolean>>(() => {
-    const saved = typeof window === "undefined" ? {} : readSavedSections();
-    return Object.fromEntries(ANCHORS.map(({ id }) => [id, typeof saved[id] === "boolean" ? saved[id] : DEFAULT_OPEN.has(id)]));
-  });
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(SECTIONS_KEY, JSON.stringify(open));
-    } catch {
-      /* stockage indisponible : l'état reste en mémoire */
-    }
-  }, [open]);
-  const openSection = useCallback((id: string) => setOpen((o) => (o[id] ? o : { ...o, [id]: true })), []);
-  const collapse = (id: string): Collapse => ({ open: !!open[id], onToggle: () => setOpen((o) => ({ ...o, [id]: !o[id] })) });
-  const setAll = (value: boolean) => setOpen(Object.fromEntries(ANCHORS.map(({ id }) => [id, value])));
-  const allOpen = ANCHORS.every(({ id }) => open[id]);
-  return { collapse, openSection, setAll, allOpen };
-}
-
-function scrollToSection(id: string) {
-  const el = document.getElementById(id);
-  if (!el) return;
-  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+function isSectionId(id: string): id is SectionId {
+  return SECTION_IDS.has(id);
 }
 
 // ── Contacts ────────────────────────────────────────────────────────────
@@ -175,7 +158,7 @@ function PersonCard({
   const [copied, setCopied] = useState(false);
   if (!contact?.name) {
     return (
-      <div style={{ display: "flex", gap: 10, alignItems: "center", padding: 12, border: `1px dashed #f2c96b`, background: "#fffdf6", borderRadius: 10 }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", padding: 12, border: `1px dashed ${COLORS.warnLine}`, background: COLORS.warnTint, borderRadius: 10 }}>
         <span style={{ width: 34, height: 34, borderRadius: 99, background: COLORS.warnBg, color: COLORS.warn, display: "grid", placeItems: "center", fontWeight: 700, flexShrink: 0 }}>+</span>
         <div>
           <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: "0.04em", textTransform: "uppercase", color: COLORS.warn }}>{role}</div>
@@ -200,7 +183,7 @@ function PersonCard({
   const knownProfile = !!link?.linkedinUrl;
   return (
     <div style={{ display: "flex", gap: 10, padding: 12, border: `1px solid ${COLORS.line}`, borderRadius: 10, minWidth: 0 }}>
-      <span style={{ width: 34, height: 34, borderRadius: 99, background: COLORS.bgSoft, border: `1px solid ${COLORS.line}`, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: COLORS.ink1, flexShrink: 0 }}>
+      <span style={{ width: 34, height: 34, borderRadius: 99, background: COLORS.sand, display: "grid", placeItems: "center", fontSize: 12, fontWeight: 700, color: COLORS.ink1, flexShrink: 0 }}>
         {initials(contact.name)}
       </span>
       <div style={{ minWidth: 0, flex: 1 }}>
@@ -238,57 +221,41 @@ function PersonCard({
   );
 }
 
-function ContactsCard({ client, onUpdated, collapse }: { client: ClientRow; onUpdated: () => void; collapse: Collapse }) {
+function ContactsCard({ client, onUpdated }: { client: ClientRow; onUpdated: () => void }) {
   const [editing, setEditing] = useState(false);
-  // Liens HubSpot / LinkedIn chargés à part, seulement carte ouverte.
-  const { data: linkData, error: linkError } = useSWR<ContactLinks>(
-    collapse.open ? `/api/clients/${client.id}/contact-links` : null,
-    fetchContactLinks,
-    { revalidateOnFocus: false },
-  );
+  // Liens HubSpot / LinkedIn chargés à part, seulement quand la section est affichée.
+  const { data: linkData, error: linkError } = useSWR<ContactLinks>(`/api/clients/${client.id}/contact-links`, fetchContactLinks, {
+    revalidateOnFocus: false,
+  });
   const links = linkData?.links ?? {};
   const linkOf = (c: Contact | null) => (c?.email ? links[c.email.trim().toLowerCase()] : undefined);
   const gi = (client.fields_json?.general_info ?? {}) as Record<string, ClientFieldValue | undefined>;
   const others = (gi.autres_parties_prenantes?.value as Contact[] | null) ?? [];
-  const contactRefs: FieldRef[] = [
-    ...CONTACT_ROLES.map((c) => ({ section: "general_info" as const, key: c.key })),
-    { section: "general_info", key: "autres_parties_prenantes" },
-  ];
-  const startEditing = () => {
-    if (!collapse.open) collapse.onToggle();
-    setEditing(true);
-  };
 
   return (
-    <Card id="k-contacts" style={{ scrollMarginTop: 64 }}>
+    <Card id="k-contacts">
       <CardHeader
-        icon={Users}
         title="Contacts"
-        meta={linkError && collapse.open ? "HubSpot links unavailable" : undefined}
-        collapse={collapse}
+        meta={linkError ? "HubSpot links unavailable" : undefined}
         right={
-          <button type="button" className="ch-btn ch-btn-sm ch-btn-ghost" onClick={() => (editing ? setEditing(false) : startEditing())}>
+          <button type="button" className="ch-btn ch-btn-sm" onClick={() => setEditing((e) => !e)}>
             {editing ? <Check size={12} /> : <Pencil size={12} />}
             {editing ? "Done" : "Edit"}
           </button>
         }
       />
-      {collapse.open && (
-        <>
-          {editing ? (
-            <FieldRows refs={contactRefs} fields={client.fields_json ?? {}} clientId={client.id} onUpdated={onUpdated} />
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 10 }}>
-              {CONTACT_ROLES.map((c) => {
-                const contact = (gi[c.key]?.value as Contact | null) ?? null;
-                return <PersonCard key={c.key} role={c.role} contact={contact} company={client.company_name} link={linkOf(contact)} onAdd={startEditing} />;
-              })}
-              {others.length > 0
-                ? others.map((o, i) => <PersonCard key={`o${i}`} role="Stakeholder" contact={o} company={client.company_name} link={linkOf(o)} onAdd={startEditing} />)
-                : <PersonCard role="Other stakeholders" contact={null} company={client.company_name} onAdd={startEditing} />}
-            </div>
-          )}
-        </>
+      {editing ? (
+        <FieldRows refs={CONTACT_REFS} fields={client.fields_json ?? {}} clientId={client.id} onUpdated={onUpdated} />
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+          {CONTACT_ROLES.map((c) => {
+            const contact = (gi[c.key]?.value as Contact | null) ?? null;
+            return <PersonCard key={c.key} role={c.role} contact={contact} company={client.company_name} link={linkOf(contact)} onAdd={() => setEditing(true)} />;
+          })}
+          {others.length > 0
+            ? others.map((o, i) => <PersonCard key={`o${i}`} role="Stakeholder" contact={o} company={client.company_name} link={linkOf(o)} onAdd={() => setEditing(true)} />)
+            : <PersonCard role="Other stakeholders" contact={null} company={client.company_name} onAdd={() => setEditing(true)} />}
+        </div>
       )}
     </Card>
   );
@@ -318,22 +285,36 @@ export function KnowledgeTab({
   client: ClientRow;
   meetings: ClientMeeting[];
   onUpdated: () => void;
-  // Ancre demandée depuis l'extérieur ("See all" de Key insights, #k-… d'un
-  // lien CoachelloAI) : la section s'ouvre puis on y scrolle. `seq` permet de
-  // redemander la même ancre.
+  // Section demandée depuis l'extérieur ("See all" de Key insights, #k-… d'un
+  // lien CoachelloAI). `seq` (horodatage) permet de redemander la même.
   focus?: { id: string; seq: number } | null;
 }) {
   const { toast } = useToast();
   const [decliningId, setDecliningId] = useState<string | null>(null);
-  const { collapse, openSection, setAll, allOpen } = useSections();
+  // Dernier choix gagnant entre un clic dans la sidebar et une demande externe.
+  const [picked, setPicked] = useState<{ id: SectionId; at: number } | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
   const fields = client.fields_json ?? {};
 
-  useEffect(() => {
-    if (!focus) return;
-    openSection(focus.id);
-    const t = setTimeout(() => scrollToSection(focus.id), 60);
-    return () => clearTimeout(t);
-  }, [focus, openSection]);
+  const requested = focus && isSectionId(focus.id) ? { id: focus.id, at: focus.seq } : null;
+  const active: SectionId = [picked, requested].reduce<{ id: SectionId; at: number } | null>(
+    (best, c) => (c && (!best || c.at > best.at) ? c : best),
+    null,
+  )?.id ?? DEFAULT_SECTION;
+
+  function select(id: SectionId) {
+    setPicked({ id, at: Date.now() });
+    // Ancre dans l'URL : lien partageable vers la section, comme ceux de CoachelloAI.
+    const url = new URL(window.location.href);
+    url.hash = id;
+    window.history.replaceState(null, "", url.toString());
+    // Page défilée dans une longue section : on remonte en haut de la nouvelle
+    // (la sidebar, collante, reste à sa place).
+    const root = rootRef.current;
+    const nav = navRef.current;
+    if (root && nav && root.getBoundingClientRect().top < nav.getBoundingClientRect().top - 1) root.scrollIntoView({ block: "start" });
+  }
 
   async function decline(r: DiscoveredRecording) {
     setDecliningId(r.recording_id);
@@ -356,120 +337,111 @@ export function KnowledgeTab({
     }
   }
 
-  function jump(id: string) {
-    openSection(id);
-    // Laisse la section s'ouvrir avant de scroller.
-    requestAnimationFrame(() => scrollToSection(id));
-  }
-
   const newsItems = client.news?.items ?? [];
-  const newsCollapse = collapse("k-news");
+  const counts: Partial<Record<SectionId, number>> = {
+    "k-meetings": meetingCount(meetings, client.discovered_claap_recordings ?? []),
+    "k-news": newsItems.length,
+  };
 
-  return (
-    <div>
-      <nav
-        aria-label="Jump to section"
-        style={{
-          // Collée sous le header : le conteneur de scroll n'a pas de padding
-          // haut (cf. page.tsx), la barre déborde de la gouttière pour masquer
-          // le contenu qui défile dessous.
-          position: "sticky",
-          top: 0,
-          zIndex: 5,
-          display: "flex",
-          gap: 6,
-          overflowX: "auto",
-          padding: "10px 32px",
-          margin: "-24px -32px 16px",
-          background: COLORS.bgPage,
-          borderBottom: `1px solid ${COLORS.line}`,
-          scrollbarWidth: "none",
-        }}
-      >
-        {ANCHORS.map((a) => (
-          <button key={a.id} type="button" className="ch-anchor" onClick={() => jump(a.id)}>
-            {a.label}
-          </button>
-        ))}
-        <button type="button" className="ch-anchor ch-anchor-ghost" onClick={() => setAll(!allOpen)}>
-          {allOpen ? "Collapse all" : "Expand all"}
-        </button>
-      </nav>
-
-      <div className="ch-grid-2" style={{ alignItems: "start" }}>
-        <div className="ch-col">
-          <FieldsCard id="k-goals" icon={Target} title="Goals & expectations" refs={sectionRefs("goals")} fields={fields} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-goals")} />
-          <FieldsCard
-            id="k-it"
-            icon={Shield}
-            title="IT & access"
-            meta={itSummary(client)}
-            refs={IT_REFS}
-            fields={fields}
-            clientId={client.id}
-            onUpdated={onUpdated}
-            collapse={collapse("k-it")}
-            nestDetails
-          />
-          <WhatsNewCard
-            id="k-activity"
-            insights={client.insights}
-            report={client.last_refresh_report}
-            clientId={client.id}
-            onUpdated={onUpdated}
-            collapse={collapse("k-activity")}
-          />
-          <DealRecapPanel recap={client.deal_recap} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-recap")} />
-          <FieldsCard id="k-history" icon={History} title="Context & history" refs={HISTORY_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-history")} />
+  function section() {
+    switch (active) {
+      case "k-goals":
+        return <FieldsCard id="k-goals" title="Goals & expectations" refs={GOALS_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} />;
+      case "k-program":
+        return <FieldsCard id="k-program" title="Program scope" refs={PROGRAM_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} />;
+      case "k-contacts":
+        return <ContactsCard client={client} onUpdated={onUpdated} />;
+      case "k-it":
+        return (
+          <FieldsCard id="k-it" title="IT & access" meta={itSummary(client)} refs={IT_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} nestDetails />
+        );
+      case "k-planning":
+        return <FieldsCard id="k-planning" title="Planning & organization" refs={PLANNING_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} />;
+      case "k-recap":
+        return <DealRecapPanel recap={client.deal_recap} clientId={client.id} onUpdated={onUpdated} />;
+      case "k-history":
+        return <FieldsCard id="k-history" title="Context & history" refs={HISTORY_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} />;
+      case "k-meetings":
+        return (
           <TimelinePanel
             meetings={meetings}
             discoveredRecordings={client.discovered_claap_recordings ?? []}
             onDecline={decline}
             decliningId={decliningId}
-            collapse={collapse("k-meetings")}
           />
-        </div>
-
-        <div className="ch-col">
-          <FieldsCard id="k-program" icon={Layers} title="Program scope" refs={PROGRAM_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} collapse={collapse("k-program")} />
-          <ContactsCard client={client} onUpdated={onUpdated} collapse={collapse("k-contacts")} />
-          <FieldsCard
-            id="k-planning"
-            icon={Calendar}
-            title="Planning & organization"
-            refs={PLANNING_REFS}
-            fields={fields}
-            clientId={client.id}
-            onUpdated={onUpdated}
-            collapse={collapse("k-planning")}
-          />
+        );
+      case "k-activity":
+        return <WhatsNewCard id="k-activity" insights={client.insights} report={client.last_refresh_report} clientId={client.id} onUpdated={onUpdated} />;
+      case "k-news":
+        return (
+          <Card id="k-news">
+            <CardHeader title={`Company news (${newsItems.length})`} meta="Last 12 months · important and useful" />
+            <NewsErrors errors={client.news?.errors ?? []} />
+            {newsItems.length === 0 ? (
+              <div style={{ fontSize: 13, color: COLORS.ink3 }}>No company news kept so far.</div>
+            ) : (
+              newsItems.map((n, i) => <NewsRow key={n.url} n={n} first={i === 0} />)
+            )}
+          </Card>
+        );
+      case "k-brief":
+        return (
           <CoachBriefPanel
             brief={client.coach_brief ?? null}
             generatedAt={client.coach_brief_generated_at ?? null}
             companyName={client.company_name}
             clientId={client.id}
             onUpdated={onUpdated}
-            collapse={collapse("k-brief")}
           />
-          <Card id="k-news" style={{ scrollMarginTop: 64 }}>
-            <CardHeader icon={Newspaper} title={`Company news (${newsItems.length})`} meta="Last 12 months · important and useful" collapse={newsCollapse} />
-            {newsCollapse.open && (
-              <>
-                {(client.news?.errors ?? []).length > 0 && (
-                  <div style={{ display: "flex", gap: 6, fontSize: 12, color: COLORS.warn, marginBottom: 10 }}>
-                    <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
-                    {client.news?.errors?.join(" · ")}
-                  </div>
-                )}
-                {newsItems.length === 0 ? (
-                  <div style={{ fontSize: 13, color: COLORS.ink3 }}>No company news kept so far.</div>
-                ) : (
-                  newsItems.map((n, i) => <NewsRow key={n.url} n={n} first={i === 0} />)
-                )}
-              </>
-            )}
-          </Card>
-        </div>
+        );
+    }
+  }
+
+  return (
+    <div ref={rootRef} className="ch-kn" style={{ scrollMarginTop: 24 }}>
+      <nav ref={navRef} className="ch-kn-nav" aria-label="Knowledge sections">
+        {NAV.map((g, gi) => (
+          <div key={g.group} style={{ display: "contents" }}>
+            <div className="ch-kn-group" style={gi === 0 ? { paddingTop: 6 } : undefined}>
+              {g.group}
+            </div>
+            {g.items.map((item) => {
+              const count = counts[item.id];
+              const missing = item.refs ? hasMissingKeyField(item.refs, fields) : false;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="ch-kn-item"
+                  aria-current={active === item.id}
+                  onClick={() => select(item.id)}
+                  title={missing ? "Some key info is missing in this section" : undefined}
+                >
+                  {item.label}
+                  {missing ? (
+                    <span className="ch-kn-dot" aria-label="Key info missing" />
+                  ) : count != null && count > 0 ? (
+                    <span className="ch-kn-meta">{count}</span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+
+      <div
+        key={active}
+        style={{
+          background: COLORS.bgCard,
+          border: `1px solid ${COLORS.line}`,
+          borderRadius: 14,
+          padding: "24px 28px 28px",
+          minWidth: 0,
+          minHeight: 320,
+        }}
+      >
+        <BareCards>{section()}</BareCards>
       </div>
     </div>
   );

@@ -32,6 +32,10 @@ export type ClientPortfolioItem = {
   billing_matched: boolean;
   health: { score: number; label: HealthLabel; trend: Health["trend"] | null; phase: HealthPhase | null } | null;
   top_risk: string | null;
+  // Dernier contact connu (engagement HubSpot ou meeting Claap), calculé avec
+  // la santé : colonne Last touch de la vue avancée. null si santé pas calculée
+  // ou aucune activité datée.
+  last_contact: { at: string; source: "hubspot" | "claap" | null } | null;
   next_action: PortfolioAction | null;
   open_actions: number;
   next_billing_date: string | null;
@@ -122,6 +126,7 @@ export function toPortfolioItem(row: PortfolioSourceRow, deal: DealContractInfo 
         ? { score: h.score, label: h.label, trend: h.trend ?? null, phase: h.phase ?? null }
         : null,
     top_risk: topRisk(h),
+    last_contact: h?.last_contact_at ? { at: h.last_contact_at, source: h.last_contact_source ?? null } : null,
     next_action: first ? { title: first.title, owner: first.owner ?? null, due: first.due ?? null, priority: first.priority } : null,
     open_actions: open.length,
     next_billing_date: row.next_billing_date ?? null,

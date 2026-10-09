@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { ChevronDown, Flag } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { DealRecap } from "@/lib/clients/types";
 import { EditableText, EditableStringList, EditableObjectList } from "./editable";
 import { patchContent } from "./content-client";
-import { Card, CardHeader, PendingCard, type Collapse } from "./ui";
+import { Card, CardHeader, PendingCard } from "./ui";
 
 // Grande catégorie du recap, dépliable (retour CSM : la carte était trop longue
 // d'un bloc). Le compteur reste visible replié. État local, non mémorisé.
@@ -46,12 +46,10 @@ export function DealRecapPanel({
   recap,
   clientId,
   onUpdated,
-  collapse,
 }: {
   recap: DealRecap | null;
   clientId?: string;
   onUpdated?: () => void;
-  collapse?: Collapse;
 }) {
   if (!recap) {
     return (
@@ -72,47 +70,44 @@ export function DealRecapPanel({
   }
 
   return (
-    <Card id="k-recap" style={{ scrollMarginTop: 64 }}>
+    <Card id="k-recap">
       <CardHeader
         icon={Flag}
         title="Deal recap"
         meta={recap.generated_at ? `How this deal was signed · ${new Date(recap.generated_at).toLocaleDateString("en-GB")}` : "How this deal was signed"}
-        collapse={collapse}
       />
-      {(!collapse || collapse.open) && (
-        // Le résumé ("How the deal was closed") d'abord et ouvert, le détail replié.
-        <div>
-          <Block title="How the deal was closed" defaultOpen first>
-            <EditableText value={recap.how_closed ?? null} multiline onSave={(v) => save({ how_closed: v ?? undefined })} />
-          </Block>
+      {/* Le résumé ("How the deal was closed") d'abord et ouvert, le détail replié. */}
+      <div>
+        <Block title="How the deal was closed" defaultOpen first>
+          <EditableText value={recap.how_closed ?? null} multiline onSave={(v) => save({ how_closed: v ?? undefined })} />
+        </Block>
 
-          <Block title="Deal timeline" count={recap.timeline?.length ?? 0}>
-            <EditableObjectList
-              items={recap.timeline ?? []}
-              schema={[
-                { key: "title", label: "Title" },
-                { key: "when", label: "When (date or text)" },
-                { key: "description", label: "Description", multiline: true },
-              ]}
-              onSave={(v) => save({ timeline: (v ?? []) as DealRecap["timeline"] })}
-              emptyLabel="No key moments"
-            />
-          </Block>
+        <Block title="Deal timeline" count={recap.timeline?.length ?? 0}>
+          <EditableObjectList
+            items={recap.timeline ?? []}
+            schema={[
+              { key: "title", label: "Title" },
+              { key: "when", label: "When (date or text)" },
+              { key: "description", label: "Description", multiline: true },
+            ]}
+            onSave={(v) => save({ timeline: (v ?? []) as DealRecap["timeline"] })}
+            emptyLabel="No key moments"
+          />
+        </Block>
 
-          <Block title="Triggers" count={recap.triggers?.length ?? 0}>
-            <EditableStringList items={recap.triggers} onSave={(v) => save({ triggers: v ?? undefined })} emptyLabel="No triggers identified" />
-          </Block>
-          <Block title="Objections" count={recap.objections?.length ?? 0}>
-            <EditableStringList items={recap.objections} onSave={(v) => save({ objections: v ?? undefined })} emptyLabel="No notable objections" />
-          </Block>
-          <Block title="Sales promises (to honor)" count={recap.sales_promises?.length ?? 0}>
-            <EditableStringList items={recap.sales_promises} onSave={(v) => save({ sales_promises: v ?? undefined })} emptyLabel="No promises identified" />
-          </Block>
-          <Block title="Onboarding risks" count={recap.onboarding_risks?.length ?? 0}>
-            <EditableStringList items={recap.onboarding_risks} onSave={(v) => save({ onboarding_risks: v ?? undefined })} emptyLabel="No risks detected" />
-          </Block>
-        </div>
-      )}
+        <Block title="Triggers" count={recap.triggers?.length ?? 0}>
+          <EditableStringList items={recap.triggers} onSave={(v) => save({ triggers: v ?? undefined })} emptyLabel="No triggers identified" />
+        </Block>
+        <Block title="Objections" count={recap.objections?.length ?? 0}>
+          <EditableStringList items={recap.objections} onSave={(v) => save({ objections: v ?? undefined })} emptyLabel="No notable objections" />
+        </Block>
+        <Block title="Sales promises (to honor)" count={recap.sales_promises?.length ?? 0}>
+          <EditableStringList items={recap.sales_promises} onSave={(v) => save({ sales_promises: v ?? undefined })} emptyLabel="No promises identified" />
+        </Block>
+        <Block title="Onboarding risks" count={recap.onboarding_risks?.length ?? 0}>
+          <EditableStringList items={recap.onboarding_risks} onSave={(v) => save({ onboarding_risks: v ?? undefined })} emptyLabel="No risks detected" />
+        </Block>
+      </div>
     </Card>
   );
 }

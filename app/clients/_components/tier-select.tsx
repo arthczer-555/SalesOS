@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ChevronDown, Loader2 } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import { useToast } from "@/components/ui/toast";
 import { CLIENT_TIERS, toClientTier, type ClientTier } from "@/lib/clients/tier";
 import { TAG_TONES, type TagTone } from "../[id]/_components/ui";

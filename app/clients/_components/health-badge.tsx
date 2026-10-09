@@ -1,4 +1,4 @@
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { HealthLabel } from "@/lib/clients/types";
 
 // Accepte un Health complet (fiche) ou sa version compacte (vue portefeuille).
@@ -20,7 +20,7 @@ export function HealthBadge({ health, compact = false }: { health: HealthLike | 
           gap: 5,
           padding: compact ? "2px 8px" : "3px 10px",
           borderRadius: 999,
-          background: COLORS.bgSoft,
+          background: COLORS.sand,
           color: COLORS.ink3,
           fontSize: 11,
           fontWeight: 600,

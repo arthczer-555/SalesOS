@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Loader2, Sparkles, RefreshCw, Copy, Check, CheckCircle2, ChevronDown, ExternalLink } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { Loader2, Sparkles, RefreshCw, Check, CheckCircle2, ExternalLink, Info } from "lucide-react";
+import { COLORS } from "@/app/clients/_components/theme";
 import {
   HUBSPOT_CHECKLIST_FIELDS,
   getMissingHubspotFields,
@@ -20,10 +20,14 @@ const GROUP_LABELS: Record<HubspotChecklistFieldDef["group"], string> = {
   contract_billing: "Contract & billing",
 };
 
+// Champs affichés d'office par carte, les suivants derrière "Show N more fields".
+const VISIBLE_PER_GROUP = 5;
+
 // Onglet "HubSpot cleaner" : champs du deal encore vides dans HubSpot, groupés
-// comme les cards de la fiche deal HubSpot, chacun avec une suggestion IA.
-// "Write to HubSpot" écrit la valeur. Champs remplis repliés en bas. L'état
-// HubSpot injoignable est géré par l'onglet (jamais "rien à compléter").
+// comme les cards de la fiche deal HubSpot (deux colonnes), chacun prérempli
+// par la suggestion IA. ✓ écrit la valeur dans HubSpot après confirmation.
+// Champs remplis repliés en bas. L'état HubSpot injoignable est géré par
+// l'onglet (jamais "rien à compléter").
 export function HubspotChecklistPanel({
   client,
   onUpdated,
@@ -78,6 +82,9 @@ export function HubspotChecklistPanel({
     }
     g.fields.push(f);
   }
+  // Deux colonnes indépendantes, en alternance (Qualification | Deal information,
+  // puis General information | Contract & billing).
+  const columns = [groups.filter((_, i) => i % 2 === 0), groups.filter((_, i) => i % 2 === 1)];
 
   async function generate() {
     setGenerating(true);
@@ -97,71 +104,67 @@ export function HubspotChecklistPanel({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <div style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.015em" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 16, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.02em", color: COLORS.ink0 }}>
             {missing.length} field{missing.length > 1 ? "s" : ""} missing in HubSpot
           </div>
-          <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>
-            Each value is a suggestion from the account data. Check it, then write it to the deal.
+          <div style={{ fontSize: 13, color: COLORS.ink2, marginTop: 2 }}>
+            Prefill with suggestions from the account data, check them, then click ✓ to write each one to the deal.
+          </div>
+          <div
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 7,
+              marginTop: 10,
+              padding: "6px 12px",
+              borderRadius: 8,
+              background: COLORS.sand,
+              fontSize: 12,
+              color: COLORS.ink1,
+            }}
+          >
+            <Info size={13} style={{ color: COLORS.ink2, flexShrink: 0 }} />
+            Values you write here are saved directly to the HubSpot deal, so HubSpot is updated too.
           </div>
         </div>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button type="button" className="ch-btn ch-btn-sm" onClick={() => void generate()} disabled={generating}>
-            {generating ? <Loader2 size={13} className="animate-spin" /> : suggestions ? <RefreshCw size={13} /> : <Sparkles size={13} />}
-            {suggestions ? "Regenerate suggestions" : "Suggest values"}
-          </button>
           {hubspotUrl && (
-            <a className="ch-btn ch-btn-sm" href={hubspotUrl} target="_blank" rel="noreferrer">
-              <ExternalLink size={13} />
+            <a className="ch-btn" href={hubspotUrl} target="_blank" rel="noreferrer">
+              <ExternalLink size={14} />
               Open deal in HubSpot
             </a>
           )}
+          <button type="button" className="ch-btn ch-btn-primary" onClick={() => void generate()} disabled={generating}>
+            {generating ? <Loader2 size={14} className="animate-spin" /> : suggestions ? <RefreshCw size={14} /> : <Sparkles size={14} />}
+            {generating ? "Suggesting…" : suggestions ? "Regenerate suggestions" : "Suggest values"}
+          </button>
         </div>
       </div>
 
       {error && <div style={{ fontSize: 12, color: COLORS.err }}>{error}</div>}
-      {!suggestions && (
-        <div style={{ fontSize: 12.5, color: COLORS.ink2 }}>
-          Click &quot;Suggest values&quot; to prefill each missing field from the enriched account data.
-        </div>
-      )}
 
-      <div className="ch-grid-2">
-        {groups.map((g) => (
-          <Card key={g.key}>
-            <CardHeader title={GROUP_LABELS[g.key]} right={<Tag tone="err">{g.fields.length} missing</Tag>} />
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              {g.fields.map((f) => (
-                <FieldRow
-                  key={f.property}
-                  clientId={client.id}
-                  def={f}
-                  suggestion={suggestionByProp.get(f.property)?.suggestion ?? ""}
-                  rationale={suggestionByProp.get(f.property)?.rationale ?? ""}
-                  onSaved={onUpdated}
-                />
-              ))}
-            </div>
-          </Card>
+      <div className="ch-grid-2" style={{ gap: 20, alignItems: "start" }}>
+        {columns.map((col, ci) => (
+          <div key={ci} className="ch-col" style={{ gap: 20 }}>
+            {col.map((g) => (
+              <GroupCard key={g.key} group={g} clientId={client.id} suggestionByProp={suggestionByProp} onSaved={onUpdated} />
+            ))}
+          </div>
         ))}
       </div>
 
       {filled.length > 0 && (
         <Card>
-          <button
-            type="button"
-            onClick={() => setShowFilled((v) => !v)}
-            aria-expanded={showFilled}
-            style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "none", border: 0, padding: 0, cursor: "pointer", fontSize: 13, fontWeight: 600, color: COLORS.ink1 }}
-          >
-            <CheckCircle2 size={15} style={{ color: COLORS.ok }} />
-            {filled.length} fields already filled
-            <ChevronDown size={14} style={{ transform: showFilled ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
-          </button>
+          <CardHeader
+            icon={CheckCircle2}
+            title={`${filled.length} fields already filled`}
+            collapse={{ open: showFilled, onToggle: () => setShowFilled((v) => !v) }}
+          />
           {showFilled && (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "4px 24px", marginTop: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "4px 24px" }}>
               {filled.map((f) => (
                 <div
                   key={f.property}
@@ -178,6 +181,47 @@ export function HubspotChecklistPanel({
         </Card>
       )}
     </div>
+  );
+}
+
+function GroupCard({
+  group,
+  clientId,
+  suggestionByProp,
+  onSaved,
+}: {
+  group: { key: HubspotChecklistFieldDef["group"]; fields: HubspotChecklistFieldDef[] };
+  clientId: string;
+  suggestionByProp: Map<string, { suggestion: string; rationale: string }>;
+  onSaved: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hidden = group.fields.length - VISIBLE_PER_GROUP;
+  const shown = expanded || hidden <= 0 ? group.fields : group.fields.slice(0, VISIBLE_PER_GROUP);
+  return (
+    <Card padding="18px 20px 10px">
+      <CardHeader title={GROUP_LABELS[group.key]} right={<Tag tone="warn">{group.fields.length} missing</Tag>} style={{ marginBottom: 6 }} />
+      <div>
+        {shown.map((f, i) => (
+          <FieldRow
+            key={f.property}
+            first={i === 0}
+            clientId={clientId}
+            def={f}
+            suggestion={suggestionByProp.get(f.property)?.suggestion ?? ""}
+            rationale={suggestionByProp.get(f.property)?.rationale ?? ""}
+            onSaved={onSaved}
+          />
+        ))}
+      </div>
+      {hidden > 0 && (
+        <div style={{ borderTop: `1px solid ${COLORS.line}`, padding: "10px 0 4px" }}>
+          <button type="button" className="ch-name-btn" style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.ink1 }} onClick={() => setExpanded((v) => !v)}>
+            {expanded ? "Show fewer fields" : `Show ${hidden} more field${hidden > 1 ? "s" : ""}`}
+          </button>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -199,16 +243,17 @@ function FieldRow({
   suggestion,
   rationale,
   onSaved,
+  first,
 }: {
   clientId: string;
   def: HubspotChecklistFieldDef;
   suggestion: string;
   rationale: string;
   onSaved: () => void;
+  first?: boolean;
 }) {
   const [value, setValue] = useState(suggestion);
   const [saving, setSaving] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -221,16 +266,6 @@ function FieldRow({
   // Human-readable value for the confirmation popup (enum -> option label).
   const displayValue =
     def.type === "enumeration" ? def.options?.find((o) => o.value === value)?.label ?? value : value;
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(value);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch {
-      /* ignore */
-    }
-  }
 
   async function save() {
     if (!value.trim()) {
@@ -272,47 +307,36 @@ function FieldRow({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink0 }}>{def.label}</span>
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "minmax(100px, 150px) minmax(0, 1fr) 32px",
+        gap: "4px 10px",
+        alignItems: "center",
+        padding: "8px 0",
+        borderTop: first ? "none" : `1px solid ${COLORS.line}`,
+      }}
+    >
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12.5, fontWeight: 500, color: COLORS.ink1, minWidth: 0 }}>
+        {def.label}
         {rationale && (
-          <span title={rationale} style={{ fontSize: 11, color: COLORS.ink4, cursor: "help" }}>
-            ⓘ
+          <span title={rationale} aria-label={`Why this suggestion: ${rationale}`} style={{ display: "inline-flex", color: COLORS.ink4, cursor: "help", flexShrink: 0 }}>
+            <Info size={12} />
           </span>
         )}
-      </div>
-      <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
-        <FieldInput def={def} value={value} disabled={saving} onChange={onChange} />
-        {def.type !== "enumeration" && (
-          <button type="button" onClick={() => void copy()} title="Copy" disabled={!value.trim()} style={iconBtn(!value.trim())}>
-            {copied ? <Check size={13} style={{ color: COLORS.ok }} /> : <Copy size={13} />}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={askConfirm}
-          disabled={saving || !value.trim()}
-          title="Write to HubSpot"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            fontSize: 12,
-            fontWeight: 600,
-            padding: "6px 10px",
-            borderRadius: 8,
-            border: "none",
-            background: saving || !value.trim() ? COLORS.bgSoft : COLORS.brand,
-            color: saving || !value.trim() ? COLORS.ink3 : "#fff",
-            cursor: saving || !value.trim() ? "not-allowed" : "pointer",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-          Write to HubSpot
-        </button>
-      </div>
-      {error && <div style={{ fontSize: 11, color: COLORS.err }}>{error}</div>}
+      </span>
+      <FieldInput def={def} value={value} disabled={saving} onChange={onChange} />
+      <button
+        type="button"
+        className="ch-write"
+        onClick={askConfirm}
+        disabled={saving || !value.trim()}
+        title="Write to HubSpot"
+        aria-label={`Write ${def.label} to HubSpot`}
+      >
+        {saving ? <Loader2 size={14} className="animate-spin" /> : <Check size={15} strokeWidth={2.5} />}
+      </button>
+      {error && <div style={{ gridColumn: "2 / -1", fontSize: 11.5, color: COLORS.err }}>{error}</div>}
 
       {confirmOpen && (
         <ConfirmWriteDialog
@@ -356,7 +380,7 @@ function ConfirmWriteDialog({
         onClick={(e) => e.stopPropagation()}
         style={{
           background: COLORS.bgCard,
-          borderRadius: 12,
+          borderRadius: 14,
           border: `1px solid ${COLORS.line}`,
           maxWidth: 420,
           width: "100%",
@@ -385,36 +409,10 @@ function ConfirmWriteDialog({
           {value}
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button
-            type="button"
-            onClick={onCancel}
-            style={{
-              fontSize: 13,
-              fontWeight: 500,
-              padding: "7px 14px",
-              borderRadius: 8,
-              border: `1px solid ${COLORS.line}`,
-              background: "white",
-              color: COLORS.ink2,
-              cursor: "pointer",
-            }}
-          >
+          <button type="button" className="ch-btn" onClick={onCancel}>
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              padding: "7px 14px",
-              borderRadius: 8,
-              border: "none",
-              background: COLORS.brand,
-              color: "#fff",
-              cursor: "pointer",
-            }}
-          >
+          <button type="button" className="ch-btn ch-btn-primary" onClick={onConfirm}>
             Write to HubSpot
           </button>
         </div>
@@ -435,21 +433,9 @@ function FieldInput({
   onChange: (v: string) => void;
 }) {
   // minWidth 0 + width 100% : sans ça un <select> prend la largeur de sa plus
-  // longue option et pousse le bouton "Write to HubSpot" hors de la carte.
-  const base: React.CSSProperties = {
-    flex: "1 1 0",
-    minWidth: 0,
-    width: "100%",
-    fontSize: 12,
-    padding: "6px 8px",
-    borderRadius: 8,
-    border: `1px solid ${COLORS.line}`,
-    background: "white",
-    color: COLORS.ink0,
-    fontFamily: "inherit",
-    boxSizing: "border-box",
-    minHeight: 32,
-  };
+  // longue option et pousse le bouton ✓ hors de la carte.
+  const className = "ds-input ds-input-sm";
+  const base: React.CSSProperties = { minWidth: 0, width: "100%", minHeight: 32 };
 
   if (def.type === "enumeration") {
     // Si la valeur courante n'est pas une option (rare), on l'ajoute en tête
@@ -457,11 +443,17 @@ function FieldInput({
     const opts = def.options ?? [];
     const known = opts.some((o) => o.value === value);
     return (
-      <select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={base}>
+      <select
+        className={className}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ ...base, color: value ? COLORS.ink0 : COLORS.ink4 }}
+      >
         <option value="">Select…</option>
         {!known && value && <option value={value}>{value}</option>}
         {opts.map((o) => (
-          <option key={o.value} value={o.value}>
+          <option key={o.value} value={o.value} style={{ color: COLORS.ink0 }}>
             {o.label}
           </option>
         ))}
@@ -470,12 +462,13 @@ function FieldInput({
   }
 
   if (def.type === "date") {
-    return <input type="date" value={value.slice(0, 10)} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={base} />;
+    return <input className={className} type="date" value={value.slice(0, 10)} disabled={disabled} onChange={(e) => onChange(e.target.value)} style={base} />;
   }
 
   if (def.type === "number") {
     return (
       <input
+        className={className}
         type="number"
         value={value}
         disabled={disabled}
@@ -486,18 +479,19 @@ function FieldInput({
     );
   }
 
-  return <AutoTextarea value={value} disabled={disabled} onChange={onChange} style={base} />;
+  return <AutoTextarea className={className} value={value} disabled={disabled} onChange={onChange} style={base} />;
 }
 
-// Textarea qui s'agrandit pour afficher tout son contenu (pas de scroll interne).
-// La hauteur suit le contenu, avec un minimum confortable et un plafond au-delà
-// duquel on scrolle.
+// Textarea d'une ligne qui s'agrandit pour afficher tout son contenu (pas de
+// scroll interne), jusqu'à un plafond au-delà duquel on scrolle.
 function AutoTextarea({
+  className,
   value,
   disabled,
   onChange,
   style,
 }: {
+  className: string;
   value: string;
   disabled: boolean;
   onChange: (v: string) => void;
@@ -509,31 +503,19 @@ function AutoTextarea({
     const el = ref.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
+    el.style.height = `${el.scrollHeight + 2}px`;
   }, [value]);
 
   return (
     <textarea
       ref={ref}
+      className={className}
+      rows={1}
       value={value}
       disabled={disabled}
       placeholder="Fill suggestion…"
       onChange={(e) => onChange(e.target.value)}
-      style={{ ...style, resize: "vertical", minHeight: 60, maxHeight: 240, overflowY: "auto", lineHeight: 1.45 }}
+      style={{ ...style, maxHeight: 220, overflowY: "auto", lineHeight: 1.45 }}
     />
   );
-}
-
-function iconBtn(disabled: boolean): React.CSSProperties {
-  return {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: "6px 8px",
-    borderRadius: 8,
-    border: `1px solid ${COLORS.line}`,
-    background: "white",
-    color: disabled ? COLORS.ink4 : COLORS.ink2,
-    cursor: disabled ? "not-allowed" : "pointer",
-  };
 }

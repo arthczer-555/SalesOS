@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Pencil, Check, X, AlertTriangle, ChevronDown } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { ClientFieldSource, ClientFieldValue, FieldDefinition } from "@/lib/clients/types";
 
 // ── Confidence dot ───────────────────────────────────────────────────────
@@ -308,7 +308,7 @@ function renderValue(value: unknown, definition: FieldDefinition): React.ReactNo
           {arr.map((d, i) => (
             <div key={i} style={{ fontSize: 13, color: COLORS.ink0 }}>
               {d.url ? (
-                <a href={d.url} target="_blank" rel="noreferrer" style={{ color: COLORS.brand }}>
+                <a href={d.url} target="_blank" rel="noreferrer" style={{ color: COLORS.primary }}>
                   {d.title}
                 </a>
               ) : (
@@ -502,7 +502,7 @@ function FieldEditor({
     fontSize: 13,
     padding: "4px 8px",
     borderRadius: 6,
-    border: `1px solid ${COLORS.brand}`,
+    border: `1px solid ${COLORS.primary}`,
     outline: "none",
     background: "white",
     color: COLORS.ink0,
@@ -680,8 +680,8 @@ function FieldEditor({
             fontSize: 11,
             padding: "3px 8px",
             borderRadius: 6,
-            border: `1px solid ${COLORS.brand}`,
-            background: COLORS.brand,
+            border: `1px solid ${COLORS.primary}`,
+            background: COLORS.primary,
             color: "white",
             cursor: saving ? "not-allowed" : "pointer",
           }}
@@ -721,6 +721,8 @@ export function FieldDisplay({
   sectionKey,
   onUpdated,
   details,
+  autoEdit = false,
+  onEditEnd,
 }: {
   definition: FieldDefinition;
   field: ClientFieldValue | undefined;
@@ -730,13 +732,17 @@ export function FieldDisplay({
   // Champ de détail rangé sous celui-ci (Knowledge, ex. le fournisseur SSO sous
   // Access) : "Details" / "Add details" déplie sa ligne, éditable, juste dessous.
   details?: { node: React.ReactNode; hasValue: boolean };
+  // To do : la ligne s'ouvre directement en édition (clic sur une pastille) et
+  // prévient quand l'édition se termine (enregistrée ou annulée).
+  autoEdit?: boolean;
+  onEditEnd?: () => void;
 }) {
   const value = field?.value;
   const confidence = field?.confidence ?? 0;
   const source = field?.source ?? null;
   const hasValue = value !== null && value !== undefined && !(Array.isArray(value) && value.length === 0);
 
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(autoEdit);
   const [error, setError] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const canEdit = !!clientId && !!sectionKey && EDITABLE_KINDS.has(definition.kind);
@@ -760,6 +766,7 @@ export function FieldDisplay({
       }
       setEditing(false);
       onUpdated?.();
+      onEditEnd?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
     }
@@ -805,6 +812,7 @@ export function FieldDisplay({
               onCancel={() => {
                 setEditing(false);
                 setError(null);
+                onEditEnd?.();
               }}
             />
           ) : details ? (
@@ -840,7 +848,7 @@ export function FieldDisplay({
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.opacity = "1";
-                e.currentTarget.style.color = COLORS.brand;
+                e.currentTarget.style.color = COLORS.primary;
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.opacity = "0.6";

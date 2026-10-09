@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { ExternalLink, Video } from "lucide-react";
-import { Card, CardHeader, type Collapse } from "./ui";
-import { COLORS } from "@/lib/design/tokens";
+import { Card, CardHeader, useBareCards } from "./ui";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { DiscoveredRecording } from "@/lib/clients/types";
 
 export type ClientMeeting = {
@@ -148,18 +148,23 @@ function DiscoveredRow({
   );
 }
 
+// Nombre de meetings affichés (analysés + trouvés sur Claap, sans doublon) :
+// compteur de la sidebar de Knowledge.
+export function meetingCount(meetings: ClientMeeting[], discovered: DiscoveredRecording[]): number {
+  const indexedIds = new Set(meetings.map((m) => m.claap_recording_id));
+  return meetings.length + discovered.filter((r) => !indexedIds.has(r.recording_id)).length;
+}
+
 export function TimelinePanel({
   meetings,
   discoveredRecordings = [],
   onDecline,
   decliningId,
-  collapse,
 }: {
   meetings: ClientMeeting[];
   discoveredRecordings?: DiscoveredRecording[];
   onDecline?: (r: DiscoveredRecording) => void;
   decliningId?: string | null;
-  collapse?: Collapse;
 }) {
   // Dédoublonne par recording_id (au cas où) : on garde la version indexed
   // qui a plus d'info.
@@ -180,20 +185,21 @@ export function TimelinePanel({
 
   const indexedCount = items.filter((i) => i.kind === "indexed").length;
   const discoveredCount = items.filter((i) => i.kind === "discovered").length;
+  // Section pleine page de Knowledge : les lignes restent dans la colonne.
+  const bare = useBareCards();
 
   return (
-    <Card id="k-meetings" padding={collapse && !collapse.open ? "18px 20px" : "18px 20px 6px"} style={{ scrollMarginTop: 64 }}>
+    <Card id="k-meetings" padding="18px 20px 6px">
       <CardHeader
         icon={Video}
         title={`Meetings (${items.length})`}
         meta={discoveredCount > 0 ? `${indexedCount} analyzed · ${discoveredCount} auto-matched` : "Claap"}
         style={{ marginBottom: 6 }}
-        collapse={collapse}
       />
-      {collapse && !collapse.open ? null : items.length === 0 ? (
+      {items.length === 0 ? (
         <div style={{ color: COLORS.ink3, fontSize: 13, padding: "8px 0 14px" }}>No Claap meeting found for this account yet.</div>
       ) : (
-        <div style={{ margin: "0 -20px" }}>
+        <div style={{ margin: bare ? 0 : "0 -20px", borderTop: bare ? `1px solid ${COLORS.line}` : undefined }}>
           {items.map((it) =>
             it.kind === "indexed" ? (
               <IndexedRow key={`i-${it.data.id}`} m={it.data} />

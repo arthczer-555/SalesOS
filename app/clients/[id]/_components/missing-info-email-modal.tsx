@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, Copy, Check, RefreshCw, X, MailPlus } from "lucide-react";
-import { COLORS } from "@/lib/design/tokens";
+import { COLORS } from "@/app/clients/_components/theme";
 import type { MissingInfoEmailDraft } from "@/lib/clients/types";
 
 type DraftResponse = { draft?: MissingInfoEmailDraft; cached?: boolean; error?: string };
@@ -132,7 +132,7 @@ export function MissingInfoEmailModal({ clientId, onClose }: { clientId: string;
             gap: 8,
           }}
         >
-          <MailPlus size={16} style={{ color: COLORS.brand }} />
+          <MailPlus size={16} style={{ color: COLORS.primary }} />
           <h3 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: COLORS.ink0 }}>Request missing info</h3>
           <button
             type="button"
@@ -258,7 +258,7 @@ function primaryBtn(disabled: boolean): React.CSSProperties {
     padding: "8px 14px",
     borderRadius: 8,
     border: "none",
-    background: disabled ? COLORS.bgSoft : COLORS.brand,
+    background: disabled ? COLORS.bgSoft : COLORS.primary,
     color: disabled ? COLORS.ink3 : "#fff",
     cursor: disabled ? "not-allowed" : "pointer",
   };
