@@ -7,8 +7,10 @@ import {
   DEFAULT_SCHEDULE,
   TIMEZONES,
   WEEKDAYS,
+  biweeklyStarts,
   computeNextRun,
   describeSchedule,
+  normalizeSchedule,
   type AgentFrequency,
   type AgentSchedule,
 } from "@/lib/agents/schedule";
@@ -18,8 +20,15 @@ const FREQUENCIES: { id: AgentFrequency; label: string }[] = [
   { id: "daily", label: "Daily" },
   { id: "weekdays", label: "Weekdays" },
   { id: "weekly", label: "Weekly" },
+  { id: "biweekly", label: "Every 2 weeks" },
   { id: "monthly", label: "Monthly" },
+  { id: "quarterly", label: "Quarterly" },
 ];
+
+/** "Mon 12 Oct", dans le fuseau de l'agent (c'est son calendrier qui compte). */
+function fmtDay(d: Date, timezone: string): string {
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: timezone });
+}
 
 // Créneaux de 15 min : le dispatcher passe toutes les 10 min, une précision à
 // la minute promettrait une ponctualité qu'on ne tient pas.
@@ -43,10 +52,18 @@ export function SchedulePicker({
   /** Libellé de la prochaine occurrence : "first run" (brouillon) ou "next run". */
   nextLabel?: string;
 }) {
-  const s = value ?? DEFAULT_SCHEDULE;
+  // Normalisé : les plannings enregistrés avant biweekly/quarterly n'ont pas leurs champs.
+  const s = value ? normalizeSchedule(value) : DEFAULT_SCHEDULE;
   const set = (patch: Partial<AgentSchedule>) => onChange({ ...s, ...patch });
   const times = TIMES.includes(s.time) ? TIMES : [...TIMES, s.time].sort();
-  const next = value ? computeNextRun(value) : null;
+  const next = value ? computeNextRun(s) : null;
+  const starts = s.frequency === "biweekly" ? biweeklyStarts(s) : [];
+  const pickFrequency = (frequency: AgentFrequency) => {
+    const days = (frequency === "weekly" || frequency === "biweekly") && s.days.length === 0 ? [1] : s.days;
+    // Passage en biweekly : la quinzaine qui démarre le plus tôt.
+    const weekParity = frequency === "biweekly" && s.frequency !== "biweekly" ? biweeklyStarts({ ...s, days })[0].parity : s.weekParity;
+    set({ frequency, days, weekParity });
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14, opacity: disabled ? 0.6 : 1 }}>
@@ -69,7 +86,7 @@ export function SchedulePicker({
             className="ag-seg-btn"
             aria-pressed={value !== null && s.frequency === f.id}
             disabled={disabled}
-            onClick={() => set({ frequency: f.id, days: f.id === "weekly" && s.days.length === 0 ? [1] : s.days })}
+            onClick={() => pickFrequency(f.id)}
           >
             {f.label}
           </button>
@@ -82,7 +99,7 @@ export function SchedulePicker({
         </p>
       ) : (
         <>
-          {s.frequency === "weekly" && (
+          {(s.frequency === "weekly" || s.frequency === "biweekly") && (
             <div>
               <span className="ag-label">On</span>
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -111,7 +128,24 @@ export function SchedulePicker({
           )}
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
-            {s.frequency === "monthly" && (
+            {s.frequency === "biweekly" && (
+              <label style={{ width: 150 }}>
+                <span className="ag-label">Starting</span>
+                <select
+                  className="ag-select"
+                  value={s.weekParity}
+                  disabled={disabled}
+                  onChange={(e) => set({ weekParity: Number(e.target.value) === 1 ? 1 : 0 })}
+                >
+                  {starts.map((o) => (
+                    <option key={o.parity} value={o.parity}>
+                      {fmtDay(o.first, s.timezone)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {(s.frequency === "monthly" || s.frequency === "quarterly") && (
               <label style={{ width: 130 }}>
                 <span className="ag-label">Day of month</span>
                 <select

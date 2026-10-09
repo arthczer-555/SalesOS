@@ -23,6 +23,7 @@ export type AgentTemplate = {
 const at = (frequency: AgentSchedule["frequency"], time: string, extra: Partial<AgentSchedule> = {}): AgentSchedule => ({
   frequency,
   days: [1],
+  weekParity: 0,
   dayOfMonth: 1,
   time,
   timezone: "Europe/Paris",

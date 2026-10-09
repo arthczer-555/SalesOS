@@ -8,13 +8,22 @@
  * 09:00 part donc entre 09:00 et 09:10.
  */
 
-export type AgentFrequency = "daily" | "weekdays" | "weekly" | "monthly";
+export type AgentFrequency = "daily" | "weekdays" | "weekly" | "biweekly" | "monthly" | "quarterly";
+
+const FREQUENCIES: readonly AgentFrequency[] = ["daily", "weekdays", "weekly", "biweekly", "monthly", "quarterly"];
 
 export type AgentSchedule = {
   frequency: AgentFrequency;
-  /** weekly : jours ISO, 1 = lundi … 7 = dimanche. */
+  /** weekly et biweekly : jours ISO, 1 = lundi … 7 = dimanche. */
   days: number[];
-  /** monthly : jour du mois, 1 à 28 (évite les mois courts). */
+  /**
+   * biweekly : parité des semaines où l'agent tourne (index de semaine depuis
+   * le lundi 5 janvier 1970, modulo 2). Fixe la quinzaine de départ sans date
+   * d'ancrage à stocker, et ne casse pas au passage d'année (contrairement à
+   * la parité des semaines ISO, faussée par les années à 53 semaines).
+   */
+  weekParity: 0 | 1;
+  /** monthly et quarterly (jan, avr, juil, oct) : jour du mois, 1 à 28 (évite les mois courts). */
   dayOfMonth: number;
   /** "HH:MM", heure locale du fuseau. */
   time: string;
@@ -27,6 +36,7 @@ export const DEFAULT_TIMEZONE = "Europe/Paris";
 export const DEFAULT_SCHEDULE: AgentSchedule = {
   frequency: "weekly",
   days: [1],
+  weekParity: 0,
   dayOfMonth: 1,
   time: "09:00",
   timezone: DEFAULT_TIMEZONE,
@@ -44,6 +54,9 @@ export const TIMEZONES: { id: string; label: string }[] = [
 const WEEKDAY_SHORT = ["", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const WEEKDAY_LONG = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
+/** quarterly : premier mois de chaque trimestre. */
+const QUARTER_MONTHS = ["Jan", "Apr", "Jul", "Oct"];
+
 function isValidTimezone(tz: string): boolean {
   try {
     new Intl.DateTimeFormat("en-US", { timeZone: tz });
@@ -59,24 +72,28 @@ function isValidTimezone(tz: string): boolean {
  */
 export function normalizeSchedule(input: unknown): AgentSchedule {
   const raw = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  const frequency: AgentFrequency = (["daily", "weekdays", "weekly", "monthly"] as const).includes(
-    raw.frequency as AgentFrequency,
-  )
+  const frequency: AgentFrequency = FREQUENCIES.includes(raw.frequency as AgentFrequency)
     ? (raw.frequency as AgentFrequency)
     : DEFAULT_SCHEDULE.frequency;
   const days = Array.isArray(raw.days)
     ? [...new Set(raw.days.map(Number).filter((d) => Number.isInteger(d) && d >= 1 && d <= 7))].sort()
     : [];
   const dom = Number(raw.dayOfMonth ?? raw.day_of_month);
+  const parity = Number(raw.weekParity ?? raw.week_parity);
   const time = typeof raw.time === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(raw.time) ? raw.time : DEFAULT_SCHEDULE.time;
   const tz = typeof raw.timezone === "string" && isValidTimezone(raw.timezone) ? raw.timezone : DEFAULT_TIMEZONE;
-  return {
+  const schedule: AgentSchedule = {
     frequency,
-    days: frequency === "weekly" && days.length === 0 ? [1] : days,
+    days: (frequency === "weekly" || frequency === "biweekly") && days.length === 0 ? [1] : days,
+    weekParity: parity === 1 ? 1 : 0,
     dayOfMonth: Number.isInteger(dom) && dom >= 1 && dom <= 28 ? dom : 1,
     time,
     timezone: tz,
   };
+  // Quinzaine non précisée (planning déduit par l'IA) : celle qui donne la
+  // première exécution la plus proche. Une fois enregistrée, elle ne bouge plus.
+  if (frequency === "biweekly" && parity !== 0 && parity !== 1) schedule.weekParity = biweeklyStarts(schedule)[0].parity;
+  return schedule;
 }
 
 // ── Fuseaux ─────────────────────────────────────────────────────────────────
@@ -115,7 +132,13 @@ function zonedToUtc(year: number, month: number, day: number, hour: number, minu
   return new Date(ts);
 }
 
-function matchesDay(s: AgentSchedule, isoWeekday: number, dayOfMonth: number): boolean {
+/** Lundi 5 janvier 1970 (UTC) : origine des index de semaine du biweekly. */
+const EPOCH_MONDAY = Date.UTC(1970, 0, 5);
+const WEEK_MS = 7 * 24 * 3600_000;
+
+/** `cal` : date calendaire locale, encodée à minuit UTC. */
+function matchesDay(s: AgentSchedule, cal: Date): boolean {
+  const isoWeekday = cal.getUTCDay() === 0 ? 7 : cal.getUTCDay();
   switch (s.frequency) {
     case "daily":
       return true;
@@ -123,26 +146,45 @@ function matchesDay(s: AgentSchedule, isoWeekday: number, dayOfMonth: number): b
       return isoWeekday <= 5;
     case "weekly":
       return s.days.includes(isoWeekday);
+    case "biweekly":
+      return s.days.includes(isoWeekday) && Math.floor((cal.getTime() - EPOCH_MONDAY) / WEEK_MS) % 2 === s.weekParity;
     case "monthly":
-      return dayOfMonth === s.dayOfMonth;
+      return cal.getUTCDate() === s.dayOfMonth;
+    case "quarterly":
+      return cal.getUTCDate() === s.dayOfMonth && cal.getUTCMonth() % 3 === 0;
   }
 }
 
-/** Prochaine exécution strictement après `after`. */
-export function computeNextRun(schedule: AgentSchedule, after: Date = new Date()): Date {
-  const s = normalizeSchedule(schedule);
+/** Calcul brut, sur un planning déjà normalisé. */
+function nextRunOf(s: AgentSchedule, after: Date): Date {
   const [hh, mm] = s.time.split(":").map(Number);
   const start = localParts(after, s.timezone);
-  // 62 jours couvrent tous les cas (mensuel compris).
-  for (let i = 0; i <= 62; i++) {
+  // 100 jours couvrent tous les cas (trimestriel compris).
+  for (let i = 0; i <= 100; i++) {
     const cal = new Date(Date.UTC(start.year, start.month - 1, start.day + i));
-    const iso = cal.getUTCDay() === 0 ? 7 : cal.getUTCDay();
-    if (!matchesDay(s, iso, cal.getUTCDate())) continue;
+    if (!matchesDay(s, cal)) continue;
     const at = zonedToUtc(cal.getUTCFullYear(), cal.getUTCMonth() + 1, cal.getUTCDate(), hh, mm, s.timezone);
     if (at.getTime() > after.getTime()) return at;
   }
   // Inatteignable avec un planning normalisé ; filet pour ne jamais rendre NaN.
   return new Date(after.getTime() + 24 * 3600_000);
+}
+
+/** Prochaine exécution strictement après `after`. */
+export function computeNextRun(schedule: AgentSchedule, after: Date = new Date()): Date {
+  return nextRunOf(normalizeSchedule(schedule), after);
+}
+
+/**
+ * biweekly : les deux quinzaines possibles avec leur première exécution, la
+ * plus proche d'abord. Sert au choix "Starting" du sélecteur.
+ */
+export function biweeklyStarts(schedule: AgentSchedule, after: Date = new Date()): { parity: 0 | 1; first: Date }[] {
+  // Parité fixée avant de normaliser : normalizeSchedule n'appelle alors pas cette fonction en retour.
+  const s = normalizeSchedule({ ...schedule, frequency: "biweekly", weekParity: 0 });
+  return ([0, 1] as const)
+    .map((parity) => ({ parity, first: nextRunOf({ ...s, weekParity: parity }, after) }))
+    .sort((a, b) => a.first.getTime() - b.first.getTime());
 }
 
 // ── Libellés (UI, en anglais) ───────────────────────────────────────────────
@@ -157,7 +199,10 @@ function tzLabel(tz: string): string {
   return TIMEZONES.find((t) => t.id === tz)?.label ?? tz.split("/").pop()?.replace(/_/g, " ") ?? tz;
 }
 
-/** "Every Monday at 09:00", "Weekdays at 08:30", "Monthly on the 1st at 09:00". */
+/**
+ * "Every Monday at 09:00", "Weekdays at 08:30", "Every other Monday at 09:00",
+ * "Monthly on the 1st at 09:00", "Quarterly on the 1st of Jan, Apr, Jul, Oct at 09:00".
+ */
 export function describeSchedule(schedule: AgentSchedule, withTimezone = false): string {
   const s = normalizeSchedule(schedule);
   const at = `at ${s.time}${withTimezone ? ` (${tzLabel(s.timezone)} time)` : ""}`;
@@ -171,8 +216,14 @@ export function describeSchedule(schedule: AgentSchedule, withTimezone = false):
       if (s.days.length === 7) return `Every day ${at}`;
       return `${s.days.map((d) => WEEKDAY_SHORT[d]).join(", ")} ${at}`;
     }
+    case "biweekly": {
+      if (s.days.length === 1) return `Every other ${WEEKDAY_LONG[s.days[0]]} ${at}`;
+      return `Every other week, ${s.days.map((d) => WEEKDAY_SHORT[d]).join(", ")} ${at}`;
+    }
     case "monthly":
       return `Monthly on the ${ordinal(s.dayOfMonth)} ${at}`;
+    case "quarterly":
+      return `Quarterly on the ${ordinal(s.dayOfMonth)} of ${QUARTER_MONTHS.join(", ")} ${at}`;
   }
 }
 
@@ -186,8 +237,12 @@ export function shortSchedule(schedule: AgentSchedule): string {
       return `Weekdays · ${s.time}`;
     case "weekly":
       return `${s.days.length === 7 ? "Daily" : s.days.map((d) => WEEKDAY_SHORT[d]).join(", ")} · ${s.time}`;
+    case "biweekly":
+      return `Every other ${s.days.map((d) => WEEKDAY_SHORT[d]).join(", ")} · ${s.time}`;
     case "monthly":
       return `${ordinal(s.dayOfMonth)} of month · ${s.time}`;
+    case "quarterly":
+      return `Quarterly · ${ordinal(s.dayOfMonth)} of ${QUARTER_MONTHS.join("/")} · ${s.time}`;
   }
 }
 
@@ -201,8 +256,12 @@ export function runsPerMonth(schedule: AgentSchedule): number {
       return 22;
     case "weekly":
       return Math.round(s.days.length * 4.3);
+    case "biweekly":
+      return Math.round(s.days.length * 2.15);
     case "monthly":
       return 1;
+    case "quarterly":
+      return 1 / 3;
   }
 }
 

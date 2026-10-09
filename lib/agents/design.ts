@@ -89,7 +89,7 @@ const SPEC_SCHEMA = {
       additionalProperties: false,
       required: ["frequency", "days", "day_of_month", "time"],
       properties: {
-        frequency: { type: "string", enum: ["daily", "weekdays", "weekly", "monthly"] },
+        frequency: { type: "string", enum: ["daily", "weekdays", "weekly", "biweekly", "monthly", "quarterly"] },
         days: { type: "array", items: { type: "integer" } },
         day_of_month: { type: "integer" },
         time: { type: "string" },
@@ -139,7 +139,7 @@ RÈGLES DE LA SPEC
 - template : le squelette du message, en anglais (sauf language = fr), avec des {{placeholders}} explicites. Écrit en MARKDOWN STANDARD (**gras**, _italique_, puces "- ", liens [texte](url)), jamais en syntaxe Slack (*gras*, <url|texte>) : la conversion vers Slack est automatique et transformerait un *gras* Slack en italique. Un titre en gras avec un emoji, des sections courtes, des puces scannables, des liens [Deal name]({{hubspot url}}) quand c'est pertinent, une ligne de synthèse ou d'action à la fin si utile. Pas de tableau. Montre la répétition d'un élément par une puce exemple suivie de "- …".
 - sources : le MINIMUM nécessaire pour livrer ce qui est demandé (chaque source en plus coûte du temps et de l'argent). LinkedIn est payant et lent : seulement si la demande le justifie. Gmail lit la boîte du créateur : seulement si la demande porte sur ses emails. Le revenu facturé vient du sheet revenue (revenue), jamais de HubSpot.
 - source_reasons : une raison courte (en anglais, moins de 70 caractères) par source retenue.
-- schedule : déduis-le de la demande ("chaque lundi" -> weekly, days [1] ; "tous les matins" -> weekdays). days = jours ISO (1 = lundi … 7 = dimanche). day_of_month entre 1 et 28. time au format HH:MM (heure de Paris). Sans indication : weekly, lundi, 09:00. Si l'utilisateur a fixé le planning, reprends-le.
+- schedule : déduis-le de la demande ("chaque lundi" -> weekly, days [1] ; "tous les matins" -> weekdays ; "un lundi sur deux", "toutes les deux semaines" -> biweekly, days [1] ; "chaque mois" -> monthly ; "chaque trimestre" -> quarterly, qui tourne en janvier, avril, juillet et octobre). days = jours ISO (1 = lundi … 7 = dimanche), pour weekly et biweekly. day_of_month entre 1 et 28, pour monthly et quarterly. time au format HH:MM (heure de Paris). Sans indication : weekly, lundi, 09:00. Si l'utilisateur a fixé le planning, reprends-le.
 - language : "en" par défaut (le produit est en anglais). "fr" seulement si l'utilisateur demande explicitement des messages en français.
 - skip_when_empty : true pour une ALERTE (prévenir seulement si quelque chose correspond), false pour un DIGEST (rendez-vous régulier attendu même vide).
 - assumptions : 0 à 4 hypothèses que tu as dû faire et que l'utilisateur devrait vérifier, en anglais, une phrase chacune.
@@ -320,7 +320,13 @@ export async function runAgentDesign(
     const schedule: AgentSchedule =
       opts.keepSchedule && !opts.feedback
         ? agent.schedule
-        : normalizeSchedule({ ...spec.schedule, dayOfMonth: spec.schedule.day_of_month, timezone: agent.schedule.timezone });
+        : normalizeSchedule({
+            ...spec.schedule,
+            dayOfMonth: spec.schedule.day_of_month,
+            // L'IA ne choisit pas la quinzaine : on garde celle de l'agent s'il était déjà biweekly.
+            weekParity: agent.schedule.frequency === "biweekly" ? agent.schedule.weekParity : undefined,
+            timezone: agent.schedule.timezone,
+          });
     const notes: AgentDesignNotes = {
       assumptions: (spec.assumptions ?? []).map(stripDashes).filter(Boolean).slice(0, 4),
       source_reasons: (spec.source_reasons ?? [])
