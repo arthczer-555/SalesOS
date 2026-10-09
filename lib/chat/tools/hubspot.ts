@@ -37,6 +37,8 @@ const PROPS: Record<string, string[]> = {
     "dealname", "dealstage", "amount", "closedate",
     "hubspot_owner_id", "hs_lastmodifieddate", "createdate",
     "hs_deal_stage_probability", "hs_is_closed_won",
+    // Fin de contrat d'un deal signé (même propriété que Key dates sur la fiche client).
+    "contract_end_date",
   ],
   companies: [
     "name", "domain", "industry", "city", "country", "phone",

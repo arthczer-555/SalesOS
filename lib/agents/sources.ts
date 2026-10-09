@@ -40,7 +40,7 @@ export const AGENT_SOURCES: AgentSourceDef[] = [
   {
     key: "clients",
     label: "Client accounts",
-    description: "CoachelloHQ client files: account tier (Tier 1 = most important), health score, program scope, contacts, goals, next actions, key dates.",
+    description: "CoachelloHQ client files: account tier (Tier 1 = most important), health score, program scope, contacts, goals, next actions, key dates (signature, kickoff, last contact, next billing, contract start and end), billed revenue, Claap meetings of the account, live HubSpot deal fields (qualification, champion, budget, contract duration, billing). Can list the accounts whose contract ends in the next N days (renewals).",
     logo: "coachello",
   },
   {
