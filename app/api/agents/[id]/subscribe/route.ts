@@ -20,12 +20,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   if (access.agent.owner_id === user.id) {
     return NextResponse.json({ error: "This is your agent: it already runs for you." }, { status: 400 });
   }
-  // loadAgent filtre déjà les agents personnels pour un non-admin ; un admin
-  // les voit, mais ne peut pas s'abonner à un agent que son owner n'a pas partagé.
+  // Un admin ou un destinataire voit un agent personnel, mais ne peut pas
+  // s'abonner à un agent que son owner n'a pas partagé.
   const body = (await req.json().catch(() => ({}))) as { active?: unknown };
   const active = body.active !== false;
   if (active && access.agent.shared !== true) {
     return NextResponse.json({ error: "This agent is personal: its owner hasn't shared it with the team." }, { status: 403 });
+  }
+  // Déjà dans l'audience : s'abonner en plus enverrait deux DMs.
+  if (active && access.isRecipient) {
+    return NextResponse.json({ error: "You already receive this agent: its creator sends it to you." }, { status: 400 });
   }
 
   const res = await setSubscription(id, user.id, active);

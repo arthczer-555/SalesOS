@@ -21,6 +21,7 @@ import type { AgentRow } from "./types";
 import { triggerAgentRun } from "./trigger";
 import { activeSubscribers } from "./subscriptions";
 import { catchUpBatchRecaps, fanOutAudience } from "./fanout";
+import { resolveAudience } from "./audience";
 
 const STUCK_AFTER_MS = 20 * 60 * 1000;
 const BATCH = 25;
@@ -83,9 +84,14 @@ export async function dispatchDueAgents(origin: string): Promise<{ dispatched: n
       else console.error(`[agents/dispatch] group send failed for ${agent.id}:`, res.error);
     }
     const subscribers = agent.shared === true ? await activeSubscribers(agent.id) : [];
+    // Un abonné déjà dans l'audience a reçu son message avec l'envoi groupé.
+    const members =
+      agent.destination.type === "audience" && subscribers.length
+        ? new Set((await resolveAudience(agent.destination)).map((m) => m.id))
+        : new Set<string>();
     const targets: (string | null)[] = [
       ...(agent.destination.type === "audience" ? [] : [null]),
-      ...subscribers.map((s) => s.user_id).filter((u) => u !== agent.owner_id),
+      ...subscribers.map((s) => s.user_id).filter((u) => u !== agent.owner_id && !members.has(u)),
     ];
     for (const runAs of targets) {
       const { data: run, error: runErr } = await db

@@ -5,6 +5,8 @@ import { normalizeDestination } from "@/lib/agents/access";
 import { DEFAULT_SCHEDULE, normalizeSchedule } from "@/lib/agents/schedule";
 import { triggerAgentDesign } from "@/lib/agents/trigger";
 import { subscribedAgentIds, subscriberCounts } from "@/lib/agents/subscriptions";
+import { loadAudienceUser } from "@/lib/agents/audience";
+import { isAudienceMember } from "@/lib/agents/audience-label";
 import type { AgentRow, AgentSummary } from "@/lib/agents/types";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +17,7 @@ export const dynamic = "force-dynamic";
 function toSummary(
   a: AgentRow,
   ownerName: string | null,
-  extra: { subscribed: boolean; subscribers_count: number },
+  extra: Pick<AgentSummary, "subscribed" | "subscribers_count" | "received_via">,
 ): AgentSummary {
   return {
     id: a.id,
@@ -41,14 +43,15 @@ function toSummary(
   };
 }
 
-// GET /api/agents : mes agents (brouillons compris) + ceux de l'équipe :
+// GET /api/agents : mes agents (brouillons compris), ceux que je reçois (un
+// collègue me les envoie, ou je m'y suis abonné) et ceux de l'équipe :
 // partagés par leur owner ("Share with the team") et activés. Un agent est
 // personnel par défaut.
 export async function GET() {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const [mine, team] = await Promise.all([
+  const [mine, others, me] = await Promise.all([
     db.from("agents").select("*").eq("owner_id", user.id).order("updated_at", { ascending: false }),
     db
       .from("agents")
@@ -57,19 +60,39 @@ export async function GET() {
       .neq("status", "draft")
       .order("updated_at", { ascending: false })
       .limit(200),
+    loadAudienceUser(user.id),
   ]);
-  if (mine.error || team.error) {
-    return NextResponse.json({ error: mine.error?.message ?? team.error?.message ?? "Could not load agents" }, { status: 500 });
+  if (mine.error || others.error) {
+    return NextResponse.json({ error: mine.error?.message ?? others.error?.message ?? "Could not load agents" }, { status: 500 });
   }
 
-  type TeamRow = AgentRow & { owner: { name: string | null; email: string } | null };
+  type OtherRow = AgentRow & { owner: { name: string | null; email: string } | null };
   const mineRows = (mine.data ?? []) as AgentRow[];
-  // Avant la migration, `shared` est absent : la liste Team reste vide (sûr).
-  const teamRows = ((team.data ?? []) as TeamRow[]).filter((a) => a.shared === true);
+  const otherRows = (others.data ?? []) as OtherRow[];
   const [subscribed, counts] = await Promise.all([subscribedAgentIds(user.id), subscriberCounts(mineRows.map((a) => a.id))]);
+
+  // Envoi groupé : membre de l'audience, recalculée comme au dispatch. Un
+  // abonnement ne tourne que sur un agent partagé (lib/agents/dispatch.ts).
+  const receivedVia = (a: OtherRow): AgentSummary["received_via"] =>
+    a.destination.type === "audience" && me && isAudienceMember(a.destination, me)
+      ? "group"
+      : a.shared === true && subscribed.has(a.id)
+        ? "subscription"
+        : undefined;
+  const otherSummary = (a: OtherRow) => {
+    const via = receivedVia(a);
+    return toSummary(a, a.owner?.name ?? a.owner?.email ?? null, {
+      subscribed: subscribed.has(a.id),
+      subscribers_count: 0,
+      ...(via ? { received_via: via } : {}),
+    });
+  };
+  const otherSummaries = otherRows.map(otherSummary);
   return NextResponse.json({
     mine: mineRows.map((a) => toSummary(a, user.name ?? user.email, { subscribed: false, subscribers_count: counts.get(a.id) ?? 0 })),
-    team: teamRows.map((a) => toSummary(a, a.owner?.name ?? a.owner?.email ?? null, { subscribed: subscribed.has(a.id), subscribers_count: 0 })),
+    received: otherSummaries.filter((a) => !!a.received_via),
+    // Avant la migration, `shared` est absent : la liste Team reste vide (sûr).
+    team: otherSummaries.filter((a) => a.shared),
   });
 }
 

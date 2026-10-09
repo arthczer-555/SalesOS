@@ -13,13 +13,13 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 export function useAgents() {
-  const { data, error, isLoading, mutate } = useSWR<{ mine: AgentSummary[]; team: AgentSummary[] }>("/api/agents", fetchJson, {
+  const { data, error, isLoading, mutate } = useSWR<{ mine: AgentSummary[]; received: AgentSummary[]; team: AgentSummary[] }>("/api/agents", fetchJson, {
     dedupingInterval: 2000,
     revalidateOnFocus: true,
     // Un agent en cours de design : on repolle pour voir sa carte se remplir.
     refreshInterval: (d) => (d?.mine.some((a) => a.design_status === "designing") ? 4000 : 0),
   });
-  return { mine: data?.mine ?? [], team: data?.team ?? [], error: error as Error | undefined, isLoading, mutate };
+  return { mine: data?.mine ?? [], received: data?.received ?? [], team: data?.team ?? [], error: error as Error | undefined, isLoading, mutate };
 }
 
 /** Design ou run en cours : l'éditeur polle vite pour suivre les étapes. */

@@ -12,6 +12,9 @@
  *    destinataire, donc seul un créateur ADMIN en voit le contenu (runs,
  *    "Preview as", lignes du récap). Un créateur non admin voit qui l'a reçu,
  *    pas ce qu'il a reçu (canSeeOthersRuns).
+ *  - Un DESTINATAIRE d'un envoi groupé (membre de l'audience, partagé ou non)
+ *    voit l'agent en lecture seule (onglet Received) et les messages qu'il a
+ *    reçus. Pas de désinscription : c'est le créateur qui décide.
  */
 
 import { db } from "@/lib/db";
@@ -19,17 +22,24 @@ import type { DbUser } from "@/lib/auth";
 import { computeNextRun, normalizeSchedule } from "./schedule";
 import { normalizeSources } from "./sources";
 import { isAgentColor, type AgentDestination, type AgentRow, type AgentRunRow } from "./types";
-import { normalizeAudience } from "./audience-label";
+import { isAudienceMember, normalizeAudience } from "./audience-label";
+import { loadAudienceUser } from "./audience";
 
-export type AgentAccess = { agent: AgentRow; canEdit: boolean };
+export type AgentAccess = { agent: AgentRow; canEdit: boolean; isRecipient: boolean };
 
 export async function loadAgent(id: string, user: DbUser): Promise<AgentAccess | null> {
   const { data } = await db.from("agents").select("*").eq("id", id).maybeSingle<AgentRow>();
   if (!data) return null;
   const canEdit = data.owner_id === user.id || user.is_admin;
-  // Un collègue (non admin) n'accède qu'aux agents partagés et activés.
-  if (!canEdit && (data.status === "draft" || data.shared !== true)) return null;
-  return { agent: data, canEdit };
+  // Destinataire d'un envoi groupé : audience recalculée comme au dispatch.
+  let isRecipient = false;
+  if (data.owner_id !== user.id && data.status !== "draft" && data.destination.type === "audience") {
+    const me = await loadAudienceUser(user.id);
+    isRecipient = !!me && isAudienceMember(data.destination, me);
+  }
+  // Un collègue (non admin) n'accède qu'aux agents activés, partagés ou qu'il reçoit.
+  if (!canEdit && (data.status === "draft" || (data.shared !== true && !isRecipient))) return null;
+  return { agent: data, canEdit, isRecipient };
 }
 
 /**

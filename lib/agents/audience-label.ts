@@ -62,6 +62,11 @@ export function matchAudience<T extends AudienceUser>(dest: AudienceDestination,
     .sort((a, b) => (a.name ?? a.email).localeCompare(b.name ?? b.email));
 }
 
+/** La personne reçoit l'agent (même règle que le dispatcher). */
+export function isAudienceMember(dest: AudienceDestination, user: AudienceUser): boolean {
+  return matchAudience(dest, [user]).length > 0;
+}
+
 /** "Everyone", "AE & AM", "Sales team + 2", "AM except 1", "3 people". */
 export function audienceLabel(dest: AudienceDestination, count?: number): string {
   const groupLabel = dest.groups.includes("everyone")

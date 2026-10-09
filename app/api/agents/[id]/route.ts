@@ -37,6 +37,30 @@ async function visibleRuns(agentId: string, forUserId: string | null | "all"): P
   return (fallback.data ?? []) as AgentRunRow[];
 }
 
+/**
+ * Envoi groupé "même message pour tous" vu par un destinataire : un seul run,
+ * celui de l'owner, livré à chacun. Il voit ceux qu'il a bien reçus, sans la
+ * liste des autres destinataires et avec SON lien Slack.
+ */
+async function receivedRuns(agentId: string, userId: string): Promise<AgentRunRow[]> {
+  const { data, error } = await db
+    .from("agent_runs")
+    .select("*")
+    .eq("agent_id", agentId)
+    .is("run_as_user_id", null)
+    .not("batch_id", "is", null)
+    // JSON en chaîne : un tableau serait envoyé comme tableau Postgres, pas JSONB.
+    .contains("deliveries", JSON.stringify([{ user_id: userId, ok: true }]))
+    .order("created_at", { ascending: false })
+    .limit(RUNS_LIMIT);
+  if (error) return [];
+  return ((data ?? []) as AgentRunRow[]).map((r) => ({
+    ...r,
+    deliveries: null,
+    slack_permalink: r.deliveries?.find((d) => d.user_id === userId)?.permalink ?? null,
+  }));
+}
+
 // GET /api/agents/[id] : l'agent, son owner, les droits, l'abonnement de
 // l'utilisateur et les runs qu'il peut voir. Pollé par l'éditeur pendant un
 // design ou un run.
@@ -52,8 +76,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   // Le créateur suit son envoi groupé. Un autre admin reste en mode collègue
   // (ses propres runs), comme sur tout agent qui n'est pas le sien.
   const managesAudience = !!audienceDest && isOwner;
+  const receivesSameMessage = access.isRecipient && !!audienceDest && !audienceDest.personalize;
 
-  const [{ data: owner }, fetchedRuns, subscription, counts, members] = await Promise.all([
+  const [{ data: owner }, fetchedRuns, subscription, counts, members, received] = await Promise.all([
     db.from("users").select("id, name, email").eq("id", access.agent.owner_id).single<AgentDetail["owner"]>(),
     // Hors owner (admin compris) : uniquement SES runs, pour lui. L'owner d'un
     // agent à audience : tous les runs (un par destinataire).
@@ -61,6 +86,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     isOwner ? Promise.resolve(null) : getSubscription(id, user.id),
     subscriberCounts([id]),
     managesAudience ? resolveAudience(audienceDest!) : Promise.resolve(null),
+    receivesSameMessage ? receivedRuns(id, user.id) : Promise.resolve([]),
   ]);
 
   // Owner d'un agent à audience : ses runs, ceux des envois groupés et ses
@@ -73,7 +99,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     ? fetchedRuns
         .filter((r) => !r.run_as_user_id || !!r.batch_id || (r.kind === "preview" && memberIds.has(r.run_as_user_id)))
         .map((r) => (r.run_as_user_id && r.run_as_user_id !== user.id && !canSeeOthersRuns(user) ? redactRun(r) : r))
-    : fetchedRuns;
+    : received.length
+      ? [...fetchedRuns, ...received].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).slice(0, RUNS_LIMIT)
+      : fetchedRuns;
 
   // Noms des destinataires des runs affichés (historique d'un envoi groupé).
   let recipients: Record<string, string> | undefined;
@@ -90,7 +118,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     owner: owner ?? { id: access.agent.owner_id, name: null, email: "" },
     canEdit: access.canEdit,
     runs: runs.map((r) => ({ ...r, cost_usd: r.cost_usd == null ? null : Number(r.cost_usd) })),
-    viewer: { isOwner, subscribed: !!subscription?.active },
+    viewer: { isOwner, subscribed: !!subscription?.active, recipient: access.isRecipient },
     subscribers_count: counts.get(id) ?? 0,
     ...(members ? { audience: members.map((m) => ({ id: m.id, name: m.name ?? m.email })) } : {}),
     ...(recipients ? { recipients } : {}),

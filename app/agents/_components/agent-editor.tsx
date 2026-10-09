@@ -414,6 +414,8 @@ export function AgentEditor({ id }: { id: string }) {
   // en plus la gestion (édition, pause, suppression).
   const forMe = data.viewer ? !data.viewer.isOwner : !canEdit;
   const subscribed = !!data.viewer?.subscribed;
+  // Membre de l'audience d'un collègue : il reçoit l'agent sans s'abonner.
+  const recipient = !!data.viewer?.recipient;
   const subscribers = data.subscribers_count ?? 0;
   const ownerName = data.owner.name ?? data.owner.email;
   const latestRun: AgentRunRow | null = runs[0] ?? null;
@@ -452,6 +454,9 @@ export function AgentEditor({ id }: { id: string }) {
   const panelRun = personalizedGroup ? (runs.find((r) => (r.run_as_user_id ?? agent.owner_id) === previewAs) ?? null) : latestRun;
   const audienceEmpty = !!draftAudience && draftAudience.groups.length === 0 && draftAudience.include.length === 0;
   const runsPerSend = savedAudience?.personalize ? Math.max(1, members.length) : 1;
+  // Destinataire d'un même message pour tous : l'essayer avec ses données ne
+  // montrerait pas ce qu'il reçoit.
+  const canTry = !recipient || !!savedAudience?.personalize;
 
   // ── Actions ──
   const onActivate = () =>
@@ -591,7 +596,11 @@ export function AgentEditor({ id }: { id: string }) {
             {agent.status === "active" && agent.next_run_at && (
               <span style={{ color: COLORS.ink3 }}>Next message {timeUntil(agent.next_run_at)}</span>
             )}
-            {forMe && <span style={{ color: COLORS.ink3 }}>Shared by {ownerName}</span>}
+            {forMe && (
+              <span style={{ color: COLORS.ink3 }}>
+                {recipient ? "Sent to you by" : "Shared by"} {ownerName}
+              </span>
+            )}
             {!forMe &&
               (agent.shared ? (
                 <Pill fg={COLORS.ok} bg={COLORS.okBg}>
@@ -608,10 +617,16 @@ export function AgentEditor({ id }: { id: string }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           {forMe ? (
             <>
-              <button type="button" className="ag-btn" onClick={() => onRun(false)} disabled={!!busy || runInFlight} title="Runs once, now, with your own data. Nothing is sent.">
-                {busy === "preview" ? <Loader2 size={14} className="ag-spin" /> : <Play size={14} />} Try it now
-              </button>
-              {subscribed ? (
+              {canTry && (
+                <button type="button" className="ag-btn" onClick={() => onRun(false)} disabled={!!busy || runInFlight} title="Runs once, now, with your own data. Nothing is sent.">
+                  {busy === "preview" ? <Loader2 size={14} className="ag-spin" /> : <Play size={14} />} Try it now
+                </button>
+              )}
+              {recipient ? (
+                <span className="ag-btn ag-btn-received" title={`${ownerName} sends it to you. Only they can stop it.`}>
+                  <BellRing size={14} /> In your DMs
+                </span>
+              ) : subscribed ? (
                 <button type="button" className="ag-btn ag-btn-subscribed" onClick={() => onSubscribe(false)} disabled={!!busy} title="Click to unsubscribe">
                   {busy === "subscribe" ? <Loader2 size={14} className="ag-spin" /> : <BellRing size={14} />} Subscribed
                 </button>
@@ -705,7 +720,16 @@ export function AgentEditor({ id }: { id: string }) {
         <div className="ag-editor-grid" style={{ marginTop: 20 }}>
           {/* ── Colonne configuration ── */}
           <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
-            {forMe && (
+            {forMe && recipient && (
+              <Callout tone="brand" icon={Users}>
+                <b>{ownerName} sends you this agent.</b> It runs {describeSchedule(agent.schedule).replace(/^Every /, "every ")} and lands in <b>your</b> DMs.{" "}
+                {savedAudience?.personalize
+                  ? "Each message is built with your data (your deals, your accounts). Only you see it."
+                  : `Everyone in the group gets the same message, built with ${ownerName}'s data.`}{" "}
+                {canEdit ? "As an admin, you can also edit it: changes apply to everyone." : "To change how it works, duplicate it."}
+              </Callout>
+            )}
+            {forMe && !recipient && (
               <Callout tone="brand" icon={Users}>
                 <b>{ownerName} shared this agent with the team.</b> Try it now or subscribe to get it on schedule: it runs with <b>your</b> data (&quot;my deals&quot; are your deals, your inbox, your accounts) and lands in <b>your</b> DMs. Only you see your runs.{" "}
                 {canEdit ? "As an admin, you can also edit it: changes apply to everyone." : "To change how it works, duplicate it."}
@@ -969,6 +993,7 @@ export function AgentEditor({ id }: { id: string }) {
               agent={{ ...agent, ...draft, tagline: draft.tagline ?? null, ...(forMe ? { destination: { type: "dm" as const } } : {}) }}
               run={panelRun}
               forMe={forMe}
+              canRun={canTry}
               designing={designing}
               onRunPreview={() => onRun(false)}
               onSend={onSend}
@@ -1019,7 +1044,9 @@ export function AgentEditor({ id }: { id: string }) {
 
             {forMe && (
               <div className="ag-card" style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 9 }}>
-                <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink0, marginBottom: 2 }}>{subscribed ? "You're subscribed" : "If you subscribe"}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink0, marginBottom: 2 }}>
+                  {recipient ? "You receive it" : subscribed ? "You're subscribed" : "If you subscribe"}
+                </div>
                 <SummaryRow icon={CalendarClock} label="Runs">
                   {agent.status === "active" ? describeSchedule(agent.schedule, true) : `Paused by ${ownerName}`}
                 </SummaryRow>
@@ -1027,14 +1054,16 @@ export function AgentEditor({ id }: { id: string }) {
                   Your Slack DMs
                 </SummaryRow>
                 <SummaryRow icon={Database} label="Reads">
-                  {agent.sources.length ? `${agent.sources.length} source${agent.sources.length > 1 ? "s" : ""}, as you` : "Only Coachello guides"}
+                  {agent.sources.length
+                    ? `${agent.sources.length} source${agent.sources.length > 1 ? "s" : ""}, as ${canTry ? "you" : ownerName}`
+                    : "Only Coachello guides"}
                 </SummaryRow>
                 {avgCost != null && (
                   <SummaryRow icon={Zap} label="Cost">
                     ≈ {fmtCost(avgCost)} per run
                   </SummaryRow>
                 )}
-                {!subscribed && (
+                {!subscribed && !recipient && (
                   <button type="button" className="ag-btn ag-btn-primary" style={{ marginTop: 6 }} onClick={() => onSubscribe(true)} disabled={!!busy}>
                     {busy === "subscribe" ? <Loader2 size={14} className="ag-spin" /> : <Bell size={14} />} Subscribe
                   </button>

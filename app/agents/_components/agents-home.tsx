@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { AlertTriangle, Bot, Plus, Search, Sparkles, Users } from "lucide-react";
+import { AlertTriangle, Bot, Inbox, Plus, Search, Sparkles, Users } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { agentsApi, useAgents } from "@/lib/hooks/use-agents";
 import { useToast } from "@/components/ui/toast";
@@ -11,7 +11,7 @@ import { AgentCard } from "./agent-card";
 import { AGENT_TEMPLATES } from "./templates";
 import { AgentAvatar, Callout, timeUntil } from "./ui";
 
-type Tab = "mine" | "team";
+type Tab = "mine" | "received" | "team";
 
 function Stat({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
   return (
@@ -105,14 +105,20 @@ function EmptyHero() {
   );
 }
 
+const EMPTY_TEXT: Record<Exclude<Tab, "mine">, string> = {
+  received:
+    "Nothing from your teammates lands in your DMs yet. When someone sends you an agent, or you subscribe to one in the Team tab, it shows up here.",
+  team: "No teammate has shared an agent yet. Agents are personal until their creator turns on \"Share with the team\".",
+};
+
 export function AgentsHome() {
-  const { mine, team, error, isLoading, mutate } = useAgents();
+  const { mine, received, team, error, isLoading, mutate } = useAgents();
   const { toast } = useToast();
   const onSubscribe = async (agent: AgentSummary, active: boolean) => {
     try {
       await agentsApi(`/api/agents/${agent.id}/subscribe`, "POST", { active });
       await mutate();
-      toast(active ? `Subscribed to ${agent.name}: it now runs for you and lands in your DMs.` : `Unsubscribed from ${agent.name}.`, "success");
+      toast(active ? `Subscribed to ${agent.name}: it now runs for you and lands in your DMs. Find it in Received.` : `Unsubscribed from ${agent.name}.`, "success");
     } catch (e) {
       toast(e instanceof Error ? e.message : "Could not update the subscription", "error");
     }
@@ -120,8 +126,7 @@ export function AgentsHome() {
   const [tab, setTab] = React.useState<Tab>("mine");
   const [query, setQuery] = React.useState("");
 
-  const list = tab === "mine" ? mine : team;
-  const subscribedAgents = team.filter((a) => a.subscribed);
+  const list = tab === "mine" ? mine : tab === "received" ? received : team;
   const q = query.trim().toLowerCase();
   const filtered = q
     ? list.filter((a) => [a.name, a.tagline, a.owner_name].some((v) => v?.toLowerCase().includes(q)))
@@ -176,6 +181,9 @@ export function AgentsHome() {
           <button type="button" role="tab" className="ag-tab" aria-selected={tab === "mine"} onClick={() => setTab("mine")}>
             <Bot size={15} /> My agents <span className="ag-tab-count">{mine.length}</span>
           </button>
+          <button type="button" role="tab" className="ag-tab" aria-selected={tab === "received"} onClick={() => setTab("received")}>
+            <Inbox size={15} /> Received <span className="ag-tab-count">{received.length}</span>
+          </button>
           <button type="button" role="tab" className="ag-tab" aria-selected={tab === "team"} onClick={() => setTab("team")}>
             <Users size={15} /> Team <span className="ag-tab-count">{team.length}</span>
           </button>
@@ -198,36 +206,27 @@ export function AgentsHome() {
         <EmptyHero />
       ) : filtered.length === 0 ? (
         <div className="ag-card" style={{ padding: "36px 20px", textAlign: "center", color: COLORS.ink3, fontSize: 13.5 }}>
-          {q ? `No agent matches "${query}".` : "No teammate has shared an agent yet. Agents are personal until their creator turns on \"Share with the team\"."}
+          {q ? `No agent matches "${query}".` : tab !== "mine" && EMPTY_TEXT[tab]}
         </div>
       ) : (
         <div className="ag-grid-cards">
           {filtered.map((a) => (
-            <AgentCard key={a.id} agent={a} showOwner={tab === "team"} onSubscribe={onSubscribe} />
+            <AgentCard key={a.id} agent={a} showOwner={tab !== "mine"} onSubscribe={onSubscribe} />
           ))}
           {tab === "mine" && !q && <NewAgentCard />}
         </div>
+      )}
+
+      {tab === "received" && received.length > 0 && (
+        <p className="ag-hint" style={{ marginTop: 12 }}>
+          Agents your teammates send you, and the ones you subscribed to. They land in your Slack DMs on their schedule. Open one to see the messages you got.
+        </p>
       )}
 
       {tab === "team" && team.length > 0 && (
         <p className="ag-hint" style={{ marginTop: 12 }}>
           Agents your teammates chose to share. Try one once, or subscribe to get it in your DMs on its schedule: it always runs with your own data. Your own agents stay personal until you turn on &quot;Share with the team&quot;. Their messages stay private, and so do yours.
         </p>
-      )}
-
-      {/* Agents de collègues auxquels je suis abonné */}
-      {tab === "mine" && !q && subscribedAgents.length > 0 && (
-        <div style={{ marginTop: 32 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: COLORS.ink0, letterSpacing: "-0.01em" }}>Subscribed</h2>
-            <span style={{ fontSize: 12.5, color: COLORS.ink3 }}>Teammates&apos; agents that run for you and land in your DMs.</span>
-          </div>
-          <div className="ag-grid-cards">
-            {subscribedAgents.map((a) => (
-              <AgentCard key={a.id} agent={a} showOwner onSubscribe={onSubscribe} />
-            ))}
-          </div>
-        </div>
       )}
 
       {/* Galerie de modèles */}

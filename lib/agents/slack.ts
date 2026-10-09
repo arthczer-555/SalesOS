@@ -114,7 +114,8 @@ export async function deliverAgentMessage(
     sections = [...sections.slice(0, MAX_SECTIONS), "_(Message truncated: too long for Slack.)_"];
   }
   const url = appUrl();
-  const manage = url ? ` · <${url}/agents/${agent.id}|Manage agent>` : "";
+  // Un destinataire ne gère pas l'agent : il l'ouvre (onglet Received).
+  const manage = url ? ` · <${url}/agents/${agent.id}|${opts.dmUserId ? "Open agent" : "Manage agent"}>` : "";
 
   const blocks: Record<string, unknown>[] = [
     {

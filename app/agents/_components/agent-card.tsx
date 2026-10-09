@@ -103,8 +103,10 @@ const footerStyle: React.CSSProperties = {
 
 /**
  * Carte d'un agent. Mes agents : toute la carte ouvre l'éditeur. Agents de
- * l'équipe : la carte ouvre l'agent, et une barre d'actions (hors du lien,
- * pas de bouton dans un <a>) permet "Try it now" et "Subscribe" directement.
+ * collègues (onglets Received et Team) : la carte ouvre l'agent, et une barre
+ * d'actions (hors du lien, pas de bouton dans un <a>) permet "Try it now" et
+ * "Subscribe" directement. Un agent que son créateur m'envoie (audience) n'a
+ * pas d'abonnement : il arrive déjà dans mes DMs.
  */
 export function AgentCard({
   agent,
@@ -131,6 +133,9 @@ export function AgentCard({
   };
 
   if (showOwner) {
+    const sentToMe = agent.received_via === "group";
+    // Même message pour tous : l'essayer avec mes données ne montrerait pas ce que je reçois.
+    const canTry = !sentToMe || (agent.destination.type === "audience" && agent.destination.personalize);
     return (
       <div className="ag-card ag-card-box" style={{ display: "flex", flexDirection: "column", minHeight: 196 }}>
         <Link href={`/agents/${agent.id}`} className="ag-card-main" style={{ padding: "18px 18px 0" }}>
@@ -139,15 +144,25 @@ export function AgentCard({
         <div style={{ padding: "0 18px 14px", display: "flex", flexDirection: "column", flex: 1 }}>
           <div style={{ ...footerStyle, marginTop: 14, minHeight: 36, paddingTop: 10 }}>
             <span style={{ fontSize: 12, color: COLORS.ink3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              by {agent.owner_name ?? "a teammate"}
+              {sentToMe ? "Sent by" : "by"} {agent.owner_name ?? "a teammate"}
+              {sentToMe && (canTry ? " · your data" : " · same for all")}
             </span>
             <SourceLogos sources={agent.sources} size={20} max={4} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-            <Link href={`/agents/${agent.id}?run=me`} className="ag-btn ag-btn-sm" title="Runs once, now, with your own data. Nothing is sent.">
-              <Play size={13} /> Try it now
-            </Link>
-            {agent.subscribed ? (
+          <div style={{ display: "grid", gridTemplateColumns: canTry ? "1fr 1fr" : "1fr", gap: 8, marginTop: 8 }}>
+            {canTry && (
+              <Link href={`/agents/${agent.id}?run=me`} className="ag-btn ag-btn-sm" title="Runs once, now, with your own data. Nothing is sent.">
+                <Play size={13} /> Try it now
+              </Link>
+            )}
+            {sentToMe ? (
+              <span
+                className="ag-btn ag-btn-sm ag-btn-received"
+                title={`${agent.owner_name ?? "A teammate"} sends it to you, ${describeSchedule(agent.schedule).replace(/^Every/, "every")}`}
+              >
+                <BellRing size={13} /> In your DMs
+              </span>
+            ) : agent.subscribed ? (
               <button type="button" className="ag-btn ag-btn-sm ag-btn-subscribed" title="Click to unsubscribe" disabled={subscribing || !onSubscribe} onClick={() => toggle(false)}>
                 {subscribing ? <Loader2 size={13} className="ag-spin" /> : <BellRing size={13} />} Subscribed
               </button>

@@ -134,6 +134,9 @@ export type AgentSummary = Pick<
   subscribed: boolean;
   /** Abonnés actifs (sur mes agents). */
   subscribers_count: number;
+  /** Agent d'un collègue qui arrive dans mes DMs : son créateur me l'envoie
+   *  (membre de l'audience) ou je m'y suis abonné. Absent sinon. */
+  received_via?: "group" | "subscription";
 };
 
 /** Réponse de GET /api/agents/[id]. */
@@ -144,7 +147,8 @@ export type AgentDetail = {
   /** Runs visibles par l'utilisateur courant : ceux de l'owner pour l'owner
    *  (et les admins), les siens propres pour un collègue. */
   runs: AgentRunRow[];
-  viewer: { isOwner: boolean; subscribed: boolean };
+  /** recipient : membre de l'audience d'un collègue (lecture seule). */
+  viewer: { isOwner: boolean; subscribed: boolean; recipient: boolean };
   subscribers_count: number;
   /** Agent à audience vu par son owner : membres résolus maintenant. */
   audience?: { id: string; name: string }[];

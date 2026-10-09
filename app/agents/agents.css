@@ -121,6 +121,14 @@
   border-color: #fbcaca;
   color: var(--c-err);
 }
+/* Agent qu'un collègue m'envoie : un état, pas une action (pas de rouge au survol). */
+.ag-btn-received,
+.ag-btn-received:hover {
+  background: var(--c-ok-bg);
+  border-color: #b7e4cf;
+  color: var(--c-ok);
+  cursor: default;
+}
 .ag-btn-danger:hover {
   border-color: var(--c-err);
   color: var(--c-err);

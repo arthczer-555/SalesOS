@@ -230,12 +230,14 @@ function LiveSteps({ run }: { run: AgentRunRow }) {
  * Panneau d'aperçu de l'éditeur. Affiche le dernier run (aperçu ou réel) tel
  * qu'il apparaît dans Slack, ou sa progression en direct. `forMe` : agent d'un
  * collègue ouvert depuis l'onglet Team, les runs affichés sont ceux exécutés
- * pour l'utilisateur (ses données, son DM).
+ * pour l'utilisateur (ses données, son DM). `canRun` false : destinataire d'un
+ * même message pour tous, il voit ce qu'il a reçu sans pouvoir le relancer.
  */
 export function PreviewPanel({
   agent,
   run,
   forMe,
+  canRun = true,
   designing,
   onRunPreview,
   onSend,
@@ -246,6 +248,7 @@ export function PreviewPanel({
   agent: AgentRow;
   run: AgentRunRow | null;
   forMe: boolean;
+  canRun?: boolean;
   designing: boolean;
   onRunPreview: () => void;
   onSend: (run: AgentRunRow) => void;
@@ -266,9 +269,11 @@ export function PreviewPanel({
     <div className="ag-card" style={{ padding: 16 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 14.5, fontWeight: 700, color: COLORS.ink0 }}>{forMe ? "Your preview" : "Live preview"}</div>
+          <div style={{ fontSize: 14.5, fontWeight: 700, color: COLORS.ink0 }}>{!canRun ? "Last message" : forMe ? "Your preview" : "Live preview"}</div>
           <div style={{ fontSize: 12, color: COLORS.ink3 }}>
-            {forMe && !run && !running
+            {!canRun && !run
+              ? "Your first message shows up here once it's sent"
+              : forMe && !run && !running
               ? "Runs with your own data, nothing is sent"
               : designing
               ? "Designing the agent first…"
@@ -279,10 +284,12 @@ export function PreviewPanel({
                   : "See the exact message before it goes out"}
           </div>
         </div>
-        <button type="button" className="ag-btn ag-btn-sm" onClick={onRunPreview} disabled={busy}>
-          {running || starting ? <Loader2 size={13} className="ag-spin" /> : <Play size={13} />}
-          {run ? "Re-run" : forMe ? "Try it now" : "Run preview"}
-        </button>
+        {canRun && (
+          <button type="button" className="ag-btn ag-btn-sm" onClick={onRunPreview} disabled={busy}>
+            {running || starting ? <Loader2 size={13} className="ag-spin" /> : <Play size={13} />}
+            {run ? "Re-run" : forMe ? "Try it now" : "Run preview"}
+          </button>
+        )}
       </div>
 
       {previewAs && previewAs.options.length > 0 && (
@@ -329,7 +336,8 @@ export function PreviewPanel({
             <SlackMarkdown markdown={agent.template} placeholders />
           </SlackFrame>
           <p className="ag-hint" style={{ margin: "10px 2px 0" }}>
-            This is the message template. {forMe ? "Try it now to fill it with your own data." : "Run a preview to fill it with real data."}
+            This is the message template.{" "}
+            {!canRun ? "It's filled with real data when it's sent to you." : forMe ? "Try it now to fill it with your own data." : "Run a preview to fill it with real data."}
           </p>
         </div>
       ) : !run ? (
@@ -343,13 +351,15 @@ export function PreviewPanel({
           }}
         >
           <div style={{ fontSize: 26, marginBottom: 6 }}>{agent.emoji}</div>
-          <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.ink0 }}>No preview yet</div>
-          <p style={{ fontSize: 12.5, color: COLORS.ink3, margin: "4px auto 14px", maxWidth: 300 }}>
-            Run the agent once with real data. Nothing is posted to Slack until you decide.
+          <div style={{ fontSize: 13.5, fontWeight: 600, color: COLORS.ink0 }}>{canRun ? "No preview yet" : "No message yet"}</div>
+          <p style={{ fontSize: 12.5, color: COLORS.ink3, margin: canRun ? "4px auto 14px" : "4px auto 0", maxWidth: 300 }}>
+            {canRun ? "Run the agent once with real data. Nothing is posted to Slack until you decide." : "Your first message shows up here once it's sent to you."}
           </p>
-          <button type="button" className="ag-btn ag-btn-primary ag-btn-sm" onClick={onRunPreview} disabled={busy}>
-            <Play size={13} /> {forMe ? "Try it now" : "Run preview"}
-          </button>
+          {canRun && (
+            <button type="button" className="ag-btn ag-btn-primary ag-btn-sm" onClick={onRunPreview} disabled={busy}>
+              <Play size={13} /> {forMe ? "Try it now" : "Run preview"}
+            </button>
+          )}
         </div>
       ) : run.status === "error" ? (
         <Callout tone="err" icon={AlertTriangle}>
