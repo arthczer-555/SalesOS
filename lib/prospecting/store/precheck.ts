@@ -84,11 +84,20 @@ export async function precheckLeads(userId: string, campaign: CampaignRow, leads
   }
 
   // Clients existants (closed-won) : par nom normalisé ou id company HubSpot.
-  const { data: clientRows } = await db.from("clients").select("company_name, hubspot_company_id").limit(1000);
-  const clientNames = new Set(((clientRows ?? []) as { company_name: string }[]).map((c) => normCompanyName(c.company_name)).filter(Boolean));
-  const clientCompanyIds = new Set(
-    ((clientRows ?? []) as { hubspot_company_id: string | null }[]).map((c) => c.hubspot_company_id).filter((x): x is string => !!x),
-  );
+  // Les fiches absorbées par une fusion (merged_clients, lu à part : la colonne
+  // peut manquer si la migration clients_merge.sql n'est pas passée) restent
+  // des clients.
+  const [{ data: clientRows }, { data: mergedRows }] = await Promise.all([
+    db.from("clients").select("company_name, hubspot_company_id").limit(1000),
+    db.from("clients").select("merged_clients").not("merged_clients", "is", null).limit(1000),
+  ]);
+  type ClientRef = { company_name: string; hubspot_company_id: string | null };
+  const allClients: ClientRef[] = [
+    ...((clientRows ?? []) as ClientRef[]),
+    ...((mergedRows ?? []) as { merged_clients: ClientRef[] | null }[]).flatMap((r) => r.merged_clients ?? []),
+  ];
+  const clientNames = new Set(allClients.map((c) => normCompanyName(c.company_name)).filter(Boolean));
+  const clientCompanyIds = new Set(allClients.map((c) => c.hubspot_company_id).filter((x): x is string => !!x));
 
   const suppressions = await loadSuppressionSets(emails, leads.map((l) => l.companyDomain ?? "").filter(Boolean));
 

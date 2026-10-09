@@ -9,6 +9,7 @@ import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
 import type { ClientTier } from "@/lib/clients/tier";
 import { HealthBadge } from "./health-badge";
 import { TierSelect } from "./tier-select";
+import { NotInSheetButton } from "./billing-link-modal";
 import type { PortfolioSort } from "./portfolio-table";
 
 // Vue par défaut de /clients : la liste simple des comptes (signature,
@@ -86,11 +87,13 @@ export function ClientsTable({
   sort,
   onSortChange,
   onTierSaved,
+  onLinkBilling,
 }: {
   clients: ClientPortfolioItem[];
   sort: PortfolioSort;
   onSortChange: (s: PortfolioSort) => void;
   onTierSaved: (clientId: string, tier: ClientTier | null) => void;
+  onLinkBilling: (client: ClientPortfolioItem) => void;
 }) {
   if (clients.length === 0) {
     return (
@@ -204,7 +207,9 @@ export function ClientsTable({
               {fmtAmount(c.billed_lifetime)}
             </div>
           ) : (
-            <div style={{ ...num, fontSize: 11.5, color: COLORS.warn }}>Not in sheet</div>
+            <div style={num}>
+              <NotInSheetButton label="Not in sheet" onClick={() => onLinkBilling(c)} />
+            </div>
           )}
           <div style={{ fontSize: 12.5, color: COLORS.ink1, fontVariantNumeric: "tabular-nums" }}>{fmtDate(c.closedwon_at)}</div>
           <div>

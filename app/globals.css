@@ -1781,6 +1781,15 @@ button.ch-kpi:disabled {
 .ch-name-btn:hover {
   border-bottom-color: currentColor;
 }
+/* Ligne cliquable de la modale de fusion de fiches. */
+.ch-merge-row {
+  background: transparent;
+  transition: background 0.12s;
+}
+.ch-merge-row:hover,
+.ch-merge-row:focus-visible {
+  background: var(--c-bg-soft);
+}
 /* Case ronde des Next actions : cocher = fait. */
 .ch-check {
   width: 20px;

@@ -9,6 +9,7 @@ import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
 import type { ClientTier } from "@/lib/clients/tier";
 import { HealthBadge } from "./health-badge";
 import { TierSelect } from "./tier-select";
+import { NotInSheetButton } from "./billing-link-modal";
 import { ContractEndOrigin, InvalidContractEnd, Tag, contractEndTone, daysAgo, daysUntil, fmtDay, fmtEur } from "../[id]/_components/ui";
 import { DUE_LABEL } from "../[id]/_components/next-actions-card";
 
@@ -195,6 +196,7 @@ export function PortfolioTable({
   onSortChange,
   hubspot,
   onTierSaved,
+  onLinkBilling,
 }: {
   clients: ClientPortfolioItem[];
   loading: boolean;
@@ -204,6 +206,7 @@ export function PortfolioTable({
   onSortChange: (s: PortfolioSort) => void;
   hubspot: HubspotState;
   onTierSaved: (clientId: string, tier: ClientTier | null) => void;
+  onLinkBilling: (client: ClientPortfolioItem) => void;
 }) {
   const router = useRouter();
   const year = new Date().getFullYear();
@@ -294,7 +297,7 @@ export function PortfolioTable({
             </div>
           </div>
         ) : (
-          <span style={{ fontSize: 12, color: COLORS.warn, whiteSpace: "nowrap" }}>Not in revenue sheet</span>
+          <NotInSheetButton label="Not in revenue sheet" onClick={() => onLinkBilling(c)} />
         ),
     },
     {

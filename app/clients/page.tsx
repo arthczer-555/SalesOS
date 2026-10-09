@@ -5,10 +5,12 @@ import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Search, RefreshCw, Plus } from "lucide-react";
 import { COLORS } from "@/app/clients/_components/theme";
 import type { ClientPortfolioItem } from "@/lib/clients/portfolio";
+import type { Billing } from "@/lib/clients/types";
 import { CLIENT_TIERS, toClientTier, type ClientTier } from "@/lib/clients/tier";
 import { ClientsTable } from "./_components/clients-table";
 import { PHASE, PortfolioTable, sortPortfolio, type HubspotState, type PhaseKey, type PortfolioSort } from "./_components/portfolio-table";
 import { BackfillModal } from "./_components/backfill-modal";
+import { BillingLinkModal } from "./_components/billing-link-modal";
 import { Select, type SelectOption } from "@/components/ui/select";
 import { Banner } from "@/components/ui/banner";
 import { daysUntil } from "./[id]/_components/ui";
@@ -200,6 +202,8 @@ export default function ClientsPage() {
   const [simpleSort, setSimpleSort] = useState<PortfolioSort>({ key: "signed", dir: "desc" });
   const [sort, setSort] = useState<PortfolioSort>({ key: "health", dir: "asc" });
   const [backfillOpen, setBackfillOpen] = useState(false);
+  // Compte "Not in sheet" en cours de liaison au sheet revenue.
+  const [linking, setLinking] = useState<ClientPortfolioItem | null>(null);
 
   const url = `/api/clients/list?owner=${ownerMode === "mine" ? "" : "all"}${advanced ? "&hubspot=1" : ""}`;
   const { data, error, isLoading, mutate } = useSWR<ListResponse>(url, fetcher, {
@@ -218,6 +222,23 @@ export default function ClientsPage() {
       void mutateCache<ListResponse>(
         (key) => typeof key === "string" && key.startsWith("/api/clients/list"),
         (cur) => cur && { ...cur, clients: cur.clients.map((c) => (c.id === clientId ? { ...c, tier } : c)) },
+        { revalidate: false },
+      );
+    },
+    [mutateCache],
+  );
+
+  // Lien au sheet revenue enregistré : même mise à jour locale que le tier.
+  const onBillingLinked = useCallback(
+    (clientId: string, billing: Billing) => {
+      const billed = {
+        billing_matched: billing.matched,
+        billed_lifetime: billing.matched ? billing.total_contract_value ?? null : null,
+        billed_current_year: billing.matched ? billing.current_year_revenue ?? null : null,
+      };
+      void mutateCache<ListResponse>(
+        (key) => typeof key === "string" && key.startsWith("/api/clients/list"),
+        (cur) => cur && { ...cur, clients: cur.clients.map((c) => (c.id === clientId ? { ...c, ...billed } : c)) },
         { revalidate: false },
       );
     },
@@ -430,7 +451,13 @@ export default function ClientsPage() {
             ) : errorMessage ? (
               <div style={{ color: COLORS.err, fontSize: 13 }}>{errorMessage}</div>
             ) : (
-              <ClientsTable clients={simpleRows} sort={simpleSort} onSortChange={setSimpleSort} onTierSaved={onTierSaved} />
+              <ClientsTable
+                clients={simpleRows}
+                sort={simpleSort}
+                onSortChange={setSimpleSort}
+                onTierSaved={onTierSaved}
+                onLinkBilling={setLinking}
+              />
             )
           ) : (
             <PortfolioTable
@@ -442,12 +469,21 @@ export default function ClientsPage() {
               onSortChange={setSort}
               hubspot={hubspot}
               onTierSaved={onTierSaved}
+              onLinkBilling={setLinking}
             />
           )}
         </div>
       </div>
 
       <BackfillModal open={backfillOpen} onClose={() => setBackfillOpen(false)} onDone={() => mutate()} />
+      {linking && (
+        <BillingLinkModal
+          clientId={linking.id}
+          clientName={linking.company_name}
+          onClose={() => setLinking(null)}
+          onSaved={(billing) => onBillingLinked(linking.id, billing)}
+        />
+      )}
     </div>
   );
 }

@@ -98,7 +98,7 @@ export async function fetchBillingRows(): Promise<BillingRow[]> {
 
 // Normalise un nom de société pour le match : majuscules, sans accents, sans
 // ponctuation, espaces compactés.
-function normalizeCompany(name: string): string {
+export function normalizeCompany(name: string): string {
   return name
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
@@ -108,9 +108,8 @@ function normalizeCompany(name: string): string {
     .trim();
 }
 
-export function matchBillingRow(rows: BillingRow[], companyName: string): Billing {
-  if (!companyName.trim() || rows.length === 0) return { matched: false };
-
+function findBillingRow(rows: BillingRow[], companyName: string): BillingRow | null {
+  if (!companyName.trim()) return null;
   const target = normalizeCompany(companyName);
   let hit = rows.find((r) => normalizeCompany(r.company) === target);
   // Fallback : l'un est préfixe de l'autre (ex: "ASCENTIAL" vs "ASCENTIAL (INFORMA)").
@@ -120,33 +119,66 @@ export function matchBillingRow(rows: BillingRow[], companyName: string): Billin
       return n.startsWith(target) || target.startsWith(n);
     });
   }
-  if (!hit) return { matched: false };
+  return hit ?? null;
+}
+
+// Un nom ou plusieurs (fiche fusionnée : son nom + ceux des fiches absorbées,
+// cf. lib/clients/merge.ts). Plusieurs lignes distinctes du sheet = un seul
+// compte, leurs montants sont additionnés ; deux noms qui tombent sur la même
+// ligne ne la comptent qu'une fois.
+export function matchBillingRow(rows: BillingRow[], companyName: string | readonly string[]): Billing {
+  const names = typeof companyName === "string" ? [companyName] : companyName;
+  const hits = new Map<string, BillingRow>();
+  for (const name of names) {
+    const hit = findBillingRow(rows, name);
+    if (hit && !hits.has(hit.company)) hits.set(hit.company, hit);
+  }
+  if (hits.size === 0) return { matched: false, match_source: "name" };
+  return { ...sumBillingRows([...hits.values()]), match_source: "name" };
+}
+
+// Lignes reliées à la main depuis la fiche (clients.billing_sheet_rows, cf.
+// lib/clients/billing-link.ts) : match exact (normalisé) sur la colonne
+// Company, sans repli par préfixe. Une ligne renommée ou supprimée du sheet
+// est listée dans missing_rows, jamais ignorée en silence ; si aucune n'est
+// trouvée, matched: false.
+export function matchLinkedBillingRows(rows: BillingRow[], linked: readonly string[]): Billing {
+  const byName = new Map(rows.map((r) => [normalizeCompany(r.company), r]));
+  const found = new Map<string, BillingRow>();
+  const missing: string[] = [];
+  for (const name of linked) {
+    const hit = byName.get(normalizeCompany(name));
+    if (hit) found.set(hit.company, hit);
+    else missing.push(name);
+  }
+  const extra = { match_source: "manual" as const, ...(missing.length ? { missing_rows: missing } : {}) };
+  if (found.size === 0) return { matched: false, ...extra };
+  return { ...sumBillingRows([...found.values()]), ...extra };
+}
+
+// Un compte = une ou plusieurs lignes du sheet, montants additionnés.
+function sumBillingRows(list: BillingRow[]): Billing {
+  const revenueByYear: Record<string, number> = {};
+  for (const r of list) {
+    for (const [year, v] of Object.entries(r.revenueByYear)) revenueByYear[year] = (revenueByYear[year] ?? 0) + v;
+  }
+  const totals = list.map((r) => r.total).filter((t): t is number => t != null);
 
   const currentYear = String(new Date().getFullYear());
   const prevYear = String(new Date().getFullYear() - 1);
-  const current = hit.revenueByYear[currentYear] ?? null;
-  const prev = hit.revenueByYear[prevYear] ?? null;
+  const current = revenueByYear[currentYear] ?? null;
+  const prev = revenueByYear[prevYear] ?? null;
   const yoy = current != null && prev != null && prev !== 0 ? (current - prev) / prev : null;
 
   return {
     matched: true,
-    match_key: hit.company,
-    total_contract_value: hit.total,
-    revenue_by_year: hit.revenueByYear,
+    match_key: list.map((r) => r.company).join(" + "),
+    matched_rows: list.map((r) => r.company),
+    total_contract_value: totals.length ? totals.reduce((s, t) => s + t, 0) : null,
+    revenue_by_year: revenueByYear,
     current_year_revenue: current,
     prev_year_revenue: prev,
     yoy_growth: yoy,
-    is_rfp: hit.isRfp,
+    is_rfp: list.some((r) => r.isRfp),
   };
-}
-
-// Convenience pour un seul client (enrichissement) : download + match.
-export async function getBillingForClient(companyName: string): Promise<Billing> {
-  try {
-    const rows = await fetchBillingRows();
-    return matchBillingRow(rows, companyName);
-  } catch (e) {
-    console.warn(`[billing] getBillingForClient failed for "${companyName}":`, e instanceof Error ? e.message : e);
-    return { matched: false };
-  }
 }

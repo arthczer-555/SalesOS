@@ -55,6 +55,7 @@ export function KeyInsightsTab({
             closedwonAt={client.closedwon_at}
             contractEndField={client.fields_json?.planning?.fin_contrat_le}
             clientId={client.id}
+            clientName={client.company_name}
             onUpdated={onUpdated}
           />
           <KeyDatesCard client={client} onUpdated={onUpdated} />

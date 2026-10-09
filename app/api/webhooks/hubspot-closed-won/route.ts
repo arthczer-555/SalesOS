@@ -4,6 +4,7 @@ import { db } from "@/lib/db";
 import { hubspotFetch } from "@/lib/hubspot";
 import { triggerPrepareMeetings } from "@/lib/clients/trigger-prepare";
 import { decideAutoEnrich } from "@/lib/clients/auto-enrich";
+import { findMergedDealIds } from "@/lib/clients/merge";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -183,8 +184,15 @@ export async function POST(req: NextRequest) {
   // courant, qu'il faut interpréter via hs_is_closed_won). Si oui, upsert
   // dans clients et déclenche la Background Function d'enrichissement.
   const processed: Array<{ dealId: string; status: string; clientId?: string }> = [];
+  // Deals d'une fiche absorbée par une fusion (cf. lib/clients/merge.ts) : déjà
+  // couverts par la fiche gardée, ne pas recréer la fiche supprimée.
+  const mergedDealIds = await findMergedDealIds(dealIds);
 
   for (const dealId of dealIds) {
+    if (mergedDealIds.has(dealId)) {
+      processed.push({ dealId, status: "merged_into_other_client" });
+      continue;
+    }
     const info = await fetchDealForWebhook(dealId);
     if (!info) {
       processed.push({ dealId, status: "fetch_failed" });

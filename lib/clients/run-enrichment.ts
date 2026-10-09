@@ -15,7 +15,8 @@ import { generateDealRecap } from "./deal-recap";
 import { fetchClientNews, mergeNewsHistory } from "./news";
 import { mergeExtractedFields } from "./merge-fields";
 import { rankClientNews } from "./rank-news";
-import { getBillingForClient } from "../billing/google-sheet";
+import { getClientBilling } from "./billing-link";
+import { mergedDealIdsOf } from "./merge";
 import { computeHealth, computeInsights } from "./health";
 import { generateHealthSummary, judgeRecentTone } from "./health-summary";
 import { generateInsightsAI } from "./insights-ai";
@@ -103,6 +104,8 @@ export async function runClientEnrichment(
       confirmedRecordingIds: confirmed && confirmed.length > 0 ? confirmed : undefined,
       excludeRecordingIds: declined.length > 0 ? declined : undefined,
       accountCompanyIds,
+      // Deals des fiches absorbées par une fusion (cf. merge.ts).
+      extraDealIds: mergedDealIdsOf(row),
     });
     const contextPrompt = renderClientContextForPrompt(ctx);
 
@@ -157,10 +160,9 @@ export async function runClientEnrichment(
 
     // Billing : best-effort, contexte facturation depuis le fichier revenue
     // (Google Drive). Pas d'IA, coût nul. Affiché immédiatement sur la fiche
-    // sans attendre le cron mensuel.
-    const billingPromise = getBillingForClient(
-      ctx.deal?.company?.name ?? ctx.deal?.name ?? "",
-    ).catch((e) => {
+    // sans attendre le cron mensuel. Lignes reliées à la main prioritaires
+    // (cf. billing-link.ts) ; null si le sheet est illisible.
+    const billingPromise = getClientBilling(row, ctx.deal?.company?.name ?? ctx.deal?.name ?? "").catch((e) => {
       console.warn(`[clients/enrich/${clientId}] billing fetch failed:`, e instanceof Error ? e.message : e);
       return null;
     });

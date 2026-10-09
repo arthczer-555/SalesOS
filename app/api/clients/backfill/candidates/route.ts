@@ -3,6 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hubspotSearchAll, hubspotFetch } from "@/lib/hubspot";
 import { parseHubspotDate } from "@/lib/clients/lifecycle";
+import { findMergedDealIds } from "@/lib/clients/merge";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -40,15 +41,17 @@ export async function GET(_req: NextRequest) {
       return NextResponse.json({ candidates: [], total: 0 });
     }
 
-    // Filtre côté DB : on ne propose que les deals pas encore importés
+    // Filtre côté DB : on ne propose que les deals pas encore importés (ni
+    // absorbés par une fusion de fiches, cf. lib/clients/merge.ts).
     const dealIds = deals.map((d) => d.id);
-    const { data: existing } = await db
-      .from("clients")
-      .select("hubspot_deal_id")
-      .in("hubspot_deal_id", dealIds);
-    const alreadyImported = new Set(
-      (existing as { hubspot_deal_id: string }[] | null ?? []).map((r) => r.hubspot_deal_id),
-    );
+    const [{ data: existing }, merged] = await Promise.all([
+      db.from("clients").select("hubspot_deal_id").in("hubspot_deal_id", dealIds),
+      findMergedDealIds(dealIds),
+    ]);
+    const alreadyImported = new Set([
+      ...(existing as { hubspot_deal_id: string }[] | null ?? []).map((r) => r.hubspot_deal_id),
+      ...merged,
+    ]);
 
     // Charge la liste des owners pour afficher le nom dans le dropdown
     type OwnerRow = { id: string; firstName?: string; lastName?: string; email?: string };

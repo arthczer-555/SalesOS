@@ -120,22 +120,24 @@ export type ClientEnrichmentContext = {
 
 export async function loadClientContext(
   dealId: string,
-  opts?: { confirmedRecordingIds?: string[]; excludeRecordingIds?: string[]; accountCompanyIds?: string[] },
+  opts?: { confirmedRecordingIds?: string[]; excludeRecordingIds?: string[]; accountCompanyIds?: string[]; extraDealIds?: string[] },
 ): Promise<ClientEnrichmentContext> {
   // includeCompanyActivities : on compte aussi l'activité associée à la
   // company (emails/meetings d'intro logués au niveau compte ou contacts mais
   // pas au deal), sinon le health rate ces touchpoints et sur-estime le
   // silence. includeLinkedDeals : idem pour le deal Customer Success où vit le
   // suivi post-signature et les autres deals du compte. accountCompanyIds :
-  // companies rattachées au compte (clients.account_companies). Dédup
+  // companies rattachées au compte (clients.account_companies). extraDealIds :
+  // deals des fiches absorbées par une fusion (clients.merged_deal_ids). Dédup
   // deal/company/liés gérée dans fetchDealContext. Les meetings Claap attendent
   // la liste des deals liés (requête rapide).
   const deal = await fetchDealContext(dealId, {
     includeCompanyActivities: true,
     includeLinkedDeals: true,
     accountCompanyIds: opts?.accountCompanyIds,
+    extraDealIds: opts?.extraDealIds,
   });
-  const indexedRes = await queryClaapMeetingsForDeals(contextDealIds(dealId, deal));
+  const indexedRes = await queryClaapMeetingsForDeals([...new Set([...contextDealIds(dealId, deal), ...(opts?.extraDealIds ?? [])])]);
   // Un meeting retiré à la main (popup "meetings analyzed" ou "Not this
   // account") sort aussi des indexés : rattaché au deal par sales-coach, il
   // reviendrait sinon à chaque refresh.

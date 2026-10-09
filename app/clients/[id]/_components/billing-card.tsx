@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
+import { Link2, Loader2, RefreshCw, TrendingDown, TrendingUp } from "lucide-react";
 import { COLORS } from "@/app/clients/_components/theme";
+import { BillingLinkModal } from "@/app/clients/_components/billing-link-modal";
 import type { Billing, ClientFieldValue, HubspotDealFields } from "@/lib/clients/types";
 import { resolveContractEnd } from "@/lib/clients/lifecycle";
 import { Card, CardHeader, ContractEndOrigin, Eyebrow, InvalidContractEnd, Tag, contractEndTone, daysUntil, fmtDay, fmtEur, parseLooseDate } from "./ui";
@@ -10,7 +11,9 @@ import { Card, CardHeader, ContractEndOrigin, Eyebrow, InvalidContractEnd, Tag, 
 // Carte "Billing" de Key insights, à côté de la santé : CA de l'année (sheet
 // revenue, source de vérité), YoY, lifetime, barres par année, et le contrat
 // (dates HubSpot lues en live ; sans fin de contrat HubSpot valable, celle
-// trouvée dans les échanges). Société absente du sheet : état explicite.
+// trouvée dans les échanges). Société absente du sheet : état explicite, avec
+// le lien manuel vers la bonne ligne (BillingLinkModal), aussi proposé sous les
+// montants pour corriger un match par nom faux.
 
 export function BillingCard({
   billing,
@@ -19,6 +22,7 @@ export function BillingCard({
   closedwonAt,
   contractEndField,
   clientId,
+  clientName,
   onUpdated,
 }: {
   billing: Billing | null;
@@ -27,10 +31,16 @@ export function BillingCard({
   closedwonAt: string | null;
   contractEndField: ClientFieldValue | null | undefined;
   clientId: string;
+  clientName: string;
   onUpdated: () => void;
 }) {
   const [reloading, setReloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
+  const missingRows = billing?.missing_rows ?? [];
+  const linkModal = linkOpen && (
+    <BillingLinkModal clientId={clientId} clientName={clientName} onClose={() => setLinkOpen(false)} onSaved={() => onUpdated()} />
+  );
 
   async function reload() {
     setReloading(true);
@@ -108,16 +118,28 @@ export function BillingCard({
       <Card style={{ display: "flex", flexDirection: "column" }}>
         <CardHeader title="Billing" right={reloadBtn} />
         <div style={{ padding: "12px 14px", borderRadius: 10, background: COLORS.warnTint, border: `1px solid ${COLORS.warnLine}` }}>
-          <div style={{ fontSize: 13, color: COLORS.warn, fontWeight: 700 }}>No match in the revenue sheet</div>
-          <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 3, lineHeight: 1.5 }}>
-            The company name was not found in the revenue file, so billed revenue is unknown (not zero).
+          <div style={{ fontSize: 13, color: COLORS.warn, fontWeight: 700 }}>
+            {missingRows.length > 0 ? "Linked row not found in the revenue sheet" : "No match in the revenue sheet"}
           </div>
+          <div style={{ fontSize: 12.5, color: COLORS.ink2, marginTop: 3, lineHeight: 1.5 }}>
+            {missingRows.length > 0
+              ? `${missingRows.join(", ")} ${missingRows.length > 1 ? "are" : "is"} no longer in the revenue file (renamed or removed), so billed revenue is unknown (not zero).`
+              : "The company name was not found in the revenue file, so billed revenue is unknown (not zero)."}
+          </div>
+          <button type="button" className="ch-btn ch-btn-sm ch-btn-primary" onClick={() => setLinkOpen(true)} style={{ marginTop: 10 }}>
+            <Link2 size={13} />
+            {missingRows.length > 0 ? "Pick the new row" : "Link a row from the sheet"}
+          </button>
         </div>
         {error && <div style={{ fontSize: 12, color: COLORS.err, marginTop: 6 }}>{error}</div>}
         <div style={{ marginTop: "auto", paddingTop: 16 }}>{contractRows}</div>
+        {linkModal}
       </Card>
     );
   }
+
+  // Lignes du sheet lues (billings d'avant le lien manuel : match_key "A + B").
+  const sheetRows = billing.matched_rows ?? (billing.match_key ? billing.match_key.split(" + ") : []);
 
   const years = Object.keys(billing.revenue_by_year ?? {}).sort();
   const lastYears = years.slice(-5);
@@ -185,8 +207,21 @@ export function BillingCard({
           })}
         </div>
       )}
+      <div style={{ marginTop: 12, fontSize: 11.5, color: COLORS.ink3, lineHeight: 1.45 }}>
+        {sheetRows.length > 1 ? "Sheet rows" : "Sheet row"} <span style={{ color: COLORS.ink1, fontWeight: 600 }}>{sheetRows.join(" + ") || "-"}</span>
+        {billing.match_source === "manual" ? " · linked by hand" : " · matched by name"} ·{" "}
+        <button type="button" className="ch-link" onClick={() => setLinkOpen(true)} style={{ fontSize: 11.5, fontWeight: 500, color: COLORS.ink2 }}>
+          Change
+        </button>
+      </div>
+      {missingRows.length > 0 && (
+        <div style={{ marginTop: 4, fontSize: 11.5, color: COLORS.warn, lineHeight: 1.45 }}>
+          Not in the sheet anymore: {missingRows.join(", ")}. Its revenue is not counted.
+        </div>
+      )}
       {error && <div style={{ fontSize: 12, color: COLORS.err, marginTop: 6 }}>{error}</div>}
       <div style={{ marginTop: "auto", paddingTop: 16 }}>{contractRows}</div>
+      {linkModal}
     </Card>
   );
 }

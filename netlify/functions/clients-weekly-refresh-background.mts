@@ -1,6 +1,12 @@
 import { db } from "../../lib/db";
-import { fetchBillingRows, matchBillingRow } from "../../lib/billing/google-sheet";
+import { fetchBillingRows } from "../../lib/billing/google-sheet";
 import { resolveCronUserId } from "../../lib/cron-user";
+import { matchClientBilling } from "../../lib/clients/billing-link";
+import type { MergedClient } from "../../lib/clients/types";
+
+// Colonnes de migrations optionnelles (clients_merge.sql,
+// clients_billing_link.sql) : retirées de la lecture tant qu'elles manquent.
+const OPTIONAL_COLUMNS = ["merged_clients", "billing_sheet_rows"];
 
 // Job hebdo : (1) sync facturation pour tous les clients 'done' (1 seul
 // download du fichier revenue, match en mémoire), puis (2) un refresh par
@@ -23,15 +29,29 @@ export default async (req: Request) => {
     return;
   }
 
-  const { data: clients, error } = await db
-    .from("clients")
-    .select("id, company_name")
-    .eq("enrichment_status", "done");
+  // merged_clients : noms des fiches absorbées par une fusion, matchés aussi dans
+  // le sheet revenue. billing_sheet_rows : lignes reliées à la main, qui
+  // remplacent le match par nom (cf. lib/clients/billing-link.ts).
+  const load = (columns: string[]) => db.from("clients").select(columns.join(", ")).eq("enrichment_status", "done");
+  let columns = ["id", "company_name", ...OPTIONAL_COLUMNS];
+  let { data: clients, error } = await load(columns);
+  for (let i = 0; i < OPTIONAL_COLUMNS.length && error; i++) {
+    const message = error.message;
+    const missing = OPTIONAL_COLUMNS.find((c) => columns.includes(c) && message.includes(c));
+    if (!missing) break;
+    columns = columns.filter((c) => c !== missing);
+    ({ data: clients, error } = await load(columns));
+  }
   if (error) {
     console.error("[clients-weekly-refresh-bg] failed to load clients:", error.message);
     return;
   }
-  const list = clients ?? [];
+  const list = (clients ?? []) as unknown as Array<{
+    id: string;
+    company_name: string;
+    merged_clients?: MergedClient[] | null;
+    billing_sheet_rows?: string[] | null;
+  }>;
   const cronUserId = await resolveCronUserId();
   console.log(`[clients-weekly-refresh-bg] ${list.length} clients 'done' (imputé à ${cronUserId ?? "système"})`);
 
@@ -41,8 +61,10 @@ export default async (req: Request) => {
     const rows = await fetchBillingRows();
     if (rows.length > 0) {
       for (const c of list) {
-        const billing = matchBillingRow(rows, c.company_name ?? "");
-        if (billing.matched) {
+        const billing = matchClientBilling(rows, c);
+        // Lien manuel dont les lignes ont disparu du sheet : écrit aussi, la
+        // fiche doit le dire au lieu d'afficher l'ancien montant.
+        if (billing.matched || billing.match_source === "manual") {
           await db.from("clients").update({ billing, billing_refreshed_at: new Date().toISOString() }).eq("id", c.id);
           billingUpdated++;
         }

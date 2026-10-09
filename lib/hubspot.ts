@@ -402,12 +402,20 @@ async function resolveLinkedDeals(
  * resolveLinkedDeals), listés dans `linked_deals`. accountCompanyIds : companies
  * rattachées au compte en plus de celle du deal ; leurs deals deviennent des
  * deals liés et leur activité est lue avec includeCompanyActivities.
+ * extraDealIds : deals à lire comme des liens explicites (deals des fiches
+ * absorbées par une fusion, cf. lib/clients/merge.ts), avec includeLinkedDeals.
  * withEngagements: false : ne lit aucun engagement (contacts, company et deals
  * liés seulement), pour les appels qui ne servent qu'à la discovery.
  */
 export async function fetchDealContext(
   dealId: string,
-  opts?: { includeCompanyActivities?: boolean; includeLinkedDeals?: boolean; accountCompanyIds?: string[]; withEngagements?: boolean },
+  opts?: {
+    includeCompanyActivities?: boolean;
+    includeLinkedDeals?: boolean;
+    accountCompanyIds?: string[];
+    extraDealIds?: string[];
+    withEngagements?: boolean;
+  },
 ): Promise<DealSnapshot | null> {
   if (!dealId || !process.env.HUBSPOT_ACCESS_TOKEN) return null;
 
@@ -466,7 +474,7 @@ export async function fetchDealContext(
       if (linkedAssoc.status !== "fulfilled") throw linkedAssoc.reason;
       linkedDeals = await resolveLinkedDeals(
         dealId,
-        (linkedAssoc.value.results ?? []).map((r) => String(r.id)),
+        [...(linkedAssoc.value.results ?? []).map((r) => String(r.id)), ...(opts.extraDealIds ?? [])],
         accountIds,
         pipelinesRes.status === "fulfilled" ? pipelinesRes.value.results ?? [] : [],
       );

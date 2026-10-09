@@ -10,6 +10,7 @@ import {
   ListChecks,
   Loader2,
   MailPlus,
+  Merge,
   MoreHorizontal,
   RefreshCw,
   Sparkles,
@@ -77,6 +78,7 @@ export type HeaderActions = {
   onShowOnboarding: () => void;
   onEnrich: () => void;
   onDelete: () => void;
+  onMerge: () => void;
   onConfirmMeetings: () => void;
   onOpenReport: () => void;
   onTierSaved: () => void;
@@ -314,6 +316,14 @@ export function ClientHeader({
                     onSelect: actions.onEnrich,
                     disabled: triggering,
                     hidden: !isAdmin || client.enrichment_status === "running" || client.enrichment_status === "awaiting_meetings",
+                  },
+                  {
+                    key: "merge",
+                    label: "Merge with another page",
+                    description: "Same account on two pages: keep one, with both deals, their HubSpot activity and billed revenue",
+                    icon: Merge,
+                    onSelect: actions.onMerge,
+                    hidden: !isAdmin,
                   },
                   { key: "delete", label: deleting ? "Deleting…" : "Delete client", icon: Trash2, danger: true, onSelect: actions.onDelete, disabled: deleting, hidden: !isAdmin },
                 ],

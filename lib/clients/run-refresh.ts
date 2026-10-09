@@ -2,7 +2,7 @@ import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { withAnthropicRetry } from "../anthropic-retry";
 import { fetchDealContext } from "../hubspot";
-import { getBillingForClient } from "../billing/google-sheet";
+import { getClientBilling } from "./billing-link";
 import { contextDealIds, loadClientContext, loadClaapMeetingsForDeals, renderClientContextForPrompt } from "./context";
 import { discoverClaapMeetingCandidates } from "./claap-discovery";
 import { discoverAccountCompanies } from "./account-discovery";
@@ -31,9 +31,11 @@ import type {
   ConfirmedRecording,
   DealRecap,
   Insights,
+  MergedClient,
   News,
   RefreshReport,
 } from "./types";
+import { mergedDealIdsOf } from "./merge";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { withForcedTool } from "../models/compat";
 
@@ -60,6 +62,10 @@ import { withForcedTool } from "../models/compat";
 // Claap (decline-meeting). Les fields sont ré-extraits même sans activité
 // nouvelle, ceux qui s'appuyaient sur ce meeting prennent la nouvelle valeur
 // (ou se vident), et ses étapes sortent de la timeline du deal recap.
+// reextract : refresh lancé après une fusion de fiches (merge.ts). L'historique
+// de la fiche absorbée n'a jamais été lu avec ce compte : fields ré-extraits
+// même sans activité nouvelle. Les deals des fiches absorbées
+// (merged_deal_ids) sont lus à chaque refresh, comme des deals liés.
 
 export type RunRefreshResult =
   | { ok: true; report: RefreshReport }
@@ -95,6 +101,11 @@ type ClientRefreshRow = {
   // appliquée (select("*") ne renvoie pas la colonne).
   account_companies?: AccountCompany[] | null;
   declined_company_ids?: string[] | null;
+  // Idem, migration clients_merge.sql.
+  merged_deal_ids?: string[] | null;
+  merged_clients?: MergedClient[] | null;
+  // Idem, migration clients_billing_link.sql.
+  billing_sheet_rows?: string[] | null;
 };
 
 // Sections dont un changement rend le coach brief obsolète.
@@ -115,7 +126,7 @@ function after(iso: string | null | undefined, sinceTs: number | null): boolean 
 export async function runClientRefresh(
   clientId: string,
   userId: string | null = null,
-  opts?: { trigger?: "manual" | "cron"; skipBilling?: boolean; removedRecordingIds?: string[] },
+  opts?: { trigger?: "manual" | "cron"; skipBilling?: boolean; removedRecordingIds?: string[]; reextract?: boolean },
 ): Promise<RunRefreshResult> {
   const trigger = opts?.trigger ?? "manual";
   const removedIds = new Set(opts?.removedRecordingIds ?? []);
@@ -150,9 +161,11 @@ export async function runClientRefresh(
     // que soit sa date (ex. meeting lié à un autre deal).
     const declinedCompanyIds = new Set(row.declined_company_ids ?? []);
     const accountCompanies: AccountCompany[] = (row.account_companies ?? []).filter((c) => !declinedCompanyIds.has(c.id));
+    const mergedDealIds = mergedDealIdsOf(row);
     const dealForDiscovery = await fetchDealContext(row.hubspot_deal_id, {
       includeLinkedDeals: true,
       accountCompanyIds: accountCompanies.map((c) => c.id),
+      extraDealIds: mergedDealIds,
       withEngagements: false,
     }).catch((e) => {
       console.warn(`[clients/refresh/${clientId}] deal fetch for meeting discovery failed:`, e instanceof Error ? e.message : e);
@@ -178,7 +191,9 @@ export async function runClientRefresh(
       addedCompanies = res.companies;
       accountCompanies.push(...addedCompanies);
     }
-    const indexedMeetings = await loadClaapMeetingsForDeals(contextDealIds(row.hubspot_deal_id, dealForDiscovery));
+    const indexedMeetings = await loadClaapMeetingsForDeals([
+      ...new Set([...contextDealIds(row.hubspot_deal_id, dealForDiscovery), ...mergedDealIds]),
+    ]);
     const knownIds = new Set([
       ...indexedMeetings.map((m) => m.recording_id),
       ...(row.confirmed_claap_recordings ?? []).map((r) => r.recording_id),
@@ -204,6 +219,7 @@ export async function runClientRefresh(
     const ctx = await loadClientContext(row.hubspot_deal_id, {
       excludeRecordingIds: declinedIds.length > 0 ? declinedIds : undefined,
       accountCompanyIds: accountCompanies.map((c) => c.id),
+      extraDealIds: mergedDealIds,
     });
     const companyName = ctx.deal?.company?.name ?? ctx.deal?.name ?? row.company_name ?? "";
 
@@ -272,9 +288,11 @@ export async function runClientRefresh(
     // ── Fields (tous) : ré-extraction seulement s'il y a du nouveau ───────────
     // Une company ajoutée au compte compte comme du nouveau : son historique
     // (antérieur au dernier refresh) n'a jamais été lu. Un meeting retiré aussi :
-    // les fields qu'il appuyait doivent être relus sans lui.
+    // les fields qu'il appuyait doivent être relus sans lui. Une fusion aussi.
     const contextPrompt =
-      newActivityCount > 0 || addedCompanies.length > 0 || removedIds.size > 0 ? renderClientContextForPrompt(ctx) : null;
+      newActivityCount > 0 || addedCompanies.length > 0 || removedIds.size > 0 || opts?.reextract
+        ? renderClientContextForPrompt(ctx)
+        : null;
     if (contextPrompt) {
       const client = anthropicClient({ timeout: 600_000 });
       const msg = await withAnthropicRetry(
@@ -321,7 +339,9 @@ export async function runClientRefresh(
       return null;
     });
     const billingPromise =
-      trigger === "cron" || opts?.skipBilling ? Promise.resolve(null) : getBillingForClient(companyName).catch(() => null);
+      trigger === "cron" || opts?.skipBilling
+        ? Promise.resolve(null)
+        : getClientBilling(row, companyName).catch(() => null);
     const suggestionsPromise = contextPrompt
       ? generateHubspotSuggestions(row.hubspot_deal_id, contextPrompt, userId).catch((e) => {
           console.warn(`[clients/refresh/${clientId}] hubspot suggestions failed:`, e instanceof Error ? e.message : e);
@@ -386,7 +406,9 @@ export async function runClientRefresh(
       newsError = "News could not be loaded";
     }
 
-    if (billing?.matched) {
+    // Lien manuel dont les lignes ont disparu du sheet : écrit aussi, la fiche
+    // doit le dire au lieu d'afficher l'ancien montant.
+    if (billing?.matched || billing?.match_source === "manual") {
       updatePayload.billing = billing;
       updatePayload.billing_refreshed_at = new Date().toISOString();
     }

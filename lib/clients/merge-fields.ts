@@ -101,3 +101,22 @@ export function mergeExtractedFields(
 
   return { merged: merged as Partial<ClientFields>, changed };
 }
+
+// Fusion de deux fiches (lib/clients/merge.ts) : les fields de la fiche gardée
+// font foi, ceux restés vides prennent la valeur de la fiche absorbée (avec sa
+// source et sa confiance). Le refresh lancé après la fusion relit ensuite tout.
+export function fillEmptyFields(kept: Partial<ClientFields>, other: Partial<ClientFields>): Partial<ClientFields> {
+  const out: Record<string, Record<string, ClientFieldValue>> = {};
+  for (const section of SECTION_DEFINITIONS) {
+    const sectionKey = section.key as SectionKey;
+    const keptSection = (kept?.[sectionKey] ?? {}) as Record<string, ClientFieldValue>;
+    const otherSection = (other?.[sectionKey] ?? {}) as Record<string, ClientFieldValue>;
+    const merged: Record<string, ClientFieldValue> = { ...keptSection };
+    for (const field of section.fields) {
+      const theirs = otherSection[field.key];
+      if (theirs && !isEmpty(theirs.value) && isEmpty(keptSection[field.key]?.value)) merged[field.key] = theirs;
+    }
+    if (Object.keys(merged).length > 0) out[sectionKey] = merged;
+  }
+  return out as Partial<ClientFields>;
+}

@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { hubspotFetch, hubspotBatchAssociations } from "../hubspot";
 import { parseHubspotDate } from "./lifecycle";
+import { findMergedDealIds } from "./merge";
 
 // Backfill des closed-won historiques côté HubSpot vers la table `clients`.
 // L'admin choisit explicitement la liste des deals à importer via le dropdown
@@ -70,12 +71,16 @@ export async function backfillClosedWonDeals(opts: BackfillOpts): Promise<Backfi
 
   const dealIds = deals.map((d) => d.id);
 
-  // 2a. Dédoublonnage : quels deals sont DEJA dans clients ?
+  // 2a. Dédoublonnage : quels deals sont DEJA dans clients (fiche à eux ou
+  // absorbée par une fusion, cf. merge.ts) ?
   const { data: existingRows } = await db
     .from("clients")
     .select("hubspot_deal_id")
     .in("hubspot_deal_id", dealIds);
-  const existing = new Set((existingRows ?? []).map((r: { hubspot_deal_id: string }) => r.hubspot_deal_id));
+  const existing = new Set([
+    ...(existingRows ?? []).map((r: { hubspot_deal_id: string }) => r.hubspot_deal_id),
+    ...(await findMergedDealIds(dealIds)),
+  ]);
 
   // 2b. Associations deals -> companies en batch (1 call / 100 deals)
   const dealsToImport = deals.filter((d) => !existing.has(d.id));

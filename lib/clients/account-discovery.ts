@@ -108,7 +108,7 @@ export async function discoverAccountCompanies(
     }
 
     const since = Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000;
-    const order: Record<AccountCompanyReason, number> = { same_domain: 0, contact_domain: 1, name: 2 };
+    const order: Record<AccountCompanyReason, number> = { merged: 0, same_domain: 0, contact_domain: 1, name: 2 };
     const now = new Date().toISOString();
     const companies = [...found.values()]
       .map(({ row, reason, detail }) => ({ row, reason, detail, last: Date.parse(row.properties.notes_last_updated ?? "") || 0 }))

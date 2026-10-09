@@ -471,10 +471,19 @@ export type RefreshReport = {
 
 // ── Facturation (onglet "Historique" du fichier revenue Google Drive) ─────────
 // Une ligne par société : Total lifetime + revenu par année + flag RFP. Matché
-// par nom de société normalisé. matched=false si aucune ligne trouvée.
+// par nom de société normalisé, ou par les lignes reliées à la main depuis la
+// fiche (clients.billing_sheet_rows, cf. lib/clients/billing-link.ts).
+// matched=false si aucune ligne trouvée.
 export type Billing = {
   matched: boolean;
   match_key?: string; // valeur du nom de société utilisée pour le match
+  // Lignes retenues (valeurs exactes de la colonne Company). Absent sur les
+  // billings calculés avant le lien manuel : retomber sur match_key.
+  matched_rows?: string[];
+  // "name" : match automatique par nom ; "manual" : lignes reliées à la main.
+  match_source?: "name" | "manual";
+  // Lignes reliées à la main introuvables dans le sheet (renommées, supprimées).
+  missing_rows?: string[];
   total_contract_value?: number | null; // colonne "Total" (lifetime)
   revenue_by_year?: Record<string, number>; // { "2022": 38140, ..., "2026": 51391 }
   current_year_revenue?: number | null;
@@ -515,7 +524,8 @@ export type MeetingCandidate = {
 // lib/clients/account-discovery.ts, migration clients_account_companies.sql).
 // "pending" = ajoutée par le refresh, à confirmer dans le panneau de la fiche ;
 // "confirmed" = gardée par un humain. Les deux comptent dans les données.
-export type AccountCompanyReason = "same_domain" | "contact_domain" | "name";
+// "merged" : company d'une fiche absorbée par une fusion (cf. merge.ts).
+export type AccountCompanyReason = "same_domain" | "contact_domain" | "name" | "merged";
 export type AccountCompany = {
   id: string;
   name: string | null;
@@ -527,6 +537,20 @@ export type AccountCompany = {
   added_at: string;
   confirmed_at?: string | null;
   last_activity_at?: string | null;
+};
+
+// Fiche absorbée par une fusion (cf. lib/clients/merge.ts, migration
+// clients_merge.sql). company_name sert au match du sheet revenue ; snapshot
+// garde la row entière, pour défaire une fusion à la main si besoin.
+export type MergedClient = {
+  id: string;
+  hubspot_deal_id: string;
+  hubspot_company_id: string | null;
+  company_name: string;
+  closedwon_at: string | null;
+  merged_at: string;
+  merged_by: string | null;
+  snapshot?: Record<string, unknown>;
 };
 
 // Recording validé par l'humain (gardé depuis les candidats ou ajouté à la
@@ -803,6 +827,10 @@ export type ClientRow = {
   // appliquée.
   account_companies?: AccountCompany[] | null;
   declined_company_ids?: string[] | null;
+  // Fiches absorbées par une fusion et leurs deals (cf. MergedClient). Absentes
+  // tant que la migration clients_merge.sql n'est pas appliquée.
+  merged_deal_ids?: string[] | null;
+  merged_clients?: MergedClient[] | null;
   last_enriched_at: string | null;
   last_health_run_at: string | null;
   last_news_run_at: string | null;
@@ -821,6 +849,12 @@ export type ClientRow = {
   am_cs_notified_at: string | null;
   billing: Billing | null;
   billing_refreshed_at: string | null;
+  // Lignes du sheet revenue reliées à la main (cf. lib/clients/billing-link.ts,
+  // migration clients_billing_link.sql). Non vide = remplace le match par nom.
+  // Absentes tant que la migration n'est pas appliquée.
+  billing_sheet_rows?: string[] | null;
+  billing_linked_by?: string | null;
+  billing_linked_at?: string | null;
   // Prochaine facturation, saisie à la main (cf. migration clients_next_billing.sql).
   // Absentes tant que la migration n'est pas appliquée.
   next_billing_date?: string | null; // YYYY-MM-DD

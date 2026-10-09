@@ -21,6 +21,7 @@ import { AnalyzedMeetingsModal } from "./_components/analyzed-meetings-modal";
 import { MissingInfoEmailModal } from "./_components/missing-info-email-modal";
 import { RefreshReportModal } from "./_components/whats-new-card";
 import { AccountCompaniesPanel } from "./_components/account-companies-panel";
+import { MergeModal } from "./_components/merge-modal";
 
 // Fiche client v2 : header (identité, Refresh, Options, onglets) + 4 onglets
 // pleine largeur. Ce fichier ne fait que l'orchestration (données, polling du
@@ -116,6 +117,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [analyzedMeetingsOpen, setAnalyzedMeetingsOpen] = useState(false);
   const [assigneesMode, setAssigneesMode] = useState<"handover" | "change" | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
+  const [mergeOpen, setMergeOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Distingue une fermeture "confirmée" (on reste sur la fiche, l'enrichissement
   // démarre) d'une fermeture "abandon" (on renvoie vers la liste, cf. gate).
@@ -321,6 +323,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             onShowOnboarding: () => void restoreOnboarding(),
             onEnrich: () => void triggerEnrich(),
             onDelete: () => void deleteClient(client.company_name),
+            onMerge: () => setMergeOpen(true),
             onConfirmMeetings: () => setConfirmOpen(true),
             onOpenReport: () => setReportOpen(true),
             onTierSaved: reload,
@@ -384,6 +387,23 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
         <AssigneesModal client={client} mode={assigneesMode} onClose={() => setAssigneesMode(null)} onSaved={reload} />
       )}
       {emailModalOpen && <MissingInfoEmailModal clientId={client.id} onClose={() => setEmailModalOpen(false)} />}
+      {mergeOpen && (
+        <MergeModal
+          clientId={client.id}
+          onClose={() => setMergeOpen(false)}
+          onMerged={(res) => {
+            setMergeOpen(false);
+            toast(`${res.absorbedName} merged into ${res.keptName}.${res.refreshing ? " Refreshing the account…" : ""}`, "success");
+            // Fiche gardée = l'autre : celle-ci n'existe plus, on y va.
+            if (res.keptId !== client.id) {
+              router.push(`/clients/${res.keptId}`);
+              return;
+            }
+            if (res.refreshing) watchRefresh();
+            reload();
+          }}
+        />
+      )}
       {analyzedMeetingsOpen && (
         <AnalyzedMeetingsModal
           clientId={client.id}

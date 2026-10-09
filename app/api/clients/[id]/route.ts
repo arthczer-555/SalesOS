@@ -49,7 +49,18 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     }
   }
 
-  // Charge aussi les meetings Claap analysés du deal pour la timeline lecture-only.
+  // Trace des fusions : la fiche n'affiche que nom / deal / date, pas la row
+  // absorbée entière (snapshot, plusieurs dizaines de Ko).
+  if (Array.isArray(data.merged_clients)) {
+    data.merged_clients = (data.merged_clients as Array<Record<string, unknown>>).map((m) => {
+      const slim = { ...m };
+      delete slim.snapshot;
+      return slim;
+    });
+  }
+
+  // Charge aussi les meetings Claap analysés du deal (et de ceux des fiches
+  // absorbées par une fusion) pour la timeline lecture-only.
   type MeetingRow = {
     id: string;
     claap_recording_id: string;
@@ -65,7 +76,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     .select(
       "id, claap_recording_id, meeting_title, meeting_started_at, meeting_kind, audience, meeting_recap, score_global",
     )
-    .eq("hubspot_deal_id", data.hubspot_deal_id)
+    .in("hubspot_deal_id", [data.hubspot_deal_id, ...((data.merged_deal_ids as string[] | null | undefined) ?? [])])
     .eq("status", "done")
     .order("meeting_started_at", { ascending: false, nullsFirst: false });
 
