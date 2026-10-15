@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getClaapRecording, pickTranscriptUrl } from "@/lib/claap";
+import { triggerSalesCoachAnalysis } from "@/lib/sales-coach/trigger-analysis";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -58,39 +59,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // Déclenchement de l'analyse (background sur Netlify, route inline en dev).
-  const internalSecret = process.env.INTERNAL_SECRET;
-  if (!internalSecret) {
-    console.warn("[analyze-without-deal] INTERNAL_SECRET missing — analysis won't start");
-    return NextResponse.json({ error: "INTERNAL_SECRET not configured" }, { status: 500 });
-  }
-
-  const siteUrl = req.nextUrl.origin;
-  const isNetlifyEnv = !!(process.env.NETLIFY || process.env.URL || process.env.DEPLOY_URL);
-  const triggerUrl = isNetlifyEnv
-    ? `${siteUrl}/.netlify/functions/sales-coach-analyze-background`
-    : `${siteUrl}/api/sales-coach/analyze/${id}`;
-  const triggerBody = isNetlifyEnv
-    ? JSON.stringify({ id, transcriptUrl })
-    : JSON.stringify({ transcriptUrl });
-  try {
-    const triggerRes = await fetch(triggerUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-internal-secret": internalSecret,
-      },
-      body: triggerBody,
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!triggerRes.ok && triggerRes.status !== 202) {
-      const text = await triggerRes.text().catch(() => "");
-      console.error(`[analyze-without-deal] trigger non-2xx (${triggerRes.status}):`, text.slice(0, 200));
-    }
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
-    if (!msg.includes("aborted") && !msg.includes("timeout")) {
-      console.error("[analyze-without-deal] trigger fetch failed:", msg);
-    }
+  const trigger = await triggerSalesCoachAnalysis({
+    origin: req.nextUrl.origin,
+    id,
+    transcriptUrl,
+    logTag: "analyze-without-deal",
+  });
+  if (!trigger.ok) {
+    return NextResponse.json({ error: trigger.error ?? "Could not start the analysis" }, { status: 500 });
   }
 
   return NextResponse.json({ ok: true, started: true });

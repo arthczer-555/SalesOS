@@ -14,6 +14,7 @@ import {
   type DealSearchResult,
 } from "@/lib/hubspot";
 import { sendSalesCoachSlack } from "@/lib/sales-coach/slack";
+import { triggerSalesCoachAnalysis } from "@/lib/sales-coach/trigger-analysis";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -155,47 +156,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   }
 
   // ── 3. Déclenchement de l'analyse si la ligne attendait un deal ────────
-  if (wasAwaiting) {
-    const internalSecret = process.env.INTERNAL_SECRET;
-    if (!internalSecret) {
-      console.warn("[resolve-deal] INTERNAL_SECRET missing — analysis won't start");
-    } else if (process.env.CLAAP_API_TOKEN) {
-      // Re-fetch le recording pour récupérer le transcriptUrl (textUrl valide
-      // 24h côté Claap, donc on ne l'a pas stocké dans la ligne).
-      const rec = await getClaapRecording(row.claap_recording_id).catch(() => null);
-      const transcriptUrl = rec ? pickTranscriptUrl(rec) : null;
-      if (!transcriptUrl) {
-        console.warn(`[resolve-deal] no transcript URL for ${id} — analysis cannot start`);
-      } else {
-        const siteUrl = req.nextUrl.origin;
-        const isNetlifyEnv = !!(process.env.NETLIFY || process.env.URL || process.env.DEPLOY_URL);
-        const triggerUrl = isNetlifyEnv
-          ? `${siteUrl}/.netlify/functions/sales-coach-analyze-background`
-          : `${siteUrl}/api/sales-coach/analyze/${id}`;
-        const triggerBody = isNetlifyEnv
-          ? JSON.stringify({ id, transcriptUrl })
-          : JSON.stringify({ transcriptUrl });
-        try {
-          const triggerRes = await fetch(triggerUrl, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "x-internal-secret": internalSecret,
-            },
-            body: triggerBody,
-            signal: AbortSignal.timeout(8000),
-          });
-          if (!triggerRes.ok && triggerRes.status !== 202) {
-            const text = await triggerRes.text().catch(() => "");
-            console.error(`[resolve-deal] trigger non-2xx (${triggerRes.status}):`, text.slice(0, 200));
-          }
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          if (!msg.includes("aborted") && !msg.includes("timeout")) {
-            console.error("[resolve-deal] trigger fetch failed:", msg);
-          }
-        }
-      }
+  if (wasAwaiting && process.env.CLAAP_API_TOKEN) {
+    // Re-fetch le recording pour récupérer le transcriptUrl (textUrl valide
+    // 24h côté Claap, donc on ne l'a pas stocké dans la ligne).
+    const rec = await getClaapRecording(row.claap_recording_id).catch(() => null);
+    const transcriptUrl = rec ? pickTranscriptUrl(rec) : null;
+    if (!transcriptUrl) {
+      console.warn(`[resolve-deal] no transcript URL for ${id} — analysis cannot start`);
+    } else {
+      await triggerSalesCoachAnalysis({ origin: req.nextUrl.origin, id, transcriptUrl, logTag: "resolve-deal" });
     }
   }
 

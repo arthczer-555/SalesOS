@@ -21,6 +21,7 @@ import {
   Trash2,
   Info,
   ChevronDown,
+  ArrowLeftRight,
 } from "lucide-react";
 import { MeddicBadge } from "@/components/ui/meddic-badge";
 import { ProgressBar } from "@/components/ui/progress-bar";
@@ -44,6 +45,7 @@ import {
 import { SynthesisTab } from "./synthesis-tab";
 import { EmailDraftModal } from "./email-draft-modal";
 import { ManualDealResolution } from "./manual-deal-resolution";
+import { DealPicker, type DealSearchResult } from "./deal-picker";
 import { Sparkles } from "lucide-react";
 import { COLORS, scoreToColor } from "@/lib/design/tokens";
 import { ScoreGauge } from "@/components/ui/score-gauge";
@@ -302,8 +304,8 @@ function DealTopo({
   onDealUpdated: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const [dealInput, setDealInput] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [changing, setChanging] = useState(false);
+  const [changeError, setChangeError] = useState<string | null>(null);
   const [reanalyzing, setReanalyzing] = useState(false);
   const [autoResolving, setAutoResolving] = useState(false);
   const [autoResolveMsg, setAutoResolveMsg] = useState<string | null>(null);
@@ -347,31 +349,74 @@ function DealTopo({
     }
   }
 
-  async function saveDeal() {
-    const trimmed = dealInput.trim();
-    if (!trimmed) return;
-    setSaving(true);
+  // Rattache le meeting à un autre deal (ou à un premier deal) puis relance
+  // l'analyse côté serveur, en un seul appel. La fiche repasse en "Analysis in
+  // progress" au reload et se met à jour seule à la fin.
+  async function changeDeal(deal: DealSearchResult) {
+    setChanging(true);
+    setChangeError(null);
     try {
-      const res = await fetch(`/api/sales-coach/${analysisId}`, {
-        method: "PATCH",
+      const res = await fetch(`/api/sales-coach/${analysisId}/change-deal`, {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hubspotDealId: trimmed }),
+        body: JSON.stringify({ dealId: deal.id }),
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error ?? "Error");
-      }
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(data.error ?? "Error while changing the deal");
       setEditing(false);
-      setDealInput("");
+      toast(`Linked to ${deal.name || `deal ${deal.id}`}. Re-analysis started.`, "success");
       onDealUpdated();
-      toast("Deal linked, re-analysis started.", "success");
-      await reanalyze();
     } catch (e) {
-      toast(e instanceof Error ? e.message : "Error", "error");
+      setChangeError(e instanceof Error ? e.message : "Error");
     } finally {
-      setSaving(false);
+      setChanging(false);
     }
   }
+
+  function closeEditor() {
+    setEditing(false);
+    setChangeError(null);
+  }
+
+  const changePanel = editing ? (
+    <div className="rounded-lg p-4 mt-2" style={{ background: "#fff", border: "1px solid #eeeeee" }}>
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div>
+          <div className="text-sm font-semibold" style={{ color: "#111" }}>
+            {dealId ? "Link this meeting to another deal" : "Link a deal"}
+          </div>
+          <div className="text-xs mt-0.5" style={{ color: "#888" }}>
+            The meeting will be re-analyzed with this deal&apos;s context, and the Slack debrief and recap sent again.
+          </div>
+        </div>
+        <button onClick={closeEditor} disabled={changing} className="text-xs disabled:opacity-50" style={{ color: "#888" }}>
+          Cancel
+        </button>
+      </div>
+      <DealPicker
+        confirmLabel="Link and re-analyze"
+        busyLabel="Linking…"
+        busy={changing}
+        error={changeError}
+        onConfirm={changeDeal}
+        onSelectionChange={() => setChangeError(null)}
+        currentDealId={dealId}
+      />
+    </div>
+  ) : null;
+
+  const changeDealButton = (
+    <button
+      onClick={() => setEditing(true)}
+      disabled={editing}
+      className="flex items-center gap-1 text-[11px] font-medium disabled:opacity-50"
+      style={{ color: "#888" }}
+      title="Link this meeting to another HubSpot deal"
+    >
+      <ArrowLeftRight size={10} />
+      Change deal
+    </button>
+  );
 
   async function reanalyze() {
     setReanalyzing(true);
@@ -419,6 +464,7 @@ function DealTopo({
   // No deal linked at all
   if (!dealId) {
     return (
+      <>
       <div className="rounded-lg p-4" style={{ background: "#fff", border: "1px dashed #e5e5e5" }}>
         <div className="flex items-center gap-2 text-xs flex-wrap" style={{ color: "#888" }}>
           <Building2 size={14} />
@@ -446,35 +492,9 @@ function DealTopo({
             {autoResolveMsg}
           </div>
         )}
-        {editing && (
-          <div className="mt-2 flex items-center gap-2">
-            <input
-              type="text"
-              placeholder="HubSpot deal ID (e.g. 12345678)"
-              value={dealInput}
-              onChange={(e) => setDealInput(e.target.value)}
-              className="text-xs px-2 py-1 rounded border outline-none flex-1"
-              style={{ borderColor: "#e5e5e5", background: "#fafafa" }}
-              autoFocus
-            />
-            <button
-              onClick={saveDeal}
-              disabled={saving || !dealInput.trim()}
-              className="text-xs font-medium px-2.5 py-1 rounded disabled:opacity-50"
-              style={{ background: "#f01563", color: "#fff" }}
-            >
-              {saving ? "…" : "Save"}
-            </button>
-            <button
-              onClick={() => { setEditing(false); setDealInput(""); }}
-              className="text-xs px-2 py-1"
-              style={{ color: "#888" }}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
       </div>
+      {changePanel}
+      </>
     );
   }
 
@@ -492,9 +512,22 @@ function DealTopo({
     }
     // Fallback : si on a une company matchée (via domaine ou title hint), on
     // affiche son nom + lifecycle pour donner du contexte plutôt qu'un ID brut.
+    const notFoundChangeButton = (
+      <button
+        onClick={() => setEditing(true)}
+        disabled={editing}
+        className="font-medium px-2 py-1 rounded disabled:opacity-50"
+        style={{ background: "#fff", color: "#92400e", border: "1px solid #fde68a" }}
+        title="Link this meeting to another HubSpot deal"
+      >
+        <ArrowLeftRight size={11} className="inline mr-1" />
+        Change deal
+      </button>
+    );
     if (companySnapshot?.name) {
       const lifecycle = companySnapshot.lifecyclestage;
       return (
+        <>
         <div
           className="rounded-lg p-3 flex items-center gap-2 text-xs flex-wrap"
           style={{ background: "#fef3c7", border: "1px solid #fde68a", color: "#92400e" }}
@@ -505,32 +538,43 @@ function DealTopo({
             {lifecycle ? ` (lifecyclestage: ${lifecycle})` : ""} - HubSpot deal not found
             {dealId ? <> (id <code style={{ background: "#fde68a", padding: "0 4px", borderRadius: 3 }}>{dealId}</code>)</> : null}.
           </span>
+          <div className="ml-auto flex items-center gap-2">
+            {notFoundChangeButton}
+            <button
+              onClick={() => reanalyze()}
+              disabled={reanalyzing}
+              className="font-medium px-2 py-1 rounded disabled:opacity-50"
+              style={{ background: "#fff", color: "#92400e", border: "1px solid #fde68a" }}
+            >
+              <RefreshCw size={11} className={`inline mr-1 ${reanalyzing ? "animate-spin" : ""}`} />
+              {reanalyzing ? "Re-analyzing…" : "Re-analyze"}
+            </button>
+          </div>
+        </div>
+        {changePanel}
+        </>
+      );
+    }
+    return (
+      <>
+      <div className="rounded-lg p-3 flex items-center gap-2 text-xs" style={{ background: "#fef3c7", border: "1px solid #fde68a", color: "#92400e" }}>
+        <Building2 size={14} />
+        <span>HubSpot deal <strong>{dealId}</strong> not found on HubSpot (deal deleted or access unavailable).</span>
+        <div className="ml-auto flex items-center gap-2">
+          {notFoundChangeButton}
           <button
             onClick={() => reanalyze()}
             disabled={reanalyzing}
-            className="ml-auto font-medium px-2 py-1 rounded disabled:opacity-50"
+            className="font-medium px-2 py-1 rounded disabled:opacity-50"
             style={{ background: "#fff", color: "#92400e", border: "1px solid #fde68a" }}
           >
             <RefreshCw size={11} className={`inline mr-1 ${reanalyzing ? "animate-spin" : ""}`} />
             {reanalyzing ? "Re-analyzing…" : "Re-analyze"}
           </button>
         </div>
-      );
-    }
-    return (
-      <div className="rounded-lg p-3 flex items-center gap-2 text-xs" style={{ background: "#fef3c7", border: "1px solid #fde68a", color: "#92400e" }}>
-        <Building2 size={14} />
-        <span>HubSpot deal <strong>{dealId}</strong> not found on HubSpot (deal deleted or access unavailable).</span>
-        <button
-          onClick={() => reanalyze()}
-          disabled={reanalyzing}
-          className="ml-auto font-medium px-2 py-1 rounded disabled:opacity-50"
-          style={{ background: "#fff", color: "#92400e", border: "1px solid #fde68a" }}
-        >
-          <RefreshCw size={11} className={`inline mr-1 ${reanalyzing ? "animate-spin" : ""}`} />
-          {reanalyzing ? "Re-analyzing…" : "Re-analyze"}
-        </button>
       </div>
+      {changePanel}
+      </>
     );
   }
 
@@ -538,6 +582,7 @@ function DealTopo({
   const amount = snapshot.amount != null ? `${snapshot.amount.toLocaleString("en-GB")}€` : null;
 
   return (
+    <>
     <div
       className="rounded-lg px-3 py-2 flex items-center gap-x-3 gap-y-1 flex-wrap text-xs"
       style={{ background: "#fff", border: "1px solid #eeeeee", color: "#555" }}
@@ -581,6 +626,7 @@ function DealTopo({
         </span>
       )}
       <div className="ml-auto flex items-center gap-3">
+        {changeDealButton}
         <button
           onClick={refreshSnapshot}
           disabled={refreshingSnapshot}
@@ -610,6 +656,8 @@ function DealTopo({
         </a>
       </div>
     </div>
+    {changePanel}
+    </>
   );
 }
 

@@ -9,6 +9,8 @@ import {
 } from "@/lib/claap";
 import { fetchDealContext, resolveDealFromParticipants } from "@/lib/hubspot";
 import { sendManualDealAlert } from "@/lib/sales-coach/admin-alert";
+import { canEditAnalysis } from "@/lib/sales-coach/access";
+import { SLACK_DELIVERY_RESET } from "@/lib/sales-coach/trigger-analysis";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -19,18 +21,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
   const { id } = await params;
 
-  const { data: userRow } = await db.from("users").select("is_admin").eq("id", user.id).single();
-  const isAdmin = !!userRow?.is_admin;
-
   const { data: row } = await db
     .from("sales_coach_analyses")
     .select(
-      "user_id, claap_recording_id, recorder_email, meeting_title, meeting_started_at, participants, hubspot_deal_id",
+      "user_id, claap_recording_id, recorder_email, internal_emails, meeting_title, meeting_started_at, participants, hubspot_deal_id",
     )
     .eq("id", id)
     .single();
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
-  if (!isAdmin && row.user_id !== user.id) {
+  if (!canEditAnalysis(user, row)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   if (!row.claap_recording_id) {
@@ -127,18 +126,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     status: "pending",
     error_message: null,
     updated_at: new Date().toISOString(),
-    // Reset des timestamps Slack pour que les 2 DM (coaching + recap) soient
-    // ré-envoyés. sendMeetingRecapSlack court-circuite si
-    // meeting_recap_slack_sent_at est déjà set, donc sans ce reset le user
-    // ne reçoit pas le nouveau recap. Idem coaching (slack_sent_at). On clear
-    // aussi les artefacts Slack du recap précédent (ts, channel, permalink,
-    // text) qui pointent vers un message obsolète.
-    slack_sent_at: null,
-    meeting_recap_slack_sent_at: null,
-    meeting_recap_slack_text: null,
-    meeting_recap_slack_ts: null,
-    meeting_recap_slack_channel: null,
-    meeting_recap_slack_permalink: null,
+    // Les 2 DM (coaching + recap) repartent après la nouvelle analyse.
+    ...SLACK_DELIVERY_RESET,
     ...resolvedSnapshotUpdate,
   };
   if (participants.length > 0) resetPayload.participants = participants;

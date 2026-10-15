@@ -273,6 +273,7 @@ Debriefs automatiques des meetings Claap. Liste filtrable par owner/deal/date, v
 - Actions : analyser un meeting passé, draft d'email de suivi, renvoi alerte Slack, résoudre le deal, réanalyser, backfill, recover-stuck (admin)
 - Webhook Claap déclenche l'analyse en arrière-plan (Netlify Function)
 - **Langue de sortie** ([lib/sales-coach/language.ts](lib/sales-coach/language.ts)) : décidée une seule fois en code sur le transcript (FR si le français domine, EN sinon, y compris pour un meeting en espagnol), imposée à l'analyse ET au recap, puis vérifiée sur la sortie. Une sortie dans une autre langue est régénérée (3 tentatives), puis l'analyse passe en `error` plutôt que de partir sur Slack dans la mauvaise langue. Les labels des DM Slack suivent la même langue. Avant (mesuré le 01/10/2026) : 44 analyses et 12 recaps sur 188 n'étaient pas dans la langue du meeting.
+- **Changer le deal d'un meeting (2026-10-15)** : bouton **Change deal** dans le bandeau du deal de la fiche (aussi sur les bandeaux "deal not found"), et **Link a deal** quand l'analyse a tourné sans deal. Même sélecteur que l'écran "No HubSpot deal found" (autocomplete par nom, [deal-picker.tsx](app/sales-coach/_components/deal-picker.tsx), deal actuel affiché "Current" et non sélectionnable). La route [change-deal](app/api/sales-coach/[id]/change-deal/route.ts) rattache le deal **et relance l'analyse** en un seul appel : tout le debrief dépend du deal (prospect ou client, historique HubSpot, analyses précédentes du deal). `user_id` repart du recorder (puis run-analysis le réattribue à l'owner du nouveau deal s'il a un compte), le debrief et le recap Slack repartent corrigés. Rien n'est modifié si HubSpot ou le transcript Claap sont illisibles. **Qui peut** ([lib/sales-coach/access.ts](lib/sales-coach/access.ts), aussi appliqué à Re-analyze) : admin, propriétaire de la ligne, recorder Claap ou participant Coachello du meeting. Avant, seul le propriétaire pouvait relancer, or `user_id` suit l'owner du deal : un meeting rattaché au mauvais deal passait à l'owner de ce deal et celui qui l'avait tenu ne pouvait plus rien corriger. Cas d'origine : "Présentation coachello & CNES" de Mehdi, rattaché par le matching IA (étape 4) au deal "ESA" de Baptiste (Environmental Science Associates, lu comme l'agence spatiale européenne ; les deals CNES sont closed lost, donc absents des candidats).
 - **Meetings internes** ([lib/sales-coach/internal-meeting.ts](lib/sales-coach/internal-meeting.ts)) : Claap classe "external" des meetings 100 % Coachello (ex. "Product-sales sync", 8 participants @coachello.io). Quand aucun externe n'est confirmé présent dans l'invite, un juge Claude lit le transcript et ne répond "internal" que s'il en est certain ; le meeting est alors ignoré comme un interne Claap (aucune ligne, aucune alerte "Claap meeting with no HubSpot deal", aucune analyse), même si un deal a été résolu. Il reste analysable depuis la modale "Analyze a past meeting". Le flag `attended` de Claap n'est pas fiable (des externes "absents" parlent) et n'est jamais une preuve ; un transcript de moins de 1000 caractères n'est jamais classé interne.
 
 ### Scoring (`/scoring`), Search (`/search`), Knowledge (`/knowledge`), Slack (`/slack`), Health (`/health`)
@@ -569,7 +570,7 @@ app/
     watchlist/                      # accounts + accounts/[id]/prospects + companies/[id]/(briefs,notes) + sales-reps
     outreach/                       # counts (badge "X échanges" par contact)
     marketing/                      # blog + content + events + leads(+sync,file,funnel,orphan-alerts) + linkedin(posts,competitors) + overview + seo + seo-trends
-    sales-coach/                    # list + claap-recordings + [id](+draft-email,reanalyze,resend-slack,resolve-deal) + analyze/[id] + backfill + recover-stuck + trends
+    sales-coach/                    # list + claap-recordings + [id](+draft-email,reanalyze,resend-slack,resolve-deal,change-deal) + analyze/[id] + backfill + recover-stuck + trends
     linkedin/                       # profile + company + search + message + scan + weekly-scan + status + init-monitoring + setup-radar
     prompt/                         # get/set instructions utilisateur + /default
     prospection-guide/              # CRUD guide prospection user
@@ -840,6 +841,7 @@ Toutes scopées sur l'utilisateur (campagnes strictement perso). Erreurs `{ erro
 | `/api/sales-coach/[id]/reanalyze` | POST | Relance l'analyse. |
 | `/api/sales-coach/[id]/resend-slack` | POST | Renvoie l'alerte Slack. |
 | `/api/sales-coach/[id]/resolve-deal` | POST | Marque le deal comme résolu. |
+| `/api/sales-coach/[id]/change-deal` | POST | Rattache le meeting à un autre deal (ou à un premier deal) et relance l'analyse. |
 | `/api/sales-coach/analyze/[id]` | POST | Lance l'analyse complète. |
 | `/api/sales-coach/backfill` | POST | Backfill historique. |
 | `/api/sales-coach/recover-stuck` | POST | Récupère analyses bloquées. |
