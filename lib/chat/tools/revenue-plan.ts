@@ -19,14 +19,14 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { db } from "@/lib/db";
 import { norm, sheetGrid } from "@/lib/billing/drive-xlsx";
 import { cellNumber, cellText, findHeader, getRevenueWorkbook } from "@/lib/billing/revenue-workbook";
 import { fetchClientTargets, type ClientTarget, type Quarter } from "@/lib/billing/client-targets";
 import { fetchForecast, fetchWeeklyForecast } from "@/lib/billing/forecast";
 import { fetchRevenueSheet, repKeyFromName } from "@/lib/ae-activity/revenue-sheet";
 import type { RevenueStream } from "@/lib/ae-activity/types";
-import type { ToolContext, ToolModule } from "./types";
+import type { ToolModule } from "./types";
+import { viewer } from "./viewer";
 
 const QUARTERS: Quarter[] = ["Q1", "Q2", "Q3", "Q4"];
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -94,12 +94,6 @@ const fuzzy = (value: string | null | undefined, query: string) => {
   const v = norm(value);
   return v.includes(query) || query.includes(v);
 };
-
-async function viewer(ctx: ToolContext): Promise<{ isAdmin: boolean; repKey: string; name: string | null }> {
-  const { data } = await db.from("users").select("name, email, is_admin").eq("id", ctx.userId).maybeSingle();
-  const name = (data?.name as string | null) ?? null;
-  return { isAdmin: !!data?.is_admin, repKey: repKeyFromName(name ?? (data?.email as string | undefined) ?? ""), name };
-}
 
 type StreamKey = "new" | "renew" | "csm";
 

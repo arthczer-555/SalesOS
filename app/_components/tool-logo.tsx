@@ -30,7 +30,7 @@ const LOGO_SRC: Partial<Record<LogoKey, string>> = {
 export function logoKeyForTool(toolName: string): LogoKey {
   if (toolName === "load_guide") return "guide";
   if (toolName.startsWith("notion_")) return "notion";
-  if (toolName.includes("slack")) return "slack";
+  if (toolName.includes("slack") || toolName === "get_inbound_leads" || toolName === "get_coaching_bookings") return "slack";
   if (toolName.includes("gmail")) return "gmail";
   if (toolName.includes("claap")) return "claap";
   if (toolName.includes("linkedin")) return "linkedin";

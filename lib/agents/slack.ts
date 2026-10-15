@@ -163,7 +163,14 @@ export async function deliverAgentMessage(
 
 // ── Canaux (sélecteur de destination) ──────────────────────────────────────
 
-export type SlackChannelOption = { id: string; name: string; isPrivate: boolean; isMember: boolean };
+export type SlackChannelOption = {
+  id: string;
+  name: string;
+  isPrivate: boolean;
+  isMember: boolean;
+  /** Description du canal saisie dans Slack (aide CoachelloAI à choisir). */
+  purpose?: string;
+};
 
 let channelsCache: { data: SlackChannelOption[]; at: number } | null = null;
 const CHANNELS_TTL_MS = 5 * 60 * 1000;
@@ -188,12 +195,13 @@ export async function listSlackChannels(): Promise<SlackChannelOption[]> {
     const data = (await res.json()) as {
       ok: boolean;
       error?: string;
-      channels?: { id: string; name: string; is_private?: boolean; is_member?: boolean }[];
+      channels?: { id: string; name: string; is_private?: boolean; is_member?: boolean; purpose?: { value?: string } }[];
       response_metadata?: { next_cursor?: string };
     };
     if (!data.ok) throw new Error(`Slack conversations.list: ${data.error ?? "unknown error"}`);
     for (const c of data.channels ?? []) {
-      all.push({ id: c.id, name: c.name, isPrivate: !!c.is_private, isMember: !!c.is_member });
+      const purpose = c.purpose?.value?.trim();
+      all.push({ id: c.id, name: c.name, isPrivate: !!c.is_private, isMember: !!c.is_member, ...(purpose ? { purpose } : {}) });
     }
     cursor = data.response_metadata?.next_cursor || undefined;
   } while (cursor);

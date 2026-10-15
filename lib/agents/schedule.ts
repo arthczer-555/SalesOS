@@ -122,7 +122,7 @@ function offsetMs(date: Date, tz: string): number {
 }
 
 /** Instant UTC correspondant à une date/heure locale dans le fuseau. */
-function zonedToUtc(year: number, month: number, day: number, hour: number, minute: number, tz: string): Date {
+export function zonedToUtc(year: number, month: number, day: number, hour: number, minute: number, tz: string): Date {
   const guess = Date.UTC(year, month - 1, day, hour, minute);
   const off1 = offsetMs(new Date(guess), tz);
   let ts = guess - off1;

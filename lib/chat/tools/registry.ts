@@ -22,6 +22,8 @@ import { loadGuideTools } from "./load-guide";
 import { clientsTools } from "./clients";
 import { invoicesTools } from "./invoices";
 import { revenuePlanTools } from "./revenue-plan";
+import { salesActivityTools } from "./sales-activity";
+import { slackFeedsTools } from "./slack-feeds";
 import type { ToolContext, ToolHandler } from "./types";
 
 // Ordre stable : ne pas réordonner sans raison (chaque changement d'ordre
@@ -43,6 +45,8 @@ const MODULES = [
   clientsTools,
   invoicesTools,
   revenuePlanTools,
+  salesActivityTools,
+  slackFeedsTools,
 ];
 
 export const TOOLS: Anthropic.Tool[] = MODULES.flatMap((m) => m.defs);

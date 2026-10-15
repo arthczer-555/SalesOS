@@ -4,9 +4,9 @@
 // validated rows — not every Slack message.
 
 import { db } from "./db";
+import { LEADS_CHANNEL } from "./slack/key-channels";
 
 const SLACK_API = "https://slack.com/api";
-const LEADS_CHANNEL = "1a-new-incoming-leads";
 
 interface SlackFile {
   id: string;
@@ -193,9 +193,18 @@ export interface SlackLeadMessage {
   posted_at: string;
 }
 
-/** Exported so the sync endpoint can resolve the channel once and reuse it. */
+/**
+ * Exported so the sync endpoint can resolve the channel once and reuse it.
+ * Known ID first (one conversations.info call, which also fails if the bot
+ * is not in the private channel), then a scan by name in case it changed.
+ */
 export async function resolveLeadsChannelId(): Promise<string | null> {
-  return findChannelId(LEADS_CHANNEL);
+  try {
+    await slackGet("/conversations.info", { channel: LEADS_CHANNEL.id });
+    return LEADS_CHANNEL.id;
+  } catch {
+    return findChannelId(LEADS_CHANNEL.name);
+  }
 }
 
 function extractAuthorName(user: SlackUser | null): string | null {

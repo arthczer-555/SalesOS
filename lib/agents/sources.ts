@@ -34,7 +34,8 @@ export const AGENT_SOURCES: AgentSourceDef[] = [
   {
     key: "hubspot",
     label: "HubSpot CRM",
-    description: "Deals, pipeline, contacts, companies and their activity (emails, calls, meetings, notes).",
+    description:
+      "Deals, pipeline, contacts, companies and their activity (emails, calls, meetings, notes). Sales activity per salesperson by week, month or quarter, same numbers as the AE Activity dashboard: calls (connected, cold), emails sent, meetings declared in #1y-new-meetings with their acquisition channel, inbound leads, deals opened, won and lost.",
     logo: "hubspot",
   },
   {
@@ -59,7 +60,8 @@ export const AGENT_SOURCES: AgentSourceDef[] = [
   {
     key: "slack",
     label: "Slack",
-    description: "Read channel history and search messages in Coachello's Slack.",
+    description:
+      "List channels, read a channel over a date range and search messages in Coachello's Slack. Knows the key channels: #1a-new-incoming-leads (inbound leads), #1y-new-meetings (sales meetings booked), #2x-booking-notifications (coaching session bookings). Counted in code: inbound leads (posted, qualified = validated by the team, awaiting review) and coaching bookings (new, orientation calls, reschedules, cancellations, internal coaches apart).",
     logo: "slack",
   },
   {

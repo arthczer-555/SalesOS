@@ -25,17 +25,19 @@ import { loadGuideTools } from "@/lib/chat/tools/load-guide";
 import { clientsTools } from "@/lib/chat/tools/clients";
 import { invoicesTools } from "@/lib/chat/tools/invoices";
 import { revenuePlanTools } from "@/lib/chat/tools/revenue-plan";
+import { salesActivityTools } from "@/lib/chat/tools/sales-activity";
+import { slackFeedsTools } from "@/lib/chat/tools/slack-feeds";
 import type { ToolModule } from "@/lib/chat/tools/types";
 import type { AgentSourceKey } from "./sources";
 
 const BLOCKED_TOOLS = new Set(["send_slack_message"]);
 
 const MODULES_BY_SOURCE: Record<AgentSourceKey, ToolModule[]> = {
-  hubspot: [hubspotTools],
+  hubspot: [hubspotTools, salesActivityTools],
   clients: [clientsTools],
   revenue: [billingTools, revenueKpisTools, invoicesTools, revenuePlanTools],
   claap: [claapTools],
-  slack: [slackTools],
+  slack: [slackTools, slackFeedsTools],
   gmail: [gmailTools],
   drive: [driveTools],
   notion: [notionTools],
