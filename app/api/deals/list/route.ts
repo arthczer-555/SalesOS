@@ -57,8 +57,10 @@ export async function GET(req: NextRequest) {
     const pipelines: { id: string; label: string; stages: { id: string; label: string; displayOrder: number; metadata?: { probability?: string; isClosed?: string } }[] }[] =
       pipelineData.results ?? [];
 
-    // Build ordered stages from first (default) pipeline, excluding closed stages
-    const defaultPipeline = pipelines[0];
+    // Sales Pipeline (id "default"), stages fermés exclus. L'ordre des pipelines
+    // renvoyé par l'API n'est pas garanti : ne pas se fier à pipelines[0]
+    // (le pipeline Customer Success afficherait ses stages dans le kanban).
+    const defaultPipeline = pipelines.find((pl) => pl.id === "default") ?? pipelines[0];
     const stages = (defaultPipeline?.stages ?? [])
       .filter((s) => s.metadata?.isClosed !== "true")
       .sort((a, b) => a.displayOrder - b.displayOrder)

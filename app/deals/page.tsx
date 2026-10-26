@@ -9,137 +9,220 @@ import { scoreBadge } from "@/lib/deal-scoring";
 import { DealFiltersBar, applyDealFilters, DEFAULT_DEAL_FILTERS, type DealFilters } from "./_components/deal-filters";
 import { DealListGrouped } from "./_components/deal-list-grouped";
 import { DealDetailPanel } from "./_components/deal-detail-panel";
-import { type Deal, type DealDetails, fmt, fmtDate, stageColor, timeAgo } from "./_helpers";
+import { type Deal, type DealDetails, fmt, fmtDate, isOverdue, stageColor, timeAgo } from "./_helpers";
 import { COLORS } from "@/lib/design/tokens";
 import { StatPill } from "@/components/ui/stat-pill";
 
 // ─── Deal Card (kanban) ────────────────────────────────────────────────────────
 
+// Texte des badges de score assombri pour le contraste (mêmes teintes et seuils
+// que scoreBadge()).
+const SCORE_TEXT: Record<string, string> = {
+  "High Priority": "#166534",
+  "On Track": "#854d0e",
+  Fragile: "#9a3412",
+  "At Risk": "#b91c1c",
+};
+
 const DealCard = memo(function DealCard({
   deal,
-  selected,
   onClick,
 }: {
   deal: Deal;
-  selected: boolean;
   onClick: () => void;
 }) {
-  const hasScore = deal.score !== null;
-  const badge = hasScore ? scoreBadge(deal.score!.total) : null;
+  const badge = deal.score ? scoreBadge(deal.score.total) : null;
   const ref = deal.lastContacted || deal.lastModified;
+  const overdue = isOverdue(deal.closedate);
 
   return (
-    <div
+    <button
+      type="button"
       onClick={onClick}
-      className="rounded-lg border cursor-pointer transition-all"
+      className="ds-card ds-card-hover"
       style={{
-        background: selected ? COLORS.brandTintSoft : COLORS.bgCard,
-        borderColor: selected ? COLORS.brand : COLORS.line,
-        padding: "10px 12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 10,
+        width: "100%",
+        padding: "12px 14px",
         marginBottom: 8,
+        textAlign: "left",
+        cursor: "pointer",
+        font: "inherit",
+        color: "inherit",
       }}
     >
-      <div style={{ marginBottom: 4 }}>
-        <span style={{ fontWeight: 600, fontSize: 13, color: COLORS.ink0, lineHeight: 1.3 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8, width: "100%" }}>
+        <span style={{ fontWeight: 600, fontSize: 14, color: COLORS.ink0, lineHeight: 1.3, minWidth: 0, overflowWrap: "anywhere" }}>
           {deal.dealname || "Untitled"}
         </span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+          {fmt(deal.amount)}
+        </span>
       </div>
-      <div style={{ fontSize: 12, color: COLORS.ink2, marginBottom: 6 }}>
-        {fmt(deal.amount)}
-        {deal.closedate ? ` · ${fmtDate(deal.closedate)}` : ""}
-        {deal.ownerName && <span style={{ color: COLORS.ink3 }}> · {deal.ownerName}</span>}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.ink2, minWidth: 0 }}>
+        {deal.ownerName && (
+          <>
+            <span
+              aria-hidden="true"
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: "50%",
+                background: COLORS.bgSoft,
+                border: `1px solid ${COLORS.line}`,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 10,
+                fontWeight: 600,
+                color: COLORS.ink1,
+                flexShrink: 0,
+              }}
+            >
+              {deal.ownerName.charAt(0).toUpperCase()}
+            </span>
+            <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{deal.ownerName}</span>
+          </>
+        )}
+        {deal.closedate && (
+          <>
+            {deal.ownerName && <span aria-hidden="true" style={{ color: COLORS.ink4 }}>·</span>}
+            <span style={{ color: overdue ? COLORS.err : COLORS.ink2, fontWeight: overdue ? 600 : 400, whiteSpace: "nowrap" }}>
+              {overdue ? `Overdue · ${fmtDate(deal.closedate)}` : fmtDate(deal.closedate)}
+            </span>
+          </>
+        )}
       </div>
-      {ref && (
-        <div style={{ fontSize: 11, color: COLORS.ink3, marginBottom: 8 }}>
-          {timeAgo(ref)}
-        </div>
-      )}
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-        {hasScore && badge ? (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, width: "100%" }}>
+        {badge ? (
           <span
             style={{
-              fontSize: 12,
-              fontWeight: 700,
-              padding: "2px 8px",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              fontSize: 11,
+              fontWeight: 600,
+              padding: "3px 8px",
               borderRadius: 99,
-              color: badge.color,
+              color: SCORE_TEXT[badge.label] ?? badge.color,
               background: badge.bg,
             }}
           >
-            {deal.score!.total}
+            <span style={{ fontVariantNumeric: "tabular-nums", fontWeight: 700 }}>{deal.score!.total}</span>
+            {badge.label}
           </span>
         ) : (
           <span style={{ fontSize: 11, color: COLORS.ink3, fontStyle: "italic" }}>Unscored</span>
         )}
+        {ref && <span style={{ fontSize: 11, color: COLORS.ink3 }}>{timeAgo(ref)}</span>}
       </div>
-    </div>
+    </button>
   );
 });
 
 // ─── Kanban Column ─────────────────────────────────────────────────────────────
 
+const COLLAPSED_WIDTH = 48;
+const OPEN_MIN_WIDTH = 250;
+
 const KanbanColumn = memo(function KanbanColumn({
   stage,
   deals,
-  selectedId,
   onSelect,
   color,
+  collapsed,
+  onToggle,
 }: {
   stage: { id: string; label: string };
   deals: Deal[];
-  selectedId: string | null;
   onSelect: (d: Deal) => void;
   color: string;
+  collapsed: boolean;
+  onToggle: () => void;
 }) {
   const totalAmount = deals.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
 
-  return (
-    <div style={{ width: 240, flexShrink: 0, display: "flex", flexDirection: "column" }}>
-      <div
+  // Colonne repliée (vide ou "To nurture" par défaut) : bandeau vertical cliquable.
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={`Expand ${stage.label} (${deals.length} deals)`}
+        title={stage.label}
         style={{
-          padding: "8px 12px",
-          borderRadius: "8px 8px 0 0",
-          marginBottom: 4,
-          background: color + "18",
-          borderBottom: `2px solid ${color}`,
+          width: COLLAPSED_WIDTH,
+          flexShrink: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 10,
+          padding: "12px 0",
+          borderRadius: 12,
+          border: "none",
+          background: COLORS.bgSoft,
+          outline: `1px solid ${COLORS.line}`,
+          outlineOffset: -1,
+          cursor: "pointer",
+          color: COLORS.ink1,
+          alignSelf: "flex-start",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", minHeight: 34 }}>
-          <span style={{ fontWeight: 600, fontSize: 12, color, lineHeight: 1.4 }}>{stage.label}</span>
-          <span
+        <span style={{ fontSize: 12, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{deals.length}</span>
+        <span style={{ width: 6, height: 6, borderRadius: "50%", background: color }} aria-hidden="true" />
+        <span
+          style={{
+            writingMode: "vertical-rl",
+            transform: "rotate(180deg)",
+            fontSize: 12,
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {stage.label}
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <div style={{ flex: `1 0 ${OPEN_MIN_WIDTH}px`, maxWidth: 340, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ padding: "4px 4px 10px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
+          <button
+            type="button"
+            onClick={onToggle}
+            title="Collapse"
             style={{
-              fontSize: 11,
-              color: COLORS.ink2,
-              background: COLORS.bgSoft,
-              padding: "1px 6px",
-              borderRadius: 99,
-              flexShrink: 0,
-              marginLeft: 6,
+              display: "inline-flex",
+              alignItems: "flex-start",
+              gap: 7,
+              padding: 0,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              textAlign: "left",
+              minWidth: 0,
             }}
           >
-            {deals.length}
+            <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, marginTop: 5, flexShrink: 0 }} aria-hidden="true" />
+            <span style={{ fontWeight: 600, fontSize: 13, color: COLORS.ink0, lineHeight: 1.4 }}>{stage.label}</span>
+          </button>
+          <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+            {(totalAmount / 1000).toFixed(0)}k€
           </span>
         </div>
-        {totalAmount > 0 && (
-          <div style={{ fontSize: 11, color: COLORS.ink2, marginTop: 2 }}>
-            {(totalAmount / 1000).toFixed(0)}k€
-          </div>
-        )}
+        <div style={{ fontSize: 12, color: COLORS.ink2, marginTop: 3, paddingLeft: 15 }}>
+          {deals.length} deal{deals.length > 1 ? "s" : ""}
+        </div>
       </div>
-      <div style={{ flex: 1, overflowY: "auto", paddingBottom: 8 }}>
+      <div className="thin-scrollbar" style={{ flex: 1, overflowY: "auto", paddingBottom: 8, paddingRight: 2 }}>
         {deals.length === 0 ? (
-          <div style={{ textAlign: "center", fontSize: 11, color: COLORS.ink5, padding: "16px 0" }}>
-            No deal
-          </div>
+          <div style={{ textAlign: "center", fontSize: 12, color: COLORS.ink4, padding: "16px 0" }}>No deal</div>
         ) : (
-          deals.map((deal) => (
-            <DealCard
-              key={deal.id}
-              deal={deal}
-              selected={deal.id === selectedId}
-              onClick={() => onSelect(deal)}
-            />
-          ))
+          deals.map((deal) => <DealCard key={deal.id} deal={deal} onClick={() => onSelect(deal)} />)
         )}
       </div>
     </div>
@@ -299,6 +382,16 @@ function DealsPageInner() {
     [stages, filteredDeals]
   );
 
+  // Colonnes repliées par défaut : étapes vides et "To nurture". Un clic force
+  // l'état (override par stage).
+  const [stageToggles, setStageToggles] = useState<Record<string, boolean>>({});
+  const isStageCollapsed = useCallback(
+    (stageId: string) =>
+      stageToggles[stageId] ?? (nurtureStageIds.has(stageId) || (dealsByStage[stageId] ?? []).length === 0),
+    [stageToggles, nurtureStageIds, dealsByStage]
+  );
+  const openStages = useMemo(() => stages.filter((s) => !nurtureStageIds.has(s.id)), [stages, nurtureStageIds]);
+
   const selectedStage = stages.find((s) => s.id === selectedDeal?.dealstage);
   const stageIdx = selectedStage ? stages.indexOf(selectedStage) : 0;
   const isListMode = !!selectedDeal;
@@ -306,7 +399,7 @@ function DealsPageInner() {
   // Resizable left panel (list mode)
   const LIST_MIN = 280;
   const LIST_MAX = 800;
-  const LIST_DEFAULT = 350;
+  const LIST_DEFAULT = 300;
   const [listWidth, setListWidth] = useState<number>(LIST_DEFAULT);
   const listWidthRef = useRef(listWidth);
   const draggingRef = useRef(false);
@@ -317,7 +410,7 @@ function DealsPageInner() {
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem("deals.listWidth");
+      const saved = window.localStorage.getItem("deals.listWidth.v2");
       if (saved) {
         const n = parseInt(saved, 10);
         if (!Number.isNaN(n)) setListWidth(Math.min(LIST_MAX, Math.max(LIST_MIN, n)));
@@ -328,9 +421,13 @@ function DealsPageInner() {
   const startResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     draggingRef.current = true;
+    // Delta depuis le point de clic : clientX est absolu (inclut la sidebar),
+    // l'utiliser comme largeur fait sauter la frontière au premier mouvement.
+    const startX = e.clientX;
+    const startWidth = listWidthRef.current;
     const onMove = (ev: MouseEvent) => {
       if (!draggingRef.current) return;
-      const next = Math.min(LIST_MAX, Math.max(LIST_MIN, ev.clientX));
+      const next = Math.min(LIST_MAX, Math.max(LIST_MIN, startWidth + ev.clientX - startX));
       setListWidth(next);
     };
     const onUp = () => {
@@ -340,7 +437,7 @@ function DealsPageInner() {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       try {
-        window.localStorage.setItem("deals.listWidth", String(Math.round(listWidthRef.current)));
+        window.localStorage.setItem("deals.listWidth.v2", String(Math.round(listWidthRef.current)));
       } catch {}
     };
     document.body.style.cursor = "col-resize";
@@ -491,6 +588,9 @@ function DealsPageInner() {
           </>
         )}
 
+        {/* KPIs du pipeline : board seulement (en vue fiche ils faisaient passer
+            le header sur deux lignes). */}
+        {!isListMode && (
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
           {lastGlobalScoringAt && (
             <span
@@ -504,6 +604,7 @@ function DealsPageInner() {
           <StatPill label="Weighted" value={`${(weightedTotal / 1000).toFixed(0)}k€`} />
           <StatPill label="Deals" value={metricsDeals.length} />
         </div>
+        )}
       </div>
 
       {/* Board */}
@@ -537,9 +638,12 @@ function DealsPageInner() {
                 style={{
                   display: "flex",
                   height: "100%",
-                  gap: 10,
-                  padding: "12px 16px",
-                  minWidth: stages.length * 258,
+                  gap: 12,
+                  padding: "14px 20px",
+                  minWidth: stages.reduce(
+                    (w, s) => w + (isStageCollapsed(s.id) ? COLLAPSED_WIDTH : OPEN_MIN_WIDTH) + 12,
+                    40
+                  ),
                 }}
               >
                 {stages.map((stage, idx) => (
@@ -547,9 +651,12 @@ function DealsPageInner() {
                     key={stage.id}
                     stage={stage}
                     deals={dealsByStage[stage.id] ?? []}
-                    selectedId={null}
                     onSelect={openDeal}
                     color={stageColor(idx)}
+                    collapsed={isStageCollapsed(stage.id)}
+                    onToggle={() =>
+                      setStageToggles((t) => ({ ...t, [stage.id]: !isStageCollapsed(stage.id) }))
+                    }
                   />
                 ))}
                 {stages.length === 0 && (
@@ -581,7 +688,7 @@ function DealsPageInner() {
             onDoubleClick={() => {
               setListWidth(LIST_DEFAULT);
               try {
-                window.localStorage.setItem("deals.listWidth", String(LIST_DEFAULT));
+                window.localStorage.setItem("deals.listWidth.v2", String(LIST_DEFAULT));
               } catch {}
             }}
             style={{
@@ -615,6 +722,7 @@ function DealsPageInner() {
             stageColor={stageColor(stageIdx)}
             slackName={slackName}
             lastGlobalScoringAt={lastGlobalScoringAt}
+            stages={openStages}
           />
         )}
       </div>

@@ -1,4 +1,5 @@
 import type { DealScore } from "@/lib/deal-scoring";
+import type { DealCommittee, DealThreading, KunaEntry } from "@/lib/deals/kuna";
 
 export interface Deal {
   id: string;
@@ -50,6 +51,12 @@ export interface DealDetails extends Deal {
   next_action: string | null;
   scoredAt: string | null;
   qualification: Record<string, string | null> | null;
+  // Qualification KUNA (null tant que le deal n'a pas été re-scoré, ou si la
+  // migration deal_scores_kuna.sql n'est pas appliquée).
+  kuna: KunaEntry[] | null;
+  committee: DealCommittee | null;
+  goLiveDate: string | null;
+  threading: DealThreading;
 }
 
 export interface Stage {
@@ -109,6 +116,20 @@ export function fmt(amount: string): string {
 export function fmtDate(dateStr: string): string {
   if (!dateStr) return "";
   return new Date(dateStr).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+// Close date dépassée (affichée en rouge sur le board).
+export function isOverdue(dateStr: string): boolean {
+  if (!dateStr) return false;
+  const t = new Date(dateStr).getTime();
+  return !Number.isNaN(t) && t < Date.now();
+}
+
+// Jours écoulés depuis une date (null si absente ou invalide).
+export function daysSince(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const t = new Date(dateStr).getTime();
+  return Number.isNaN(t) ? null : Math.floor((Date.now() - t) / 864e5);
 }
 
 export function timeAgo(dateStr: string): string {

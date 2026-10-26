@@ -5,6 +5,14 @@ import { logUsage } from "./log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { noExtendedThinking, textOf } from "@/lib/models/compat";
+import {
+  reconcileKunaWithCommittee,
+  sanitizeCommittee,
+  sanitizeGoLiveDate,
+  sanitizeKuna,
+  type DealCommittee,
+  type KunaEntry,
+} from "@/lib/deals/kuna";
 
 export const DEFAULT_SCORE_MODEL = "claude-haiku-4-5-20251001";
 
@@ -317,7 +325,17 @@ const MODEL_MAXES = {
   ai_coaching:    { authority: 15, budget: 15, timeline: 10, business_need: 15, engagement: 25, strategic_fit: 5, competition: 15 },
 };
 
-export async function scoreOneDeal(dealId: string, userId: string | null, claudeModel = DEFAULT_SCORE_MODEL, enableCache = false): Promise<DealScore & { reasoning: string; next_action: string; qualification: Record<string, string | null>; key_events: DealKeyEvent[] }> {
+export type ScoreOneDealResult = DealScore & {
+  reasoning: string;
+  next_action: string;
+  qualification: Record<string, string | null>;
+  key_events: DealKeyEvent[];
+  kuna: KunaEntry[] | null;
+  committee: DealCommittee | null;
+  go_live_date: string | null;
+};
+
+export async function scoreOneDeal(dealId: string, userId: string | null, claudeModel = DEFAULT_SCORE_MODEL, enableCache = false): Promise<ScoreOneDealResult> {
   const DEAL_PROPS = [
     "dealname", "dealstage", "amount", "closedate", "description",
     "hs_deal_stage_probability", "deal_type", "notes_last_contacted", "hs_lastmodifieddate",
@@ -326,13 +344,35 @@ export async function scoreOneDeal(dealId: string, userId: string | null, claude
     "authority_status", "budget_status", "decision_timeline", "business_need_level", "strategic_fit",
   ];
 
-  const [dealData, contactAssoc, engagementAssoc] = await Promise.allSettled([
+  const [dealData, contactAssoc, engagementAssoc, claapRes, pipelinesRes] = await Promise.allSettled([
     hubspot(`/crm/v3/objects/deals/${dealId}?properties=${DEAL_PROPS.join(",")}`),
     hubspot(`/crm/v3/objects/deals/${dealId}/associations/contacts`),
     hubspot(`/crm/v3/objects/deals/${dealId}/associations/engagements`),
+    // Comptes-rendus des meetings Claap analysés (Sales Coach) : plus riches que
+    // les notes HubSpot pour qualifier le KUNA et le buying committee.
+    db
+      .from("sales_coach_analyses")
+      .select("meeting_title, meeting_started_at, meeting_recap, participants")
+      .eq("hubspot_deal_id", dealId)
+      .eq("status", "done")
+      .order("meeting_started_at", { ascending: false })
+      .limit(5),
+    // Libellés des stages : sans eux l'IA ne voit qu'un id ("174474870") et ne
+    // peut appliquer ni les règles de stage avancé ni le statut N du KUNA.
+    hubspot("/crm/v3/pipelines/deals"),
   ]);
 
   const p = dealData.status === "fulfilled" ? (dealData.value?.properties ?? {}) : {};
+  const stageLabels: Record<string, string> = {};
+  if (pipelinesRes.status === "fulfilled") {
+    for (const pl of (pipelinesRes.value?.results ?? []) as { stages?: { id: string; label: string }[] }[]) {
+      for (const st of pl.stages ?? []) stageLabels[st.id] = st.label.trim();
+    }
+  }
+  const stageLabel = p.dealstage ? (stageLabels[p.dealstage] ?? p.dealstage) : "?";
+  // hs_deal_stage_probability est une fraction (0.3 = 30 %).
+  const probNum = parseFloat(p.hs_deal_stage_probability ?? "");
+  const probability = Number.isNaN(probNum) ? "?" : String(Math.round(probNum <= 1 ? probNum * 100 : probNum));
   const model = detectModel(p.deal_type);
   const maxes = MODEL_MAXES[model];
   const names = DIMENSION_NAMES[model];
@@ -340,16 +380,18 @@ export async function scoreOneDeal(dealId: string, userId: string | null, claude
   // Contacts
   let contactLines = "";
   if (contactAssoc.status === "fulfilled") {
-    const ids: string[] = (contactAssoc.value?.results ?? []).slice(0, 3).map((r: { id: string }) => r.id);
+    // 10 contacts max : assez pour cartographier le buying committee.
+    const ids: string[] = (contactAssoc.value?.results ?? []).slice(0, 10).map((r: { id: string }) => r.id);
     if (ids.length > 0) {
       const details = await Promise.allSettled(
-        ids.map((cid) => hubspot(`/crm/v3/objects/contacts/${cid}?properties=firstname,lastname,jobtitle`))
+        ids.map((cid) => hubspot(`/crm/v3/objects/contacts/${cid}?properties=firstname,lastname,jobtitle,email`))
       );
       contactLines = details
         .filter((c) => c.status === "fulfilled")
         .map((c) => {
           const cp = (c as PromiseFulfilledResult<{ properties: Record<string, string> }>).value.properties;
-          return `${cp.firstname ?? ""} ${cp.lastname ?? ""} - ${cp.jobtitle ?? "?"}`.trim();
+          const email = cp.email ? ` <${cp.email}>` : "";
+          return `${cp.firstname ?? ""} ${cp.lastname ?? ""} - ${cp.jobtitle ?? "?"}${email}`.trim();
         })
         .join(", ");
     }
@@ -432,8 +474,37 @@ export async function scoreOneDeal(dealId: string, userId: string | null, claude
 
   const dealAge = p.createdate ? Math.floor((Date.now() - new Date(p.createdate).getTime()) / 864e5) : null;
 
+  // Meetings Claap : résumé structuré + participants, tronqués pour le budget tokens.
+  type ClaapRecapRow = {
+    meeting_title: string | null;
+    meeting_started_at: string | null;
+    meeting_recap: Record<string, unknown> | null;
+    participants: { name: string | null; email: string }[] | null;
+  };
+  const claapRows: ClaapRecapRow[] =
+    claapRes.status === "fulfilled" ? ((claapRes.value.data ?? []) as ClaapRecapRow[]) : [];
+  const claapLines = claapRows
+    .map((m) => {
+      const date = m.meeting_started_at ? new Date(m.meeting_started_at).toLocaleDateString("fr-FR") : "";
+      const recap = m.meeting_recap
+        ? Object.entries(m.meeting_recap)
+            .filter(([, v]) => typeof v === "string" && v.trim())
+            .map(([k, v]) => `${k}: ${v}`)
+            .join("\n")
+        : "";
+      const who = (m.participants ?? [])
+        .map((x) => x.name || x.email)
+        .filter(Boolean)
+        .join(", ");
+      if (!recap) return "";
+      return `[CLAAP ${date}] ${m.meeting_title ?? "Meeting"}${who ? ` (participants : ${who})` : ""}\n${recap.slice(0, 1500)}`;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+
   const context = [
-    `Deal : ${p.dealname ?? "?"} | Stage : ${p.dealstage ?? "?"} | Probabilité : ${p.hs_deal_stage_probability ?? "?"}%`,
+    `Date du jour : ${new Date().toLocaleDateString("fr-FR")}`,
+    `Deal : ${p.dealname ?? "?"} | Stage : ${stageLabel} | Probabilité : ${probability}%`,
     `Montant : ${p.amount ? `${parseFloat(p.amount).toLocaleString("fr-FR")}€` : "non renseigné"}`,
     `Clôture : ${p.closedate ? new Date(p.closedate).toLocaleDateString("fr-FR") : "non renseignée"}`,
     dealAge !== null ? `Âge du deal : ${dealAge} jours` : null,
@@ -441,6 +512,7 @@ export async function scoreOneDeal(dealId: string, userId: string | null, claude
     crmFields.length > 0 ? `\nChamps CRM renseignés :\n${crmFields.join("\n")}` : "Champs CRM de qualification : aucun renseigné",
     contactLines ? `Contacts : ${contactLines}` : "Contacts : aucun",
     engagementLines ? `\nÉchanges récents :\n${engagementLines}` : "Échanges : aucun enregistré",
+    claapLines ? `\nMeetings Claap analysés :\n${claapLines}` : null,
   ].filter(Boolean).join("\n");
 
   const systemPrompt = `Tu es un expert en vente B2B pour Coachello (coaching professionnel).
@@ -599,6 +671,50 @@ STRATEGIC FIT : "développement du leadership", "coaching dirigeants/managers", 
 
 COMPETITION : BetterUp, CoachHub, Ezra, MentorCity, MoovOne, Simundia, Bloom at Work, Nayan, Wemanity, 15Five, Lattice, Leapsome. Mention explicite = competition 0-3.
 
+=== QUALIFICATION KUNA (10 dimensions) ===
+
+KUNA mesure ce que l'on SAIT réellement, pas ce que le score suppose. Pour chaque dimension, choisis UN statut :
+- "K" (Known) : confirmé EXPLICITEMENT par le prospect dans un échange daté (email, call, meeting, Claap). Source obligatoire. Sans source datée, jamais "K".
+- "A" (Assumption) : ce qu'on croit vrai sans confirmation du prospect. Exemples : montant saisi par l'AE dans le CRM, champ CRM non corroboré, enthousiasme interprété comme du pouvoir de décision, concurrent "juste en benchmark" sans l'avoir demandé, budget supposé parce qu'on a demandé un devis.
+- "N" (Need to know) : inconnu CRITIQUE qui bloque l'avancée au stage actuel (ex. budget, date ou EB inconnus alors qu'une proposition est envoyée).
+- "U" (Unknown) : inconnu, mais pas encore bloquant à ce stage.
+IMPORTANT : les planchers "STAGES AVANCÉS" valent pour le SCORE uniquement. Ne déduis JAMAIS un "K" du stage : stage avancé sans preuve = "A".
+Règles strictes :
+- economic_buyer = "K" UNIQUEMENT si la personne qui signe est identifiée avec certitude ET a été rencontrée (call/meeting). "Signature probable", "décideur supposé" ou redirection vers quelqu'un d'autre = "A" ou "N". Doit être cohérent avec committee : l'economic_buyer du committee a alors le status "talked".
+- champion = "K" UNIQUEMENT si sa force a été testée (il a déjà obtenu un accès à l'EB ou fait avancer la décision). Enthousiaste mais jamais testé = "A".
+
+Dimensions (clé : définition) :
+- budget : ligne budgétaire confirmée ET montant
+- decision_date : date de décision ou de déploiement donnée par le prospect
+- economic_buyer : la personne qui signe et débloque le budget, identifiée ET rencontrée
+- champion : force du champion (peut-il organiser un call avec l'EB ?)
+- approval_process : processus de validation interne (qui valide, qui signe, combien de niveaux)
+- competition : concurrents cartographiés (pas seulement nommés : pourquoi ils regardent ailleurs)
+- urgency : trigger d'urgence (pourquoi maintenant, échéance réelle)
+- org_context : contexte organisationnel (réorg, nouveau DRH, fusion, plan social…)
+- target_population : population cible définie (qui, combien, quel objectif)
+- exec_sponsor : sponsor exécutif (quelqu'un au CODIR/COMEX qui a mis le sujet à l'agenda)
+
+Pour chaque dimension :
+- evidence : ce qu'on sait réellement, 1-2 phrases factuelles (ou "Aucun signal." si rien)
+- source : type + date de l'échange qui le prouve, ex. "Call 02/10/2026", "Email 18/09/2026", "Claap 05/10/2026", "CRM" pour une hypothèse issue du CRM, null si aucune
+- action : UNE action concrète pour passer en "K" (20 mots max)
+
+=== BUYING COMMITTEE (5 rôles) ===
+Cartographie à partir des contacts ET des personnes citées dans les échanges :
+- economic_buyer : signe et débloque le budget (DRH groupe, CEO, CFO, DG BU…)
+- champion : allié interne qui porte le dossier
+- influencer : ne décide pas mais peut bloquer ou accélérer
+- end_user : utilisateurs finaux (managers, collaborateurs coachés)
+- gatekeeper : filtre l'accès à l'EB (assistante, achats, chef de projet…)
+status : "talked" = vraie conversation (call, meeting, réponse email) ; "known" = identifié (nom) mais jamais échangé directement ; "unknown" = rôle non identifié (name null).
+champion_is_gatekeeper : true si le champion filtre lui-même l'accès à l'EB (signal de danger).
+
+=== GO-LIVE ===
+go_live_date : date à laquelle le prospect veut que ses premiers collaborateurs aient accès à Coachello, UNIQUEMENT si le prospect l'a donnée (YYYY-MM-DD, 1er du mois si seul le mois est connu). Sinon null. N'invente jamais.
+
+Rédige evidence, action et les noms dans la langue des échanges du deal (ne traduis pas).
+
 === INSTRUCTIONS ===
 - Sois exigeant sur les deals early-stage (discovery, qualification) : une dimension sans aucun signal même indirect = 0.
 - Pour les deals avancés (stage agreement/contract/negotiation/closedwon, RFP soumis, shortlist, closing), les signaux de momentum et d'aboutissement COMPENSENT l'absence de data dure. Un deal qui progresse concrètement mérite son score même si les champs CRM dédiés ne sont pas remplis.
@@ -632,8 +748,21 @@ COMPETITION : BetterUp, CoachHub, Ezra, MentorCity, MoovOne, Simundia, Bloom at 
   },
   "key_events": [
     { "date": "YYYY-MM-DD", "label": "Titre court (ex: Devis envoyé)", "type": "devis|contrat|echange_important|objection|relance|decision|reunion|autre", "description": "1 phrase de contexte" }
-  ]
+  ],
+  "kuna": [
+    { "key": "budget", "status": "K|U|N|A", "evidence": "...", "source": "Call 02/10/2026 ou null", "action": "..." }
+  ],
+  "committee": {
+    "members": [
+      { "role": "economic_buyer", "name": "Prénom Nom ou null", "title": "fonction ou null", "status": "talked|known|unknown" }
+    ],
+    "champion_is_gatekeeper": false
+  },
+  "go_live_date": "YYYY-MM-DD ou null"
 }
+
+kuna : EXACTEMENT 10 entrées, une par clé, dans cet ordre : budget, decision_date, economic_buyer, champion, approval_process, competition, urgency, org_context, target_population, exec_sponsor.
+committee.members : EXACTEMENT 5 entrées, une par rôle : economic_buyer, champion, influencer, end_user, gatekeeper.
 
 key_events : extrais les moments DATÉS qui retracent le parcours du deal (devis/proposition envoyé, échange ou réunion important, objection majeure, relance décisive, décision ou engagement du prospect…). Convertis les dates DD/MM/YYYY du contexte en YYYY-MM-DD. N'invente JAMAIS de date : si un événement ne peut pas être daté depuis le contexte, ne l'inclus pas. Renvoie un tableau vide s'il n'y a aucun événement datable.
 
@@ -642,7 +771,8 @@ ${NO_EM_DASH_RULE}`;
   const client = anthropicClient();
   const message = await client.messages.create({
     model: claudeModel,
-    max_tokens: 1500,
+    // KUNA (10 entrées) + committee : la sortie fait ~2,5x l'ancienne.
+    max_tokens: 4000,
     system: enableCache
       ? [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }]
       : systemPrompt,
@@ -720,5 +850,51 @@ ${NO_EM_DASH_RULE}`;
         .filter((e: DealKeyEvent | null): e is DealKeyEvent => e !== null)
     : [];
 
-  return { ...score, reasoning, next_action, qualification, key_events };
+  const committee = sanitizeCommittee(ai.committee);
+  return {
+    ...score,
+    reasoning,
+    next_action,
+    qualification,
+    key_events,
+    kuna: reconcileKunaWithCommittee(sanitizeKuna(ai.kuna), committee),
+    committee,
+    go_live_date: sanitizeGoLiveDate(ai.go_live_date),
+  };
+}
+
+/**
+ * Persiste un résultat de scoring dans `deal_scores`. Partagé par le Rescore
+ * d'un deal et "Score all deals". Les colonnes optionnelles (key_events,
+ * kuna, committee, go_live_date) sont écrites à part, en best-effort : tant que
+ * leur migration n'est pas appliquée, le scoring continue de fonctionner.
+ */
+export async function persistDealScore(dealId: string, result: ScoreOneDealResult): Promise<void> {
+  const { error } = await db.from("deal_scores").upsert({
+    deal_id: dealId,
+    score: { total: result.total, components: result.components, reliability: result.reliability },
+    reasoning: result.reasoning,
+    next_action: result.next_action,
+    qualification: result.qualification ?? null,
+    scored_at: new Date().toISOString(),
+  }, { onConflict: "deal_id" });
+  if (error) throw new Error(`deal_scores upsert: ${error.message}`);
+
+  if (result.key_events?.length) {
+    const { error: keErr } = await db
+      .from("deal_scores")
+      .update({ key_events: result.key_events })
+      .eq("deal_id", dealId);
+    if (keErr) console.warn("[deal-scoring] key_events non persistés (migration ?):", keErr.message);
+  }
+
+  // KUNA illisible (JSON tronqué) : on garde la version précédente plutôt que
+  // d'effacer une qualification valide.
+  if (result.kuna) {
+    const { error: kErr } = await db
+      .from("deal_scores")
+      .update({ kuna: result.kuna, committee: result.committee, go_live_date: result.go_live_date })
+      .eq("deal_id", dealId);
+    if (kErr) console.warn("[deal-scoring] KUNA non persisté (migration deal_scores_kuna.sql ?):", kErr.message);
+  }
 }

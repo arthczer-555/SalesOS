@@ -92,17 +92,19 @@ Prépare automatiquement les meetings à venir en croisant 5 sources :
 
 Synthèse Claude structurée : objectif, identité contact, insights entreprise/interlocuteur, questions à poser, prochaine étape, qualification BANT+. Si un deal est associé, encadré compact avec score IA / stage / montant / raisonnement. Actions : envoi DM Slack, téléchargement .txt, regénération. Cache 4h.
 
-### Deals (`/deals`)
-- Pipeline Kanban HubSpot (sans Closed Won / Closed Lost)
-- Panel détail 65% en 2 colonnes :
-  - **Gauche — About the deal** : score IA (6 dimensions avec barres), raisonnement, suggestion d'action
-  - **Droite — Qualification** : BANT+ (8 champs) avec progression
-- Contacts + entreprise côte à côte, activité récente encadrée
-- Scoring IA Claude (6 dimensions : authority, budget, timeline, need, engagement, strategic fit), cache Supabase
-- Indicateur de santé (vert/orange/rouge) selon date de closing et dernière activité
-- Analyse approfondie : synthèse, risques, dynamique, signaux +/−
-- Génération d'email de suivi + envoi Slack
-- LinkedIn lookup par deal
+### Deals (`/deals`) - refonte KUNA (2026-10-26)
+
+Inspirée du deck de training "Deal Strategy Coachello" (Drive) : KUNA, buying committee, multithreading, retroplanning. **Règle d'Arthur : le KUNA n'apparaît que dans la fiche d'un deal ouvert**, jamais sur le board ni dans la liste ; l'ancienne note /100 reste partout.
+
+- **Board** : kanban du **Sales Pipeline** (`pipeline = default`, ciblé par id : l'ordre des pipelines renvoyé par HubSpot n'est pas garanti) sans Closed Won / Lost. Étapes lues en live. Les colonnes **vides** et **To nurture** sont repliées en bandeau vertical (clic pour déplier). Carte : nom, montant, owner, close date (rouge "Overdue" si dépassée), note /100 + label (High Priority / On Track / Fragile / At Risk, seuils de `scoreBadge`), dernière activité. Clic = la fiche s'ouvre, le board devient une liste groupée à gauche.
+- **Fiche** ([deal-detail-panel.tsx](app/deals/_components/deal-detail-panel.tsx)), de haut en bas : header + **stepper des étapes**, carte score /100 (inchangée), **Path to close** + **Next move**, **KUNA** (récap + dépliant), **Buying committee**, **Threading**, **Retroplanning**, puis l'existant (timeline, Deep analysis, contacts, LinkedIn, news, email, activité récente). L'ancienne colonne "Qualification" (texte BANT) est remplacée par le KUNA ; `qualification` reste écrit en base (digest AE, Slack, Sales Coach).
+- **KUNA** ([lib/deals/kuna.ts](lib/deals/kuna.ts)) : 10 dimensions (budget, date de décision, Economic Buyer identifié ET rencontré, force du champion, processus de validation, compétition, trigger d'urgence, contexte orga, population cible, sponsor exec), chacune **K** (confirmé par le prospect, source datée obligatoire), **U** (inconnu), **N** (inconnu bloquant au stage actuel) ou **A** (supposé sans confirmation : montant saisi dans le CRM, enthousiasme lu comme du pouvoir…). Produit par **le même appel IA que le score** (`scoreOneDeal`, Rescore / Score all deals), avec preuve, source et action par dimension, + le buying committee (5 rôles, `talked` / `known` / `unknown`) et la date de go-live si le prospect l'a donnée. Le contexte inclut maintenant les comptes-rendus des meetings Claap analysés et 10 contacts. Les planchers "stage avancé" du prompt ne valent que pour le score : un stage avancé sans preuve donne "A", jamais "K". Garde-fou en code : l'EB ne peut pas être "K" si l'EB du committee n'a jamais été rencontré. Affichage : récap (compteurs K/U/N/A + une pastille par dimension, preuve au survol) et "Show details" pour le tableau complet. Deal pas encore re-scoré = carte "Rescore", jamais un tableau vide.
+- **Path to close** : un deal est *forecastable* quand les **4 conditions** sont vraies : budget, date de décision et Economic Buyer en **K**, + assez de **contacts actifs**. Calcul déterministe depuis le KUNA et le threading.
+- ⚠ **Threading = contacts actifs, calculé en live** dans `/api/deals/details` : un contact côté prospect est **actif** s'il a **envoyé un email loggé sur le deal** (`hs_email_direction = INCOMING_EMAIL`, parmi les 50 derniers emails) **ou assisté à un meeting Claap** du deal dans les **30 derniers jours** ; adresses @coachello exclues. Les calls HubSpot ne comptent pas (pas d'interlocuteur exploitable). Seuil : **3 contacts au-dessus de 30k€** (règle du deck), **2 en dessous** (convention CoachelloHQ).
+- **Retroplanning** : jalons calculés à rebours depuis le go-live (décision J-30, validation interne J-14 avant décision, démo, proposition, qualification, espacés comme l'exemple MODEC du deck). Sans date de go-live : la question du deck à poser au prochain call.
+- Analyse approfondie (synthèse, risques, dynamique, signaux), email de suivi, envoi Slack, Ask Claude (reçoit aussi KUNA, committee et contacts actifs), LinkedIn et news par deal.
+
+> **À appliquer** : migration [deal_scores_kuna.sql](supabase/migrations/deal_scores_kuna.sql) (`kuna`, `committee`, `go_live_date`). Sans elle le scoring tourne, mais le KUNA n'est pas sauvegardé : la fiche affiche "Rescore", et un Rescore montre le KUNA sans le garder.
 
 ### Prospecting (`/prospecting`) - refonte v2 (2026-10-02)
 

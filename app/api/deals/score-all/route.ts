@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { scoreOneDeal } from "@/lib/deal-scoring";
+import { scoreOneDeal, persistDealScore } from "@/lib/deal-scoring";
 import { fetchNurtureStageIds } from "@/lib/deals/stages";
 
 export const dynamic = "force-dynamic";
@@ -96,21 +96,7 @@ export async function POST(req: NextRequest) {
       const results = await Promise.allSettled(
         batch.map(async (dealId) => {
           const result = await scoreOneDeal(dealId, userId, undefined, true);
-          await db.from("deal_scores").upsert({
-            deal_id: dealId,
-            score: { total: result.total, components: result.components, reliability: result.reliability },
-            reasoning: result.reasoning,
-            next_action: result.next_action,
-            qualification: result.qualification ?? null,
-            scored_at: new Date().toISOString(),
-          }, { onConflict: "deal_id" });
-          // Best-effort : events clés (colonne optionnelle, cf. migration).
-          if (result.key_events?.length) {
-            await db
-              .from("deal_scores")
-              .update({ key_events: result.key_events })
-              .eq("deal_id", dealId);
-          }
+          await persistDealScore(dealId, result);
         })
       );
       for (const r of results) {

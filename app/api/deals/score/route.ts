@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { scoreOneDeal, DEFAULT_SCORE_MODEL } from "@/lib/deal-scoring";
+import { scoreOneDeal, persistDealScore, DEFAULT_SCORE_MODEL } from "@/lib/deal-scoring";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -19,24 +19,7 @@ export async function POST(req: NextRequest) {
     try { if (globalModelEntry?.content) scoreModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).deals_score ?? DEFAULT_SCORE_MODEL; } catch { /* keep default */ }
     const result = await scoreOneDeal(dealId, user.id, scoreModel);
 
-    await db.from("deal_scores").upsert({
-      deal_id: dealId,
-      score: { total: result.total, components: result.components, reliability: result.reliability },
-      reasoning: result.reasoning,
-      next_action: result.next_action,
-      qualification: result.qualification ?? null,
-      scored_at: new Date().toISOString(),
-    }, { onConflict: "deal_id" });
-
-    // Best-effort : persiste les événements clés (colonne ajoutée par la
-    // migration deal_scores_key_events.sql — si absente, on n'échoue pas).
-    if (result.key_events?.length) {
-      const { error: keErr } = await db
-        .from("deal_scores")
-        .update({ key_events: result.key_events })
-        .eq("deal_id", dealId);
-      if (keErr) console.warn("[deals/score] key_events non persistés (migration ?):", keErr.message);
-    }
+    await persistDealScore(dealId, result);
 
     return NextResponse.json(result);
   } catch (e) {

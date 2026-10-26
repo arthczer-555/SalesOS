@@ -6,10 +6,7 @@ import {
   Mail,
   Zap,
   AlertCircle,
-  AlertTriangle,
   CheckCircle,
-  CheckCircle2,
-  XCircle,
   TrendingUp,
   RefreshCw,
   Linkedin,
@@ -24,24 +21,29 @@ import {
 import Link from "next/link";
 import { useUserMe } from "@/lib/hooks/use-user-me";
 import {
-  scoreBadge,
-  reliabilityLabel,
-  reliabilityColor,
   type DealScore,
 } from "@/lib/deal-scoring";
 import { AskClaudePanel } from "@/components/ask-claude";
 import { COLORS } from "@/lib/design/tokens";
 import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
-import { ScoreGauge } from "@/components/ui/score-gauge";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { IconButton } from "@/components/ui/icon-button";
-import { ProgressBar } from "@/components/ui/progress-bar";
-import type { Analysis, AnalysisEvent, DealDetails } from "../_helpers";
+import type { DealCommittee, KunaEntry } from "@/lib/deals/kuna";
+import type { Analysis, AnalysisEvent, DealDetails, Stage } from "../_helpers";
 import { engagementTypeBadge, formatDealForSlack, timeAgo } from "../_helpers";
 import { DealLinkedinCard } from "./deal-linkedin-card";
 import { DealNewsCard } from "./deal-news-card";
 import { DealEventsTimeline } from "./deal-timeline-card";
+import { DealKunaCard } from "./deal-kuna-card";
+import { DealHeaderSummary, DealScoreDetails } from "./deal-header-summary";
+import { DealNextMove, DealPathToClose } from "./deal-path-to-close";
+import {
+  DealCommitteeCard,
+  DealRetroplanningCard,
+  DealStageStepper,
+  DealThreadingCard,
+} from "./deal-strategy-cards";
 
 interface Props {
   details: DealDetails | null;
@@ -52,21 +54,9 @@ interface Props {
   stageColor: string;
   slackName: string | null;
   lastGlobalScoringAt?: string | null;
+  // Étapes ouvertes du Sales Pipeline (hors nurture) pour le stepper.
+  stages?: Stage[];
 }
-
-const BANT_FIELDS: { key: string; label: string }[] = [
-  { key: "budget", label: "Budget" },
-  { key: "authority", label: "Authority" },
-  { key: "need", label: "Need" },
-  { key: "timeline", label: "Timeline" },
-];
-
-const EXTRA_QUAL_FIELDS: { key: string; label: string }[] = [
-  { key: "estimatedBudget", label: "Estimated budget" },
-  { key: "champion", label: "Internal champion" },
-  { key: "needDetailed", label: "Detailed need" },
-  { key: "strategicFit", label: "Strategic fit" },
-];
 
 export function DealDetailPanel({
   details,
@@ -76,7 +66,7 @@ export function DealDetailPanel({
   stageLabel,
   stageColor: color,
   slackName,
-  lastGlobalScoringAt,
+  stages = [],
 }: Props) {
   const [analysis, setAnalysis] = React.useState<Analysis | null>(null);
   const [analyzing, setAnalyzing] = React.useState(false);
@@ -105,7 +95,17 @@ export function DealDetailPanel({
   const [engagementsShown, setEngagementsShown] = React.useState(5);
   const [claudeOpen, setClaudeOpen] = React.useState(false);
   const [rescoring, setRescoring] = React.useState(false);
-  const [localScore, setLocalScore] = React.useState<{ score: DealScore; reasoning: string; next_action: string; scoredAt: string; qualification: Record<string, string | null> | null; key_events: AnalysisEvent[] } | null>(null);
+  const [localScore, setLocalScore] = React.useState<{
+    score: DealScore;
+    reasoning: string;
+    next_action: string;
+    scoredAt: string;
+    qualification: Record<string, string | null> | null;
+    key_events: AnalysisEvent[];
+    kuna: KunaEntry[] | null;
+    committee: DealCommittee | null;
+    goLiveDate: string | null;
+  } | null>(null);
 
   React.useEffect(() => {
     setAnalysis(null);
@@ -310,6 +310,9 @@ export function DealDetailPanel({
           scoredAt: new Date().toISOString(),
           qualification: data.qualification ?? null,
           key_events: Array.isArray(data.key_events) ? data.key_events : [],
+          kuna: Array.isArray(data.kuna) ? data.kuna : null,
+          committee: data.committee ?? null,
+          goLiveDate: data.go_live_date ?? null,
         });
         onRescore(details.id, newScore, data.reasoning ?? "", data.next_action ?? "");
       }
@@ -375,11 +378,13 @@ export function DealDetailPanel({
   const activeReasoning = localScore?.reasoning ?? details.reasoning;
   const activeNextAction = localScore?.next_action ?? details.next_action;
   const activeScoredAt = localScore?.scoredAt ?? details.scoredAt;
-  const activeQualification = localScore?.qualification ?? details.qualification;
-  const badge = activeScore ? scoreBadge(activeScore.total) : null;
-  const relColor = activeScore ? reliabilityColor(activeScore.reliability) : null;
+  // Un rescore sans KUNA lisible garde la qualification précédente (cf persistDealScore).
+  const activeKuna = localScore?.kuna ?? details.kuna;
+  const activeCommittee = localScore?.kuna ? localScore.committee : details.committee;
+  const activeGoLive = localScore?.kuna ? localScore.goLiveDate : details.goLiveDate;
+  const threading = details.threading ?? { active: [], windowDays: 30 };
+  const stepperVisible = stages.some((st) => st.id === details.dealstage);
   const amountNum = parseFloat(details.amount);
-  const amountStr = isNaN(amountNum) ? "—" : `${(amountNum / 1000).toFixed(0)}k€`;
   const companyName = details.company?.name || details.dealname;
 
   return (
@@ -397,14 +402,15 @@ export function DealDetailPanel({
       {/* Header */}
       <div
         style={{
-          padding: "16px 20px",
+          padding: "16px 20px 14px",
           background: COLORS.bgCard,
           borderBottom: `1px solid ${COLORS.line}`,
           display: "flex",
-          alignItems: "flex-start",
-          gap: 12,
+          flexDirection: "column",
+          gap: 14,
         }}
       >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
         <CompanyAvatar name={companyName} size={48} rounded="md" />
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2
@@ -444,30 +450,21 @@ export function DealDetailPanel({
               flexWrap: "wrap",
             }}
           >
-            <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
-              <span style={{ fontWeight: 500, color: COLORS.ink1 }}>{stageLabel}</span>
-            </span>
-            {details.amount && (
-              <>
-                <span>·</span>
-                <span style={{ color: COLORS.ink0, fontWeight: 600 }}>
-                  {parseFloat(details.amount).toLocaleString("en-GB")} €
+            {/* Montant et close date sont dans la ligne de résumé, l'étape dans
+                le stepper : ici l'étape ne s'affiche que hors Sales Pipeline. */}
+            {[
+              !stepperVisible && stageLabel ? (
+                <span key="stage" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: color }} />
+                  <span style={{ fontWeight: 500, color: COLORS.ink1 }}>{stageLabel}</span>
                 </span>
-              </>
-            )}
-            {details.closedate && (
-              <>
-                <span>·</span>
-                <span>Close {new Date(details.closedate).toLocaleDateString("en-GB")}</span>
-              </>
-            )}
-            {details.ownerName && (
-              <>
-                <span>·</span>
-                <span>{details.ownerName}</span>
-              </>
-            )}
+              ) : null,
+              details.company?.industry ? <span key="industry">{details.company.industry.replace(/_/g, " ").toLowerCase().replace(/^\w/, (c) => c.toUpperCase())}</span> : null,
+              details.company?.employees ? <span key="employees">{parseInt(details.company.employees, 10).toLocaleString("en-GB")} employees</span> : null,
+              details.ownerName ? <span key="owner">Owner {details.ownerName}</span> : null,
+            ]
+              .filter(Boolean)
+              .flatMap((el, i) => (i === 0 ? [el] : [<span key={`sep-${i}`} aria-hidden="true">·</span>, el]))}
           </div>
         </div>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -592,262 +589,74 @@ export function DealDetailPanel({
           <IconButton icon={X} aria-label="Close" onClick={onClose} variant="ghost" />
         </div>
       </div>
+      <DealHeaderSummary
+        score={activeScore}
+        scoredAt={activeScoredAt}
+        detailsOpen={showScoreDetails}
+        onToggleDetails={() => setShowScoreDetails((v) => !v)}
+        onRescore={rescore}
+        rescoring={rescoring}
+        amountNum={isNaN(amountNum) ? 0 : amountNum}
+        closedate={details.closedate}
+        createdate={details.createdate}
+        stageLabel={stageLabel}
+        events={details.events}
+        threading={threading}
+      />
+      {stepperVisible && <DealStageStepper stages={stages} currentStageId={details.dealstage} />}
+      </div>
 
-      {/* Body — 2-column layout: score/actions on the left, qualification stack on the right */}
+      {/* Body : score, puis stratégie du deal (Path to close, KUNA, committee,
+          threading, retroplanning), puis les sections historiques. */}
       <div style={{ flex: 1, overflowY: "auto", padding: "18px 20px" }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) 360px",
-            gap: 16,
-            alignItems: "flex-start",
-          }}
-        >
-          {/* LEFT COLUMN */}
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
-          {/* Score + Montant */}
-          {activeScore && badge ? (
-            <Card padding={18}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-                  <ScoreGauge value={activeScore.total} scale={100} size={120} />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                    <span
-                      style={{
-                        fontSize: 11,
-                        fontWeight: 700,
-                        letterSpacing: "0.06em",
-                        textTransform: "uppercase",
-                        color: COLORS.ink3,
-                      }}
-                    >
-                      Deal score
-                    </span>
-                    <span style={{ fontSize: 16, fontWeight: 700, color: badge.color }}>{badge.label}</span>
-                    {relColor && (
-                      <div style={{ display: "inline-flex", alignItems: "center", gap: 6, marginTop: 2 }}>
-                        <div style={{ display: "flex", gap: 2 }}>
-                          {[0, 1, 2, 3, 4].map((i) => (
-                            <span
-                              key={i}
-                              style={{
-                                width: 7,
-                                height: 7,
-                                borderRadius: "50%",
-                                background: i < activeScore.reliability ? relColor : COLORS.line,
-                              }}
-                            />
-                          ))}
-                        </div>
-                        <span style={{ fontSize: 11, color: relColor, fontWeight: 500 }}>
-                          {reliabilityLabel(activeScore.reliability)}
-                        </span>
-                      </div>
-                    )}
-                    {activeScoredAt && (
-                      <span
-                        style={{ fontSize: 10, color: COLORS.ink4 }}
-                        title={new Date(activeScoredAt).toLocaleString("en-GB")}
-                      >
-                        This deal: {timeAgo(activeScoredAt).toLowerCase()}
-                      </span>
-                    )}
-                    {lastGlobalScoringAt && (
-                      <span
-                        style={{ fontSize: 10, color: COLORS.ink4 }}
-                        title={new Date(lastGlobalScoringAt).toLocaleString("en-GB")}
-                      >
-                        Global scoring: {timeAgo(lastGlobalScoringAt).toLowerCase()}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
-                  <span
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 700,
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
-                      color: COLORS.ink3,
-                    }}
-                  >
-                    Amount
-                  </span>
-                  <span
-                    style={{
-                      fontSize: 32,
-                      fontWeight: 800,
-                      color: COLORS.ink0,
-                      letterSpacing: "-0.02em",
-                      lineHeight: 1,
-                    }}
-                  >
-                    {amountStr}
-                  </span>
-                  {details.closedate && (
-                    <span style={{ fontSize: 11, color: COLORS.ink3 }}>
-                      Close {new Date(details.closedate).toLocaleDateString("en-GB", { month: "short", day: "numeric", year: "numeric" })}
-                    </span>
-                  )}
-                </div>
-              </div>
+          {showScoreDetails && activeScore && <DealScoreDetails score={activeScore} reasoning={activeReasoning} />}
 
-              {/* AI reasoning — stylized check/cross/warning icons + black text */}
-              {activeReasoning && (
-                <div style={{ marginTop: 14 }}>
-                  {activeReasoning.includes("✓") || activeReasoning.includes("✗") || activeReasoning.includes("⚠") ? (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {activeReasoning.split("\n").filter(Boolean).map((line, i) => {
-                        const isOk = line.startsWith("✓");
-                        const isErr = line.startsWith("✗");
-                        const isWarn = line.startsWith("⚠");
-                        const text = line.replace(/^[✓✗⚠]\s*/, "");
-                        const Icon = isOk ? CheckCircle2 : isErr ? XCircle : isWarn ? AlertTriangle : null;
-                        const iconColor = isOk
-                          ? COLORS.ok
-                          : isErr
-                            ? COLORS.err
-                            : isWarn
-                              ? COLORS.warn
-                              : COLORS.ink3;
-                        const iconBg = isOk
-                          ? COLORS.okBg
-                          : isErr
-                            ? COLORS.errBg
-                            : isWarn
-                              ? COLORS.warnBg
-                              : COLORS.bgSoft;
-                        return (
-                          <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                            <span
-                              style={{
-                                width: 22,
-                                height: 22,
-                                borderRadius: 999,
-                                background: iconBg,
-                                color: iconColor,
-                                display: "inline-flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                flexShrink: 0,
-                                marginTop: 1,
-                              }}
-                            >
-                              {Icon ? <Icon size={14} strokeWidth={2.25} /> : null}
-                            </span>
-                            <p
-                              style={{
-                                fontSize: 13,
-                                color: COLORS.ink0,
-                                margin: 0,
-                                lineHeight: 1.5,
-                                flex: 1,
-                              }}
-                            >
-                              {text}
-                            </p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div
-                      style={{
-                        padding: "10px 12px",
-                        borderRadius: 8,
-                        background: COLORS.bgSoft,
-                        border: `1px solid ${COLORS.line}`,
-                      }}
-                    >
-                      <p style={{ fontSize: 13, color: COLORS.ink0, margin: 0, lineHeight: 1.5 }}>
-                        {activeReasoning}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Score components collapsible */}
-              {activeScore.components.length > 0 && (
-                <div style={{ marginTop: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => setShowScoreDetails((v) => !v)}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      letterSpacing: "0.04em",
-                      textTransform: "uppercase",
-                      color: COLORS.ink3,
-                      background: "transparent",
-                      border: "none",
-                      cursor: "pointer",
-                      padding: 0,
-                    }}
-                  >
-                    <ChevronDown
-                      size={12}
-                      style={{ transform: showScoreDetails ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s" }}
-                    />
-                    Score details
-                  </button>
-                  {showScoreDetails && (
-                    <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
-                      {activeScore.components.map((c) => (
-                        <div key={c.name}>
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
-                            <span style={{ fontSize: 12, color: COLORS.ink1 }}>{c.name}</span>
-                            <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink0 }}>
-                              {c.earned}/{c.max}
-                            </span>
-                          </div>
-                          <ProgressBar
-                            value={(c.earned / c.max) * 100}
-                            max={100}
-                            height={4}
-                            variant="brand"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </Card>
-          ) : (
-            <Card padding={18}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-                <div>
-                  <p style={{ fontSize: 13, color: COLORS.ink2, margin: 0 }}>This deal hasn&apos;t been scored yet.</p>
-                </div>
+          {/* Stratégie du deal : Path to close + Next move */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
+            {activeKuna ? (
+              <DealPathToClose kuna={activeKuna} activeThreads={threading.active.length} amount={isNaN(amountNum) ? 0 : amountNum} />
+            ) : (
+              <Card padding={20} style={{ flex: "999 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 10 }}>
+                <span style={{ fontSize: 15, fontWeight: 600, color: COLORS.ink0 }}>KUNA qualification not generated yet</span>
+                <span style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.5 }}>
+                  Rescore this deal to read the budget, decision date, Economic Buyer, buying committee and 7 other dimensions from the exchanges.
+                </span>
                 <button
+                  type="button"
                   onClick={rescore}
                   disabled={rescoring}
                   style={{
+                    alignSelf: "flex-start",
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 6,
-                    fontSize: 12,
-                    fontWeight: 500,
-                    padding: "7px 14px",
+                    padding: "8px 14px",
                     borderRadius: 8,
-                    background: COLORS.brand,
-                    color: "#fff",
                     border: "none",
-                    cursor: rescoring ? "not-allowed" : "pointer",
-                    opacity: rescoring ? 0.6 : 1,
+                    background: COLORS.ink0,
+                    color: "#fff",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    cursor: rescoring ? "default" : "pointer",
+                    opacity: rescoring ? 0.7 : 1,
                   }}
                 >
-                  {rescoring ? <RefreshCw size={12} className="animate-spin" /> : <Zap size={12} />}
-                  {rescoring ? "Scoring…" : "Score this deal"}
+                  {rescoring ? <RefreshCw size={13} className="animate-spin" /> : <Zap size={13} />}
+                  {rescoring ? "Scoring…" : "Rescore"}
                 </button>
-              </div>
-            </Card>
-          )}
+              </Card>
+            )}
+            {activeNextAction && <DealNextMove text={activeNextAction} />}
+          </div>
+
+          {activeKuna && <DealKunaCard kuna={activeKuna} scoredAt={activeScoredAt} />}
+
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, alignItems: "start" }}>
+            {activeCommittee && <DealCommitteeCard committee={activeCommittee} />}
+            <DealThreadingCard threading={threading} amount={isNaN(amountNum) ? 0 : amountNum} />
+            <DealRetroplanningCard goLiveDate={activeGoLive} />
+          </div>
 
           {/* Timeline — étapes pipeline + réunions Claap + événements clés extraits
               par l'IA (scoring + analyse approfondie, fusionnés) */}
@@ -949,45 +758,6 @@ export function DealDetailPanel({
                 )}
               </div>
               <AnalysisView analysis={analysis} onReanalyze={() => analyze({ force: true })} />
-            </Card>
-          )}
-
-          {/* Next action — single card */}
-          {activeNextAction && (
-            <Card padding={16} style={{ background: COLORS.okBg, borderColor: COLORS.okBg }}>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
-                <span
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: 8,
-                    background: "rgba(255,255,255,0.6)",
-                    color: COLORS.ok,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    flexShrink: 0,
-                  }}
-                >
-                  <TrendingUp size={14} />
-                </span>
-                <div style={{ flex: 1 }}>
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
-                      color: COLORS.ok,
-                    }}
-                  >
-                    Next action
-                  </span>
-                  <p style={{ fontSize: 14, color: "#15803d", margin: 0, marginTop: 2, lineHeight: 1.5, fontWeight: 500 }}>
-                    {activeNextAction}
-                  </p>
-                </div>
-              </div>
             </Card>
           )}
 
@@ -1287,91 +1057,6 @@ export function DealDetailPanel({
           )}
 
           </div>
-          {/* /LEFT COLUMN */}
-
-          {/* RIGHT COLUMN — Qualification cards stacked vertically */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {activeQualification && (() => {
-              const missingBant = BANT_FIELDS.filter((f) => !activeQualification[f.key]);
-              return (
-                <>
-                  <Card padding={18}>
-                    <SectionHeader title="Qualification" />
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      {[...BANT_FIELDS, ...EXTRA_QUAL_FIELDS]
-                        .filter((f) => activeQualification[f.key])
-                        .map((f) => (
-                          <div
-                            key={f.key}
-                            style={{
-                              padding: "12px 14px",
-                              borderRadius: 8,
-                              background: COLORS.bgCard,
-                              border: `1px solid ${COLORS.line}`,
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: 10,
-                                fontWeight: 700,
-                                letterSpacing: "0.06em",
-                                textTransform: "uppercase",
-                                color: COLORS.ink3,
-                              }}
-                            >
-                              {f.label}
-                            </div>
-                            <div
-                              style={{
-                                fontSize: 13,
-                                color: COLORS.ink0,
-                                marginTop: 4,
-                                lineHeight: 1.45,
-                              }}
-                            >
-                              {activeQualification[f.key]}
-                            </div>
-                          </div>
-                        ))}
-                      {[...BANT_FIELDS, ...EXTRA_QUAL_FIELDS].every((f) => !activeQualification[f.key]) && (
-                        <div style={{ fontSize: 12, color: COLORS.ink3, fontStyle: "italic" }}>
-                          No qualification info.
-                        </div>
-                      )}
-                    </div>
-                  </Card>
-                  {missingBant.length > 0 && (
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        padding: "14px 16px",
-                        marginTop: 4,
-                        borderRadius: 10,
-                        background: COLORS.warnBg,
-                        border: `1px solid ${COLORS.warn}33`,
-                        fontSize: 14,
-                        fontWeight: 600,
-                        color: COLORS.warn,
-                        justifyContent: "center",
-                        flexWrap: "wrap",
-                      }}
-                    >
-                      <AlertTriangle size={18} strokeWidth={2.25} style={{ flexShrink: 0 }} />
-                      <span>
-                        {missingBant.map((f) => f.label).join(", ")}
-                        {" "}
-                        {missingBant.length === 1 ? "missing" : "missing"}
-                      </span>
-                    </div>
-                  )}
-                </>
-              );
-            })()}
-          </div>
-          {/* /RIGHT COLUMN */}
-        </div>
       </div>
 
       {/* Claude modal overlay — centered with backdrop */}
@@ -1419,6 +1104,10 @@ export function DealDetailPanel({
                   reasoning: details.reasoning,
                   nextAction: details.next_action,
                   qualification: details.qualification,
+                  kuna: activeKuna,
+                  buyingCommittee: activeCommittee,
+                  goLiveDate: activeGoLive,
+                  activeContactsLast30Days: threading.active,
                 },
                 contacts: details.contacts,
                 company: details.company,

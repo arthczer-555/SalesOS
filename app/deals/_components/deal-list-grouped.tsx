@@ -4,9 +4,16 @@ import * as React from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { scoreBadge } from "@/lib/deal-scoring";
 import { COLORS } from "@/lib/design/tokens";
-import { ListItem } from "@/components/ui/list-item";
 import type { Deal, Stage } from "../_helpers";
-import { fmt, fmtDate, stageColor, timeAgo } from "../_helpers";
+import { fmt, fmtDate, isOverdue, stageColor } from "../_helpers";
+
+// Texte des badges assombri pour le contraste (mêmes teintes que scoreBadge).
+const SCORE_TEXT: Record<string, string> = {
+  "High Priority": "#166534",
+  "On Track": "#854d0e",
+  Fragile: "#9a3412",
+  "At Risk": "#b91c1c",
+};
 
 export function DealListGrouped({
   stages,
@@ -19,9 +26,13 @@ export function DealListGrouped({
   selectedId: string | null;
   onSelect: (d: Deal) => void;
 }) {
-  const [expanded, setExpanded] = React.useState<Record<string, boolean>>({});
-  const toggle = (id: string) =>
-    setExpanded((c) => ({ ...c, [id]: !c[id] }));
+  // Par défaut seul le groupe du deal ouvert est déplié ; un clic force l'état.
+  const [toggles, setToggles] = React.useState<Record<string, boolean>>({});
+  const selectedStageId = React.useMemo(
+    () => stages.find((s) => (dealsByStage[s.id] ?? []).some((d) => d.id === selectedId))?.id ?? null,
+    [stages, dealsByStage, selectedId]
+  );
+  const isOpen = (id: string) => toggles[id] ?? id === selectedStageId;
 
   return (
     <div
@@ -29,114 +40,131 @@ export function DealListGrouped({
       style={{
         display: "flex",
         flexDirection: "column",
-        gap: 12,
-        padding: "8px 12px 16px",
+        gap: 4,
+        padding: "10px 10px 16px",
         overflowY: "auto",
         height: "100%",
       }}
     >
       {stages.map((stage, idx) => {
         const items = dealsByStage[stage.id] ?? [];
-        const color = stageColor(idx);
         const total = items.reduce((s, d) => s + (parseFloat(d.amount) || 0), 0);
-        const isCollapsed = !expanded[stage.id];
+        const open = isOpen(stage.id);
         return (
-          <section key={stage.id} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <section key={stage.id} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
             <button
               type="button"
-              onClick={() => toggle(stage.id)}
-              aria-expanded={!isCollapsed}
+              onClick={() => setToggles((t) => ({ ...t, [stage.id]: !open }))}
+              aria-expanded={open}
               style={{
                 display: "flex",
                 alignItems: "center",
-                justifyContent: "space-between",
-                padding: "6px 10px",
-                borderRadius: 8,
-                background: `${color}10`,
-                border: "none",
-                borderLeft: `3px solid ${color}`,
-                cursor: "pointer",
+                gap: 8,
                 width: "100%",
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
                 textAlign: "left",
               }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = COLORS.bgSoft)}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
             >
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 6, minWidth: 0 }}>
-                {isCollapsed ? (
-                  <ChevronRight size={12} style={{ color, marginTop: 2, flexShrink: 0 }} />
-                ) : (
-                  <ChevronDown size={12} style={{ color, marginTop: 2, flexShrink: 0 }} />
-                )}
-                <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 700, color, letterSpacing: "0.04em", textTransform: "uppercase" }}>
-                    {stage.label}
-                  </span>
-                  <span style={{ fontSize: 10, color: COLORS.ink3 }}>
-                    {items.length} deal{items.length > 1 ? "s" : ""}
-                  </span>
-                </div>
-              </div>
-              <span style={{ fontSize: 11, color: COLORS.ink2, fontWeight: 600, flexShrink: 0 }}>
-                {(total / 1000).toFixed(0)}k€
+              {open ? (
+                <ChevronDown size={13} style={{ color: COLORS.ink3, flexShrink: 0 }} />
+              ) : (
+                <ChevronRight size={13} style={{ color: COLORS.ink3, flexShrink: 0 }} />
+              )}
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: stageColor(idx), flexShrink: 0 }} aria-hidden="true" />
+              <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: COLORS.ink0, lineHeight: 1.35 }}>
+                {stage.label}
+              </span>
+              <span style={{ fontSize: 12, color: COLORS.ink2, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                {items.length}
+                {total > 0 ? ` · ${(total / 1000).toFixed(0)}k€` : ""}
               </span>
             </button>
-            {!isCollapsed && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {items.length === 0 && (
-                <div style={{ fontSize: 11, color: COLORS.ink4, fontStyle: "italic", padding: "6px 10px" }}>
-                  No deal
-                </div>
-              )}
-              {items.map((d) => {
-                const ref = d.lastContacted || d.lastModified;
-                const badge = d.score ? scoreBadge(d.score.total) : null;
-                return (
-                  <ListItem
-                    key={d.id}
-                    active={d.id === selectedId}
-                    onClick={() => onSelect(d)}
-                    right={
-                      d.score && badge ? (
-                        <span
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 700,
-                            padding: "2px 7px",
-                            borderRadius: 999,
-                            background: badge.bg,
-                            color: badge.color,
-                            fontVariantNumeric: "tabular-nums",
-                          }}
-                        >
-                          {d.score.total}
+            {open && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingBottom: 6 }}>
+                {items.length === 0 && (
+                  <div style={{ fontSize: 12, color: COLORS.ink4, padding: "4px 12px 6px 38px" }}>No deal</div>
+                )}
+                {items.map((d) => {
+                  const badge = d.score ? scoreBadge(d.score.total) : null;
+                  const active = d.id === selectedId;
+                  const overdue = isOverdue(d.closedate);
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => onSelect(d)}
+                      aria-current={active ? "true" : undefined}
+                      style={{
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 5,
+                        width: "100%",
+                        padding: "9px 12px",
+                        borderRadius: 10,
+                        border: `1px solid ${active ? "#ffc2d6" : "transparent"}`,
+                        background: active ? "#fff1f6" : "transparent",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        font: "inherit",
+                        color: "inherit",
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!active) e.currentTarget.style.background = COLORS.bgSoft;
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!active) e.currentTarget.style.background = "transparent";
+                      }}
+                    >
+                      <span style={{ display: "flex", justifyContent: "space-between", gap: 8, width: "100%" }}>
+                        <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {d.dealname || "Untitled"}
                         </span>
-                      ) : (
-                        <span style={{ fontSize: 10, color: COLORS.ink4, fontStyle: "italic" }}>—</span>
-                      )
-                    }
-                  >
-                    <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                      <span
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 600,
-                          color: COLORS.ink0,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {d.dealname || "Untitled"}
+                        <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink0, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                          {fmt(d.amount)}
+                        </span>
                       </span>
-                      <span style={{ fontSize: 10, color: COLORS.ink3 }}>
-                        {fmt(d.amount)}
-                        {d.closedate ? ` · ${fmtDate(d.closedate)}` : ""}
-                        {ref ? ` · ${timeAgo(ref)}` : ""}
+                      <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, width: "100%" }}>
+                        <span style={{ fontSize: 12, color: COLORS.ink2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {d.ownerName ? d.ownerName.split(" ")[0] : ""}
+                          {d.ownerName && d.closedate ? " · " : ""}
+                          {d.closedate && (
+                            <span style={{ color: overdue ? COLORS.err : undefined, fontWeight: overdue ? 600 : 400 }}>
+                              {overdue ? `Overdue ${fmtDate(d.closedate)}` : fmtDate(d.closedate)}
+                            </span>
+                          )}
+                        </span>
+                        {badge ? (
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              flexShrink: 0,
+                              fontSize: 11,
+                              fontWeight: 600,
+                              padding: "2px 7px",
+                              borderRadius: 999,
+                              background: badge.bg,
+                              color: SCORE_TEXT[badge.label] ?? badge.color,
+                            }}
+                          >
+                            <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>{d.score!.total}</span>
+                            {badge.label}
+                          </span>
+                        ) : (
+                          <span style={{ fontSize: 11, color: COLORS.ink4, fontStyle: "italic", flexShrink: 0 }}>Unscored</span>
+                        )}
                       </span>
-                    </div>
-                  </ListItem>
-                );
-              })}
-            </div>
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </section>
         );

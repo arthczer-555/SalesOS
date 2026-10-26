@@ -4,6 +4,7 @@ import { type DealScore } from "@/lib/deal-scoring";
 import { db } from "@/lib/db";
 import { stripHtml } from "@/lib/hubspot";
 import { getClaapRecording } from "@/lib/claap";
+import type { ActiveContact, DealThreading } from "@/lib/deals/kuna";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +55,10 @@ export async function GET(req: NextRequest) {
         hubspot(`/crm/v3/objects/deals/${id}/associations/companies`),
         hubspot("/crm/v3/objects/emails/search", "POST", {
           ...dealFilter,
-          properties: ["hs_email_subject", "hs_email_text", "hs_email_html", "hs_email_direction", "hs_timestamp"],
+          properties: [
+            "hs_email_subject", "hs_email_text", "hs_email_html", "hs_email_direction", "hs_timestamp",
+            "hs_email_from_email", "hs_email_from_firstname", "hs_email_from_lastname",
+          ],
         }),
         hubspot("/crm/v3/objects/meetings/search", "POST", {
           ...dealFilter,
@@ -236,6 +240,29 @@ export async function GET(req: NextRequest) {
       events.push({ kind: "created", label: "Deal created", iso: p.createdate });
     }
 
+    // Threading : contacts côté prospect "actifs" = ont envoyé un email loggé
+    // sur le deal (ou assisté à un meeting Claap, cf plus bas) dans les 30 derniers
+    // jours. Calcul déterministe, vérifiable dans HubSpot.
+    const THREAD_WINDOW_DAYS = 30;
+    const threadSince = Date.now() - THREAD_WINDOW_DAYS * 864e5;
+    const isInternal = (email: string) => /@coachello\./i.test(email);
+    const activeByEmail = new Map<string, ActiveContact>();
+    const markActive = (email: string, name: string | null, iso: string, via: ActiveContact["via"]) => {
+      const key = email.toLowerCase();
+      const prev = activeByEmail.get(key);
+      if (!prev || prev.lastInboundAt < iso) {
+        activeByEmail.set(key, { email: key, name: name || prev?.name || null, lastInboundAt: iso, via });
+      }
+    };
+    for (const row of rowsOf(emailsRes)) {
+      const ep = row.properties ?? {};
+      const from = ep.hs_email_from_email?.trim();
+      if (ep.hs_email_direction !== "INCOMING_EMAIL" || !from || isInternal(from)) continue;
+      if (tsNum(ep.hs_timestamp) < threadSince) continue;
+      const name = [ep.hs_email_from_firstname, ep.hs_email_from_lastname].filter(Boolean).join(" ").trim();
+      markActive(from, name || null, new Date(tsNum(ep.hs_timestamp)).toISOString(), "email");
+    }
+
     // Fetch cached AI score
     let cachedScore: DealScore | null = null;
     let reasoning: string | null = null;
@@ -243,6 +270,9 @@ export async function GET(req: NextRequest) {
     let scoredAt: string | null = null;
     let qualification: Record<string, string | null> | null = null;
     let keyEvents: unknown[] = [];
+    let kuna: unknown[] | null = null;
+    let committee: unknown = null;
+    let goLiveDate: string | null = null;
     if (process.env.SUPABASE_URL) {
       const { data: cached } = await db
         .from("deal_scores")
@@ -264,6 +294,18 @@ export async function GET(req: NextRequest) {
         .eq("deal_id", id)
         .maybeSingle();
       if (ke?.key_events && Array.isArray(ke.key_events)) keyEvents = ke.key_events;
+
+      // Best-effort aussi : colonnes de la migration deal_scores_kuna.sql.
+      const { data: kn } = await db
+        .from("deal_scores")
+        .select("kuna, committee, go_live_date")
+        .eq("deal_id", id)
+        .maybeSingle();
+      if (kn) {
+        kuna = Array.isArray(kn.kuna) ? kn.kuna : null;
+        committee = kn.committee && typeof kn.committee === "object" ? kn.committee : null;
+        goLiveDate = typeof kn.go_live_date === "string" ? kn.go_live_date : null;
+      }
     }
 
     // Réunions Claap analysées rattachées au deal (sales_coach_analyses).
@@ -277,6 +319,7 @@ export async function GET(req: NextRequest) {
       audience: string | null;
       score_global: number | null;
       meeting_recap: { summary?: string | null } | null;
+      participants: { name: string | null; email: string; attended: boolean | null }[] | null;
     };
     let meetings: {
       id: string;
@@ -292,11 +335,19 @@ export async function GET(req: NextRequest) {
       const { data: rows } = await db
         .from("sales_coach_analyses")
         .select(
-          "id, claap_recording_id, meeting_title, meeting_started_at, meeting_kind, audience, score_global, meeting_recap, status"
+          "id, claap_recording_id, meeting_title, meeting_started_at, meeting_kind, audience, score_global, meeting_recap, participants, status"
         )
         .eq("hubspot_deal_id", id)
         .eq("status", "done")
         .order("meeting_started_at", { ascending: false });
+      // Participants externes d'un meeting Claap récent = contacts actifs aussi.
+      for (const m of (rows ?? []) as ClaapRow[]) {
+        if (!m.meeting_started_at || tsNum(m.meeting_started_at) < threadSince) continue;
+        for (const pt of m.participants ?? []) {
+          if (!pt?.email || pt.attended === false || isInternal(pt.email)) continue;
+          markActive(pt.email, pt.name, new Date(tsNum(m.meeting_started_at)).toISOString(), "meeting");
+        }
+      }
       meetings = ((rows ?? []) as ClaapRow[]).map((m) => ({
         id: m.id,
         claap_recording_id: m.claap_recording_id,
@@ -340,6 +391,15 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Noms : on préfère celui du contact HubSpot quand l'email correspond.
+    const contactNameByEmail = new Map(contacts.filter((c) => c.email).map((c) => [c.email.toLowerCase(), c.name]));
+    const threading: DealThreading = {
+      windowDays: THREAD_WINDOW_DAYS,
+      active: [...activeByEmail.values()]
+        .map((a) => ({ ...a, name: contactNameByEmail.get(a.email) || a.name }))
+        .sort((a, b) => b.lastInboundAt.localeCompare(a.lastInboundAt)),
+    };
+
     return NextResponse.json({
       id,
       dealname: p.dealname ?? "",
@@ -366,6 +426,10 @@ export async function GET(req: NextRequest) {
       meetings,
       events,
       keyEvents,
+      kuna,
+      committee,
+      goLiveDate,
+      threading,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Error" }, { status: 500 });
