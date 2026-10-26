@@ -63,7 +63,8 @@ function isRawField(x: unknown): x is RawField {
   return !!x && typeof x === "object" && "value" in (x as object) && "confidence" in (x as object) && "source" in (x as object);
 }
 
-function toFieldValue<T>(raw: unknown): ClientFieldValue<T> {
+// Exporté : les attributs des programmes (programs.ts) ont le même format.
+export function toFieldValue<T>(raw: unknown): ClientFieldValue<T> {
   const now = new Date().toISOString();
   if (!isRawField(raw)) {
     return { value: null, confidence: 0, source: null, updated_at: now };
@@ -80,7 +81,7 @@ function toFieldValue<T>(raw: unknown): ClientFieldValue<T> {
 }
 
 // Traverse la sortie Claude et la transforme en ClientFields. Garantit une
-// structure COMPLÈTE : les 6 sections et tous leurs fields sont toujours
+// structure COMPLÈTE : les 5 sections et tous leurs fields sont toujours
 // présents, même si Claude en omet (section/field absent => value=null,
 // confidence=0). Évite que fields_json soit partiel selon l'humeur du modèle.
 export function parseClientFieldsFromClaude(raw: unknown): Partial<ClientFields> {
@@ -113,11 +114,6 @@ export function parseClientFieldsFromClaude(raw: unknown): Partial<ClientFields>
     "entreprise_compte", "contact_signataire", "contact_principal_rh",
     "contact_rh_operationnel", "contact_facturation", "contact_it",
     "autres_parties_prenantes", "langues_requises", "zones_geographiques",
-  ]);
-  mapSection("program_scope", [
-    "type_coaching", "nom_programme", "population_accompagnee", "nb_coaches_estime",
-    "cohortes_format", "auto_assessment", "flash_feedback", "tripartite",
-    "quadripartite", "offres_associees",
   ]);
   mapSection("goals", ["objectifs_business_rh", "kpis_cles", "attentes_specifiques"]);
   mapSection("org", [

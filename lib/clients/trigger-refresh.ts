@@ -4,13 +4,13 @@ import { runClientRefresh } from "./run-refresh";
 // functions), via la Background Function Netlify en prod (le refresh enchaîne
 // plusieurs appels IA, 20 à 90 s). Fire-and-forget : la fiche se met à jour
 // toute seule quand le report change (polling SWR côté page).
-// removedRecordingIds, reextract : cf. runClientRefresh (retrait à la main d'un
-// meeting, fusion de fiches).
+// removedRecordingIds, reextract, detectPrograms : cf. runClientRefresh (retrait
+// à la main d'un meeting, fusion de fiches, bouton "Detect programs").
 export async function triggerClientRefresh(
   origin: string,
   clientId: string,
   userId: string | null,
-  opts?: { removedRecordingIds?: string[]; reextract?: boolean },
+  opts?: { removedRecordingIds?: string[]; reextract?: boolean; detectPrograms?: boolean },
 ): Promise<"inline" | "background"> {
   const isNetlifyEnv = !!(process.env.NETLIFY || process.env.URL || process.env.DEPLOY_URL);
   if (!isNetlifyEnv) {
@@ -18,6 +18,7 @@ export async function triggerClientRefresh(
       trigger: "manual",
       removedRecordingIds: opts?.removedRecordingIds,
       reextract: opts?.reextract,
+      detectPrograms: opts?.detectPrograms,
     }).catch((e) => {
       console.error(`[clients/refresh/${clientId}] inline run failed:`, e instanceof Error ? e.message : e);
     });
@@ -37,6 +38,7 @@ export async function triggerClientRefresh(
         trigger: "manual",
         removedRecordingIds: opts?.removedRecordingIds,
         reextract: opts?.reextract,
+        detectPrograms: opts?.detectPrograms,
       }),
       signal: AbortSignal.timeout(8000),
     });

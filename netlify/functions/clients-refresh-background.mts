@@ -12,6 +12,7 @@ export default async (req: Request) => {
   let trigger: "manual" | "cron" = "manual";
   let removedRecordingIds: string[] | undefined;
   let reextract = false;
+  let detectPrograms = false;
   try {
     const body = (await req.json()) as {
       id?: string;
@@ -19,11 +20,13 @@ export default async (req: Request) => {
       trigger?: "manual" | "cron";
       removedRecordingIds?: unknown;
       reextract?: unknown;
+      detectPrograms?: unknown;
     };
     id = body.id;
     userId = body.userId ?? null;
     trigger = body.trigger === "cron" ? "cron" : "manual";
     reextract = body.reextract === true;
+    detectPrograms = body.detectPrograms === true;
     if (Array.isArray(body.removedRecordingIds)) {
       removedRecordingIds = body.removedRecordingIds.filter((r): r is string => typeof r === "string");
     }
@@ -37,7 +40,7 @@ export default async (req: Request) => {
     return;
   }
 
-  const result = await runClientRefresh(id, userId, { trigger, removedRecordingIds, reextract });
+  const result = await runClientRefresh(id, userId, { trigger, removedRecordingIds, reextract, detectPrograms });
   if (!result.ok) {
     console.error(`[clients-refresh-bg] ${id} failed:`, result.error);
   } else if ("skipped" in result) {

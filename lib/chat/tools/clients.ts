@@ -17,7 +17,14 @@ import { db } from "@/lib/db";
 import { normalizeCompany, pickBestFuzzy } from "@/lib/fuzzy-match";
 import {
   HUBSPOT_CHECKLIST_FIELDS,
+  PROGRAM_FIELD_DEFINITIONS,
   SECTION_DEFINITIONS,
+  getProgramFieldDef,
+  programFieldApplies,
+  programStatusOf,
+  programTypeOf,
+  type ClientProgram,
+  type ProgramFieldKey,
   getMissingHubspotFields,
   isHubspotFieldEmpty,
   mergeOnboardingItems,
@@ -29,6 +36,8 @@ import {
 } from "@/lib/clients/types";
 import { toClientTier } from "@/lib/clients/tier";
 import { getClientTodo } from "@/lib/clients/todo";
+import { missingFieldLabel, summarizePrograms } from "@/lib/clients/program-summary";
+import { upgradePrograms } from "@/lib/clients/programs";
 import { fetchDealsContractInfo, fetchHubspotDealFields } from "@/lib/clients/hubspot-fields";
 import { resolveContractEnd, type ContractEnd } from "@/lib/clients/lifecycle";
 import { openActions } from "@/lib/clients/portfolio";
@@ -43,14 +52,33 @@ const LIST_COLUMNS =
 // search_clients lit en plus, comme la vue portefeuille (api/clients/list) :
 // insights pour la prochaine action, et la fin de contrat trouvée dans les
 // échanges (repli de HubSpot, cf. resolveContractEnd), seule, sans fields_json.
-const SEARCH_COLUMNS = `${LIST_COLUMNS}, insights, contract_end_field:fields_json->planning->fin_contrat_le`;
+const SEARCH_COLUMNS_BASE = `${LIST_COLUMNS}, insights, contract_end_field:fields_json->planning->fin_contrat_le`;
 
 // Colonnes de la fiche : tout ce que get_client peut rendre, section par
 // section. Explicite plutôt que "*" pour ne pas embarquer les colonnes de
 // travail (candidats de meetings en attente, brouillon d'email, etc.).
-const DETAIL_COLUMNS = `${LIST_COLUMNS}, hubspot_company_id, billing_refreshed_at, am_cs_notified_at, fields_json, deal_recap, insights, news, coach_brief, coach_brief_generated_at, health_history, onboarding_checklist, hubspot_field_suggestions, enrichment_error, last_refresh_report, declined_claap_recording_ids, discovered_claap_recordings, account_companies`;
+const DETAIL_COLUMNS_BASE = `${LIST_COLUMNS}, hubspot_company_id, billing_refreshed_at, am_cs_notified_at, fields_json, deal_recap, insights, news, coach_brief, coach_brief_generated_at, health_history, onboarding_checklist, hubspot_field_suggestions, enrichment_error, last_refresh_report, declined_claap_recording_ids, discovered_claap_recordings, account_companies`;
 
-// Les 6 sections du brief (SECTION_DEFINITIONS) sont adressables une par une :
+// programs (migration clients_programs.sql) : sondée avant de la lire, sinon
+// une colonne manquante ferait échouer toute lecture de fiche (et
+// resolveByCompany répondrait "aucune fiche"). Seul un succès est mis en cache :
+// la migration appliquée est vue sans redéploiement.
+let programsColumn = false;
+async function hasProgramsColumn(): Promise<boolean> {
+  if (programsColumn) return true;
+  const { error } = await db.from("clients").select("programs").limit(1);
+  programsColumn = !error;
+  return programsColumn;
+}
+async function detailColumns(): Promise<string> {
+  return (await hasProgramsColumn()) ? `${DETAIL_COLUMNS_BASE}, programs` : DETAIL_COLUMNS_BASE;
+}
+async function searchColumns(): Promise<string> {
+  return (await hasProgramsColumn()) ? `${SEARCH_COLUMNS_BASE}, programs` : SEARCH_COLUMNS_BASE;
+}
+
+// Les 6 sections du brief sont adressables une par une (program_scope = les
+// programmes du compte, clients.programs ; les 5 autres = SECTION_DEFINITIONS) :
 // chacune pèse 1 à 3 ko, les 6 ensemble 9 à 14 ko. Rendre la fiche entière à
 // chaque appel ferait payer 4 ko de tokens pour "qui est le contact RH ?".
 // L'agent cible donc la section utile en UN appel (mapping topic -> section
@@ -104,7 +132,7 @@ function clientsPageUrl(path = ""): string {
 /** Ce que contient chaque section : sert au tail "non chargé" pour que l'agent sache quoi rappeler. */
 const FIELD_SECTION_HINTS: Record<FieldSectionName, string> = {
   general_info: "contacts (signataire, RH principal, RH opérationnel, facturation, IT), autres parties prenantes, langues, zones géographiques",
-  program_scope: "type de coaching, nom du programme, population accompagnée, nb de coachés, cohortes, offres associées",
+  program_scope: "programmes du compte (un par programme) : statut (Not started / Set up / POC / Live / Turned off) et sa raison, type (Human / Hybrid / AI), objectif, population, risque, puis selon le type : programme catalogue, sessions, tripartite (humain) ; modules IA, type de programme role-play (upskilling / assessment debrief / certification), déploiement, licences (IA)",
   goals: "objectifs business/RH, KPIs clés, attentes spécifiques",
   org: "IT et accès (SSO, provisioning, canal Slack/Teams et statut de l'app, visio, sécurité, DPA, résidence des données), documents de référence, contraintes organisationnelles",
   history: "relation commerciale (nouveau/renouvellement/upsell), initiatives RH parallèles, points de vigilance",
@@ -131,7 +159,9 @@ type ListRow = Pick<
   | "last_enriched_at" | "last_refreshed_at" | "next_billing_date"
 >;
 
-type SearchRow = ListRow & Pick<ClientRow, "insights"> & { contract_end_field?: ClientFieldValue | null };
+type SearchRow = ListRow &
+  Pick<ClientRow, "insights"> &
+  Partial<Pick<ClientRow, "programs">> & { contract_end_field?: ClientFieldValue | null };
 
 type DetailRow = ListRow &
   Pick<
@@ -140,7 +170,8 @@ type DetailRow = ListRow &
     | "deal_recap" | "insights" | "news" | "coach_brief" | "coach_brief_generated_at"
     | "health_history" | "onboarding_checklist" | "hubspot_field_suggestions" | "enrichment_error"
     | "last_refresh_report" | "declined_claap_recording_ids" | "discovered_claap_recordings" | "account_companies"
-  >;
+  > &
+  Partial<Pick<ClientRow, "programs">>;
 
 // ── Helpers de rendu ─────────────────────────────────────────────────────────
 
@@ -174,14 +205,16 @@ function slimHealth(h: ClientRow["health"]) {
  * `actions` avec un done_at : on la sort de la liste ouverte, sinon l'agent
  * présente comme "à faire" ce que l'équipe a déjà fait.
  */
-function slimInsights(i: ClientRow["insights"]) {
+function slimInsights(i: ClientRow["insights"], programs: ClientRow["programs"]) {
   if (!i) return null;
+  const programNames = new Map((programs ?? []).map((p) => [p.id, p.name]));
   const open = i.actions.filter((a) => !a.done_at);
   const done = i.actions.filter((a) => a.done_at);
   return {
     generated_at: i.generated_at,
     next_actions: open.map((a) => ({
       title: a.title,
+      program: a.program_id ? programNames.get(a.program_id) ?? null : null,
       why: a.why ?? a.rationale ?? null,
       owner: a.owner ?? null,
       due: a.due ?? null,
@@ -208,6 +241,13 @@ function slimRefreshReport(r: ClientRow["last_refresh_report"]) {
     // Par source : une source en erreur n'a pas été lue, ce n'est pas "rien de neuf".
     sources: r.sources ?? undefined,
     changed_fields: r.changed_fields.map((f) => ({ field: f.label, before: f.before, after: f.after, overrode_manual: f.overrode_manual })),
+    program_changes: r.program_changes?.length
+      ? r.program_changes.map((c) =>
+          c.added
+            ? { program: c.program_name, added: true }
+            : { program: c.program_name, field: c.label, before: c.before, after: c.after, overrode_manual: c.overrode_manual },
+        )
+      : undefined,
     meetings_added: r.auto_added_meetings?.length ? r.auto_added_meetings : undefined,
     notes: r.notes?.length ? r.notes : undefined,
     skipped_no_activity: r.skipped_no_activity ?? false,
@@ -314,6 +354,76 @@ function flattenFields(
   }
 
   return { sections, low_confidence };
+}
+
+// Valeur d'un attribut de programme, enum traduit comme sur la page.
+function programValue(p: ClientProgram, key: ProgramFieldKey): unknown {
+  const def = getProgramFieldDef(key);
+  const v = p.fields[key]?.value;
+  if (v == null || !def || !programFieldApplies(def, p.fields)) return null;
+  return def.kind === "enum" && typeof v === "string" ? def.optionLabels?.[v] ?? v : v;
+}
+
+const PROGRAM_TYPE_FILTER: Record<string, string> = { human: "humain", hybrid: "hybride", ai: "ia" };
+
+/**
+ * Vue portefeuille (search_clients) : les programmes d'un compte en une ligne
+ * chacun (statut, type, risque, et l'essentiel du type), pour répondre à
+ * "quels programmes AI sont en set up", "quels programmes sont à risque" sans
+ * ouvrir chaque fiche. Le détail complet est dans get_client (program_scope).
+ */
+function programSummaries(programs: ClientProgram[]): Array<Record<string, unknown>> {
+  return programs.map((p) => {
+    const item: Record<string, unknown> = {
+      name: p.name,
+      status: programValue(p, "status"),
+      type: programValue(p, "coaching_type"),
+    };
+    for (const key of ["risk", "sessions_per_coachee", "three_way", "ai_modules", "rp_program_type", "deployment"] as const) {
+      const v = programValue(p, key);
+      if (v != null && !(Array.isArray(v) && v.length === 0)) item[key] = v;
+    }
+    if (p.fields.status?.source?.kind === "manual") item.status_set_by_hand = true;
+    return item;
+  });
+}
+
+/**
+ * Knowledge > Program scope : un objet par programme (statut du kanban et sa
+ * raison, type, tripartite, objectif...), valeurs seules, enums traduits comme
+ * sur la page. Fiche jamais détectée : l'ancien résumé unique, signalé.
+ */
+function slimPrograms(row: Pick<DetailRow, "fields_json" | "programs">): Record<string, unknown> {
+  if (!Array.isArray(row.programs)) {
+    const coachingLabels = PROGRAM_FIELD_DEFINITIONS.find((d) => d.key === "coaching_type")?.optionLabels ?? {};
+    return {
+      programs: summarizePrograms(row).programs.map((p) => ({
+        name: p.name,
+        coaching_type: p.coachingType ? coachingLabels[p.coachingType] ?? p.coachingType : null,
+        population: p.population,
+        coachees: p.nbCoachees,
+      })),
+      programs_note:
+        "Programmes pas encore détectés un par un sur cette fiche : ancien résumé unique (un seul programme, sans statut). Le prochain refresh les détecte.",
+    };
+  }
+  return {
+    programs: row.programs.map((p) => {
+      const item: Record<string, unknown> = { name: p.name };
+      if (p.aliases.length > 0) item.aliases = p.aliases;
+      // Champs du type du programme seulement (cf. programFieldApplies).
+      for (const def of PROGRAM_FIELD_DEFINITIONS) {
+        if (!programFieldApplies(def, p.fields)) continue;
+        const cell = p.fields[def.key];
+        if (!cell || isEmpty(cell.value)) continue;
+        item[def.label] = def.kind === "enum" && typeof cell.value === "string" ? def.optionLabels?.[cell.value] ?? cell.value : cell.value;
+      }
+      if (p.fields.status?.source?.kind === "manual") item.status_set_by_hand = true;
+      return item;
+    }),
+    programs_note:
+      "Un objet par programme du compte (kanban de Knowledge > Program scope). Statut et risque = jugements IA tirés des échanges (sauf status_set_by_hand), pas une mesure d'adoption : aucune donnée d'usage plateforme n'est branchée.",
+  };
 }
 
 /**
@@ -439,8 +549,9 @@ const defs: Anthropic.Tool[] = [
   {
     name: "search_clients",
     description:
-      "Liste les clients ayant une FICHE CLIENT dans CoachelloHQ (table clients, un compte par deal closed-won). Utilise-le pour toute question de portefeuille : 'mes clients', 'les comptes en risque', 'qui gère X', 'les derniers clients signés'. Renvoie par compte : société, tier, owner du deal, AM et CS assignés, date de signature, montant, santé (score + label vert/jaune/rouge, phase, DERNIER CONTACT), CA facturé (année en cours et all time, sheet revenue), FIN DE CONTRAT (contract_end : date, jours restants, origine, lue en live dans HubSpot comme sur la fiche), prochaine facturation et prochaine action ouverte de la fiche. Passe 'mine_only' pour ne garder que les comptes de l'utilisateur connecté (owner, AM ou CS), 'health' ou 'phase' (onboarding / running / renewal, comme la colonne Phase) pour filtrer. Passe 'query' pour cibler une société (matching flou : 'Adyen' matche 'ADYEN N.V.'). " +
+      "Liste les clients ayant une FICHE CLIENT dans CoachelloHQ (table clients, un compte par deal closed-won). Utilise-le pour toute question de portefeuille : 'mes clients', 'les comptes en risque', 'qui gère X', 'les derniers clients signés'. Renvoie par compte : société, tier, owner du deal, AM et CS assignés, date de signature, montant, santé (score + label vert/jaune/rouge, phase, DERNIER CONTACT), CA facturé (année en cours et all time, sheet revenue), FIN DE CONTRAT (contract_end : date, jours restants, origine, lue en live dans HubSpot comme sur la fiche), prochaine facturation, prochaine action ouverte de la fiche, et ses PROGRAMMES (un par programme : statut Not started / Set up / POC / Live / Turned off, type Human / Hybrid / AI, risque, sessions et tripartite en humain, modules IA et type de programme role-play Upskilling / Assessment debrief / Certification en IA ; le détail complet est dans get_client, section program_scope). Passe 'mine_only' pour ne garder que les comptes de l'utilisateur connecté (owner, AM ou CS), 'health' ou 'phase' (onboarding / running / renewal, comme la colonne Phase) pour filtrer. Passe 'query' pour cibler une société (matching flou : 'Adyen' matche 'ADYEN N.V.'). " +
       "RENOUVELLEMENTS : 'les contrats qui se terminent dans les 90 jours', 'mes renouvellements à venir' → passe contract_ends_within_days (ex : 90), le résultat est trié par fin de contrat (la plus proche d'abord) et no_contract_end liste les comptes sans date exploitable, à signaler plutôt qu'à ignorer en silence. " +
+      "PROGRAMMES : pour 'les programmes en set up', 'les programmes AI', 'les programmes à risque', passe program_status, program_type et/ou program_risk : seuls les comptes ayant au moins un programme qui correspond sont gardés, et seuls ces programmes sont listés. Le statut et le risque sont des jugements IA tirés des échanges (sauf status_set_by_hand), pas une mesure d'usage. " +
       "TIER = importance du compte fixée à la main par l'équipe : 1 = stratégique (priorité maximale), 2 = important, 3 = standard, null = pas encore classé. Passe 'tier' pour ne garder qu'un niveau ('mes comptes prioritaires', 'les Tier 1'). Quand tu listes, classes ou résumes plusieurs comptes, traite les Tier 1 en premier, et un Tier 1 en risque passe avant tout le reste. " +
       "COUVERTURE PARTIELLE, à ne jamais oublier : cette table ne contient que les deals signés depuis la mise en place de la fiche client. De nombreux clients historiques n'y sont PAS. L'absence d'un compte ici ne prouve rien : enchaîne sur HubSpot (search_deals, get_companies) et sur get_billing_revenue, dont le sheet liste tous les clients facturés. Pour un total de clients ou un classement, c'est le sheet revenue qui fait foi, pas cette table. " +
       "Si le résultat contient un champ commençant par 'warning' (fiches dont les meetings Claap restent à confirmer, ou jamais enrichies), relaie-le à l'utilisateur : leur contexte est vide tant qu'il n'a pas fait l'action.",
@@ -465,6 +576,17 @@ const defs: Anthropic.Tool[] = [
           enum: ["signed", "contract_end"],
           description: "signed (défaut) = signés les plus récents d'abord. contract_end = fin de contrat la plus proche d'abord, comptes sans date en dernier (défaut quand contract_ends_within_days est passé).",
         },
+        program_status: {
+          type: "string",
+          enum: ["not_started", "set_up", "poc", "live", "turned_off"],
+          description: "Ne garde que les programmes à ce statut (et les comptes qui en ont un).",
+        },
+        program_type: { type: "string", enum: ["human", "hybrid", "ai"], description: "Ne garde que les programmes de ce type." },
+        program_risk: {
+          type: "string",
+          enum: ["watch", "at_risk"],
+          description: "Ne garde que les programmes à ce niveau de risque ou pire (watch = watch + at_risk).",
+        },
         limit: { type: "number", description: "Nombre max de clients renvoyés (défaut 50)." },
       },
       required: [],
@@ -476,7 +598,7 @@ const defs: Anthropic.Tool[] = [
       "Fiche client CoachelloHQ : LA source de vérité sur l'état d'un compte signé, quand elle existe. Elle agrège déjà HubSpot, les meetings Claap analysés et le sheet revenue. " +
       "RÉFLEXE : dès qu'une question nomme un client Coachello, commence par ici. " +
       "QUESTION DE DÉTAIL = CET OUTIL SEUL. 'Qui est le contact RH chez X', 'quel est le programme de X', 'la date de kickoff de X', 'quand se termine le contrat de X', 'qui est l'AM sur X' : UN appel, tu réponds, tu n'ouvres RIEN d'autre. TOUJOURS RENVOYÉ, quelles que soient les sections : key_dates, la carte Key dates de la fiche (signature, kickoff, dernier contact, prochaine facturation, FIN DE CONTRAT lue en live dans HubSpot, sinon trouvée dans les échanges). N'appelle pas HubSpot, Claap, le sheet revenue ni Notion 'pour compléter'. Ne croise que pour une question d'ANALYSE (point de compte, QBR, risque de churn, upsell). " +
-      "CIBLE LA BONNE SECTION en un seul appel, via 'sections' : general_info = les contacts (signataire, RH principal, RH opérationnel, facturation, IT), parties prenantes, langues, zones. program_scope = type de coaching, nom du programme, population, nb de coachés, cohortes, offres. goals = objectifs business/RH, KPIs, attentes. org = organisation et IT : mode d'accès (SSO, magic link), provisioning (SCIM, CSV, SIRH), canal Slack/Teams et statut de l'app, visio, questionnaire sécurité, DPA, résidence des données, documents, contraintes. history = relation commerciale, initiatives RH parallèles, POINTS DE VIGILANCE. planning = date de KICKOFF, suivi CS attendu, engagements pris par le sales. Plus : health (score, drivers, DERNIER CONTACT, ton des derniers meetings), deal_recap (comment le deal s'est signé, objections, promesses), insights (NEXT ACTIONS avec owner et échéance, faits récents), whats_new (QUOI DE NEUF : ce que le dernier refresh a trouvé et changé), news, coach_brief, checklist (ce qui reste à faire : handover, champs à compléter, onboarding, champs HubSpot vides), meetings (analysés avec recap ET associés au compte sans analyse), hubspot (onglet HubSpot cleaner : champs du deal lus en live, qualification, champion, budget, need, timeline, next step HubSpot, durée et dates du contrat, mode de facturation, champs vides et suggestions). Utilise 'fields' pour charger les 6 sections d'un coup, seulement si la question est large. " +
+      "CIBLE LA BONNE SECTION en un seul appel, via 'sections' : general_info = les contacts (signataire, RH principal, RH opérationnel, facturation, IT), parties prenantes, langues, zones. program_scope = les PROGRAMMES du compte, un par programme : statut (Not started / Set up / POC / Live / Turned off) et sa raison, type (Human / Hybrid / AI), objectif, population, risque, et les champs propres au type (sessions et tripartite en humain, modules IA et type de programme role-play en IA). goals = objectifs business/RH, KPIs, attentes. org = organisation et IT : mode d'accès (SSO, magic link), provisioning (SCIM, CSV, SIRH), canal Slack/Teams et statut de l'app, visio, questionnaire sécurité, DPA, résidence des données, documents, contraintes. history = relation commerciale, initiatives RH parallèles, POINTS DE VIGILANCE. planning = date de KICKOFF, suivi CS attendu, engagements pris par le sales. Plus : health (score, drivers, DERNIER CONTACT, ton des derniers meetings), deal_recap (comment le deal s'est signé, objections, promesses), insights (NEXT ACTIONS avec owner et échéance, faits récents), whats_new (QUOI DE NEUF : ce que le dernier refresh a trouvé et changé), news, coach_brief, checklist (ce qui reste à faire : handover, champs à compléter, onboarding, champs HubSpot vides), meetings (analysés avec recap ET associés au compte sans analyse), hubspot (onglet HubSpot cleaner : champs du deal lus en live, qualification, champion, budget, need, timeline, next step HubSpot, durée et dates du contrat, mode de facturation, champs vides et suggestions). Utilise 'fields' pour charger les 6 sections d'un coup, seulement si la question est large. " +
       "SI AUCUNE FICHE N'EXISTE : ne conclus jamais que le client est inconnu. La table ne couvre que les deals signés depuis la mise en place de la fiche, beaucoup de clients historiques y manquent. Bascule immédiatement sur HubSpot (search_deals, get_companies), get_billing_revenue, search_claap_meetings et search_slack, ET préviens l'utilisateur que ce client devrait être importé dans la table clients. " +
       "AVERTISSEMENTS À RELAYER : si le résultat contient un champ 'warning' (fiche absente, meetings Claap à confirmer, enrichissement jamais lancé ou en échec), reprends-le tel quel à la fin de ta réponse avec l'action à faire. C'est une action concrète de l'utilisateur qui manque, pas une information inexistante : ne le laisse jamais croire l'inverse. " +
       "Les pages clients de Notion sont des use cases et références commerciales, jamais l'état opérationnel d'un compte. Les valeurs sont extraites par IA et datées (last_enriched_at) : signale une fiche ancienne, et ne présente jamais un champ listé dans low_confidence comme un fait acquis. Le bloc billing est un instantané ; pour un chiffre de CA à jour ou le détail par année, get_billing_revenue fait foi.",
@@ -510,7 +632,8 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
     : null;
   const sortByEnd = input.sort === "contract_end" || (within !== null && input.sort !== "signed");
 
-  let q = db.from("clients").select(SEARCH_COLUMNS).order("closedwon_at", { ascending: false, nullsFirst: false });
+  const columns = await searchColumns();
+  let q = db.from("clients").select(columns).order("closedwon_at", { ascending: false, nullsFirst: false });
 
   if (input.mine_only === true) {
     if (!ctx.userEmail) {
@@ -527,13 +650,13 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
   const { data, error } = await q;
   if (error) return `Erreur lecture des clients : ${error.message}`;
 
-  let rows = (data as SearchRow[] | null) ?? [];
+  let rows = ((data as unknown as SearchRow[] | null) ?? []).map((r) => ({ ...r, programs: upgradePrograms(r.programs) }));
 
   // Repêchage flou seulement si le "contient" SQL n'a rien donné. Il repart
   // d'une requête sans filtre : on ré-applique mine_only, health, phase et tier
   // à la main, sinon le fallback les contournerait silencieusement.
   if (rows.length === 0 && query) {
-    let fuzzy = (await resolveByCompany(query, SEARCH_COLUMNS)) as SearchRow[];
+    let fuzzy = ((await resolveByCompany(query, columns)) as unknown as SearchRow[]).map((r) => ({ ...r, programs: upgradePrograms(r.programs) }));
     if (input.mine_only === true && ctx.userEmail) {
       const me = ctx.userEmail;
       fuzzy = fuzzy.filter((r) => r.owner_email === me || r.am_email === me || r.cs_email === me);
@@ -544,9 +667,39 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
     if (fuzzy.length === 0) return notFound(query);
     rows = fuzzy;
   }
+  // Filtres programmes : appliqués après lecture (la donnée est dans un JSON
+  // par compte). Chaque compte garde seulement ses programmes qui matchent.
+  const programStatus = typeof input.program_status === "string" ? input.program_status : null;
+  const programType = typeof input.program_type === "string" ? PROGRAM_TYPE_FILTER[input.program_type] ?? null : null;
+  const programRisk = input.program_risk === "watch" || input.program_risk === "at_risk" ? input.program_risk : null;
+  const programFiltered = !!(programStatus || programType || programRisk);
+  const programsOf = (r: SearchRow): ClientProgram[] | null => {
+    if (!Array.isArray(r.programs)) return null;
+    if (!programFiltered) return r.programs;
+    return r.programs.filter((p) => {
+      if (programStatus && programStatusOf(p) !== programStatus) return false;
+      if (programType && programTypeOf(p.fields) !== programType) return false;
+      const risk = p.fields.risk?.value;
+      if (programRisk === "at_risk" && risk !== "at_risk") return false;
+      if (programRisk === "watch" && risk !== "watch" && risk !== "at_risk") return false;
+      return true;
+    });
+  };
+  // Comptes dont les programmes n'ont jamais été détectés : ni gardés ni
+  // perdus en silence par un filtre programme, ils sont nommés à part.
+  let programsUnknown: string[] = [];
+  if (programFiltered) {
+    programsUnknown = rows.filter((r) => !Array.isArray(r.programs)).map((r) => r.company_name);
+    rows = rows.filter((r) => (programsOf(r) ?? []).length > 0);
+  }
+
   if (rows.length === 0) {
     return JSON.stringify({
       count: 0,
+      ...(programsUnknown.length > 0 && {
+        programs_not_detected: programsUnknown,
+        programs_not_detected_note: "Fiches dont les programmes n'ont pas encore été détectés (prochain refresh) : elles n'ont pas pu être filtrées. Signale-les.",
+      }),
       message:
         "Aucune fiche client ne correspond à ces critères. Rappel : la table ne couvre que les deals signés depuis la mise en place de la fiche client, elle n'est pas la liste complète des clients Coachello. Si la question porte sur le portefeuille global, appuie-toi sur get_billing_revenue (sheet revenue).",
     });
@@ -612,6 +765,13 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
       "Liste des clients AYANT UNE FICHE, pas la liste des clients Coachello. Ne présente jamais ce total comme le nombre de clients de l'entreprise : pour un décompte ou un classement, c'est get_billing_revenue (sheet revenue) qui fait foi.",
     count: rows.length,
     returned: capped.length,
+    programs_note: programFiltered
+      ? "Filtre programme appliqué : seuls les programmes qui correspondent sont listés pour chaque compte."
+      : "programs : un objet par programme du compte (null = programmes jamais détectés sur cette fiche). Statut et risque = jugements IA tirés des échanges, sauf status_set_by_hand.",
+    ...(programsUnknown.length > 0 && {
+      programs_not_detected: programsUnknown,
+      programs_not_detected_note: "Fiches dont les programmes n'ont pas encore été détectés (prochain refresh) : elles n'ont pas pu être filtrées. Signale-les.",
+    }),
     // Un gabarit plutôt qu'une URL par ligne : 50 URLs complètes pèseraient ~1k tokens.
     client_page_url: clientsPageUrl("/{client_id}"),
     client_page_note: "Pour renvoyer vers la fiche d'un compte cité, remplace {client_id} par son client_id.",
@@ -637,6 +797,10 @@ async function searchClients(input: Record<string, unknown>, ctx: ToolContext): 
         health: slimHealth(r.health),
         next_action: next ? { title: next.title, owner: next.owner ?? null, due: next.due ?? null } : null,
         open_actions: open.length,
+        programs: (() => {
+          const list = programsOf(r);
+          return list ? programSummaries(list) : null;
+        })(),
         enrichment_status: r.enrichment_status,
       };
     }),
@@ -662,11 +826,11 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
 
   let rows: DetailRow[];
   if (clientId) {
-    const { data, error } = await db.from("clients").select(DETAIL_COLUMNS).eq("id", clientId);
+    const { data, error } = await db.from("clients").select(await detailColumns()).eq("id", clientId);
     if (error) return `Erreur lecture de la fiche client : ${error.message}`;
-    rows = (data as DetailRow[] | null) ?? [];
+    rows = (data as unknown as DetailRow[] | null) ?? [];
   } else {
-    rows = (await resolveByCompany(company!, DETAIL_COLUMNS)) as DetailRow[];
+    rows = (await resolveByCompany(company!, await detailColumns())) as unknown as DetailRow[];
   }
 
   if (rows.length === 0) return company ? notFound(company) : "Aucune fiche client pour cet identifiant.";
@@ -690,7 +854,7 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
     });
   }
 
-  const row = rows[0];
+  const row = { ...rows[0], programs: upgradePrograms(rows[0].programs) };
   const pageUrl = clientsPageUrl(`/${row.id}`);
   ctx.onSource({ kind: "client", title: row.company_name, url: pageUrl });
 
@@ -792,6 +956,7 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
   if (wantedFieldSections.size > 0) {
     const { sections, low_confidence } = flattenFields(row.fields_json ?? {}, wantedFieldSections);
     out.fields = sections;
+    if (wantedFieldSections.has("program_scope")) Object.assign(out, slimPrograms(row));
     if (low_confidence.length > 0) {
       out.low_confidence = low_confidence;
       out.low_confidence_note = "Champs extraits par l'IA avec une confiance faible : à annoncer comme incertains, pas comme des faits.";
@@ -803,7 +968,7 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
     out.health_note = "Le score de santé est un JUGEMENT produit par IA à la date indiquée, pas une mesure. Cite-le comme tel.";
   }
   if (requested.has("deal_recap")) out.deal_recap = row.deal_recap;
-  if (requested.has("insights")) out.insights = slimInsights(row.insights);
+  if (requested.has("insights")) out.insights = slimInsights(row.insights, row.programs);
   if (requested.has("whats_new")) out.whats_new = slimRefreshReport(row.last_refresh_report);
   if (requested.has("news")) out.news = row.news;
   if (requested.has("coach_brief")) {
@@ -832,7 +997,7 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
     const items = mergeOnboardingItems(row.onboarding_checklist);
     out.todo = {
       handover_pending: todo.handoverPending,
-      fields_to_fill: todo.missingFields.map((f) => `${f.group} > ${f.label}${f.required ? " (required)" : ""}`),
+      fields_to_fill: todo.missingFields.map((f) => `${f.group} > ${missingFieldLabel(f)}${f.required ? " (required)" : ""}`),
       onboarding_checklist:
         todo.onboarding.applicable && !todo.onboarding.dismissed
           ? {
@@ -896,7 +1061,10 @@ async function getClient(input: Record<string, unknown>, ctx: ToolContext): Prom
   const raw = (row.fields_json ?? {}) as Record<string, Record<string, { value?: unknown }> | undefined>;
   for (const s of FIELD_SECTIONS) {
     if (wantedFieldSections.has(s)) continue;
-    const filled = Object.values(raw[s] ?? {}).filter((c) => !isEmpty(c?.value)).length;
+    const filled =
+      s === "program_scope"
+        ? summarizePrograms(row).programs.length
+        : Object.values(raw[s] ?? {}).filter((c) => !isEmpty(c?.value)).length;
     if (filled > 0) availableElsewhere.push(`${s} : ${FIELD_SECTION_HINTS[s]}`);
   }
   if (!requested.has("deal_recap") && row.deal_recap) availableElsewhere.push("deal_recap (comment le deal s'est signé, objections, promesses sales, risques onboarding)");

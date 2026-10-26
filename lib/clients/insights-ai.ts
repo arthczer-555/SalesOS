@@ -5,15 +5,20 @@ import { getModelPreference } from "../models/get-model-preference";
 import { NO_EM_DASH_RULE_EN } from "@/lib/no-em-dash";
 import type { ClientEnrichmentContext } from "./context";
 import { computeAccountPhase, PHASE_GUIDANCE } from "./lifecycle";
-import type {
-  ClientFields,
-  Health,
-  InsightAction,
-  InsightHighlight,
-  InsightSource,
-  InsightSourceKind,
-  Insights,
-  News,
+import { summarizePrograms } from "./program-summary";
+import {
+  PROGRAM_FIELD_DEFINITIONS,
+  PROGRAM_STATUS_LABELS,
+  programFieldApplies,
+  type ClientFields,
+  type ClientProgram,
+  type Health,
+  type InsightAction,
+  type InsightHighlight,
+  type InsightSource,
+  type InsightSourceKind,
+  type Insights,
+  type News,
 } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { withForcedTool } from "../models/compat";
@@ -35,6 +40,10 @@ const DONE_RETENTION_DAYS = 30;
 const DAY = 24 * 60 * 60 * 1000;
 
 const SOURCE_KINDS: InsightSourceKind[] = ["claap", "hubspot", "slack", "news", "fiche"];
+
+// Attributs de programme passés au prompt en plus du statut, du type, de la
+// population et du risque.
+const PROGRAM_PROMPT_KEYS = new Set<string>(["three_way", "sessions_per_coachee", "ai_modules", "rp_program_type", "deployment"]);
 
 const sourceSchema = {
   type: "object",
@@ -74,6 +83,10 @@ const CLIENT_INSIGHTS_TOOL = {
             due: { type: "string", enum: ["this_week", "next_2_weeks", "this_month"] },
             priority: { type: "string", enum: ["high", "medium"] },
             source: sourceSchema,
+            program_id: {
+              type: ["string", "null"],
+              description: "id of the PROGRAM this action is about (see PROGRAMS), null if it is about the whole account",
+            },
           },
           required: ["title", "why", "owner", "due", "priority", "source"],
         },
@@ -147,6 +160,8 @@ export type GenerateInsightsInput = {
   ctx: ClientEnrichmentContext;
   health: Health;
   fields: Partial<ClientFields>;
+  // Programmes du compte : une action peut être rattachée à l'un d'eux.
+  programs?: ClientProgram[] | null;
   news: News | null;
   closedwonAt: string | null;
   hubspotNextStep: string | null;
@@ -213,10 +228,6 @@ export async function generateInsightsAI(input: GenerateInsightsInput): Promise<
     `Primary HR: ${fmtContact(fieldValue(fields, "general_info", "contact_principal_rh"))}`,
     `Billing contact: ${fmtContact(fieldValue(fields, "general_info", "contact_facturation"))}`,
     `IT contact: ${fmtContact(fieldValue(fields, "general_info", "contact_it"))}`,
-    `Coaching type: ${fmtScalar(fieldValue(fields, "program_scope", "type_coaching"))}`,
-    `Program: ${fmtScalar(fieldValue(fields, "program_scope", "nom_programme"))}`,
-    `Target population: ${fmtScalar(fieldValue(fields, "program_scope", "population_accompagnee"))}`,
-    `Estimated coachees: ${fmtScalar(fieldValue(fields, "program_scope", "nb_coaches_estime"))}`,
     `Planned kickoff: ${fmtScalar(kickoff)}`,
     `Access: ${fmtScalar(fieldValue(fields, "org", "mode_acces"))}`,
     `Provisioning: ${fmtScalar(fieldValue(fields, "org", "provisioning"))}`,
@@ -226,6 +237,32 @@ export async function generateInsightsAI(input: GenerateInsightsInput): Promise<
     `Sales commitments: ${fmtScalar(fieldValue(fields, "planning", "engagements_sales"))}`,
     `Watch points: ${fmtScalar(fieldValue(fields, "history", "points_de_vigilance"))}`,
   ].join("\n");
+
+  // ── Programmes ──────────────────────────────────────────────────────────
+  // Détectés : avec leur id (rattachement des actions). Sinon l'ancien bloc
+  // unique, sans id.
+  const programs = Array.isArray(input.programs) ? input.programs : null;
+  const programIds = new Set((programs ?? []).map((p) => p.id));
+  const programsBlock = programs
+    ? programs
+        .map((p) => {
+          const status = p.fields.status?.value as keyof typeof PROGRAM_STATUS_LABELS | undefined;
+          const parts = [
+            `status ${status ? PROGRAM_STATUS_LABELS[status] ?? status : "unknown"}`,
+            `type ${fmtScalar(p.fields.coaching_type?.value)}`,
+            `population ${fmtScalar(p.fields.population?.value)}`,
+            // Infos propres au type (tripartite en humain, modules en IA...).
+            ...PROGRAM_FIELD_DEFINITIONS.filter(
+              (d) => PROGRAM_PROMPT_KEYS.has(d.key) && programFieldApplies(d, p.fields) && p.fields[d.key]?.value != null,
+            ).map((d) => `${d.label.toLowerCase()} ${fmtScalar(p.fields[d.key]?.value)}`),
+            p.fields.risk?.value ? `risk ${String(p.fields.risk.value)}${p.fields.risk_reason?.value ? ` (${String(p.fields.risk_reason.value)})` : ""}` : null,
+          ].filter(Boolean);
+          return `- id=${p.id} · ${p.name}: ${parts.join(" · ")}`;
+        })
+        .join("\n")
+    : summarizePrograms({ fields_json: fields })
+        .programs.map((p) => `- ${p.name}: coaching type ${fmtScalar(p.coachingType)} · population ${fmtScalar(p.population)} · coachees ${fmtScalar(p.nbCoachees)}`)
+        .join("\n");
 
   // ── Plan précédent ──────────────────────────────────────────────────────
   const prevActions = previous?.actions ?? [];
@@ -249,6 +286,9 @@ ACCOUNT
 FICHE ("missing" = not captured yet)
 ${keyFields}
 
+PROGRAMS (an account can run several programs, each with its own status)
+${programsBlock || "(none captured yet)"}
+
 RECENT ACTIVITY (last ${RECENT_DAYS} days, most recent first)
 Claap meetings:
 ${meetingsBlock || "(none)"}
@@ -269,6 +309,7 @@ Call the client_insights tool.
 - actions: the 1 to 3 things that matter most NOW for this account, most important first. Each must be triggered by something concrete above, preferably RECENT (what was said in the last meetings, emails, Slack, or an important news), and cite it in "source" with its date. If the HubSpot next step is still relevant, it can be action 1 (source kind "hubspot", label "HubSpot next step"). Keep a current open action (same reuse_id) only if it is still relevant and not done. No generic advice ("send a check-in", "monitor adoption") unless the data shows a real reason. Name people when known.
 - highlights: up to 3 facts from the recent activity that the team must know, with date and source. Not the actions again.
 - watch_points: up to 3 short risks (max 8 words each).
+- program_id: when an action is about one program (its set-up, launch, adoption, renewal), give that program's id from PROGRAMS; null when it is about the whole account.
 Be very concise everywhere: this is read in 10 seconds. Write everything in English.
 
 ${NO_EM_DASH_RULE_EN}`;
@@ -307,6 +348,7 @@ ${NO_EM_DASH_RULE_EN}`;
         due: dues.has(a.due as string) ? (a.due as InsightAction["due"]) : null,
         priority: (a.priority === "high" ? "high" : "medium") as InsightAction["priority"],
         source: parseSource(a.source),
+        program_id: typeof a.program_id === "string" && programIds.has(a.program_id) ? a.program_id : null,
         done_at: null,
         done_by: null,
       };

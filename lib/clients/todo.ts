@@ -9,6 +9,7 @@ import {
   type HubspotChecklistFieldDef,
   type MissingFieldRef,
 } from "./types";
+import { getMissingProgramFields, summarizePrograms } from "./program-summary";
 
 // Source unique de l'état "à compléter" d'une fiche : compteurs et couleur des
 // onglets To do / HubSpot cleaner, contenu de ces onglets et pilules d'alerte
@@ -51,8 +52,10 @@ export function todoGroupFor(ref: MissingFieldRef): TodoGroup {
 }
 
 // Pick plutôt que ClientRow : l'outil chat get_client ne charge pas toute la ligne.
+// programs : manques des programmes (groupe "Program"), type de coaching.
 export function getClientTodo(
-  client: Pick<ClientRow, "enrichment_status" | "fields_json" | "onboarding_checklist" | "am_cs_notified_at">
+  client: Pick<ClientRow, "enrichment_status" | "fields_json" | "onboarding_checklist" | "am_cs_notified_at"> &
+    Partial<Pick<ClientRow, "programs">>
 ): ClientTodo {
   const empty: ClientTodo = {
     handoverPending: false,
@@ -66,10 +69,13 @@ export function getClientTodo(
   const fields = client.fields_json ?? {};
   const missingFields: TodoMissingField[] = [
     ...getMissingRequiredFields(fields).map((m) => ({ ...m, group: todoGroupFor(m), required: true })),
+    ...getMissingProgramFields(client, "required").map((m) => ({ ...m, group: "Program" as const, required: true })),
     ...getMissingRecommendedFields(fields).map((m) => ({ ...m, group: todoGroupFor(m), required: false })),
+    ...getMissingProgramFields(client, "recommended").map((m) => ({ ...m, group: "Program" as const, required: false })),
   ];
 
-  const coachingType = fields.program_scope?.type_coaching?.value ?? null;
+  // Type de coaching du compte, tiré des programmes actifs (cf. program-summary).
+  const coachingType = summarizePrograms(client).coachingType;
   const applicable = coachingType === "humain" || coachingType === "hybride";
   const dismissed = client.onboarding_checklist?.dismissed === true;
   const items = mergeOnboardingItems(client.onboarding_checklist ?? null);

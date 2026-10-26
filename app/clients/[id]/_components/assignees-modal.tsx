@@ -5,6 +5,7 @@ import useSWR from "swr";
 import { Loader2, Send, X } from "lucide-react";
 import { COLORS, SHADOWS } from "@/app/clients/_components/theme";
 import { getMissingRecommendedFields, getMissingRequiredFields, type ClientRow } from "@/lib/clients/types";
+import { getMissingProgramFields, missingFieldLabel } from "@/lib/clients/program-summary";
 import { useToast } from "@/components/ui/toast";
 
 // Modal unique pour l'AM / le CS d'un compte :
@@ -103,7 +104,15 @@ export function AssigneesModal({
   }, [onClose, saving]);
 
   const fields = client.fields_json ?? {};
-  const missing = mode === "handover" ? [...getMissingRequiredFields(fields), ...getMissingRecommendedFields(fields)] : [];
+  const missing =
+    mode === "handover"
+      ? [
+          ...getMissingRequiredFields(fields),
+          ...getMissingProgramFields(client, "required"),
+          ...getMissingRecommendedFields(fields),
+          ...getMissingProgramFields(client, "recommended"),
+        ]
+      : [];
   const nameFor = (email: string) => users.find((u) => u.email === email)?.name ?? null;
 
   async function submit() {
@@ -177,7 +186,7 @@ export function AssigneesModal({
 
         {missing.length > 0 && (
           <div style={{ marginTop: 14, padding: "10px 12px", borderRadius: 10, background: "#fffbeb", border: "1px solid #f6dfa4", fontSize: 12.5, color: COLORS.warn }}>
-            <b>Still missing:</b> {missing.map((m) => m.label).join(", ")}. You can hand over anyway, the CS will find them in To do.
+            <b>Still missing:</b> {missing.map(missingFieldLabel).join(", ")}. You can hand over anyway, the CS will find them in To do.
           </div>
         )}
         {error && <div style={{ marginTop: 12, fontSize: 12.5, color: COLORS.err }}>{error}</div>}

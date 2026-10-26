@@ -32,12 +32,46 @@ function isEmpty(value: unknown): boolean {
   return false;
 }
 
+// Décision pour UN field (partagée avec les attributs des programmes, cf.
+// programs.ts). null = on garde le field existant tel quel.
+export function mergeFieldValue(
+  prevField: ClientFieldValue | undefined,
+  nextField: ClientFieldValue | undefined,
+  purgeIds: ReadonlySet<string>,
+): { field: ClientFieldValue; changed: boolean; overrode_manual?: boolean } | null {
+  const prevSource = prevField?.source;
+  if (prevField && prevSource?.kind === "claap" && prevSource.recordingId && purgeIds.has(prevSource.recordingId)) {
+    const replacement: ClientFieldValue = nextField ?? { value: null, confidence: 0, source: null, updated_at: new Date().toISOString() };
+    return { field: replacement, changed: normalizeForCompare(prevField.value) !== normalizeForCompare(replacement.value) };
+  }
+
+  if (!nextField) return null;
+
+  // Structure complète : un field jamais vu prend la valeur extraite (même
+  // nulle) pour que fields_json reste homogène.
+  if (!prevField) return { field: nextField, changed: !isEmpty(nextField.value) };
+
+  if (isEmpty(nextField.value)) return null;
+  if (normalizeForCompare(prevField.value) === normalizeForCompare(nextField.value)) return null;
+
+  if (prevField.source?.kind === "manual" && !isEmpty(prevField.value)) {
+    const editedDay = (prevField.updated_at ?? "").slice(0, 10);
+    const newer = !!nextField.evidence_at && !!editedDay && nextField.evidence_at > editedDay;
+    if (!newer || nextField.confidence < MANUAL_OVERRIDE_MIN_CONFIDENCE) return null;
+    return { field: nextField, changed: true, overrode_manual: true };
+  }
+
+  return { field: nextField, changed: true };
+}
+
 export function mergeExtractedFields(
   prev: Partial<ClientFields>,
   next: Partial<ClientFields>,
   opts?: { purgeRecordingIds?: ReadonlySet<string> },
 ): { merged: Partial<ClientFields>; changed: RefreshReport["changed_fields"] } {
-  const merged: Record<string, Record<string, ClientFieldValue>> = {};
+  // Les sections hors SECTION_DEFINITIONS (ancien program_scope) sont gardées
+  // telles quelles : plus extraites, elles restent lisibles.
+  const merged: Record<string, Record<string, ClientFieldValue>> = { ...(prev as Record<string, Record<string, ClientFieldValue>>) };
   const changed: RefreshReport["changed_fields"] = [];
   const purgeIds = opts?.purgeRecordingIds ?? new Set<string>();
 
@@ -49,51 +83,18 @@ export function mergeExtractedFields(
 
     for (const field of section.fields) {
       const prevField = prevSection[field.key];
-      const nextField = nextSection[field.key];
-
-      const prevSource = prevField?.source;
-      if (prevField && prevSource?.kind === "claap" && prevSource.recordingId && purgeIds.has(prevSource.recordingId)) {
-        const replacement: ClientFieldValue = nextField ?? { value: null, confidence: 0, source: null, updated_at: new Date().toISOString() };
-        out[field.key] = replacement;
-        if (normalizeForCompare(prevField.value) !== normalizeForCompare(replacement.value)) {
-          changed.push({ section: sectionKey, key: field.key, label: field.label, before: prevField.value ?? null, after: replacement.value ?? null });
-        }
-        continue;
-      }
-
-      if (!nextField) continue;
-
-      // Structure complète : un field jamais vu prend la valeur extraite (même
-      // nulle) pour que fields_json reste homogène.
-      if (!prevField) {
-        out[field.key] = nextField;
-        if (!isEmpty(nextField.value)) {
-          changed.push({ section: sectionKey, key: field.key, label: field.label, before: null, after: nextField.value });
-        }
-        continue;
-      }
-
-      if (isEmpty(nextField.value)) continue;
-      if (normalizeForCompare(prevField.value) === normalizeForCompare(nextField.value)) continue;
-
-      if (prevField.source?.kind === "manual" && !isEmpty(prevField.value)) {
-        const editedDay = (prevField.updated_at ?? "").slice(0, 10);
-        const newer = !!nextField.evidence_at && !!editedDay && nextField.evidence_at > editedDay;
-        if (!newer || nextField.confidence < MANUAL_OVERRIDE_MIN_CONFIDENCE) continue;
-        out[field.key] = nextField;
-        changed.push({
-          section: sectionKey,
-          key: field.key,
-          label: field.label,
-          before: prevField.value,
-          after: nextField.value,
-          overrode_manual: true,
-        });
-        continue;
-      }
-
-      out[field.key] = nextField;
-      changed.push({ section: sectionKey, key: field.key, label: field.label, before: prevField.value ?? null, after: nextField.value });
+      const decision = mergeFieldValue(prevField, nextSection[field.key], purgeIds);
+      if (!decision) continue;
+      out[field.key] = decision.field;
+      if (!decision.changed) continue;
+      changed.push({
+        section: sectionKey,
+        key: field.key,
+        label: field.label,
+        before: prevField?.value ?? null,
+        after: decision.field.value ?? null,
+        ...(decision.overrode_manual ? { overrode_manual: true } : {}),
+      });
     }
 
     merged[sectionKey] = out;
@@ -106,7 +107,12 @@ export function mergeExtractedFields(
 // font foi, ceux restés vides prennent la valeur de la fiche absorbée (avec sa
 // source et sa confiance). Le refresh lancé après la fusion relit ensuite tout.
 export function fillEmptyFields(kept: Partial<ClientFields>, other: Partial<ClientFields>): Partial<ClientFields> {
-  const out: Record<string, Record<string, ClientFieldValue>> = {};
+  // Sections hors SECTION_DEFINITIONS (ancien program_scope) : celle de la
+  // fiche gardée, sinon celle de l'absorbée.
+  const out: Record<string, Record<string, ClientFieldValue>> = {
+    ...(other as Record<string, Record<string, ClientFieldValue>>),
+    ...(kept as Record<string, Record<string, ClientFieldValue>>),
+  };
   for (const section of SECTION_DEFINITIONS) {
     const sectionKey = section.key as SectionKey;
     const keptSection = (kept?.[sectionKey] ?? {}) as Record<string, ClientFieldValue>;
@@ -117,6 +123,7 @@ export function fillEmptyFields(kept: Partial<ClientFields>, other: Partial<Clie
       if (theirs && !isEmpty(theirs.value) && isEmpty(keptSection[field.key]?.value)) merged[field.key] = theirs;
     }
     if (Object.keys(merged).length > 0) out[sectionKey] = merged;
+    else delete out[sectionKey];
   }
   return out as Partial<ClientFields>;
 }

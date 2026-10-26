@@ -34,6 +34,15 @@ Les fields sont regroupés en 6 blocs. Chaque field est stocké dans `clients.fi
 - zones_geographiques (array)
 
 ### 2.2 Périmètre du programme
+
+> **Remplacé le 2026-10-26** : un compte a 1 à N programmes, stockés dans
+> `clients.programs` (un objet par programme, kanban de statut Not started /
+> Set up / POC / Live / Turned off, type Human / AI Role-Play / Hybrid,
+> tripartite, objectif, population, risque...). Détection et fusion :
+> `lib/clients/programs.ts`, voir la section Program scope du README. La liste
+> ci-dessous (un seul programme) n'est plus extraite ; la valeur déjà stockée
+> sert d'indice à la première détection.
+
 - type_coaching (`humain` | `ia` | `hybride`)
 - nom_programme
 - population_accompagnee

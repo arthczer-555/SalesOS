@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { COLORS } from "@/app/clients/_components/theme";
 import { mergeOnboardingItems, type ClientRow, type OnboardingItem } from "@/lib/clients/types";
+import { summarizePrograms } from "@/lib/clients/program-summary";
 import { Card, CardHeader } from "./ui";
 
 // Checklist d'onboarding (onglet To do). 100 % manuelle : items du template
@@ -23,13 +24,13 @@ export function OnboardingChecklistPanel({ client, onUpdated }: { client: Client
   // Masquee par le CSM pour ce compte.
   if (client.onboarding_checklist?.dismissed) return null;
 
-  // La checklist depend du coaching type du programme (champ de donnees, pas
-  // l'item de checklist). "humain" et "hybride" affichent la checklist humaine
-  // ("hybride" ajoute en plus un onglet "AI Coaching" a venir) ; "ia" est a venir ;
-  // null = pas encore renseigne (la checklist en depend).
-  const coachingType = client.fields_json?.program_scope?.type_coaching?.value ?? null;
+  // La checklist depend du coaching type des programmes actifs (cf.
+  // summarizePrograms : plusieurs types = hybride). "humain" et "hybride"
+  // affichent la checklist humaine ("hybride" ajoute en plus un onglet "AI
+  // Coaching" a venir) ; "ia" est a venir ; null = pas encore renseigne.
+  const coachingType = summarizePrograms(client).coachingType;
   if (!coachingType) {
-    return <OnboardingInfoCard message="Set the program's coaching type to load the onboarding checklist." />;
+    return <OnboardingInfoCard message="Set the coaching type of a program (Knowledge > Program scope) to load the onboarding checklist." />;
   }
   if (coachingType === "ia") {
     return <OnboardingInfoCard message="Coming soon. The AI onboarding checklist is on the way." />;

@@ -1,6 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 
-// System prompt utilisé pour extraire les 6 sections de fields à partir du
+// System prompt utilisé pour extraire les 5 sections de fields à partir du
 // contexte deal HubSpot + transcripts Claap. Règles clés :
 // - JAMAIS halluciner : si l'info n'est pas dans le contexte, laisser
 //   value=null et confidence=0. Le CS lira la confiance avant d'agir.
@@ -14,7 +14,9 @@ export const CLIENT_EXTRACTION_SYSTEM_PROMPT = `Tu es un analyste Customer Succe
 Tu reçois tout l'historique d'un deal venant de passer en closed-won : contexte HubSpot
 (deal, contacts, company, notes, emails, meetings) + transcripts Claap des meetings sales.
 
-Ton job : remplir 6 sections de fiche client en t'appuyant UNIQUEMENT sur ce contexte.
+Ton job : remplir 5 sections de fiche client en t'appuyant UNIQUEMENT sur ce contexte.
+Le périmètre des programmes (type de coaching, population, tripartite...) n'en fait pas
+partie : il est extrait à part, programme par programme.
 
 Règles ABSOLUES :
 - Ne JAMAIS inventer. Si tu n'as aucun signal pour un field, value=null et confidence=0.
@@ -40,20 +42,17 @@ Règles ABSOLUES :
 Sections à remplir :
 1. general_info : qui est le client (entreprise, signataire, RH principal et opérationnel,
    contact facturation, contact IT, parties prenantes additionnelles, langues, zones géographiques).
-2. program_scope : périmètre du programme acheté (type coaching, nom du programme,
-   population, nb coachés estimé, format cohortes, options activées comme auto-assessment,
-   flash feedback, tripartite, quadripartite, offres associées).
-3. goals : objectifs business/RH du client, KPIs visés, attentes spécifiques exprimées.
-4. org : organisation et IT. Mode d'accès des coachés (SSO, magic link, email + mot de
+2. goals : objectifs business/RH du client, KPIs visés, attentes spécifiques exprimées.
+3. org : organisation et IT. Mode d'accès des coachés (SSO, magic link, email + mot de
    passe) et détails SSO (fournisseur type Azure AD / Okta / Google, protocole SAML / OIDC),
    provisioning des utilisateurs (invitations manuelles, import CSV, SCIM, sync SIRH) et
    détails, canal de coaching (Slack, Teams, web) et statut de l'app Slack/Teams côté IT,
    outil de visio, questionnaire sécurité, DPA, résidence des données, whitelisting du
    domaine email Coachello, autres notes IT, référentiels/documents partagés (avec liens
    si dispo), contraintes organisationnelles (zones horaires, validation interne...).
-5. history : relation commerciale (nouveau / renouvellement / upsell), initiatives RH
+4. history : relation commerciale (nouveau / renouvellement / upsell), initiatives RH
    parallèles, points de vigilance détectés pendant le deal.
-6. planning : date de kickoff envisagée, date de fin du contrat, suivi CS attendu (QBR,
+5. planning : date de kickoff envisagée, date de fin du contrat, suivi CS attendu (QBR,
    adoption call M+1...), engagements pris par le sales pendant le deal (promesses
    contractuelles ou non).
    fin_contrat_le : UNIQUEMENT une fin de contrat dite ou écrite dans un échange (meeting,
@@ -89,7 +88,8 @@ c'est ce qui permet de savoir qu'une info est plus récente que la fiche.`;
 
 type FieldSpec = { type: string; nullable?: boolean; description?: string; items?: unknown; enum?: readonly string[] };
 
-function field(spec: FieldSpec) {
+// Exporté : le tool des programmes (programs.ts) décrit ses attributs pareil.
+export function field(spec: FieldSpec) {
   // Schéma générique d'un field : value (typage variable), confidence 0..1, source string.
   const valueSchema: Record<string, unknown> = { description: spec.description };
   if (spec.type === "string") valueSchema.type = ["string", "null"];
@@ -164,7 +164,7 @@ function field(spec: FieldSpec) {
 export const CLIENT_FIELDS_TOOL: Anthropic.Tool = {
   name: "client_fields",
   description:
-    "Remplit les 6 sections de la fiche client. Pour chaque field : value (ou null), confidence 0..1, source citée.",
+    "Remplit les 5 sections de la fiche client. Pour chaque field : value (ou null), confidence 0..1, source citée.",
   input_schema: {
     type: "object",
     properties: {
@@ -185,26 +185,6 @@ export const CLIENT_FIELDS_TOOL: Anthropic.Tool = {
           "entreprise_compte", "contact_signataire", "contact_principal_rh",
           "contact_rh_operationnel", "contact_facturation", "contact_it",
           "autres_parties_prenantes", "langues_requises", "zones_geographiques",
-        ],
-      },
-      program_scope: {
-        type: "object",
-        properties: {
-          type_coaching: field({ type: "enum", enum: ["humain", "ia", "hybride"], description: "humain (1:1 humain), ia (Coachello GPT), hybride" }),
-          nom_programme: field({ type: "string" }),
-          population_accompagnee: field({ type: "string", description: "Qui est coaché : managers, leaders, équipe RH, dirigeants…" }),
-          nb_coaches_estime: field({ type: "number", description: "Nombre estimé de bénéficiaires sur la durée du contrat" }),
-          cohortes_format: field({ type: "string", description: "Cohortes vs no-cohortes, durée, fréquence des sessions" }),
-          auto_assessment: field({ type: "bool_with_details" }),
-          flash_feedback: field({ type: "bool_with_details" }),
-          tripartite: field({ type: "bool_with_details", description: "Manager + coach + coaché" }),
-          quadripartite: field({ type: "bool_with_details", description: "RH + manager + coach + coaché" }),
-          offres_associees: field({ type: "array_string", description: "Workshops, peer coaching, contenus annexes" }),
-        },
-        required: [
-          "type_coaching", "nom_programme", "population_accompagnee", "nb_coaches_estime",
-          "cohortes_format", "auto_assessment", "flash_feedback", "tripartite",
-          "quadripartite", "offres_associees",
         ],
       },
       goals: {
@@ -261,11 +241,11 @@ export const CLIENT_FIELDS_TOOL: Anthropic.Tool = {
         required: ["kickoff_envisage_le", "fin_contrat_le", "suivi_cs_attendu", "engagements_sales"],
       },
     },
-    required: ["general_info", "program_scope", "goals", "org", "history", "planning"],
+    required: ["general_info", "goals", "org", "history", "planning"],
   },
 };
 
-// Sonnet (5.5) pour l'extraction des 30 fields : Haiku 4.5 ignorait le schéma
+// Sonnet (5.5) pour l'extraction des ~30 fields : Haiku 4.5 ignorait le schéma
 // imbriqué et ne renvoyait que la section general_info (les `required` du tool
 // ne sont pas imposés par l'API). Sonnet honore les 6 sections. Le brief et le
 // recap restent sur Haiku (cf. coach-brief.ts / deal-recap.ts), ils marchent

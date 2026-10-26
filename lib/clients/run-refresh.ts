@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { withAnthropicRetry } from "../anthropic-retry";
@@ -25,14 +26,19 @@ import { generateCoachBrief } from "./coach-brief";
 import { generateHubspotSuggestions } from "./hubspot-suggestions";
 import { fetchHubspotDealFields } from "./hubspot-fields";
 import { fetchClientSlackActivity } from "./slack-context";
+import { assignProgramIds, detectClientPrograms, loadLatestPrograms, mergePrograms, programChangesTouchBrief, type DetectedProgram } from "./programs";
+import { summarizePrograms } from "./program-summary";
 import type {
   AccountCompany,
   ClientFields,
+  ClientProgram,
+  CoachBrief,
   ConfirmedRecording,
   DealRecap,
   Insights,
   MergedClient,
   News,
+  ProgramChange,
   RefreshReport,
 } from "./types";
 import { mergedDealIdsOf } from "./merge";
@@ -51,7 +57,10 @@ import { withForcedTool } from "../models/compat";
 //   - Slack : canal dédié au client + mentions ailleurs (slack-context.ts) ;
 //   - News : Tavily + Google News, triées "important pour le compte".
 // S'il y a du nouveau, ré-extrait TOUS les fields et fusionne (merge-fields.ts :
-// une édition manuelle n'est remplacée que par une source plus récente).
+// une édition manuelle n'est remplacée que par une source plus récente), et
+// redétecte les programmes en parallèle (programs.ts, même règle de fusion).
+// Les programmes jamais détectés (programs_detected_at null) le sont même sans
+// activité nouvelle, comme sur demande (detectPrograms, bouton "Detect programs").
 // Recalcule toujours health, Next actions, news ; régénère le coach brief si le
 // périmètre a changé (sauf retouche manuelle) et les suggestions HubSpot ;
 // resynchronise le billing (sauf en cron, où il est synchronisé en lot).
@@ -95,6 +104,7 @@ type ClientRefreshRow = {
   }> | null;
   declined_claap_recording_ids: string[] | null;
   deal_recap: DealRecap | null;
+  coach_brief: CoachBrief | null;
   coach_brief_generated_at: string | null;
   coach_brief_edited_at?: string | null;
   // undefined tant que la migration clients_account_companies.sql n'est pas
@@ -106,11 +116,15 @@ type ClientRefreshRow = {
   merged_clients?: MergedClient[] | null;
   // Idem, migration clients_billing_link.sql.
   billing_sheet_rows?: string[] | null;
+  // Idem, migration clients_programs.sql.
+  programs?: ClientProgram[] | null;
+  declined_program_names?: string[] | null;
+  programs_detected_at?: string | null;
 };
 
-// Sections dont un changement rend le coach brief obsolète.
+// Sections dont un changement rend le coach brief obsolète (les programmes :
+// cf. programChangesTouchBrief).
 const BRIEF_SENSITIVE: Array<{ section: string; key?: string }> = [
-  { section: "program_scope" },
   { section: "planning" },
   { section: "general_info", key: "langues_requises" },
   { section: "general_info", key: "zones_geographiques" },
@@ -126,7 +140,13 @@ function after(iso: string | null | undefined, sinceTs: number | null): boolean 
 export async function runClientRefresh(
   clientId: string,
   userId: string | null = null,
-  opts?: { trigger?: "manual" | "cron"; skipBilling?: boolean; removedRecordingIds?: string[]; reextract?: boolean },
+  opts?: {
+    trigger?: "manual" | "cron";
+    skipBilling?: boolean;
+    removedRecordingIds?: string[];
+    reextract?: boolean;
+    detectPrograms?: boolean;
+  },
 ): Promise<RunRefreshResult> {
   const trigger = opts?.trigger ?? "manual";
   const removedIds = new Set(opts?.removedRecordingIds ?? []);
@@ -289,11 +309,17 @@ export async function runClientRefresh(
     // Une company ajoutée au compte compte comme du nouveau : son historique
     // (antérieur au dernier refresh) n'a jamais été lu. Un meeting retiré aussi :
     // les fields qu'il appuyait doivent être relus sans lui. Une fusion aussi.
-    const contextPrompt =
-      newActivityCount > 0 || addedCompanies.length > 0 || removedIds.size > 0 || opts?.reextract
-        ? renderClientContextForPrompt(ctx)
-        : null;
-    if (contextPrompt) {
+    // Programmes : mêmes déclencheurs, plus "jamais détectés" et la demande
+    // explicite. Ignorés tant que la migration clients_programs.sql manque.
+    const needFields = newActivityCount > 0 || addedCompanies.length > 0 || removedIds.size > 0 || !!opts?.reextract;
+    const programsSupported = row.programs !== undefined;
+    // Jamais détectés par l'IA (même si un programme a été ajouté à la main).
+    const neverDetected = !row.programs_detected_at;
+    const needPrograms = programsSupported && (needFields || neverDetected || !!opts?.detectPrograms);
+    const contextPrompt = needFields || needPrograms ? renderClientContextForPrompt(ctx) : null;
+
+    const fieldsTask = async () => {
+      if (!contextPrompt || !needFields) return;
       const client = anthropicClient({ timeout: 600_000 });
       const msg = await withAnthropicRetry(
         () =>
@@ -315,8 +341,57 @@ export async function runClientRefresh(
         changedFields = changed;
         if (changed.length > 0) updatePayload.fields_json = merged;
       }
-    }
+    };
+
+    // Détection des programmes, best-effort : un échec est signalé en note, le
+    // reste du refresh continue avec les programmes déjà sur la fiche.
+    const programsTask = async (): Promise<DetectedProgram[] | null> => {
+      if (!contextPrompt || !needPrograms) return null;
+      try {
+        const detected = await detectClientPrograms({
+          contextPrompt,
+          prompt: {
+            existing: row.programs ?? [],
+            declined: row.declined_program_names ?? [],
+            deal: ctx.deal,
+            coachBrief: row.coach_brief,
+            legacyScope: row.fields_json?.program_scope ?? null,
+          },
+          model: clientsModel,
+          userId,
+          label: `clients/refresh/${clientId}/programs`,
+          refresh: true,
+        });
+        return assignProgramIds(detected, new Set((row.programs ?? []).map((p) => p.id)));
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn(`[clients/refresh/${clientId}] program detection failed:`, msg);
+        notes.push(`Program detection failed: ${msg}. The programs shown are the previous ones.`);
+        return null;
+      }
+    };
+
+    const [, detectedPrograms] = await Promise.all([fieldsTask(), programsTask()]);
     const fieldsNow = (updatePayload.fields_json as Partial<ClientFields>) ?? row.fields_json ?? {};
+
+    // Fusion des programmes détectés (refaite sur la version fraîche juste avant
+    // l'écriture, cf. plus bas). seedId : le programme tiré de l'ancien bloc
+    // garde le même id d'une fusion à l'autre.
+    const programSeedId = randomUUID();
+    const mergeDetected = (prevPrograms: ClientProgram[] | null, declined: string[]) =>
+      mergePrograms(prevPrograms, detectedPrograms ?? [], {
+        declined,
+        legacyScope: row.fields_json?.program_scope ?? null,
+        seedId: programSeedId,
+        purgeRecordingIds: removedIds,
+      });
+    let programChanges: ProgramChange[] = [];
+    let programsNow: ClientProgram[] | null = row.programs ?? null;
+    if (detectedPrograms) {
+      const res = mergeDetected(row.programs ?? null, row.declined_program_names ?? []);
+      programsNow = res.programs;
+      programChanges = res.changes;
+    }
 
     // Le deal recap n'est pas régénéré : on retire seulement les étapes de sa
     // timeline sourcées par un meeting retiré.
@@ -327,9 +402,9 @@ export async function runClientRefresh(
     }
 
     // ── En parallèle : news, billing, suggestions HubSpot, coach brief ────────
-    const briefOutdated = changedFields.some((c) =>
-      BRIEF_SENSITIVE.some((b) => b.section === c.section && (!b.key || b.key === c.key)),
-    );
+    const briefOutdated =
+      changedFields.some((c) => BRIEF_SENSITIVE.some((b) => b.section === c.section && (!b.key || b.key === c.key))) ||
+      programChangesTouchBrief(programChanges);
     const briefEditedByHand =
       !!row.coach_brief_edited_at &&
       (!row.coach_brief_generated_at || row.coach_brief_edited_at > row.coach_brief_generated_at);
@@ -342,7 +417,7 @@ export async function runClientRefresh(
       trigger === "cron" || opts?.skipBilling
         ? Promise.resolve(null)
         : getClientBilling(row, companyName).catch(() => null);
-    const suggestionsPromise = contextPrompt
+    const suggestionsPromise = contextPrompt && needFields
       ? generateHubspotSuggestions(row.hubspot_deal_id, contextPrompt, userId).catch((e) => {
           console.warn(`[clients/refresh/${clientId}] hubspot suggestions failed:`, e instanceof Error ? e.message : e);
           return null;
@@ -385,10 +460,10 @@ export async function runClientRefresh(
           companyName,
           userId,
           feature: "clients_refresh_news_rank",
-          programContext: [
-            fieldsNow.program_scope?.nom_programme?.value,
-            fieldsNow.program_scope?.population_accompagnee?.value,
-          ].filter(Boolean).join(", ") || null,
+          programContext:
+            summarizePrograms({ fields_json: fieldsNow, programs: programsNow })
+              .active.map((p) => [p.name, p.population].filter(Boolean).join(", "))
+              .join("; ") || null,
         }).catch(() => ({ items: freshNews.items, ignored: 0 }));
         freshNews.items = ranked.items;
         freshNews.ignored_count = ranked.ignored;
@@ -434,6 +509,7 @@ export async function runClientRefresh(
       ctx,
       health,
       fields: fieldsNow,
+      programs: programsNow,
       news: newsForInsights,
       closedwonAt: row.closedwon_at,
       hubspotNextStep: dealFields?.hs_next_step ?? null,
@@ -498,6 +574,7 @@ export async function runClientRefresh(
         },
         news: { new: newsNew, error: newsError },
       },
+      program_changes: programChanges.length > 0 ? programChanges : undefined,
       auto_added_meetings: autoConfirmed.map((m) => ({
         recording_id: m.recording_id,
         meeting_title: m.meeting_title,
@@ -507,8 +584,20 @@ export async function runClientRefresh(
         ? [...notes, ...(slack.messages.length > 0 ? slack.errors : [])]
         : undefined,
       // Fields non ré-analysés (rien de nouveau, ni company ajoutée, ni meeting retiré).
-      skipped_no_activity: contextPrompt === null,
+      skipped_no_activity: !needFields,
     };
+
+    // Programmes : refusion de la détection sur la version relue maintenant.
+    if (detectedPrograms) {
+      const latest = await loadLatestPrograms(clientId);
+      const final = latest ? mergeDetected(latest.programs, latest.declined) : { programs: programsNow ?? [], changes: programChanges };
+      updatePayload.programs = final.programs;
+      updatePayload.programs_detected_at = new Date().toISOString();
+      report.program_changes = final.changes.length > 0 ? final.changes : undefined;
+      if (neverDetected && final.programs.length > 0) {
+        report.notes = [...(report.notes ?? []), `Programs detected for the first time: ${final.programs.map((p) => p.name).join(", ")}.`];
+      }
+    }
 
     updatePayload.health = health;
     updatePayload.health_history = trimmedHistory;

@@ -3,7 +3,16 @@
 import { useEffect, useState } from "react";
 import { Activity, AlertTriangle, Loader2, Undo2, Video, X } from "lucide-react";
 import { COLORS, SHADOWS } from "@/app/clients/_components/theme";
-import type { AccountCompany, ClientFields, Insights, RefreshReport, RefreshSourceStat } from "@/lib/clients/types";
+import {
+  PROGRAM_FIELD_DEFINITIONS,
+  SECTION_DEFINITIONS,
+  type AccountCompany,
+  type ClientFields,
+  type Insights,
+  type ProgramChange,
+  type RefreshReport,
+  type RefreshSourceStat,
+} from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { SourceLabel } from "./next-actions-card";
 import { Card, CardHeader, Eyebrow, Tag, fmtDay } from "./ui";
@@ -33,6 +42,17 @@ function stringify(value: unknown): string {
   }
   return String(value);
 }
+
+// Valeur d'un attribut de programme, enums traduits ("set_up" -> "Set up").
+function programValue(c: ProgramChange, value: unknown): string {
+  const def = PROGRAM_FIELD_DEFINITIONS.find((d) => d.key === c.key);
+  if (def?.kind === "enum" && typeof value === "string") return def.optionLabels?.[value] ?? value;
+  return stringify(value);
+}
+
+// Sections encore éditables par /fields : l'ancien program_scope n'en fait plus
+// partie (un report d'avant les programmes n'a donc pas d'Undo sur ces lignes).
+const UNDOABLE_SECTIONS = new Set<string>(SECTION_DEFINITIONS.map((s) => s.key));
 
 function same(a: unknown, b: unknown): boolean {
   return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
@@ -252,6 +272,7 @@ export function RefreshReportModal({
   }
 
   const changes = report?.changed_fields ?? [];
+  const programChanges = report?.program_changes ?? [];
 
   return (
     <div
@@ -353,7 +374,7 @@ export function RefreshReportModal({
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   {changes.map((c) => {
                     const current = (fields as Record<string, Record<string, { value?: unknown }> | undefined>)[c.section]?.[c.key]?.value;
-                    const canUndo = "before" in c;
+                    const canUndo = "before" in c && UNDOABLE_SECTIONS.has(c.section);
                     const restored = canUndo && same(current, c.before) && !same(c.before, c.after);
                     const key = `${c.section}.${c.key}`;
                     return (
@@ -377,7 +398,7 @@ export function RefreshReportModal({
                           )}
                         </span>
                         <span style={{ minWidth: 0 }}>
-                          {canUndo ? (
+                          {"before" in c ? (
                             <>
                               <del style={{ color: COLORS.ink3 }}>{stringify(c.before)}</del>
                               <span style={{ color: COLORS.ink4, margin: "0 6px" }}>→</span>
@@ -403,6 +424,44 @@ export function RefreshReportModal({
                 </div>
               )}
             </div>
+
+            {programChanges.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <Eyebrow style={{ marginBottom: 6 }}>
+                  {programChanges.length} program update{programChanges.length > 1 ? "s" : ""}
+                </Eyebrow>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {programChanges.map((c, i) => (
+                    <div
+                      key={`${c.program_id}.${c.key ?? "added"}.${i}`}
+                      style={{ display: "grid", gridTemplateColumns: "minmax(110px, 170px) minmax(0, 1fr)", gap: 10, alignItems: "center", fontSize: 12.5 }}
+                    >
+                      <span style={{ color: COLORS.ink2, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <b style={{ color: COLORS.ink0, fontWeight: 600 }}>{c.program_name}</b>
+                        {c.label ? `· ${c.label}` : null}
+                        {c.overrode_manual && (
+                          <Tag tone="warn" title="This value had been set by hand. A more recent source replaced it.">
+                            replaced a manual edit
+                          </Tag>
+                        )}
+                      </span>
+                      <span style={{ minWidth: 0 }}>
+                        {c.added ? (
+                          <span style={{ fontWeight: 600 }}>New program detected</span>
+                        ) : (
+                          <>
+                            <del style={{ color: COLORS.ink3 }}>{programValue(c, c.before)}</del>
+                            <span style={{ color: COLORS.ink4, margin: "0 6px" }}>→</span>
+                            <span style={{ fontWeight: 600 }}>{programValue(c, c.after)}</span>
+                          </>
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 6, fontSize: 11.5, color: COLORS.ink3 }}>To correct a program, change it in Knowledge &gt; Program scope.</div>
+              </div>
+            )}
 
             {(report.notes ?? []).map((n, i) => (
               <div key={i} style={{ marginTop: 10, fontSize: 12, color: COLORS.warn, display: "flex", gap: 6 }}>

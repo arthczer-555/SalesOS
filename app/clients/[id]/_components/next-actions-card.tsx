@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Check, CheckCircle2, Database, Hash, Newspaper, RotateCcw, Video, FileText } from "lucide-react";
 import { COLORS } from "@/app/clients/_components/theme";
-import type { InsightAction, InsightSource, Insights } from "@/lib/clients/types";
+import type { ClientProgram, InsightAction, InsightSource, Insights } from "@/lib/clients/types";
 import { useToast } from "@/components/ui/toast";
 import { Card, CardHeader, Tag, daysAgo, fmtDay } from "./ui";
 
@@ -11,6 +11,7 @@ import { Card, CardHeader, Tag, daysAgo, fmtDay } from "./ui";
 // réservé à l'échéance "This week"). Chacune : case ronde (cocher = fait,
 // PATCH /insights), titre impératif, "why", source datée, owner et échéance à
 // droite. Les actions faites restent consultables ("N done") avec Reopen.
+// Une action rattachée à un programme porte son nom (pastille violette).
 
 export const DUE_LABEL: Record<NonNullable<InsightAction["due"]>, string> = {
   this_week: "This week",
@@ -57,11 +58,14 @@ export function NextActionsCard({
   insights,
   clientId,
   onUpdated,
+  programs,
 }: {
   insights: Insights | null;
   clientId: string;
   onUpdated: () => void;
+  programs?: ClientProgram[] | null;
 }) {
+  const programName = (id: string | null | undefined) => (id ? programs?.find((p) => p.id === id)?.name ?? null : null);
   const { toast } = useToast();
   const [hiding, setHiding] = useState<Set<string>>(new Set());
   const [showDone, setShowDone] = useState(false);
@@ -143,7 +147,14 @@ export function NextActionsCard({
                   <span />
                 )}
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: COLORS.ink0 }}>{a.title}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.4, color: COLORS.ink0 }}>
+                    {a.title}
+                    {programName(a.program_id) && (
+                      <Tag tone="info" title="Program this action is about" style={{ marginLeft: 8, verticalAlign: "1px" }}>
+                        {programName(a.program_id)}
+                      </Tag>
+                    )}
+                  </div>
                   {why && (
                     <div
                       title={why}

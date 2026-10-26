@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { fetchHubspotDealFields } from "@/lib/clients/hubspot-fields";
+import { upgradePrograms } from "@/lib/clients/programs";
+import type { ClientProgram } from "@/lib/clients/types";
 
 export const dynamic = "force-dynamic";
 
@@ -48,6 +50,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       data.updated_at = updated_at;
     }
   }
+
+  // Programmes stockés avant les champs par type : lus au nouveau format.
+  data.programs = upgradePrograms(data.programs as ClientProgram[] | null | undefined);
 
   // Trace des fusions : la fiche n'affiche que nom / deal / date, pas la row
   // absorbée entière (snapshot, plusieurs dizaines de Ko).

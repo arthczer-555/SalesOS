@@ -37,7 +37,11 @@ export type GeneralInfoFields = {
   zones_geographiques: ClientFieldValue<string[]>;
 };
 
-// ── 2.2 Périmètre du programme ───────────────────────────────────────────
+// ── 2.2 Périmètre du programme (ancien format, un seul programme) ────────
+// Remplacé par clients.programs (ClientProgram[], un par programme, cf. plus
+// bas et lib/clients/programs.ts). N'est plus extrait ni affiché : la valeur
+// déjà stockée sert d'indice à la première détection des programmes et de
+// repli tant qu'une fiche n'a pas été détectée (cf. program-summary.ts).
 export type TypeCoaching = "humain" | "ia" | "hybride";
 export type ProgramScopeFields = {
   type_coaching: ClientFieldValue<TypeCoaching>;
@@ -105,6 +109,7 @@ export type PlanningFields = {
 
 export type ClientFields = {
   general_info: GeneralInfoFields;
+  // Ancien format, hors SECTION_DEFINITIONS (cf. ProgramScopeFields).
   program_scope: ProgramScopeFields;
   goals: GoalsFields;
   org: OrgFields;
@@ -113,9 +118,11 @@ export type ClientFields = {
 };
 
 // ── Sections meta (pour l'UI : ordre, libellés, mapping) ─────────────────
-// Ordre repris du plan §2 (Informations → Périmètre → Objectifs → Orga →
-// Contexte → Planning). Source de vérité unique pour l'UI : la fiche
-// itère sur SECTION_DEFINITIONS pour afficher chaque bloc dans l'ordre.
+// Ordre repris du plan §2 (Informations → Objectifs → Orga → Contexte →
+// Planning). Source de vérité unique pour l'UI : la fiche itère sur
+// SECTION_DEFINITIONS pour afficher chaque bloc dans l'ordre. Le périmètre du
+// programme n'en fait plus partie : il vit dans clients.programs
+// (PROGRAM_FIELD_DEFINITIONS).
 
 export type SectionKey = keyof ClientFields;
 
@@ -160,22 +167,6 @@ export const SECTION_DEFINITIONS: ReadonlyArray<{
       { key: "autres_parties_prenantes", label: "Other stakeholders", kind: "array_contact", recommended: true },
       { key: "langues_requises", label: "Required languages", kind: "array_string", display: "tags", recommended: true },
       { key: "zones_geographiques", label: "Geographic regions", kind: "array_string", display: "tags" },
-    ],
-  },
-  {
-    key: "program_scope",
-    label: "Program scope",
-    fields: [
-      { key: "type_coaching", label: "Coaching type", kind: "enum", options: ["humain", "ia", "hybride"] as const, optionLabels: { humain: "Human", ia: "AI", hybride: "Hybrid" }, required: true },
-      { key: "nom_programme", label: "Program name", kind: "text", required: true },
-      { key: "population_accompagnee", label: "Target population", kind: "text", required: true },
-      { key: "nb_coaches_estime", label: "Estimated number of coachees", kind: "number", recommended: true },
-      { key: "cohortes_format", label: "Cohorts / format", kind: "text", recommended: true },
-      { key: "auto_assessment", label: "Auto-assessment", kind: "bool_with_details" },
-      { key: "flash_feedback", label: "Flash feedback", kind: "bool_with_details" },
-      { key: "tripartite", label: "Tripartite", kind: "bool_with_details" },
-      { key: "quadripartite", label: "Quadripartite", kind: "bool_with_details" },
-      { key: "offres_associees", label: "Add-on offers", kind: "array_string" },
     ],
   },
   {
@@ -227,6 +218,282 @@ export const SECTION_DEFINITIONS: ReadonlyArray<{
     ],
   },
 ] as const;
+
+// ── Programmes du compte (Knowledge > Program scope) ─────────────────────
+// Un compte a 1 à N programmes (une offre déployée pour une population :
+// "Manager", "Executive coaching"...), suivis chacun dans un kanban de statut :
+// le churn et le pilotage se jouent au niveau du programme, pas du compte.
+// Stockés dans clients.programs (migration clients_programs.sql), détectés par
+// l'IA au refresh (lib/clients/programs.ts). Chaque attribut est un
+// ClientFieldValue : même source, même confiance et même règle manuel/IA que
+// les fields (un statut déplacé à la main tient jusqu'à une source plus récente).
+// L'adoption (sessions, coachés actifs) viendra de la DB plateforme.
+export type ProgramStatus = "not_started" | "set_up" | "poc" | "live" | "turned_off";
+export type ProgramRisk = "on_track" | "watch" | "at_risk";
+
+// Ordre des colonnes du kanban.
+export const PROGRAM_STATUSES: readonly ProgramStatus[] = ["not_started", "set_up", "poc", "live", "turned_off"];
+export const PROGRAM_STATUS_LABELS: Record<ProgramStatus, string> = {
+  not_started: "Not started",
+  set_up: "Set up",
+  poc: "POC",
+  live: "Live",
+  turned_off: "Turned off",
+};
+
+// Attributs d'un programme. Socle commun à tous les types, puis un bloc par
+// famille (cf. ProgramFieldDefinition) : coaching humain (Human, Hybrid), IA
+// (AI, Hybrid), role-play (dès que le module Role-play est coché), déploiement
+// et licences (AI seule ; en Hybrid le prix suit le programme humain).
+// Champs validés avec Juliette (CSM) le 2026-10-26, à partir de la base Notion
+// (assistant de création de programme, catalogue humain, runbook onboarding).
+export type ProgramFieldKey =
+  // Socle
+  | "status"
+  | "status_reason"
+  | "coaching_type"
+  | "objective"
+  | "population"
+  | "nb_coachees"
+  | "start_date"
+  | "end_date"
+  | "cohorts"
+  | "languages"
+  | "risk"
+  | "risk_reason"
+  | "add_ons"
+  // Coaching humain (Human, Hybrid)
+  | "catalog_program"
+  | "sessions_per_coachee"
+  | "journey_months"
+  | "three_way"
+  | "three_way_details"
+  | "coach_pool"
+  | "internal_coaches"
+  | "assessments"
+  | "credits"
+  // IA (AI, Hybrid)
+  | "ai_modules"
+  | "client_context"
+  // Role-play (module Role-play coché)
+  | "rp_program_type"
+  | "rp_content"
+  | "rp_content_details"
+  | "scenarios_count"
+  | "skills"
+  | "evaluation_grid"
+  // IA seule
+  | "deployment"
+  | "deployment_details"
+  | "licences"
+  | "licence_months";
+
+export type ClientProgram = {
+  id: string;
+  // Stable : l'IA ne renomme jamais un programme existant (un autre nom trouvé
+  // part dans aliases), seul un humain le renomme.
+  name: string;
+  // Autres noms du même programme : éditions, vagues, cohortes, groupes de la
+  // plateforme ("Rise 4 - Executive coaching 2025", "Évolution 2025").
+  aliases: string[];
+  created_by: "ai" | "manual";
+  created_at: string;
+  fields: Partial<Record<ProgramFieldKey, ClientFieldValue>>;
+};
+
+export type ProgramFieldDefinition = FieldDefinition & {
+  key: ProgramFieldKey;
+  // Types de programme concernés ; absent = socle commun. Type pas encore
+  // connu : seul le socle s'affiche.
+  types?: readonly TypeCoaching[];
+  // Seulement si le module Role-play est coché (AI ou Hybrid).
+  rolePlay?: boolean;
+  // Champ clé : visible sans déplier la carte du programme.
+  keyField?: boolean;
+  // Détail rangé sous un autre champ (déplié au clic, comme SSO sous Access).
+  detailOf?: ProgramFieldKey;
+};
+
+const HUMAN_TYPES = ["humain", "hybride"] as const;
+const AI_TYPES = ["ia", "hybride"] as const;
+
+// Valeurs des listes à choix (array_string) : l'IA et l'UI s'y tiennent.
+export const AI_MODULE_VALUES = ["Role-play", "AI coach"] as const;
+export const ASSESSMENT_VALUES = ["Self-assessment", "Impact assessment", "Peer feedback (Flash 360)"] as const;
+
+// Ordre d'affichage de la carte : champs clés d'abord (le statut est dans
+// l'en-tête), le reste derrière "More details". required / recommended :
+// manques remontés dans To do (programmes non arrêtés, champs applicables).
+export const PROGRAM_FIELD_DEFINITIONS: ReadonlyArray<ProgramFieldDefinition> = [
+  {
+    key: "status",
+    label: "Status",
+    kind: "enum",
+    options: PROGRAM_STATUSES,
+    optionLabels: PROGRAM_STATUS_LABELS,
+    optionTones: { not_started: "neutral", set_up: "warn", poc: "warn", live: "ok", turned_off: "neutral" },
+  },
+  { key: "status_reason", label: "Why this status", kind: "long_text", keyField: true },
+  {
+    key: "coaching_type",
+    label: "Type",
+    kind: "enum",
+    options: ["humain", "hybride", "ia"] as const,
+    optionLabels: { humain: "Human", hybride: "Hybrid", ia: "AI" },
+    required: true,
+    keyField: true,
+  },
+  { key: "objective", label: "Objective", kind: "long_text", recommended: true, keyField: true },
+  { key: "population", label: "Target population", kind: "text", required: true, keyField: true },
+  {
+    key: "catalog_program",
+    label: "Catalog program",
+    kind: "enum",
+    options: [
+      "first_time_manager", "womens_leadership_boost", "womens_leadership_lead", "professional_development",
+      "executive_transition", "leadership_transition", "return_sick_leave", "parenthood", "flash", "extension", "custom",
+    ] as const,
+    optionLabels: {
+      first_time_manager: "First-time Manager",
+      womens_leadership_boost: "Women's Leadership - Boost",
+      womens_leadership_lead: "Women's Leadership - Lead",
+      professional_development: "Professional Development",
+      executive_transition: "Executive Transition",
+      leadership_transition: "Leadership Transition",
+      return_sick_leave: "Return from Extended Sick-Leave",
+      parenthood: "Parenthood",
+      flash: "Specific Flash",
+      extension: "Specific Extension",
+      custom: "Custom",
+    },
+    types: HUMAN_TYPES,
+    keyField: true,
+  },
+  { key: "sessions_per_coachee", label: "Sessions per coachee", kind: "number", types: HUMAN_TYPES, required: true, keyField: true },
+  {
+    key: "three_way",
+    label: "Three-way session",
+    kind: "enum",
+    options: ["none", "tripartite", "quadripartite"] as const,
+    optionLabels: { none: "None", tripartite: "Tripartite (manager)", quadripartite: "Quadripartite (manager + HR)" },
+    types: HUMAN_TYPES,
+    recommended: true,
+    keyField: true,
+  },
+  { key: "three_way_details", label: "Three-way details", kind: "text", types: HUMAN_TYPES, detailOf: "three_way" },
+  {
+    key: "ai_modules",
+    label: "AI modules",
+    kind: "array_string",
+    display: "tags",
+    types: AI_TYPES,
+    required: true,
+    keyField: true,
+  },
+  {
+    key: "rp_program_type",
+    label: "Role-play program",
+    kind: "enum",
+    options: ["upskilling", "assessment_debrief", "certification"] as const,
+    optionLabels: { upskilling: "Upskilling", assessment_debrief: "Assessment debrief", certification: "Certification" },
+    types: AI_TYPES,
+    rolePlay: true,
+    recommended: true,
+    keyField: true,
+  },
+  {
+    key: "rp_content",
+    label: "Role-play content",
+    kind: "enum",
+    options: ["catalog", "custom", "mixed"] as const,
+    optionLabels: { catalog: "Coachello catalog", custom: "Custom", mixed: "Catalog + custom" },
+    types: AI_TYPES,
+    rolePlay: true,
+    keyField: true,
+  },
+  { key: "rp_content_details", label: "Programs / scenarios", kind: "text", types: AI_TYPES, rolePlay: true, detailOf: "rp_content" },
+  {
+    key: "deployment",
+    label: "Deployment",
+    kind: "enum",
+    options: ["standalone", "embedded", "annual_licenses"] as const,
+    optionLabels: { standalone: "Standalone", embedded: "Embedded in a training", annual_licenses: "Annual licenses" },
+    types: ["ia"],
+    keyField: true,
+  },
+  { key: "deployment_details", label: "Deployment details", kind: "text", types: ["ia"], detailOf: "deployment" },
+  {
+    key: "risk",
+    label: "Risk",
+    kind: "enum",
+    options: ["on_track", "watch", "at_risk"] as const,
+    optionLabels: { on_track: "On track", watch: "Watch", at_risk: "At risk" },
+    optionTones: { on_track: "ok", watch: "warn", at_risk: "err" },
+    keyField: true,
+  },
+  { key: "risk_reason", label: "Why this risk", kind: "long_text", keyField: true },
+  // ── More details ──
+  { key: "nb_coachees", label: "Planned participants", kind: "number" },
+  { key: "start_date", label: "Launch date", kind: "date" },
+  { key: "end_date", label: "End date", kind: "date" },
+  { key: "cohorts", label: "Cohorts / waves", kind: "text" },
+  { key: "languages", label: "Languages", kind: "array_string", display: "tags" },
+  { key: "journey_months", label: "Journey length (months)", kind: "number", types: HUMAN_TYPES },
+  {
+    key: "coach_pool",
+    label: "Coach pool",
+    kind: "enum",
+    options: ["standard", "executive"] as const,
+    optionLabels: { standard: "Standard", executive: "Executive" },
+    types: HUMAN_TYPES,
+  },
+  { key: "internal_coaches", label: "Internal coaches", kind: "bool_with_details", types: HUMAN_TYPES },
+  { key: "assessments", label: "Assessments", kind: "array_string", display: "tags", types: HUMAN_TYPES },
+  { key: "credits", label: "Credits / licences", kind: "text", types: HUMAN_TYPES },
+  { key: "client_context", label: "Client context loaded", kind: "bool_with_details", types: AI_TYPES },
+  { key: "scenarios_count", label: "Number of scenarios", kind: "number", types: AI_TYPES, rolePlay: true },
+  { key: "skills", label: "Skills practised", kind: "array_string", display: "tags", types: AI_TYPES, rolePlay: true },
+  { key: "evaluation_grid", label: "Evaluation grid", kind: "text", types: AI_TYPES, rolePlay: true },
+  { key: "licences", label: "Licences (users)", kind: "number", types: ["ia"] },
+  { key: "licence_months", label: "Licence duration (months)", kind: "number", types: ["ia"] },
+  { key: "add_ons", label: "Add-on offers", kind: "array_string" },
+];
+
+export function getProgramFieldDef(key: string): ProgramFieldDefinition | undefined {
+  return PROGRAM_FIELD_DEFINITIONS.find((f) => f.key === key);
+}
+
+export function programStatusOf(p: ClientProgram): ProgramStatus | null {
+  const v = p.fields.status?.value;
+  return typeof v === "string" && (PROGRAM_STATUSES as readonly string[]).includes(v) ? (v as ProgramStatus) : null;
+}
+
+type ProgramFields = ClientProgram["fields"];
+
+export function programTypeOf(fields: ProgramFields): TypeCoaching | null {
+  const v = fields.coaching_type?.value;
+  return v === "humain" || v === "hybride" || v === "ia" ? v : null;
+}
+
+// Module Role-play coché sur un programme AI ou Hybrid.
+export function programHasRolePlay(fields: ProgramFields): boolean {
+  const type = programTypeOf(fields);
+  if (type !== "ia" && type !== "hybride") return false;
+  const modules = fields.ai_modules?.value;
+  return Array.isArray(modules) && modules.some((m) => typeof m === "string" && /role/i.test(m));
+}
+
+// Le champ s'affiche-t-il pour ce programme (type, module Role-play) ? Une
+// valeur hors du type n'est jamais effacée : elle est masquée, et revient si
+// le type change.
+export function programFieldApplies(def: ProgramFieldDefinition, fields: ProgramFields): boolean {
+  if (def.types) {
+    const type = programTypeOf(fields);
+    if (!type || !def.types.includes(type)) return false;
+  }
+  if (def.rolePlay && !programHasRolePlay(fields)) return false;
+  return true;
+}
 
 // ── Deal recap (généré plus tard, structuré façon CoachelloAI) ─────────
 export type DealRecap = {
@@ -368,6 +635,8 @@ export type InsightAction = {
   due?: "this_week" | "next_2_weeks" | "this_month" | null;
   priority?: "high" | "medium" | "low";
   source?: InsightSource | null;
+  // Programme concerné (ClientProgram.id), null = le compte en général.
+  program_id?: string | null;
   done_at?: string | null;
   done_by?: string | null;
 };
@@ -429,6 +698,16 @@ export type News = {
 // a tourné mais n'a trouvé aucune activité nouvelle (health/news recalculés
 // quand même, fields inchangés).
 export type RefreshSourceStat = { new: number; error?: string | null };
+export type ProgramChange = {
+  program_id: string;
+  program_name: string;
+  added?: boolean;
+  key?: ProgramFieldKey;
+  label?: string;
+  before?: unknown;
+  after?: unknown;
+  overrode_manual?: boolean;
+};
 export type RefreshReport = {
   refreshed_at: string;
   trigger?: "manual" | "cron";
@@ -445,6 +724,9 @@ export type RefreshReport = {
     after?: unknown;
     overrode_manual?: boolean;
   }>;
+  // Programmes : ajoutés (added) ou attribut changé (statut, type...) par la
+  // détection IA. Pas d'Undo : un déplacement à la main dans le kanban suffit.
+  program_changes?: ProgramChange[];
   // Compteurs par source (nouveau depuis le refresh précédent) + erreur
   // éventuelle : une source KO s'affiche comme telle, jamais comme un 0.
   sources?: {
@@ -865,6 +1147,13 @@ export type ClientRow = {
   tier?: ClientTier | null;
   tier_set_by?: string | null;
   tier_set_at?: string | null;
+  // Programmes du compte (cf. ClientProgram, migration clients_programs.sql).
+  // null = jamais détectés ; absentes tant que la migration n'est pas appliquée.
+  programs?: ClientProgram[] | null;
+  // Noms (et alias) des programmes supprimés à la main ("Not a program") :
+  // la détection ne les recrée pas.
+  declined_program_names?: string[] | null;
+  programs_detected_at?: string | null;
   // Checklists colonne gauche (cf. migration clients_checklists.sql).
   hubspot_field_suggestions: HubspotFieldSuggestions | null;
   onboarding_checklist: OnboardingChecklist | null;
@@ -937,7 +1226,9 @@ export function emptyField<T>(): ClientFieldValue<T> {
 // Réutilisé côté client (panneau handover + surlignage) et serveur (garde-fou
 // de la route notify-handover).
 
-export type MissingFieldRef = { section: SectionKey; key: string; label: string };
+// program : manque sur un attribut d'un programme (section "program_scope",
+// key = ProgramFieldKey), ou programme absent (key "programs", sans program).
+export type MissingFieldRef = { section: SectionKey; key: string; label: string; program?: { id: string; name: string } };
 
 // Une valeur de field est "vide" si null/undefined, array vide, ou string vide.
 // Même logique que renderValue() dans field-display.tsx.

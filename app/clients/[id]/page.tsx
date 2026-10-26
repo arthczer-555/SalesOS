@@ -230,10 +230,15 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
     setRefreshing(true);
   }
 
-  async function triggerRefresh() {
+  // programs : détection des programmes forcée (bouton "Detect programs").
+  async function triggerRefresh(opts?: { programs?: boolean }) {
     watchRefresh();
     try {
-      const res = await fetch(`/api/clients/${id}/refresh`, { method: "POST" });
+      const res = await fetch(`/api/clients/${id}/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ programs: !!opts?.programs }),
+      });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? `HTTP ${res.status}`);
@@ -358,7 +363,16 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       <div ref={scrollRef} style={{ flex: 1, overflowY: "auto", padding: "0 32px 56px" }}>
         <div style={{ paddingTop: 24 }}>
         {tab === "insights" && <KeyInsightsTab client={client} hubspotUrl={hubspotUrl} onUpdated={reload} goTo={goTo} />}
-        {tab === "knowledge" && <KnowledgeTab client={client} meetings={meetings} onUpdated={reload} focus={knowledgeFocus} />}
+        {tab === "knowledge" && (
+          <KnowledgeTab
+            client={client}
+            meetings={meetings}
+            onUpdated={reload}
+            focus={knowledgeFocus}
+            refreshing={refreshing}
+            onDetectPrograms={enriched ? () => void triggerRefresh({ programs: true }) : undefined}
+          />
+        )}
         {tab === "todo" && (
           <TodoTab
             client={client}
@@ -366,6 +380,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             onUpdated={reload}
             onOpenHandover={() => setAssigneesMode("handover")}
             onDraftEmail={() => setEmailModalOpen(true)}
+            onOpenPrograms={() => goTo("knowledge", "k-program")}
           />
         )}
         {tab === "hubspot" && <HubspotCleanerTab client={client} state={hubspot} hubspotUrl={hubspotUrl} onUpdated={reload} />}

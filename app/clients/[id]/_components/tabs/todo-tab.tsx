@@ -3,7 +3,16 @@
 import { useState } from "react";
 import { Check, CheckCircle2, MailPlus, UserCheck, X } from "lucide-react";
 import { COLORS } from "@/app/clients/_components/theme";
-import { SECTION_DEFINITIONS, type ClientFieldValue, type ClientRow, type SectionKey } from "@/lib/clients/types";
+import {
+  PROGRAM_FIELD_DEFINITIONS,
+  SECTION_DEFINITIONS,
+  programFieldApplies,
+  programStatusOf,
+  type ClientFieldValue,
+  type ClientRow,
+  type FieldDefinition,
+  type SectionKey,
+} from "@/lib/clients/types";
 import { todoGroupFor, type ClientTodo, type TodoGroup } from "@/lib/clients/todo";
 import { OnboardingChecklistPanel } from "../onboarding-checklist-panel";
 import { FieldDisplay } from "../field-display";
@@ -13,19 +22,29 @@ import { EmptyState } from "../ui";
 // Tant qu'il y a quelque chose ici, l'onglet a un compteur. Blocs : handover,
 // infos clés (une pastille par champ requis ou recommandé, groupées ; cliquer
 // une pastille l'ouvre en édition juste dessous), checklist d'onboarding
-// repliée.
+// repliée. Les infos clés des programmes (type, population...) sont dans le
+// groupe Program, une pastille par programme non arrêté.
 
 const GROUP_ORDER: TodoGroup[] = ["Contacts", "IT & access", "Program", "Planning", "Goals", "Context"];
 
-type KeyField = { section: SectionKey; key: string; label: string; required: boolean; missing: boolean; group: TodoGroup };
+type KeyField = {
+  section: SectionKey;
+  key: string;
+  label: string;
+  required: boolean;
+  missing: boolean;
+  group: TodoGroup;
+  program?: { id: string; name: string };
+};
 
-const fieldId = (f: { section: string; key: string }) => `${f.section}.${f.key}`;
+const fieldId = (f: { section: string; key: string; program?: { id: string } }) =>
+  `${f.section}.${f.key}${f.program ? `.${f.program.id}` : ""}`;
 
 // Tous les champs clés (requis ou recommandés), remplis compris : les remplis
 // s'affichent en vert à côté des manquants de leur groupe.
-function keyFields(todo: ClientTodo): KeyField[] {
+function keyFields(client: ClientRow, todo: ClientTodo): KeyField[] {
   const missing = new Set(todo.missingFields.map(fieldId));
-  return SECTION_DEFINITIONS.flatMap((s) =>
+  const sections = SECTION_DEFINITIONS.flatMap((s) =>
     s.fields
       .filter((f) => f.required || f.recommended)
       .map((f) => {
@@ -33,6 +52,30 @@ function keyFields(todo: ClientTodo): KeyField[] {
         return { ...ref, required: !!f.required, missing: missing.has(fieldId(ref)), group: todoGroupFor(ref) };
       }),
   );
+  // Programmes non arrêtés ; aucun programme détecté = la pastille "Programs".
+  const programs = (client.programs ?? []).filter((p) => programStatusOf(p) !== "turned_off");
+  const programFields: KeyField[] = programs.flatMap((p) =>
+    PROGRAM_FIELD_DEFINITIONS.filter((f) => (f.required || f.recommended) && programFieldApplies(f, p.fields)).map((f) => {
+      const ref = { section: "program_scope" as const, key: f.key, label: f.label, program: { id: p.id, name: p.name } };
+      return { ...ref, required: !!f.required, missing: missing.has(fieldId(ref)), group: "Program" as const };
+    }),
+  );
+  const noProgram: KeyField[] = todo.missingFields
+    .filter((m) => m.section === "program_scope" && m.key === "programs")
+    .map((m) => ({ section: m.section, key: m.key, label: m.label, required: true, missing: true, group: "Program" }));
+  return [...sections, ...noProgram, ...programFields];
+}
+
+async function saveProgramField(clientId: string, programId: string, key: string, value: unknown) {
+  const res = await fetch(`/api/clients/${clientId}/programs`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ op: "set_field", programId, key, value }),
+  });
+  if (!res.ok) {
+    const b = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(b.error ?? `HTTP ${res.status}`);
+  }
 }
 
 function Dot({ kind }: { kind: "required" | "recommended" | "filled" }) {
@@ -68,11 +111,23 @@ function Legend() {
   );
 }
 
-function KeyInfoCard({ client, todo, onUpdated, onDraftEmail }: { client: ClientRow; todo: ClientTodo; onUpdated: () => void; onDraftEmail: () => void }) {
+function KeyInfoCard({
+  client,
+  todo,
+  onUpdated,
+  onDraftEmail,
+  onOpenPrograms,
+}: {
+  client: ClientRow;
+  todo: ClientTodo;
+  onUpdated: () => void;
+  onDraftEmail: () => void;
+  onOpenPrograms?: () => void;
+}) {
   const [requiredOnly, setRequiredOnly] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const all = keyFields(todo).filter((f) => !requiredOnly || f.required);
+  const all = keyFields(client, todo).filter((f) => !requiredOnly || f.required);
   const groups = GROUP_ORDER.map((g) => {
     const fields = all.filter((f) => f.group === g);
     // Manquants d'abord (requis puis recommandés), remplis ensuite.
@@ -119,8 +174,14 @@ function KeyInfoCard({ client, todo, onUpdated, onDraftEmail }: { client: Client
       ) : (
         groups.map((g) => {
           const open = g.fields.find((f) => fieldId(f) === openId);
-          const def = open ? SECTION_DEFINITIONS.find((s) => s.key === open.section)?.fields.find((f) => f.key === open.key) : undefined;
+          const openProgram = open?.program ? client.programs?.find((p) => p.id === open.program?.id) : undefined;
+          const def: FieldDefinition | undefined = !open
+            ? undefined
+            : open.program
+              ? PROGRAM_FIELD_DEFINITIONS.find((f) => f.key === open.key)
+              : SECTION_DEFINITIONS.find((s) => s.key === open.section)?.fields.find((f) => f.key === open.key);
           const sectionData = open ? ((client.fields_json?.[open.section] ?? {}) as Record<string, ClientFieldValue | undefined>) : null;
+          const field = openProgram && open ? openProgram.fields[open.key as keyof typeof openProgram.fields] : open ? sectionData?.[open.key] : undefined;
           return (
             <div key={g.group} style={{ padding: "12px 0", borderTop: `1px solid ${COLORS.warnLine}` }}>
               <div style={{ display: "grid", gridTemplateColumns: "minmax(110px, 150px) minmax(0, 1fr)", gap: 12, alignItems: "start" }}>
@@ -141,22 +202,33 @@ function KeyInfoCard({ client, todo, onUpdated, onDraftEmail }: { client: Client
                         title={f.missing ? `${f.required ? "Required" : "Recommended"}: click to fill it` : "Filled: click to edit"}
                       >
                         <Dot kind={kind} />
-                        {f.label}
+                        {f.program ? `${f.program.name}: ${f.label}` : f.label}
                       </button>
                     );
                   })}
                 </div>
               </div>
+              {open && open.key === "programs" && (
+                <div style={{ marginTop: 12, background: COLORS.bgCard, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "12px 16px", fontSize: 13, color: COLORS.ink1, display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+                  No program was found in the conversations for this account.
+                  {onOpenPrograms && (
+                    <button type="button" className="ch-btn ch-btn-sm" onClick={onOpenPrograms}>
+                      Open Program scope
+                    </button>
+                  )}
+                </div>
+              )}
               {open && def && (
                 <div style={{ marginTop: 12, background: COLORS.bgCard, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: "4px 16px", display: "flex", gap: 8 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <FieldDisplay
                       key={fieldId(open)}
                       definition={def}
-                      field={sectionData?.[open.key]}
+                      field={field}
                       clientId={client.id}
                       sectionKey={open.section}
                       onUpdated={onUpdated}
+                      onSaveValue={open.program ? (v) => saveProgramField(client.id, open.program!.id, open.key, v) : undefined}
                       autoEdit
                       onEditEnd={() => setOpenId(null)}
                     />
@@ -188,12 +260,14 @@ export function TodoTab({
   onUpdated,
   onOpenHandover,
   onDraftEmail,
+  onOpenPrograms,
 }: {
   client: ClientRow;
   todo: ClientTodo;
   onUpdated: () => void;
   onOpenHandover: () => void;
   onDraftEmail: () => void;
+  onOpenPrograms?: () => void;
 }) {
   if (todo.count === 0) {
     return (
@@ -252,7 +326,9 @@ export function TodoTab({
         </div>
       )}
 
-      {todo.missingFields.length > 0 && <KeyInfoCard client={client} todo={todo} onUpdated={onUpdated} onDraftEmail={onDraftEmail} />}
+      {todo.missingFields.length > 0 && (
+        <KeyInfoCard client={client} todo={todo} onUpdated={onUpdated} onDraftEmail={onDraftEmail} onOpenPrograms={onOpenPrograms} />
+      )}
 
       {onboarding.pending > 0 || !onboarding.applicable ? <OnboardingChecklistPanel client={client} onUpdated={onUpdated} /> : null}
     </div>

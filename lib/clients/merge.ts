@@ -3,6 +3,7 @@ import { fetchBillingRows, matchBillingRow, matchLinkedBillingRows, type Billing
 import { billingNamesOf, mergedBillingLink } from "./billing-link";
 import { DEAL_NAME_NOISE_TOKENS, tokenizeWords } from "./claap-discovery";
 import { fillEmptyFields } from "./merge-fields";
+import { concatPrograms } from "./programs";
 import { toClientTier } from "./tier";
 import type { AccountCompany, Billing, ClientRow, HealthLabel, MergedClient, OnboardingChecklist } from "./types";
 
@@ -23,8 +24,8 @@ import type { AccountCompany, Billing, ClientRow, HealthLabel, MergedClient, Onb
 //    des deux a des lignes reliées à la main (billing-link.ts), le compte garde
 //    un lien manuel : l'union des lignes des deux fiches ;
 //  - meetings Claap confirmés / découverts / retirés, companies, AM/CS, tier,
-//    prochaine facturation, checklist onboarding, coach brief, deal recap et
-//    fields vides sont complétés. Quand les deux ont une valeur, la fiche
+//    prochaine facturation, checklist onboarding, coach brief, deal recap,
+//    programmes et fields vides sont complétés. Quand les deux ont une valeur, la fiche
 //    gardée l'emporte (sauf le tier : le plus important des deux).
 // Un refresh suit (route merge) pour recalculer santé, Next actions et fields
 // sur le compte complet. La row absorbée est gardée entière dans
@@ -223,6 +224,14 @@ export function buildMergeUpdate(
     if (absorbed.coach_brief_edited_at !== undefined) update.coach_brief_edited_at = absorbed.coach_brief_edited_at;
   }
   if (!kept.deal_recap && absorbed.deal_recap) update.deal_recap = absorbed.deal_recap;
+  // Programmes des deux fiches (dédoublonnés par nom), noms refusés en union.
+  // Ignoré tant que la migration clients_programs.sql n'est pas appliquée.
+  if (kept.programs !== undefined) {
+    const programs = concatPrograms(kept.programs ?? null, absorbed.programs ?? null);
+    if (programs) update.programs = programs;
+    const declined = [...new Set([...(kept.declined_program_names ?? []), ...(absorbed.declined_program_names ?? [])])];
+    if (declined.length > 0) update.declined_program_names = declined;
+  }
 
   if (opts.billing) {
     update.billing = opts.billing;

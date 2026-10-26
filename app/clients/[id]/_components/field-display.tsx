@@ -723,6 +723,7 @@ export function FieldDisplay({
   details,
   autoEdit = false,
   onEditEnd,
+  onSaveValue,
 }: {
   definition: FieldDefinition;
   field: ClientFieldValue | undefined;
@@ -736,6 +737,9 @@ export function FieldDisplay({
   // prévient quand l'édition se termine (enregistrée ou annulée).
   autoEdit?: boolean;
   onEditEnd?: () => void;
+  // Enregistrement fourni par le parent (attributs d'un programme) à la place
+  // du PATCH /fields. Doit lever une erreur en cas d'échec.
+  onSaveValue?: (value: unknown) => Promise<void>;
 }) {
   const value = field?.value;
   const confidence = field?.confidence ?? 0;
@@ -745,24 +749,28 @@ export function FieldDisplay({
   const [editing, setEditing] = useState(autoEdit);
   const [error, setError] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const canEdit = !!clientId && !!sectionKey && EDITABLE_KINDS.has(definition.kind);
+  const canEdit = (!!onSaveValue || (!!clientId && !!sectionKey)) && EDITABLE_KINDS.has(definition.kind);
   // `required` ne bloque plus rien : c'est juste un champ clé qu'on surligne en
   // jaune tant qu'il est vide (cf. handover). `recommended` = indice discret.
   const isMissingHighlighted = !!definition.required && !hasValue;
   const isMissingRecommended = !!definition.recommended && !hasValue;
 
   async function save(newValue: unknown) {
-    if (!clientId || !sectionKey) return;
+    if (!onSaveValue && (!clientId || !sectionKey)) return;
     setError(null);
     try {
-      const res = await fetch(`/api/clients/${clientId}/fields`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sectionKey, fieldKey: definition.key, value: newValue }),
-      });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? `HTTP ${res.status}`);
+      if (onSaveValue) {
+        await onSaveValue(newValue);
+      } else {
+        const res = await fetch(`/api/clients/${clientId}/fields`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sectionKey, fieldKey: definition.key, value: newValue }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? `HTTP ${res.status}`);
+        }
       }
       setEditing(false);
       onUpdated?.();

@@ -6,7 +6,8 @@ import {
   lookupSlackIdByEmail,
 } from "../slack/lookup";
 import { fetchHubspotDealFields } from "./hubspot-fields";
-import { SECTION_DEFINITIONS, type ClientFields, type HubspotDealFields } from "./types";
+import { getProgramFieldDef, SECTION_DEFINITIONS, type ClientFields, type ClientProgram, type HubspotDealFields } from "./types";
+import { summarizePrograms } from "./program-summary";
 
 // DM Slack à l'AM et au CS assignés à un client closed-won, déclenché par l'AE
 // depuis le panneau handover de la fiche. But : l'AM/CS savent que le contexte
@@ -32,7 +33,7 @@ function optionLabel(section: keyof ClientFields, key: string, value: string | n
   return def?.optionLabels?.[value] ?? null;
 }
 
-// Fallback quand type_coaching est vide : le "Project Type" du deal HubSpot.
+// Fallback quand aucun programme n'a de type de coaching : le "Project Type" du deal HubSpot.
 const PROJECT_TYPE_LABELS: Record<string, string> = {
   "Human Coaching Deal": "Human",
   "AI Coaching Deal": "AI",
@@ -66,10 +67,13 @@ function joinParts(parts: Array<string | null | undefined>, sep = " · "): strin
 // closed-won et les lignes qui n'existent que côté HubSpot disparaissent.
 function buildKeyFacts(
   fields: Partial<ClientFields>,
+  programs: ClientProgram[] | null | undefined,
   dealAmount: number | null,
   hs: HubspotDealFields | null,
 ): string[] {
-  const scope = fields.program_scope;
+  // Programmes détectés, sinon l'ancien bloc unique (cf. program-summary).
+  const summary = summarizePrograms({ fields_json: fields, programs });
+  const shown = summary.active.length > 0 ? summary.active : summary.programs;
   const general = fields.general_info;
   const planning = fields.planning;
 
@@ -79,7 +83,7 @@ function buildKeyFacts(
   const price = amount != null ? `${fmtEur(amount)}${relationLabel ? ` (${relationLabel})` : ""}` : null;
 
   const coachingType =
-    optionLabel("program_scope", "type_coaching", scope?.type_coaching?.value) ??
+    (summary.coachingType ? getProgramFieldDef("coaching_type")?.optionLabels?.[summary.coachingType] : null) ??
     (hs?.project_type ? PROJECT_TYPE_LABELS[hs.project_type] : null) ??
     null;
 
@@ -98,12 +102,11 @@ function buildKeyFacts(
     ],
     ["Coaching type", coachingType],
     [
-      "Program",
-      joinParts([
-        scope?.nom_programme?.value,
-        scope?.population_accompagnee?.value,
-        scope?.nb_coaches_estime?.value != null ? `${scope.nb_coaches_estime.value} coachees` : null,
-      ]),
+      shown.length > 1 ? "Programs" : "Program",
+      joinParts(
+        shown.map((p) => joinParts([p.name, p.population, p.nbCoachees != null ? `${p.nbCoachees} coachees` : null])),
+        "; ",
+      ),
     ],
     ["Kickoff", kickoff ? fmtDate(kickoff) : null],
     ["Main HR contact", hr?.name ? joinParts([hr.name, hr.role ? `(${hr.role})` : null], " ") : null],
@@ -133,7 +136,8 @@ export async function notifyHandoverAmCs(
 
   const { data: row, error } = await db
     .from("clients")
-    .select("id, company_name, hubspot_deal_id, deal_amount, fields_json")
+    // "*" : la colonne programs (migration clients_programs.sql) peut manquer.
+    .select("*")
     .eq("id", clientId)
     .single();
 
@@ -146,6 +150,7 @@ export async function notifyHandoverAmCs(
   const hs = row.hubspot_deal_id ? await fetchHubspotDealFields(row.hubspot_deal_id) : null;
   const keyFacts = buildKeyFacts(
     (row.fields_json ?? {}) as Partial<ClientFields>,
+    row.programs as ClientProgram[] | null | undefined,
     row.deal_amount as number | null,
     hs,
   );

@@ -23,7 +23,8 @@ import { generateInsightsAI } from "./insights-ai";
 import { notifyOwnerOfEnrichedClient } from "./notify-owner";
 import { generateHubspotSuggestions } from "./hubspot-suggestions";
 import { fetchHubspotDealFields } from "./hubspot-fields";
-import type { AccountCompany, ClientFields, News } from "./types";
+import { assignProgramIds, detectClientPrograms, loadLatestPrograms, mergePrograms } from "./programs";
+import type { AccountCompany, ClientFields, ClientProgram, CoachBrief, News } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { withForcedTool } from "../models/compat";
 
@@ -37,7 +38,8 @@ export type RunEnrichmentResult =
 //   1. Verrouille la row (enrichment_status = 'running').
 //   2. Charge le contexte HubSpot + Claap pour le deal.
 //   3. En parallèle :
-//        - Extraction des 6 sections de fields (Claude Sonnet 5.5)
+//        - Extraction des 5 sections de fields (Claude Sonnet 5.5)
+//        - Détection des programmes (Claude Sonnet 5.5, cf. programs.ts)
 //        - Brief coachs (Claude Sonnet 5.5)
 //        - Recap deal IA (Claude Sonnet 5.5)
 //        - News entreprise (Tavily, pas d'IA)
@@ -133,6 +135,31 @@ export async function runClientEnrichment(
       { label: `clients/enrich/${clientId}` },
     );
 
+    // Programmes : best-effort, même contexte. Ignoré tant que la migration
+    // clients_programs.sql n'est pas appliquée (colonne absente du select *).
+    const programsSupported = row.programs !== undefined;
+    const existingPrograms = (row.programs as ClientProgram[] | null | undefined) ?? null;
+    const programsPromise = programsSupported
+      ? detectClientPrograms({
+          contextPrompt,
+          prompt: {
+            existing: existingPrograms ?? [],
+            declined: (row.declined_program_names as string[] | null) ?? [],
+            deal: ctx.deal,
+            coachBrief: (row.coach_brief as CoachBrief | null) ?? null,
+            legacyScope: (row.fields_json as Partial<ClientFields> | null)?.program_scope ?? null,
+          },
+          model: clientsModel,
+          userId,
+          label: `clients/enrich/${clientId}/programs`,
+        })
+          .then((detected) => assignProgramIds(detected, new Set((existingPrograms ?? []).map((p) => p.id))))
+          .catch((e) => {
+            console.warn(`[clients/enrich/${clientId}] program detection failed:`, e instanceof Error ? e.message : e);
+            return null;
+          })
+      : Promise.resolve(null);
+
     const briefPromise = generateCoachBrief(ctx, userId).catch((e) => {
       console.warn(
         `[clients/enrich/${clientId}] coach brief generation failed:`,
@@ -195,8 +222,9 @@ export async function runClientEnrichment(
     );
     const dealFieldsPromise = fetchHubspotDealFields(row.hubspot_deal_id);
 
-    const [msg, coachBrief, dealRecap, news, billing, hubspotSuggestions, toneRes, dealFields] = await Promise.all([
+    const [msg, detectedPrograms, coachBrief, dealRecap, news, billing, hubspotSuggestions, toneRes, dealFields] = await Promise.all([
       fieldsPromise,
+      programsPromise,
       briefPromise,
       recapPromise,
       newsPromise,
@@ -213,7 +241,7 @@ export async function runClientEnrichment(
       throw new Error("No tool_use block in Claude response");
     }
 
-    // Re-enrich : la sortie IA (6 sections complètes) est fusionnée avec
+    // Re-enrich : la sortie IA (5 sections complètes) est fusionnée avec
     // l'existant. Les éditions manuelles survivent, sauf info plus récente.
     const parsed = parseClientFieldsFromClaude(toolBlock.input);
     const { merged } = mergeExtractedFields((row.fields_json ?? {}) as Partial<ClientFields>, parsed);
@@ -225,6 +253,19 @@ export async function runClientEnrichment(
       last_enriched_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
+    // Programmes : fusion sur la version relue maintenant (une édition faite
+    // pendant l'enrichissement n'est pas écrasée), première détection comprise.
+    let programsNow: ClientProgram[] | null = existingPrograms;
+    if (detectedPrograms) {
+      const latest = await loadLatestPrograms(clientId);
+      const { programs } = mergePrograms(latest ? latest.programs : existingPrograms, detectedPrograms, {
+        declined: latest?.declined ?? ((row.declined_program_names as string[] | null) ?? []),
+        legacyScope: (row.fields_json as Partial<ClientFields> | null)?.program_scope ?? null,
+      });
+      programsNow = programs;
+      updatePayload.programs = programs;
+      updatePayload.programs_detected_at = new Date().toISOString();
+    }
     if (coachBrief) {
       updatePayload.coach_brief = coachBrief;
       updatePayload.coach_brief_generated_at = new Date().toISOString();
@@ -298,6 +339,7 @@ export async function runClientEnrichment(
         ctx,
         health,
         fields: fieldsForInsights,
+        programs: programsNow,
         news: (updatePayload.news as News | undefined) ?? null,
         closedwonAt,
         hubspotNextStep: dealFields?.hs_next_step ?? null,

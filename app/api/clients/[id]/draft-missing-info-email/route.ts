@@ -9,6 +9,7 @@ import {
   type ClientRow,
   type MissingInfoEmailDraft,
 } from "@/lib/clients/types";
+import { getMissingProgramFields, missingFieldLabel } from "@/lib/clients/program-summary";
 import { NO_EM_DASH_RULE, stripEmDashes } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { noExtendedThinking, textOf } from "@/lib/models/compat";
@@ -41,7 +42,12 @@ async function generateDraft(client: ClientRow, senderName: string, userId: stri
   // Infos manquantes = champs de NOTRE contexte (la fiche) qu'on ne connait pas
   // encore. On NE demande PAS les champs HubSpot (internes, non pertinents pour
   // l'interlocuteur).
-  const missing = [...getMissingRequiredFields(fields), ...getMissingRecommendedFields(fields)].map((m) => m.label);
+  const missing = [
+    ...getMissingRequiredFields(fields),
+    ...getMissingProgramFields(client, "required"),
+    ...getMissingRecommendedFields(fields),
+    ...getMissingProgramFields(client, "recommended"),
+  ].map(missingFieldLabel);
 
   const contact = pickContact(fields);
 

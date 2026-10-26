@@ -12,6 +12,8 @@ import { TimelinePanel, meetingCount, type ClientMeeting } from "../timeline-pan
 import { FieldRows, FieldsCard, hasMissingKeyField, sectionRefs, type FieldRef } from "../fields-section";
 import { NewsErrors, NewsRow } from "../side-cards";
 import { WhatsNewCard } from "../whats-new-card";
+import { ProgramScopePanel } from "../program-scope-panel";
+import { getMissingProgramFields } from "@/lib/clients/program-summary";
 import { BareCards, Card, CardHeader } from "../ui";
 
 // Onglet Knowledge : la référence du compte (qui, quoi, comment, historique).
@@ -39,12 +41,6 @@ const CONTACT_ROLES: Array<{ key: string; role: string }> = [
 const refsOf = (section: SectionKey, keys: string[]): FieldRef[] => keys.map((key) => ({ section, key }));
 
 const GOALS_REFS: FieldRef[] = sectionRefs("goals");
-
-const PROGRAM_REFS: FieldRef[] = refsOf("program_scope", [
-  "nom_programme", "type_coaching", "nb_coaches_estime", "population_accompagnee",
-  "auto_assessment", "flash_feedback", "tripartite", "quadripartite",
-  "cohortes_format", "offres_associees",
-]);
 
 const CONTACT_REFS: FieldRef[] = [
   ...CONTACT_ROLES.map((c) => ({ section: "general_info" as const, key: c.key })),
@@ -84,7 +80,8 @@ const NAV: Array<{ group: string; items: Array<{ id: SectionId; label: string; r
     group: "Account",
     items: [
       { id: "k-goals", label: "Goals & expectations", refs: GOALS_REFS },
-      { id: "k-program", label: "Program scope", refs: PROGRAM_REFS },
+      // Programmes : un par programme (ProgramScopePanel), manques calculés à part.
+      { id: "k-program", label: "Program scope" },
       { id: "k-contacts", label: "Contacts", refs: CONTACT_REFS },
       { id: "k-it", label: "IT & access", refs: IT_REFS },
       { id: "k-planning", label: "Planning", refs: PLANNING_REFS },
@@ -281,10 +278,15 @@ export function KnowledgeTab({
   meetings,
   onUpdated,
   focus,
+  onDetectPrograms,
+  refreshing,
 }: {
   client: ClientRow;
   meetings: ClientMeeting[];
   onUpdated: () => void;
+  // Bouton "Detect programs" de Program scope : refresh avec détection forcée.
+  onDetectPrograms?: () => void;
+  refreshing?: boolean;
   // Section demandée depuis l'extérieur ("See all" de Key insights, #k-… d'un
   // lien CoachelloAI). `seq` (horodatage) permet de redemander la même.
   focus?: { id: string; seq: number } | null;
@@ -339,16 +341,19 @@ export function KnowledgeTab({
 
   const newsItems = client.news?.items ?? [];
   const counts: Partial<Record<SectionId, number>> = {
+    "k-program": client.programs?.length ?? 0,
     "k-meetings": meetingCount(meetings, client.discovered_claap_recordings ?? []),
     "k-news": newsItems.length,
   };
+  const programsMissing =
+    getMissingProgramFields(client, "required").length + getMissingProgramFields(client, "recommended").length > 0;
 
   function section() {
     switch (active) {
       case "k-goals":
         return <FieldsCard id="k-goals" title="Goals & expectations" refs={GOALS_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} />;
       case "k-program":
-        return <FieldsCard id="k-program" title="Program scope" refs={PROGRAM_REFS} fields={fields} clientId={client.id} onUpdated={onUpdated} />;
+        return <ProgramScopePanel client={client} onUpdated={onUpdated} onDetectPrograms={onDetectPrograms} refreshing={refreshing} />;
       case "k-contacts":
         return <ContactsCard client={client} onUpdated={onUpdated} />;
       case "k-it":
@@ -407,7 +412,7 @@ export function KnowledgeTab({
             </div>
             {g.items.map((item) => {
               const count = counts[item.id];
-              const missing = item.refs ? hasMissingKeyField(item.refs, fields) : false;
+              const missing = item.id === "k-program" ? programsMissing : item.refs ? hasMissingKeyField(item.refs, fields) : false;
               return (
                 <button
                   key={item.id}

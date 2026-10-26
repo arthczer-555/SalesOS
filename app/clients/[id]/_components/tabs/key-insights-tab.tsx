@@ -44,7 +44,7 @@ export function KeyInsightsTab({
           Billing. */}
       <div className="ch-grid-2-1" style={{ gap: 20, alignItems: "start" }}>
         <div className="ch-col" style={{ gap: 20 }}>
-          <NextActionsCard insights={client.insights} clientId={client.id} onUpdated={onUpdated} />
+          <NextActionsCard insights={client.insights} clientId={client.id} onUpdated={onUpdated} programs={client.programs} />
           <CompanyNewsCard client={client} onSeeAll={() => goTo("knowledge", "k-news")} />
         </div>
         <div className="ch-col" style={{ gap: 20 }}>

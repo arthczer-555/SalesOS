@@ -15,6 +15,8 @@ export const maxDuration = 60;
 //
 // Action légère/CS : tout utilisateur authentifié (pas admin-only comme
 // l'enrich complet). 409 si le client n'a pas encore été enrichi.
+// Body optionnel { programs: true } : détecte les programmes même sans activité
+// nouvelle (bouton "Detect programs" de Knowledge > Program scope).
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
@@ -33,8 +35,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     return NextResponse.json({ error: "Run the enrichment first, then refresh." }, { status: 409 });
   }
 
+  const body = (await req.json().catch(() => ({}))) as { programs?: unknown };
+
   try {
-    const mode = await triggerClientRefresh(req.nextUrl.origin, id, user.id);
+    const mode = await triggerClientRefresh(req.nextUrl.origin, id, user.id, { detectPrograms: body.programs === true });
     return NextResponse.json({ ok: true, mode }, { status: 202 });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Refresh failed to start" }, { status: 500 });
