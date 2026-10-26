@@ -4,11 +4,24 @@
 // données déjà prêtes. C'est ce qui permet à /dashboard (données réelles) et à
 // /dashboard/demo (données fictives) de partager exactement le même rendu.
 
+import { useState } from "react";
 import Link from "next/link";
 import type { QuarterAmount, RevenueStream } from "@/lib/ae-activity/types";
 import type { RepRevenueLine } from "@/lib/dashboard/global-overview";
 import { COLORS } from "@/lib/design/tokens";
-import { fmtEUR, fmtEURCompact, ragColor, revenueAttainment, type Kpi } from "@/app/admin/ae-activity/_components/helpers";
+import {
+  fmtEUR,
+  fmtEURCompact,
+  ragColor,
+  revenueAttainment,
+  yearAccounts,
+  type Kpi,
+} from "@/app/admin/ae-activity/_components/helpers";
+import {
+  TargetDetailModal,
+  lateAccountCount,
+  type StreamKind,
+} from "@/app/admin/ae-activity/_components/target-detail";
 
 export function currentQuarter(): QuarterAmount["quarter"] {
   return `Q${Math.floor(new Date().getUTCMonth() / 3) + 1}` as QuarterAmount["quarter"];
@@ -87,14 +100,17 @@ const TONE: Record<string, { fg: string; bg: string }> = {
 export function StreamBlock({
   title,
   hint,
+  kind,
   stream,
   accent,
 }: {
   title: string;
   hint: string;
+  kind: StreamKind;
   stream: RevenueStream;
   accent: string;
 }) {
+  const [detailOpen, setDetailOpen] = useState(false);
   const q = currentQuarter();
   const year = new Date().getUTCFullYear();
   const quarter = stream.quarters.find((x) => x.quarter === q);
@@ -103,7 +119,9 @@ export function StreamBlock({
   const yearRag = ragColor(yearAtt);
   const qRag = ragColor(qAtt);
   const pace = paceMessage(qAtt);
-  const top = stream.accounts.slice(0, 5);
+  const accounts = yearAccounts(stream);
+  const top = accounts.slice(0, 5);
+  const late = kind === "renew" ? lateAccountCount(stream, q) : 0;
 
   return (
     <Card>
@@ -160,20 +178,46 @@ export function StreamBlock({
             target {fmtEURCompact(quarter?.target ?? null)}
           </div>
           <Progress pct={qAtt} color={qRag.fg} />
-          <div
-            className="text-[11px] mt-2 inline-block px-2 py-0.5 rounded-full"
-            style={{ color: TONE[pace.tone].fg, background: TONE[pace.tone].bg }}
-          >
-            {pace.text}
+          <div className="flex items-center gap-2 flex-wrap mt-2">
+            <span
+              className="text-[11px] px-2 py-0.5 rounded-full"
+              style={{ color: TONE[pace.tone].fg, background: TONE[pace.tone].bg }}
+            >
+              {pace.text}
+            </span>
+            {/* La porte vers le détail par compte : le compteur dit tout de
+                suite s'il y a des comptes en retard ce trimestre. */}
+            <button
+              type="button"
+              onClick={() => setDetailOpen(true)}
+              className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full border transition-colors hover:bg-[#fde8ef]"
+              style={{ color: COLORS.brand, borderColor: "#f9c4d6" }}
+            >
+              {late > 0
+                ? `${late} account${late > 1 ? "s" : ""} behind · details →`
+                : kind === "renew"
+                  ? "Target by account →"
+                  : "Accounts billed →"}
+            </button>
           </div>
         </div>
       </div>
+
+      {detailOpen && (
+        <TargetDetailModal
+          title={`${title} · ${hint}`}
+          stream={stream}
+          kind={kind}
+          initialPeriod={q}
+          onClose={() => setDetailOpen(false)}
+        />
+      )}
 
       {top.length > 0 && (
         <div className="mt-4 pt-3 border-t" style={{ borderColor: COLORS.line }}>
           <div className="text-[11px] mb-1.5" style={{ color: COLORS.ink4 }}>
             Top accounts
-            {stream.accounts.length > top.length && ` · ${top.length} of ${stream.accounts.length}`}
+            {accounts.length > top.length && ` · ${top.length} of ${accounts.length}`}
           </div>
           <ul className="space-y-1">
             {top.map((a, i) => (

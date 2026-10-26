@@ -65,6 +65,22 @@ export type QuarterAmount = {
 // Un compte facturé sur l'année (bloc "DÉTAIL DES DEALS" du Sheet).
 export type AccountRevenue = { company: string; billed: number };
 
+// Facture d'un compte du rep attribuée à un autre owner (ex. target chez Leon,
+// facture saisie au nom de Magdalena) : elle compte chez cet owner, pas ici.
+export type AccountBilledElsewhere = {
+  quarter: QuarterAmount["quarter"];
+  owner: string | null; // prénom tel qu'écrit dans le Sheet, null si la facture n'a pas d'owner
+  billed: number;
+};
+
+// Target et facturé d'un compte du rep, par trimestre (lib/ae-activity/account-targets.ts).
+export type AccountTarget = {
+  company: string;
+  quarters: QuarterAmount[]; // Q1..Q4 ; target null = pas de target sur ce compte (New, ou facturé hors objectif)
+  revisedTarget: number | null; // "Target actualisé" 2026 du Sheet, seulement s'il diffère du target initial
+  billedElsewhere: AccountBilledElsewhere[];
+};
+
 // Un flux de revenu porté par un rep (New en tant qu'AE, Renew en tant qu'AM,
 // Renew en tant que CSM). Même forme dans les trois cas.
 export type RevenueStream = {
@@ -72,6 +88,10 @@ export type RevenueStream = {
   billed: number | null;
   quarters: QuarterAmount[]; // Q1..Q4
   accounts: AccountRevenue[]; // détail des comptes, montant décroissant
+  // Détail par compte et par trimestre, dont la somme redonne `quarters`.
+  // Absent des snapshots calculés avant le 2026-10-26, null si les onglets
+  // Targets / Factures étaient illisibles au dernier refresh.
+  byAccount?: AccountTarget[] | null;
 };
 
 export function emptyRevenueStream(): RevenueStream {

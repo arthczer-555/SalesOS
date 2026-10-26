@@ -2,6 +2,8 @@
 // période, statut RAG et KPIs dérivés.
 
 import type {
+  AccountRevenue,
+  AccountTarget,
   ActivityBucket,
   Coaching,
   FunnelStage,
@@ -443,7 +445,47 @@ function mergeStream(reps: RepSnapshot[], pick: (rv: RevenuePerf) => RevenueStre
     billed: sum((s) => s.billed),
     quarters: order.filter((q) => qMap.has(q)).map((q) => ({ quarter: q, ...qMap.get(q)! })),
     accounts: streams.flatMap((s) => s.accounts).sort((a, b) => b.billed - a.billed),
+    byAccount: mergeAccounts(streams),
   };
+}
+
+/**
+ * Détail par compte de l'équipe : un compte porté par deux reps (target chez
+ * l'un, facture au nom de l'autre) redevient une seule ligne. Les factures
+ * « billed elsewhere » sont donc déjà dans la ligne et ne sont plus signalées.
+ */
+function mergeAccounts(streams: RevenueStream[]): AccountTarget[] | null | undefined {
+  if (streams.some((s) => s.byAccount === undefined)) return undefined;
+  if (streams.some((s) => s.byAccount === null)) return null;
+  const byCompany = new Map<string, AccountTarget>();
+  for (const a of streams.flatMap((s) => s.byAccount ?? [])) {
+    const key = a.company.toLowerCase();
+    const cur = byCompany.get(key);
+    if (!cur) {
+      byCompany.set(key, { ...a, quarters: a.quarters.map((q) => ({ ...q })), billedElsewhere: [] });
+      continue;
+    }
+    cur.quarters.forEach((q, i) => {
+      const other = a.quarters[i];
+      if (other?.target != null) q.target = (q.target ?? 0) + other.target;
+      if (other?.billed != null) q.billed = (q.billed ?? 0) + other.billed;
+    });
+    cur.revisedTarget ??= a.revisedTarget;
+  }
+  return [...byCompany.values()];
+}
+
+/**
+ * Comptes facturés sur l'année, montant décroissant. Le détail par compte
+ * (mêmes filtres que le facturé affiché) prime sur le bloc « DÉTAIL DES
+ * DEALS » du Sheet, dont le total peut s'écarter du facturé du rep.
+ */
+export function yearAccounts(stream: RevenueStream): AccountRevenue[] {
+  if (!stream.byAccount) return stream.accounts;
+  return stream.byAccount
+    .map((a) => ({ company: a.company, billed: a.quarters.reduce((s, q) => s + (q.billed ?? 0), 0) }))
+    .filter((a) => a.billed > 0)
+    .sort((a, b) => b.billed - a.billed);
 }
 
 function mergeRevenue(reps: RepSnapshot[]): RevenuePerf {

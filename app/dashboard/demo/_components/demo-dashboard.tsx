@@ -184,13 +184,13 @@ export function DemoDashboard() {
           {rep && (
             <>
               {roles.includes("ae") && (
-                <StreamBlock title="My New" hint="AE role" stream={rep.revenue.newBiz} accent={accent} />
+                <StreamBlock title="My New" hint="AE role" kind="new" stream={rep.revenue.newBiz} accent={accent} />
               )}
               {roles.includes("am") && (
-                <StreamBlock title="My Renew" hint="AM role" stream={rep.revenue.renew} accent={accent} />
+                <StreamBlock title="My Renew" hint="AM role" kind="renew" stream={rep.revenue.renew} accent={accent} />
               )}
               {roles.includes("csm") && (
-                <StreamBlock title="My Renew" hint="CSM role" stream={rep.revenue.csmRenew} accent={accent} />
+                <StreamBlock title="My Renew" hint="CSM role" kind="renew" stream={rep.revenue.csmRenew} accent={accent} />
               )}
               {roles.length === 0 && (
                 <EmptyState

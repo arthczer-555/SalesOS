@@ -5,7 +5,6 @@ import type { Granularity, RepSnapshot, RevenueStream } from "@/lib/ae-activity/
 import { COLORS } from "@/lib/design/tokens";
 import {
   buildKpis,
-  fmtEUR,
   fmtEURCompact,
   revenueAttainment,
   ragColor,
@@ -22,6 +21,7 @@ import {
   FunnelChart,
   ActionsVsRevenueChart,
 } from "./charts";
+import { TargetDetailModal, type StreamKind, type TargetPeriod } from "./target-detail";
 
 // Codes techniques poussés par fetch-hubspot / build-snapshot → libellé lisible.
 const WARNING_LABEL: Record<string, string> = {
@@ -35,8 +35,7 @@ const WARNING_LABEL: Record<string, string> = {
   emails_split: "Cold vs deal split (emails)",
 };
 
-type RevenuePeriod = "year" | "Q1" | "Q2" | "Q3" | "Q4";
-const REVENUE_PERIODS: RevenuePeriod[] = ["year", "Q1", "Q2", "Q3", "Q4"];
+const REVENUE_PERIODS: TargetPeriod[] = ["year", "Q1", "Q2", "Q3", "Q4"];
 
 function DeltaBadge({ delta }: { delta?: Delta }) {
   if (!delta) return null;
@@ -84,100 +83,13 @@ function KpiCard({ kpi, accent }: { kpi: Kpi; accent: string }) {
   );
 }
 
-/** Liste des comptes facturés derrière une card revenu (source : Sheet). */
-function AccountsModal({
-  label,
-  stream,
-  onClose,
-}: {
-  label: string;
-  stream: RevenueStream;
-  onClose: () => void;
-}) {
-  const total = stream.accounts.reduce((s, a) => s + a.billed, 0);
-  // Le Sheet ventile les comptes à l'année mais pas au trimestre : quand le
-  // total des lignes s'écarte du facturé annoncé, c'est une incohérence de la
-  // source, autant la montrer plutôt que de la masquer.
-  const gap = stream.billed != null ? total - stream.billed : 0;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: "rgba(0,0,0,0.3)" }}
-      onClick={onClose}
-      role="presentation"
-    >
-      <div
-        className="bg-white rounded-2xl w-full max-w-lg shadow-xl max-h-[80vh] flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-label={`Account breakdown - ${label}`}
-      >
-        <div className="px-5 pt-5 pb-3 border-b" style={{ borderColor: COLORS.line }}>
-          <h3 className="text-[14px] font-semibold" style={{ color: COLORS.ink0 }}>
-            {label} · account breakdown
-          </h3>
-          <p className="text-[11px] mt-0.5" style={{ color: COLORS.ink4 }}>
-            {stream.accounts.length} account{stream.accounts.length > 1 ? "s" : ""} this year · from the revenue
-            Sheet
-          </p>
-        </div>
-
-        <div className="overflow-y-auto px-5 py-3 flex-1">
-          {stream.accounts.length === 0 ? (
-            <p className="text-[12px] py-6 text-center" style={{ color: COLORS.ink4 }}>
-              No account listed in the Sheet for this stream.
-            </p>
-          ) : (
-            <table className="w-full text-[12.5px]">
-              <tbody>
-                {stream.accounts.map((a, i) => (
-                  <tr key={`${a.company}-${i}`} className="border-b last:border-0" style={{ borderColor: COLORS.line }}>
-                    <td className="py-1.5 pr-3" style={{ color: COLORS.ink1 }}>
-                      {a.company}
-                    </td>
-                    <td className="py-1.5 text-right font-medium tabular-nums" style={{ color: COLORS.ink0 }}>
-                      {fmtEUR(a.billed)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div
-          className="px-5 py-3 border-t flex items-center justify-between"
-          style={{ borderColor: COLORS.line, background: COLORS.bgSoft }}
-        >
-          <div>
-            <span className="text-[11px]" style={{ color: COLORS.ink2 }}>
-              Rows total
-            </span>
-            {Math.abs(gap) > 1 && (
-              <span className="text-[10px] ml-2" style={{ color: COLORS.warn }}>
-                ⚠ {gap > 0 ? "+" : ""}
-                {fmtEUR(gap)} vs the Sheet billed total
-              </span>
-            )}
-          </div>
-          <span className="text-[13px] font-bold tabular-nums" style={{ color: COLORS.ink0 }}>
-            {fmtEUR(total)}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 /**
  * Card revenu (niveau 1) : sélecteur année / trimestre, barre d'atteinte RAG et
- * accès au détail des comptes. Indépendante du sélecteur de granularité globale,
- * le revenu étant trimestriel par nature.
+ * accès au détail par compte (target, facturé, reste à facturer). Indépendante
+ * du sélecteur de granularité globale, le revenu étant trimestriel par nature.
  */
-function RevenueCard({ label, stream }: { label: string; stream: RevenueStream }) {
-  const [period, setPeriod] = useState<RevenuePeriod>("year");
+function RevenueCard({ label, kind, stream }: { label: string; kind: StreamKind; stream: RevenueStream }) {
+  const [period, setPeriod] = useState<TargetPeriod>("year");
   const [openDetail, setOpenDetail] = useState(false);
 
   const q = period === "year" ? null : stream.quarters.find((x) => x.quarter === period);
@@ -186,7 +98,9 @@ function RevenueCard({ label, stream }: { label: string; stream: RevenueStream }
 
   const att = revenueAttainment(billed, target);
   const rag = ragColor(att);
-  const canDrill = stream.accounts.length > 0;
+  // Un snapshot ancien (undefined) ou une source en échec (null) ouvrent quand
+  // même le détail, qui explique pourquoi il est vide.
+  const canDrill = stream.byAccount ? stream.byAccount.length > 0 : true;
 
   return (
     <div className="rounded-xl border px-4 py-3.5" style={{ borderColor: COLORS.line, background: COLORS.bgCard }}>
@@ -244,12 +158,20 @@ function RevenueCard({ label, stream }: { label: string; stream: RevenueStream }
             className="text-[10.5px] font-medium hover:underline shrink-0"
             style={{ color: COLORS.brand }}
           >
-            breakdown →
+            by account →
           </button>
         )}
       </div>
 
-      {openDetail && <AccountsModal label={label} stream={stream} onClose={() => setOpenDetail(false)} />}
+      {openDetail && (
+        <TargetDetailModal
+          title={label}
+          stream={stream}
+          kind={kind}
+          initialPeriod={period}
+          onClose={() => setOpenDetail(false)}
+        />
+      )}
     </div>
   );
 }
@@ -311,9 +233,9 @@ export function RepBlock({ rep, gran }: { rep: RepSnapshot; gran: Granularity })
           className="grid gap-2.5 mb-5"
           style={{ gridTemplateColumns: `repeat(${revenueCards}, minmax(0, 1fr))` }}
         >
-          <RevenueCard label="New billed 2026" stream={rev.newBiz} />
-          {showRenew && <RevenueCard label="Renew billed 2026 (AM)" stream={rev.renew} />}
-          {showCsm && <RevenueCard label="Renew billed 2026 (CSM)" stream={rev.csmRenew} />}
+          <RevenueCard label="New billed 2026" kind="new" stream={rev.newBiz} />
+          {showRenew && <RevenueCard label="Renew billed 2026 (AM)" kind="renew" stream={rev.renew} />}
+          {showCsm && <RevenueCard label="Renew billed 2026 (CSM)" kind="renew" stream={rev.csmRenew} />}
         </div>
       ) : (
         <div className="text-[11px] mb-5 rounded-lg px-3 py-2" style={{ color: COLORS.ink3, background: COLORS.bgSoft }}>

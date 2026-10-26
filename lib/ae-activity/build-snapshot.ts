@@ -28,7 +28,8 @@ import {
   type OwnerHubspotContext,
 } from "./fetch-hubspot";
 import { listSalesReps } from "./reps";
-import { fetchRevenueSheet, repKeyFromName } from "./revenue-sheet";
+import { fetchRevenueSheet, repKeyFromName, type StreamKey } from "./revenue-sheet";
+import { fetchAccountTargets } from "./account-targets";
 import { fetchClaapMeetingsHeld } from "./claap-meetings";
 import { fetchSlackSelfBookedMeetings } from "./slack-meetings";
 import { fetchMarketingLeads, buildLeadsFunnel } from "./leads";
@@ -93,14 +94,16 @@ export async function runAeActivityRefresh(opts: RefreshOptions = {}): Promise<R
     }
 
     // Sources partagées (fetchées une seule fois pour tous les reps).
-    const [stages, dispositionMap, revenueSheet, claapHeld, slackBooked, leads] = await Promise.all([
+    const [stages, dispositionMap, revenueSheet, accountTargets, claapHeld, slackBooked, leads] = await Promise.all([
       fetchSalesPipelineStages(),
       fetchDispositionLabelMap(),
       fetchRevenueSheet(),
+      fetchAccountTargets(),
       fetchClaapMeetingsHeld(start),
       fetchSlackSelfBookedMeetings(start),
       fetchMarketingLeads(start),
     ]);
+    if (!accountTargets.ok) console.warn("[ae-activity] account targets failed:", accountTargets.error);
 
     const ctx: OwnerHubspotContext = { startDay: start, endDay: end, stages, dispositionMap, leads };
     const refreshedAt = new Date().toISOString();
@@ -131,15 +134,19 @@ export async function runAeActivityRefresh(opts: RefreshOptions = {}): Promise<R
 
         const sheetKey = repKeyFromName(rep.name);
         const rr = revenueSheet.byRep.get(sheetKey);
-        const revenue: RevenuePerf = rr
-          ? { matched: true, sheetName: sheetKey, newBiz: rr.newBiz, renew: rr.renew, csmRenew: rr.csmRenew }
-          : {
-              matched: false,
-              sheetName: null,
-              newBiz: emptyRevenueStream(),
-              renew: emptyRevenueStream(),
-              csmRenew: emptyRevenueStream(),
-            };
+        // Détail par compte : null (et non []) si la source a échoué, pour que
+        // l'UI dise « indisponible » au lieu d'afficher un portefeuille vide.
+        const withAccounts = (stream: StreamKey) => ({
+          ...(rr?.[stream] ?? emptyRevenueStream()),
+          byAccount: accountTargets.ok ? accountTargets.forRep(sheetKey, stream) : null,
+        });
+        const revenue: RevenuePerf = {
+          matched: Boolean(rr),
+          sheetName: rr ? sheetKey : null,
+          newBiz: withAccounts("newBiz"),
+          renew: withAccounts("renew"),
+          csmRenew: withAccounts("csmRenew"),
+        };
 
         const coaching = await buildCoaching(rep.userId, start);
 

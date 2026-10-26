@@ -7,9 +7,22 @@ import { config } from "dotenv";
 config({ path: ".env.local" });
 
 import { fetchRevenueSheet } from "../lib/ae-activity/revenue-sheet";
-import type { RevenueStream } from "../lib/ae-activity/types";
+import { fetchAccountTargets } from "../lib/ae-activity/account-targets";
+import type { AccountTarget, RevenueStream } from "../lib/ae-activity/types";
 
-const eur = (n: number | null): string => (n == null ? "—" : `${Math.round(n).toLocaleString("fr-FR")} €`);
+const eur = (n: number | null): string => (n == null ? "-" : `${Math.round(n).toLocaleString("fr-FR")} €`);
+
+/** Le détail par compte doit redonner, trimestre par trimestre, le total du rep. */
+function checkAccounts(s: RevenueStream, accounts: AccountTarget[], withTargets: boolean): void {
+  for (const q of s.quarters) {
+    const i = Number(q.quarter.slice(1)) - 1;
+    const t = accounts.reduce((x, a) => x + (a.quarters[i]?.target ?? 0), 0);
+    const b = accounts.reduce((x, a) => x + (a.quarters[i]?.billed ?? 0), 0);
+    if ((withTargets && Math.abs(t - (q.target ?? 0)) > 1) || Math.abs(b - (q.billed ?? 0)) > 1) {
+      console.log(`    ⚠ ${q.quarter} comptes ${eur(b)}/${eur(withTargets ? t : null)} vs rep ${eur(q.billed)}/${eur(q.target)}`);
+    }
+  }
+}
 
 function renderStream(label: string, s: RevenueStream): void {
   if (s.target == null && s.billed == null && s.accounts.length === 0) return;
@@ -31,14 +44,17 @@ function renderStream(label: string, s: RevenueStream): void {
 
 async function main() {
   const t0 = Date.now();
-  const sheet = await fetchRevenueSheet();
-  console.log(`durée: ${Date.now() - t0}ms  ok=${sheet.ok}  reps=${sheet.byRep.size}\n`);
+  const [sheet, byAccount] = await Promise.all([fetchRevenueSheet(), fetchAccountTargets()]);
+  console.log(`durée: ${Date.now() - t0}ms  ok=${sheet.ok}  reps=${sheet.byRep.size}  détail par compte=${byAccount.ok ? "ok" : byAccount.error}\n`);
 
   for (const [key, rep] of [...sheet.byRep.entries()].sort()) {
     console.log(`── ${key}`);
     renderStream("New (AE)", rep.newBiz);
+    if (byAccount.ok) checkAccounts(rep.newBiz, byAccount.forRep(key, "newBiz"), false);
     renderStream("Renew (AM)", rep.renew);
+    if (byAccount.ok) checkAccounts(rep.renew, byAccount.forRep(key, "renew"), true);
     renderStream("Renew (CSM)", rep.csmRenew);
+    if (byAccount.ok) checkAccounts(rep.csmRenew, byAccount.forRep(key, "csmRenew"), true);
   }
 }
 

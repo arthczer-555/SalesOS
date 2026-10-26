@@ -3,9 +3,10 @@
 // "Dashboard revenue 2026 .xlsx" (source de vérité business, pas HubSpot).
 //
 // Le montant des deals HubSpot est peu fiable : le "facturé" du Sheet est la
-// vraie donnée. On lit via l'OAuth Google existant (GOOGLE_DRIVE_REFRESH_TOKEN),
-// download Drive + parsing xlsx (lib `xlsx` déjà installée), même pattern que
-// lib/billing/google-sheet.ts.
+// vraie donnée. Le classeur est celui que partagent les outils revenue de
+// CoachelloAI (lib/billing/revenue-workbook.ts : un téléchargement par minute),
+// ce qui permet à account-targets.ts de relire les onglets Targets et Factures
+// du même refresh sans second téléchargement.
 //
 // Parsing par LIBELLÉS de tables (jamais par coordonnées de cellules) pour
 // survivre aux changements de mise en page. Best-effort : si l'env manque, si
@@ -13,6 +14,7 @@
 // ────────────────────────────────────────────────────────────────────────
 
 import * as XLSX from "xlsx";
+import { getRevenueWorkbook } from "@/lib/billing/revenue-workbook";
 import {
   emptyRevenueStream,
   type AccountRevenue,
@@ -20,13 +22,9 @@ import {
   type RevenueStream,
 } from "./types";
 
-// Fichier "Dashboard revenue 2026 .xlsx" (partagé, mis à jour en continu).
-// Surchargagle via env si le fichier de référence change.
-const DEFAULT_FILE_ID = "1zjB-phoCampmQOFNwwiYnw6jwjvrfwmb";
-
 // Les 3 onglets de suivi ont la MÊME structure (bloc de perf par rep + bloc
 // "DÉTAIL DES DEALS"), seuls les libellés de colonnes changent.
-type StreamKey = "newBiz" | "renew" | "csmRenew";
+export type StreamKey = "newBiz" | "renew" | "csmRenew";
 
 export type RepRevenue = {
   newBiz: RevenueStream;
@@ -38,33 +36,6 @@ export type RevenueSheet = {
   ok: boolean;
   byRep: Map<string, RepRevenue>; // clé = prénom normalisé
 };
-
-let _driveAccessToken: string | null = null;
-let _driveTokenExpiry = 0;
-
-async function getDriveAccessToken(): Promise<string> {
-  if (_driveAccessToken && Date.now() < _driveTokenExpiry) return _driveAccessToken;
-  const refreshToken = process.env.GOOGLE_DRIVE_REFRESH_TOKEN;
-  if (!refreshToken) throw new Error("GOOGLE_DRIVE_REFRESH_TOKEN manquant");
-  const res = await fetch("https://oauth2.googleapis.com/token", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: process.env.GOOGLE_CLIENT_ID!,
-      client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-      grant_type: "refresh_token",
-    }),
-  });
-  if (!res.ok) {
-    const errBody = await res.text().catch(() => "");
-    throw new Error(`Refresh token Drive échoué (${res.status}): ${errBody.slice(0, 120)}`);
-  }
-  const { access_token, expires_in } = await res.json();
-  _driveAccessToken = access_token;
-  _driveTokenExpiry = Date.now() + ((expires_in ?? 3600) - 60) * 1000;
-  return access_token;
-}
 
 // "400,000 €" / "€0" / 0 / "" → nombre (ou null).
 function parseAmount(raw: unknown): number | null {
@@ -261,20 +232,9 @@ function parseWorkbook(wb: XLSX.WorkBook, byRep: Map<string, RepRevenue>): Set<S
 }
 
 export async function fetchRevenueSheet(): Promise<RevenueSheet> {
-  const fileId = process.env.AE_REVENUE_DRIVE_FILE_ID || DEFAULT_FILE_ID;
   const byRep = new Map<string, RepRevenue>();
   try {
-    const token = await getDriveAccessToken();
-    const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-    if (!res.ok) {
-      const t = await res.text().catch(() => "");
-      throw new Error(`Drive download ${res.status}: ${t.slice(0, 120)}`);
-    }
-    const buf = Buffer.from(await res.arrayBuffer());
-    const wb = XLSX.read(buf, { type: "buffer" });
+    const wb = await getRevenueWorkbook();
     const found = parseWorkbook(wb, byRep);
     // Les onglets Renew/CSM sont best-effort : c'est le New qui conditionne
     // la validité du parsing (c'est la métrique AE de référence).
