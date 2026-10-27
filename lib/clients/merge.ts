@@ -233,6 +233,15 @@ export function buildMergeUpdate(
     if (declined.length > 0) update.declined_program_names = declined;
   }
 
+  // Canaux Slack des deux fiches, un "Unlink" fait sur l'une l'emporte.
+  // Ignoré tant que la migration clients_slack_channels.sql n'est pas appliquée.
+  if (kept.slack_channels !== undefined) {
+    const declinedChannels = new Set([...(kept.declined_slack_channel_ids ?? []), ...(absorbed.declined_slack_channel_ids ?? [])]);
+    const channels = uniqBy([...(kept.slack_channels ?? []), ...(absorbed.slack_channels ?? [])], (c) => c.id).filter((c) => !declinedChannels.has(c.id));
+    if (channels.length > 0 || kept.slack_channels?.length) update.slack_channels = channels;
+    if (declinedChannels.size > 0) update.declined_slack_channel_ids = [...declinedChannels];
+  }
+
   if (opts.billing) {
     update.billing = opts.billing;
     if (opts.billingFromSheet) update.billing_refreshed_at = now;

@@ -29,8 +29,9 @@ import { TIER_HINT, TierSelect } from "../../_components/tier-select";
 import type { ClientTabKey } from "./tabs/key-insights-tab";
 
 // Header de la fiche : identité (avatar, nom, santé, tier), une ligne de texte
-// "AE … · AM … · CS … · Signed … · Billed …" (AM et CS cliquables pour les
-// changer, rôles fusionnés quand c'est la même personne), deux actions (Refresh
+// "AE … · AM … · CS … · Signed … · Billed … · #canal" (AM et CS cliquables pour
+// les changer, rôles fusionnés quand c'est la même personne ; le canal Slack
+// dédié, ou "No Slack channel", ouvre le sélecteur de canal), deux actions (Refresh
 // et le menu ⋯) et la barre d'onglets. Les actions secondaires vivent dans ⋯.
 
 type Role = "AE" | "AM" | "CS";
@@ -81,6 +82,7 @@ export type HeaderActions = {
   onMerge: () => void;
   onConfirmMeetings: () => void;
   onOpenReport: () => void;
+  onOpenSlack: () => void;
   onTierSaved: () => void;
 };
 
@@ -123,6 +125,7 @@ export function ClientHeader({
       ? `${TIER_HINT} Set by ${client.tier_set_by}${client.tier_set_at ? ` on ${fmtDay(client.tier_set_at, true)}` : ""}.`
       : TIER_HINT;
   const people = peopleOf(client, done, handedOver);
+  const slackChannels = client.slack_channels ?? [];
   const onPerson = handedOver ? actions.onChangeAssignees : actions.onOpenHandover;
 
   const tabs: TabItem[] = [
@@ -228,6 +231,21 @@ export function ClientHeader({
                     </span>
                   </>
                 )
+              )}
+              {/* Sans la migration clients_slack_channels.sql (undefined) : rien. */}
+              {done && client.slack_channels !== undefined && (
+                <>
+                  {SEP}
+                  <button
+                    type="button"
+                    className="ch-name-btn"
+                    onClick={actions.onOpenSlack}
+                    title={slackChannels.length ? "Dedicated Slack channel, read in full by every refresh. Click to change." : "No dedicated Slack channel. Click to link one."}
+                    style={slackChannels.length ? undefined : { color: COLORS.ink3 }}
+                  >
+                    {slackChannels.length ? slackChannels.map((c) => `#${c.name}`).join(", ") : "No Slack channel"}
+                  </button>
+                </>
               )}
             </div>
           </div>

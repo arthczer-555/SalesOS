@@ -22,6 +22,7 @@ import { MissingInfoEmailModal } from "./_components/missing-info-email-modal";
 import { RefreshReportModal } from "./_components/whats-new-card";
 import { AccountCompaniesPanel } from "./_components/account-companies-panel";
 import { MergeModal } from "./_components/merge-modal";
+import { SlackChannelModal } from "./_components/slack-channel-modal";
 
 // Fiche client v2 : header (identité, Refresh, Options, onglets) + 4 onglets
 // pleine largeur. Ce fichier ne fait que l'orchestration (données, polling du
@@ -118,6 +119,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
   const [assigneesMode, setAssigneesMode] = useState<"handover" | "change" | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [mergeOpen, setMergeOpen] = useState(false);
+  const [slackOpen, setSlackOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Distingue une fermeture "confirmée" (on reste sur la fiche, l'enrichissement
   // démarre) d'une fermeture "abandon" (on renvoie vers la liste, cf. gate).
@@ -331,6 +333,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
             onMerge: () => setMergeOpen(true),
             onConfirmMeetings: () => setConfirmOpen(true),
             onOpenReport: () => setReportOpen(true),
+            onOpenSlack: () => setSlackOpen(true),
             onTierSaved: reload,
           }}
         />
@@ -354,7 +357,17 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
       {refreshing && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 32px", background: COLORS.sand, borderBottom: `1px solid ${COLORS.line}`, color: COLORS.ink1, fontSize: 12, fontWeight: 500, flexShrink: 0 }}>
           <Loader2 size={13} className="animate-spin" />
-          Refreshing from Claap, HubSpot, Slack and the news. The page updates by itself, usually in under a minute.
+          <span style={{ flex: 1 }}>Refreshing from Claap, HubSpot, Slack and the news. The page updates by itself, usually in under a minute.</span>
+          {/* Canal dédié : sans canal relié, le refresh en cherche un (où l'app est membre). */}
+          {client.slack_channels !== undefined && (client.slack_channels ?? []).length === 0 && (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0, color: COLORS.warn }}>
+              <AlertTriangle size={12} />
+              No dedicated Slack channel ·
+              <button type="button" className="ch-link" style={{ fontSize: 12 }} onClick={() => setSlackOpen(true)}>
+                Link one
+              </button>
+            </span>
+          )}
         </div>
       )}
 
@@ -394,7 +407,23 @@ export default function ClientDetailPage({ params }: { params: Promise<{ id: str
           accountCompanies={client.account_companies}
           onUpdated={reload}
           onRefreshStarted={watchRefresh}
+          onLinkSlack={() => {
+            setReportOpen(false);
+            setSlackOpen(true);
+          }}
           onClose={() => setReportOpen(false)}
+        />
+      )}
+      {slackOpen && (
+        <SlackChannelModal
+          clientId={client.id}
+          clientName={client.company_name}
+          onClose={() => setSlackOpen(false)}
+          onLinked={(refreshStarted) => {
+            if (refreshStarted) watchRefresh();
+            reload();
+          }}
+          onUnlinked={reload}
         />
       )}
 

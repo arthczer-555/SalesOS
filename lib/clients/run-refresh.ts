@@ -25,13 +25,14 @@ import { generateInsightsAI } from "./insights-ai";
 import { generateCoachBrief } from "./coach-brief";
 import { generateHubspotSuggestions } from "./hubspot-suggestions";
 import { fetchHubspotDealFields } from "./hubspot-fields";
-import { fetchClientSlackActivity } from "./slack-context";
+import { fetchClientSlackActivity, type ClientSlackActivity } from "./slack-context";
 import { assignProgramIds, detectClientPrograms, loadLatestPrograms, mergePrograms, programChangesTouchBrief, type DetectedProgram } from "./programs";
 import { summarizePrograms } from "./program-summary";
 import type {
   AccountCompany,
   ClientFields,
   ClientProgram,
+  ClientSlackChannel,
   CoachBrief,
   ConfirmedRecording,
   DealRecap,
@@ -54,7 +55,9 @@ import { withForcedTool } from "../models/compat";
 //     (account-discovery.ts), ajoutées en "pending" et confirmées ou retirées
 //     depuis le panneau de la fiche ;
 //   - HubSpot : engagements deal + deals liés + companies du compte ;
-//   - Slack : canal dédié au client + mentions ailleurs (slack-context.ts) ;
+//   - Slack : canaux dédiés reliés à la fiche (le refresh relie ceux trouvés où
+//     l'app CoachelloHQ est membre) + #12-everything-clients + mentions
+//     ailleurs (slack-context.ts) ;
 //   - News : Tavily + Google News, triées "important pour le compte".
 // S'il y a du nouveau, ré-extrait TOUS les fields et fusionne (merge-fields.ts :
 // une édition manuelle n'est remplacée que par une source plus récente), et
@@ -120,6 +123,9 @@ type ClientRefreshRow = {
   programs?: ClientProgram[] | null;
   declined_program_names?: string[] | null;
   programs_detected_at?: string | null;
+  // Idem, migration clients_slack_channels.sql.
+  slack_channels?: ClientSlackChannel[] | null;
+  declined_slack_channel_ids?: string[] | null;
 };
 
 // Sections dont un changement rend le coach brief obsolète (les programmes :
@@ -253,8 +259,14 @@ export async function runClientRefresh(
       fetchClientSlackActivity({
         companyName,
         lastReadAt: row.last_refreshed_at,
-      }).catch((e) => ({
-        channels: [] as Array<{ id: string; name: string }>,
+        // undefined sans la migration clients_slack_channels.sql : canaux lus, pas reliés.
+        linked: row.slack_channels === undefined ? undefined : (row.slack_channels ?? []),
+        declinedIds: row.declined_slack_channel_ids ?? [],
+      }).catch((e): ClientSlackActivity => ({
+        channels: [],
+        added: [],
+        firstRead: [],
+        unjoined: [],
         messages: [],
         errors: [`Slack failed (${e instanceof Error ? e.message : e})`],
       })),
@@ -268,7 +280,10 @@ export async function runClientRefresh(
     const newClaap = ctx.meetings.filter((m) => after(m.meeting_started_at, sinceTs)).length;
     const claapNew = Math.max(newClaap, newlyDiscoveredCount);
     const hubspotNew = (ctx.deal?.engagements ?? []).filter((e) => after(e.date, sinceTs)).length;
-    const slackNew = slack.messages.filter((m) => after(m.date, sinceTs)).length;
+    // Un canal relié depuis le dernier passage n'a jamais été lu : tout son
+    // historique compte comme nouveau (sinon les fields ne seraient pas relus).
+    const firstReadChannels = new Set(slack.firstRead);
+    const slackNew = slack.messages.filter((m) => after(m.date, sinceTs) || firstReadChannels.has(m.channel)).length;
     const newActivityCount = claapNew + hubspotNew + slackNew;
 
     const prevScore = row.health && typeof row.health.score === "number" ? row.health.score : null;
@@ -570,7 +585,9 @@ export async function runClientRefresh(
           // Une erreur partielle (un canal illisible) n'invalide pas le reste : la
           // source n'est "KO" que si rien n'a pu être lu.
           error: slack.errors.length && slack.messages.length === 0 ? slack.errors.join(" · ") : null,
-          channel: slack.channels.length ? slack.channels.map((c) => `#${c.name}`).join(", ") : null,
+          channels: slack.channels.map((c) => ({ id: c.id, name: c.name, source: c.source })),
+          added: slack.added.length ? slack.added.map((c) => c.name) : undefined,
+          unjoined: slack.unjoined.length ? slack.unjoined.map((c) => c.name) : undefined,
         },
         news: { new: newsNew, error: newsError },
       },
@@ -596,6 +613,24 @@ export async function runClientRefresh(
       report.program_changes = final.changes.length > 0 ? final.changes : undefined;
       if (neverDetected && final.programs.length > 0) {
         report.notes = [...(report.notes ?? []), `Programs detected for the first time: ${final.programs.map((p) => p.name).join(", ")}.`];
+      }
+    }
+
+    // Canaux Slack : nouveaux canaux reliés automatiquement, noms à jour.
+    // Relu juste avant l'écriture : un Link / Unlink fait pendant le refresh ne
+    // doit pas être écrasé par la liste lue au départ.
+    if (row.slack_channels !== undefined) {
+      const liveNames = new Map(slack.channels.map((c) => [c.id, c.name]));
+      const renamed = (row.slack_channels ?? []).some((c) => liveNames.has(c.id) && liveNames.get(c.id) !== c.name);
+      if (slack.added.length > 0 || renamed) {
+        const { data: latest } = await db.from("clients").select("slack_channels, declined_slack_channel_ids").eq("id", clientId).single();
+        const latestList = (latest?.slack_channels as ClientSlackChannel[] | null) ?? [];
+        const latestDeclined = new Set((latest?.declined_slack_channel_ids as string[] | null) ?? []);
+        const latestIds = new Set(latestList.map((c) => c.id));
+        updatePayload.slack_channels = [
+          ...latestList.map((c) => ({ ...c, name: liveNames.get(c.id) ?? c.name })),
+          ...slack.added.filter((c) => !latestIds.has(c.id) && !latestDeclined.has(c.id)),
+        ];
       }
     }
 

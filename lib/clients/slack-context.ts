@@ -1,9 +1,15 @@
 import { searchSlackMessages, slackBotGet } from "@/lib/slack/search";
+import { SLACK_APP_NAME, type ClientSlackChannel } from "./types";
 
 // Activité Slack d'un client pour le refresh : (1) les canaux dédiés au client
-// (#engie, #adyen, #coachello-adyen…) : jusqu'à 3 canaux auto-matchés sur le nom
-// de la société (un client a souvent un ancien et un nouveau canal). Lus via le
-// bot, ou via la recherche du user token quand le bot n'est pas membre ;
+// (#engie, #adyen, #coachello-adyen…), reliés à la fiche (clients.slack_channels)
+// et lus en entier via le bot. Un canal n'est dédié que si l'app CoachelloHQ en
+// est membre : le refresh relie tout seul les canaux dont le nom ressemble à la
+// société et où l'app est présente (jusqu'à 3, un client a souvent un ancien et
+// un nouveau canal), on peut aussi en relier un à la main depuis la fiche. Ceux
+// où l'app n'est pas sont remontés dans `unjoined` ("invite CoachelloHQ"), pas
+// lus : pas d'auto-join (visible de tous les membres) ni de lecture détournée
+// par le user token ;
 // (2) les canaux partagés lus par défaut (#12-everything-clients : recaps de
 // meetings, échanges d'équipe sur tous les clients) : messages qui citent la
 // société + TOUT leur thread (les réponses ne la nomment pas forcément) ;
@@ -21,11 +27,21 @@ export type ClientSlackMessage = {
 };
 
 export type ClientSlackActivity = {
-  // Canaux client lus (auto-matchés à chaque refresh).
-  channels: Array<{ id: string; name: string }>;
+  // Canaux dédiés lus : ceux reliés à la fiche (noms à jour) + ceux reliés
+  // automatiquement à ce passage.
+  channels: ClientSlackChannel[];
+  // Reliés automatiquement à ce passage, à enregistrer sur la fiche.
+  added: ClientSlackChannel[];
+  // Canaux lus pour la première fois (reliés depuis le dernier passage) : tout
+  // leur historique sur la fenêtre est nouveau pour la fiche.
+  firstRead: string[];
+  // Canaux qui ressemblent au compte mais où l'app n'est pas.
+  unjoined: Array<{ id: string; name: string }>;
   messages: ClientSlackMessage[];
   errors: string[];
 };
+
+type ListedChannel = { id: string; name: string; is_private?: boolean; is_member?: boolean };
 
 const RECENT_DAYS = 45;
 const FIRST_READ_DAYS = 90;
@@ -88,8 +104,10 @@ export function channelMatchScore(channelName: string, companyName: string): num
   return 0;
 }
 
-async function listChannels(): Promise<{ channels: Array<{ id: string; name: string }>; error: string | null }> {
-  const all: Array<{ id: string; name: string }> = [];
+// Canaux visibles du bot : tous les publics (is_member dit s'il y est) et les
+// privés dont il est membre. Sert aussi au sélecteur de la fiche.
+export async function listChannels(): Promise<{ channels: ListedChannel[]; error: string | null }> {
+  const all: ListedChannel[] = [];
   let cursor: string | undefined;
   do {
     const params: Record<string, string> = {
@@ -99,7 +117,7 @@ async function listChannels(): Promise<{ channels: Array<{ id: string; name: str
     };
     if (cursor) params.cursor = cursor;
     const data = await slackBotGet<{
-      channels?: Array<{ id: string; name: string }>;
+      channels?: ListedChannel[];
       response_metadata?: { next_cursor?: string };
     }>("/conversations.list", params);
     if (!data.ok) return { channels: all, error: data.error };
@@ -109,16 +127,25 @@ async function listChannels(): Promise<{ channels: Array<{ id: string; name: str
   return { channels: all, error: null };
 }
 
-function matchClientChannels(
-  all: Array<{ id: string; name: string }>,
-  companyName: string,
-): Array<{ id: string; name: string }> {
+// Canaux dont le nom ressemble à la société, du plus proche au moins proche.
+export function matchClientChannels<T extends { id: string; name: string }>(all: T[], companyName: string): T[] {
   return all
-    .map((ch) => ({ id: ch.id, name: ch.name, score: channelMatchScore(ch.name, companyName) }))
-    .filter((ch) => ch.score > 0 && !NOISY_CHANNEL.test(ch.name) && !DEFAULT_SHARED_CHANNELS.includes(ch.name))
-    .sort((a, b) => b.score - a.score || a.name.length - b.name.length)
-    .slice(0, MAX_AUTO_CHANNELS)
-    .map(({ id, name }) => ({ id, name }));
+    .map((ch) => ({ ch, score: channelMatchScore(ch.name, companyName) }))
+    .filter(({ ch, score }) => score > 0 && !NOISY_CHANNEL.test(ch.name) && !isSharedChannel(ch.name))
+    .sort((a, b) => b.score - a.score || a.ch.name.length - b.ch.name.length)
+    .map(({ ch }) => ch);
+}
+
+// #12-everything-clients est lu pour tous les clients : jamais "dédié".
+export function isSharedChannel(name: string): boolean {
+  return DEFAULT_SHARED_CHANNELS.includes(name);
+}
+
+// Message d'erreur lisible pour un canal relié qu'on n'a pas pu lire.
+function channelReadError(name: string, error: string): string {
+  if (error === "not_in_channel") return `${SLACK_APP_NAME} is no longer in #${name}: invite it back to read the channel, or unlink it.`;
+  if (error === "channel_not_found") return `#${name} was deleted, or ${SLACK_APP_NAME} can no longer see it.`;
+  return `Could not read #${name} (${error})`;
 }
 
 type RawSlackMessage = {
@@ -230,45 +257,64 @@ export async function fetchClientSlackActivity(opts: {
   // Dernier passage du refresh : sert à choisir la fenêtre (45 j, ou 90 j au
   // tout premier passage). Le "nouveau" est compté par l'appelant.
   lastReadAt?: string | null;
+  // Canaux reliés à la fiche et retirés à la main (jamais re-reliés). linked
+  // undefined = migration clients_slack_channels.sql absente : les canaux
+  // trouvés sont lus mais ne sont pas reliés (rien à enregistrer).
+  linked?: ClientSlackChannel[];
+  declinedIds?: string[];
 }): Promise<ClientSlackActivity> {
   const errors: string[] = [];
   if (!process.env.SLACK_BOT_TOKEN && !process.env.SLACK_USER_TOKEN) {
-    return { channels: [], messages: [], errors: ["Slack is not configured"] };
+    return { channels: [], added: [], firstRead: [], unjoined: [], messages: [], errors: ["Slack is not configured"] };
   }
 
   const days = opts.lastReadAt ? RECENT_DAYS : FIRST_READ_DAYS;
   const oldestMs = Date.now() - days * 24 * 60 * 60 * 1000;
   const oldestTs = Math.floor(oldestMs / 1000);
+  const firstReadOldestTs = Math.floor((Date.now() - FIRST_READ_DAYS * 24 * 60 * 60 * 1000) / 1000);
 
-  // ── Canaux dédiés ─────────────────────────────────────────────────────────
+  // ── Canaux dédiés : reliés à la fiche + trouvés à ce passage ─────────────
   const listed = process.env.SLACK_BOT_TOKEN ? await listChannels() : { channels: [], error: null };
   if (listed.error && listed.channels.length === 0) errors.push(`Slack channel lookup failed (${listed.error})`);
-  const channels = matchClientChannels(listed.channels, opts.companyName);
+  const listedById = new Map(listed.channels.map((c) => [c.id, c]));
+  const persist = opts.linked !== undefined;
+  // Nom à jour (un canal renommé garde son id).
+  const linked = (opts.linked ?? []).map((c) => {
+    const live = listedById.get(c.id);
+    return live && live.name !== c.name ? { ...c, name: live.name } : c;
+  });
+  const linkedIds = new Set(linked.map((c) => c.id));
+  const declined = new Set(opts.declinedIds ?? []);
+  const matches = matchClientChannels(listed.channels, opts.companyName).filter((c) => !linkedIds.has(c.id) && !declined.has(c.id));
+  const now = new Date().toISOString();
+  const added: ClientSlackChannel[] = matches
+    .filter((c) => c.is_member)
+    .slice(0, Math.max(0, MAX_AUTO_CHANNELS - linked.length))
+    .map((c) => ({ id: c.id, name: c.name, source: "auto", linked_at: now }));
+  const unjoined = matches
+    .filter((c) => !c.is_member)
+    .slice(0, MAX_AUTO_CHANNELS)
+    .map((c) => ({ id: c.id, name: c.name }));
+  const channels = [...linked, ...added];
   const clientChannelNames = new Set(channels.map((c) => c.name));
 
-  const raws: Array<{ m: RawSlackMessage; channel: string; inClient: boolean }> = [];
+  // Relié depuis le dernier passage : jamais lu, on remonte sur 90 jours. Sans
+  // migration, rien n'est relié : pas de "première lecture" à chaque passage.
+  const lastReadMs = opts.lastReadAt ? new Date(opts.lastReadAt).getTime() : null;
+  const firstRead = persist
+    ? channels.filter((c) => lastReadMs === null || new Date(c.linked_at).getTime() > lastReadMs).map((c) => c.name)
+    : [];
+
+  const raws: Array<{ m: RawSlackMessage; channel: string; inClient: boolean; minTs: number }> = [];
   const after = new Date(oldestMs - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   for (const channel of channels) {
-    const viaBot = process.env.SLACK_BOT_TOKEN ? await readChannel(channel.id, oldestTs) : { raw: [], error: "slack_bot_token_missing" };
-    if (!viaBot.error) {
-      for (const m of viaBot.raw) raws.push({ m, channel: channel.name, inClient: true });
-    } else {
-      // Bot pas membre du canal (cas courant : il n'est invité que dans quelques
-      // canaux) : on lit le canal via la recherche du user token, qui voit tout
-      // ce que voit l'utilisateur qui a installé l'app.
-      const viaSearch = await searchSlackMessages(`in:#${channel.name}`, { after, count: 100 });
-      if (!viaSearch.error) {
-        for (const m of viaSearch.messages) {
-          raws.push({ m: { ts: m.timestamp, text: m.text, user: m.user }, channel: channel.name, inClient: true });
-        }
-      } else {
-        errors.push(
-          viaBot.error === "not_in_channel"
-            ? `Could not read #${channel.name}: invite the Slack bot to the channel.`
-            : `Could not read #${channel.name} (${viaBot.error})`,
-        );
-      }
+    const minTs = firstRead.includes(channel.name) ? firstReadOldestTs : oldestTs;
+    const res = await readChannel(channel.id, minTs);
+    if (res.error) {
+      errors.push(channelReadError(channel.name, res.error));
+      continue;
     }
+    for (const m of res.raw) raws.push({ m, channel: channel.name, inClient: true, minTs });
   }
 
   // ── Canaux partagés lus par défaut (#12-everything-clients) ──────────────
@@ -279,12 +325,12 @@ export async function fetchClientSlackActivity(opts: {
     const ch = listed.channels.find((c) => c.name === name);
     const viaBot = ch ? await readSharedChannel(ch.id, oldestTs, opts.companyName) : { raw: [], error: "channel_not_visible" };
     if (!viaBot.error) {
-      for (const m of viaBot.raw) raws.push({ m, channel: name, inClient: false });
+      for (const m of viaBot.raw) raws.push({ m, channel: name, inClient: false, minTs: oldestTs });
       continue;
     }
     const viaSearch = await searchSlackMessages(`in:#${name} "${opts.companyName}"`, { after, count: 50 });
     if (!viaSearch.error) {
-      for (const m of viaSearch.messages) raws.push({ m: { ts: m.timestamp, text: m.text, user: m.user }, channel: name, inClient: false });
+      for (const m of viaSearch.messages) raws.push({ m: { ts: m.timestamp, text: m.text, user: m.user }, channel: name, inClient: false, minTs: oldestTs });
     } else {
       errors.push(`Could not read #${name} (${viaBot.error})`);
     }
@@ -298,17 +344,17 @@ export async function fetchClientSlackActivity(opts: {
   for (const m of searched.messages) {
     if (clientChannelNames.has(m.channel) || sharedNames.has(m.channel)) continue; // déjà lu plus haut
     if (NOISY_CHANNEL.test(m.channel)) continue;
-    raws.push({ m: { ts: m.timestamp, text: m.text, user: m.user }, channel: m.channel, inClient: false });
+    raws.push({ m: { ts: m.timestamp, text: m.text, user: m.user }, channel: m.channel, inClient: false, minTs: oldestTs });
   }
 
   // Dédup par (canal, ts), filtre texte vide, tri du plus récent au plus ancien.
   const seen = new Set<string>();
-  const unique = raws.filter(({ m, channel: ch }) => {
+  const unique = raws.filter(({ m, channel: ch, minTs }) => {
     if (!m.ts || !m.text?.trim()) return false;
     const key = `${ch}:${m.ts}`;
     if (seen.has(key)) return false;
     seen.add(key);
-    return Number(m.ts) >= oldestTs;
+    return Number(m.ts) >= minTs;
   });
   unique.sort((a, b) => Number(b.m.ts) - Number(a.m.ts));
 
@@ -324,7 +370,7 @@ export async function fetchClientSlackActivity(opts: {
     in_client_channel: inClient,
   }));
 
-  return { channels, messages, errors };
+  return { channels, added: persist ? added : [], firstRead, unjoined, messages, errors };
 }
 
 // Rendu prompt : du plus récent au plus ancien, budget ~25k caractères.

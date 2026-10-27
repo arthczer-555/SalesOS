@@ -740,7 +740,16 @@ export type RefreshReport = {
       deals?: Array<{ id: string; name: string; pipeline_label: string | null }>;
       companies?: Array<{ id: string; name: string | null; domain: string | null }>;
     };
-    slack?: RefreshSourceStat & { channel?: string | null };
+    // channels : canaux dédiés lus (reliés à la fiche), added : reliés
+    // automatiquement à ce refresh, unjoined : canaux qui ressemblent au compte
+    // mais où l'app n'est pas (à inviter). channel : anciens reports (avant les
+    // canaux reliés), liste "#a, #b" des canaux auto-matchés.
+    slack?: RefreshSourceStat & {
+      channel?: string | null;
+      channels?: Array<{ id: string; name: string; source: ClientSlackChannel["source"] }>;
+      added?: string[];
+      unjoined?: string[];
+    };
     news?: RefreshSourceStat;
   };
   // Meetings Claap retenus automatiquement à ce refresh (plus de popup de
@@ -819,6 +828,36 @@ export type AccountCompany = {
   added_at: string;
   confirmed_at?: string | null;
   last_activity_at?: string | null;
+};
+
+// Canal Slack dédié au client (cf. lib/clients/slack-context.ts, migration
+// clients_slack_channels.sql). Seulement un canal dont l'app CoachelloHQ est
+// membre. "auto" = trouvé par le refresh (nom du canal proche du nom de la
+// société), "manual" = relié à la main depuis la fiche.
+export type ClientSlackChannel = {
+  id: string;
+  name: string; // sans #
+  source: "auto" | "manual";
+  linked_at: string;
+  linked_by?: string | null;
+};
+
+// Nom de l'app Slack dans les textes de l'UI ("invite CoachelloHQ").
+export const SLACK_APP_NAME = "CoachelloHQ";
+
+// Sélecteur de canal de la fiche (GET /api/clients/[id]/slack-channels).
+export type SlackChannelOption = {
+  id: string;
+  name: string;
+  is_private: boolean;
+  is_member: boolean; // l'app est dans le canal : seul cas où on peut le relier
+  suggested: boolean; // nom proche de celui de la société
+};
+export type SlackChannelsResponse = {
+  linked: ClientSlackChannel[];
+  channels: SlackChannelOption[];
+  // false tant que la migration clients_slack_channels.sql n'est pas appliquée.
+  supported: boolean;
 };
 
 // Fiche absorbée par une fusion (cf. lib/clients/merge.ts, migration
@@ -1113,6 +1152,10 @@ export type ClientRow = {
   // tant que la migration clients_merge.sql n'est pas appliquée.
   merged_deal_ids?: string[] | null;
   merged_clients?: MergedClient[] | null;
+  // Canaux Slack dédiés / retirés à la main (cf. ClientSlackChannel). Absentes
+  // tant que la migration clients_slack_channels.sql n'est pas appliquée.
+  slack_channels?: ClientSlackChannel[] | null;
+  declined_slack_channel_ids?: string[] | null;
   last_enriched_at: string | null;
   last_health_run_at: string | null;
   last_news_run_at: string | null;

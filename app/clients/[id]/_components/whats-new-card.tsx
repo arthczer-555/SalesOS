@@ -6,6 +6,7 @@ import { COLORS, SHADOWS } from "@/app/clients/_components/theme";
 import {
   PROGRAM_FIELD_DEFINITIONS,
   SECTION_DEFINITIONS,
+  SLACK_APP_NAME,
   type AccountCompany,
   type ClientFields,
   type Insights,
@@ -193,6 +194,58 @@ function SourceStat({ label, stat, suffix }: { label: string; stat: RefreshSourc
   );
 }
 
+type SlackSourceStat = NonNullable<NonNullable<RefreshReport["sources"]>["slack"]>;
+
+// Canaux dédiés lus par un refresh ("#a, #b"). Les anciens reports n'ont que
+// `channel`, déjà formaté.
+function dedicatedChannels(slack: SlackSourceStat): string[] {
+  if (slack.channels) return slack.channels.map((c) => `#${c.name}`);
+  return slack.channel ? slack.channel.split(", ") : [];
+}
+
+// Sous les compteurs : canaux lus, ou "pas de canal dédié" avec le lien vers le
+// sélecteur, et les canaux du compte où l'app n'est pas encore.
+function SlackChannelsLine({ slack, onLinkSlack }: { slack: SlackSourceStat; onLinkSlack?: () => void }) {
+  if (slack.error) return null;
+  const dedicated = dedicatedChannels(slack);
+  const action = (label: string) =>
+    onLinkSlack ? (
+      <>
+        {" · "}
+        <button type="button" className="ch-link" style={{ fontSize: 12 }} onClick={onLinkSlack}>
+          {label}
+        </button>
+      </>
+    ) : null;
+  return (
+    <>
+      <div style={{ marginTop: 6, fontSize: 12, color: COLORS.ink3 }}>
+        {dedicated.length > 0 ? (
+          <>
+            Slack channels read: {dedicated.join(", ")}, #12-everything-clients
+            {!!slack.added?.length && ` (${slack.added.map((n) => `#${n}`).join(", ")} found and linked by this refresh)`}
+            {action("Change")}
+          </>
+        ) : (
+          <>
+            <b style={{ color: COLORS.ink1, fontWeight: 600 }}>No dedicated Slack channel.</b> Only #12-everything-clients and the mentions of the account were read
+            {action("Link a channel")}
+          </>
+        )}
+      </div>
+      {!!slack.unjoined?.length && (
+        <div style={{ marginTop: 6, fontSize: 12, color: COLORS.warn, display: "flex", gap: 6 }}>
+          <AlertTriangle size={13} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>
+            {slack.unjoined.map((n) => `#${n}`).join(", ")} {slack.unjoined.length > 1 ? "look" : "looks"} like this account&apos;s channel, but {SLACK_APP_NAME} is not
+            in it. Type /invite @{SLACK_APP_NAME} in the channel: the next refresh links it.
+          </span>
+        </div>
+      )}
+    </>
+  );
+}
+
 // Popup "Last refresh" : compteurs par source, champs modifiés (avant / après,
 // Undo), notes. Ouvert depuis le petit lien "details" sous le bouton Refresh.
 export function RefreshReportModal({
@@ -202,6 +255,7 @@ export function RefreshReportModal({
   accountCompanies,
   onUpdated,
   onRefreshStarted,
+  onLinkSlack,
   onClose,
 }: {
   report: RefreshReport | null;
@@ -212,6 +266,8 @@ export function RefreshReportModal({
   accountCompanies?: AccountCompany[] | null;
   onUpdated: () => void;
   onRefreshStarted?: () => void;
+  // Ouvre le sélecteur de canal Slack (le popup se ferme).
+  onLinkSlack?: () => void;
   onClose: () => void;
 }) {
   const { toast } = useToast();
@@ -319,15 +375,18 @@ export function RefreshReportModal({
                   <SourceStat label="Claap" stat={report.sources.claap} suffix="meetings" />
                   <SourceStat label="HubSpot" stat={report.sources.hubspot} suffix="activities" />
                   <SourceStat label="Slack" stat={report.sources.slack} suffix="messages" />
+                  {report.sources.slack && !report.sources.slack.error && dedicatedChannels(report.sources.slack).length === 0 && (
+                    <Tag tone="warn" title="No Slack channel of this account was read: link one, or invite the app in it">
+                      No dedicated Slack channel
+                    </Tag>
+                  )}
                   <SourceStat label="News" stat={report.sources.news} suffix="important" />
                 </>
               ) : (
                 <Tag>{report.new_activity_count} new activities</Tag>
               )}
             </div>
-            {report.sources?.slack?.channel && (
-              <div style={{ marginTop: 6, fontSize: 12, color: COLORS.ink3 }}>Slack channels read: {report.sources.slack.channel}, #12-everything-clients</div>
-            )}
+            {report.sources?.slack && <SlackChannelsLine slack={report.sources.slack} onLinkSlack={onLinkSlack} />}
             {!!report.sources?.hubspot?.deals?.length && (
               <div style={{ marginTop: 6, fontSize: 12, color: COLORS.ink3 }}>
                 {`HubSpot deals read: ${report.sources.hubspot.deals
