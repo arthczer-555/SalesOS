@@ -2,7 +2,6 @@
 // période, statut RAG et KPIs dérivés.
 
 import type {
-  AccountRevenue,
   AccountTarget,
   ActivityBucket,
   Coaching,
@@ -473,19 +472,6 @@ function mergeAccounts(streams: RevenueStream[]): AccountTarget[] | null | undef
     cur.revisedTarget ??= a.revisedTarget;
   }
   return [...byCompany.values()];
-}
-
-/**
- * Comptes facturés sur l'année, montant décroissant. Le détail par compte
- * (mêmes filtres que le facturé affiché) prime sur le bloc « DÉTAIL DES
- * DEALS » du Sheet, dont le total peut s'écarter du facturé du rep.
- */
-export function yearAccounts(stream: RevenueStream): AccountRevenue[] {
-  if (!stream.byAccount) return stream.accounts;
-  return stream.byAccount
-    .map((a) => ({ company: a.company, billed: a.quarters.reduce((s, q) => s + (q.billed ?? 0), 0) }))
-    .filter((a) => a.billed > 0)
-    .sort((a, b) => b.billed - a.billed);
 }
 
 function mergeRevenue(reps: RepSnapshot[]): RevenuePerf {

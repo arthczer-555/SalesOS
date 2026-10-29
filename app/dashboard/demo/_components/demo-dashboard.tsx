@@ -20,6 +20,7 @@ import {
   ActivityBlock,
   CompanyPulseBlock,
   EmptyState,
+  IncentiveBlock,
   QuarterBars,
   RepTable,
   StatStrip,
@@ -192,6 +193,8 @@ export function DemoDashboard() {
               {roles.includes("csm") && (
                 <StreamBlock title="My Renew" hint="CSM role" kind="renew" stream={rep.revenue.csmRenew} accent={accent} />
               )}
+              {/* Prime : seulement si le rep a un barème (lib/incentives/plans.ts). */}
+              {me?.incentive && <IncentiveBlock incentive={me.incentive} accent={accent} />}
               {roles.length === 0 && (
                 <EmptyState
                   title="No sales role assigned."

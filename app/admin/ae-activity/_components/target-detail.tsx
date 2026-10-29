@@ -2,8 +2,9 @@
 
 // Détail du target par compte : pour un flux (New / Renew / Renew CSM) et une
 // période (année ou trimestre), chaque compte avec son target, son facturé et
-// ce qu'il reste à facturer, les plus en retard d'abord. Partagé par
-// /dashboard (blocs My New / My Renew) et AE Activity (cards revenu).
+// ce qu'il reste à facturer, les plus en retard d'abord. Affiché directement
+// dans les blocs My New / My Renew de /dashboard (TargetDetailPanel compact),
+// et en modale depuis les cards revenu d'AE Activity (TargetDetailModal).
 //
 // Les lignes viennent de `stream.byAccount` (lib/ae-activity/account-targets.ts),
 // dont la somme redonne le total affiché au-dessus. Si ce n'est pas le cas, on
@@ -21,6 +22,9 @@ const PERIODS: TargetPeriod[] = ["year", "Q1", "Q2", "Q3", "Q4"];
 
 // "new" : le New n'a d'objectif que par rep, ses comptes n'ont que du facturé.
 export type StreamKind = "new" | "renew";
+
+// Au-delà, la liste intégrée au dashboard se replie derrière "Show all".
+const COMPACT_ROWS = 8;
 
 type Status = "missed" | "behind" | "upcoming" | "reached" | "unplanned";
 
@@ -95,20 +99,24 @@ function MiniStat({ label, value, color }: { label: string; value: string; color
   );
 }
 
-export function TargetDetailModal({
-  title,
+/**
+ * Détail par compte d'un flux sur une période. `compact` : intégré dans une
+ * carte qui affiche déjà le target et le facturé (bloc du dashboard), donc
+ * sans tuiles de synthèse et avec une liste repliée au-delà de COMPACT_ROWS.
+ */
+export function TargetDetailPanel({
   stream,
   kind,
   initialPeriod,
-  onClose,
+  compact = false,
 }: {
-  title: string;
   stream: RevenueStream;
   kind: StreamKind;
   initialPeriod: TargetPeriod;
-  onClose: () => void;
+  compact?: boolean;
 }) {
   const [period, setPeriod] = useState<TargetPeriod>(initialPeriod);
+  const [showAll, setShowAll] = useState(false);
   const year = new Date().getUTCFullYear();
   const periodLabel = period === "year" ? String(year) : `${period} ${year}`;
 
@@ -119,6 +127,7 @@ export function TargetDetailModal({
   const left = target != null ? Math.max(target - (billed ?? 0), 0) : null;
 
   const rows = stream.byAccount ? rowsFor(stream.byAccount, period) : [];
+  const visible = compact && !showAll ? rows.slice(0, COMPACT_ROWS) : rows;
   const late = rows.filter(isLate);
   const rowsTarget = rows.reduce((s, r) => s + r.target, 0);
   const rowsBilled = rows.reduce((s, r) => s + r.billed, 0);
@@ -127,56 +136,62 @@ export function TargetDetailModal({
   const targetGap = kind === "renew" && target != null ? rowsTarget - target : 0;
 
   const num = "py-2 pl-3 text-right tabular-nums whitespace-nowrap";
+  const emptyPad = compact ? "py-4" : "py-8";
 
   return (
-    <Modal
-      open
-      onClose={onClose}
-      width={880}
-      title={title}
-      description={
-        kind === "renew"
-          ? "Target by account, most behind first. Source: revenue Sheet (Targets and Factures tabs)."
-          : "Accounts billed as New. Source: revenue Sheet (Factures tab)."
-      }
-    >
-      <SegmentedControl
-        size="sm"
-        value={period}
-        onChange={setPeriod}
-        options={PERIODS.map((p) => ({ value: p, label: p === "year" ? "Year" : p }))}
-      />
-
-      <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
-        <MiniStat label={`Target ${periodLabel}`} value={fmtEUR(target)} />
-        <MiniStat label={att != null ? `Billed · ${att}%` : "Billed"} value={fmtEUR(billed)} color={ragColor(att).fg} />
-        <MiniStat label="Left to bill" value={fmtEUR(left)} />
-        {kind === "renew" && (
-          <MiniStat
-            label={late.length === 1 ? "Account behind" : "Accounts behind"}
-            value={String(late.length)}
-            color={late.length > 0 ? STATUS[late.some((r) => r.status === "missed") ? "missed" : "behind"].fg : undefined}
-          />
+    <>
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <SegmentedControl
+          size="sm"
+          value={period}
+          onChange={setPeriod}
+          options={PERIODS.map((p) => ({ value: p, label: p === "year" ? "Year" : p }))}
+        />
+        {compact && (
+          <span className="text-[11.5px] tabular-nums" style={{ color: COLORS.ink3 }}>
+            {periodLabel} · <strong style={{ color: COLORS.ink0 }}>{fmtEUR(billed)}</strong> billed of{" "}
+            {fmtEUR(target)}
+            {att != null && (
+              <span className="ml-1.5 font-bold" style={{ color: ragColor(att).fg }}>
+                {att}%
+              </span>
+            )}
+          </span>
         )}
       </div>
 
+      {!compact && (
+        <div className="grid gap-2 mt-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))" }}>
+          <MiniStat label={`Target ${periodLabel}`} value={fmtEUR(target)} />
+          <MiniStat label={att != null ? `Billed · ${att}%` : "Billed"} value={fmtEUR(billed)} color={ragColor(att).fg} />
+          <MiniStat label="Left to bill" value={fmtEUR(left)} />
+          {kind === "renew" && (
+            <MiniStat
+              label={late.length === 1 ? "Account behind" : "Accounts behind"}
+              value={String(late.length)}
+              color={late.length > 0 ? STATUS[late.some((r) => r.status === "missed") ? "missed" : "behind"].fg : undefined}
+            />
+          )}
+        </div>
+      )}
+
       {stream.byAccount === undefined ? (
-        <p className="text-[12.5px] py-8 text-center" style={{ color: COLORS.ink3 }}>
+        <p className={`text-[12.5px] ${emptyPad} text-center`} style={{ color: COLORS.ink3 }}>
           The account detail is not in this snapshot yet. It appears after the next refresh.
         </p>
       ) : stream.byAccount === null ? (
-        <p className="text-[12.5px] py-8 text-center" style={{ color: COLORS.warn }}>
+        <p className={`text-[12.5px] ${emptyPad} text-center`} style={{ color: COLORS.warn }}>
           The Targets or Factures tab of the revenue Sheet could not be read at the last refresh: account detail
           unavailable.
         </p>
       ) : rows.length === 0 ? (
-        <p className="text-[12.5px] py-8 text-center" style={{ color: COLORS.ink3 }}>
+        <p className={`text-[12.5px] ${emptyPad} text-center`} style={{ color: COLORS.ink3 }}>
           {kind === "renew"
             ? `No account with a target or billing in ${periodLabel}.`
             : `No New business billed in ${periodLabel} yet.`}
         </p>
       ) : (
-        <div className="overflow-x-auto mt-4">
+        <div className={`overflow-x-auto ${compact ? "mt-3" : "mt-4"}`}>
           <table className="w-full text-[12.5px]">
             <thead>
               <tr className="text-[11px] text-left" style={{ color: COLORS.ink4 }}>
@@ -188,7 +203,7 @@ export function TargetDetailModal({
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => {
+              {visible.map((r) => {
                 const st = STATUS[r.status];
                 return (
                   <tr key={r.company} className="border-t align-top" style={{ borderColor: COLORS.line }}>
@@ -226,6 +241,20 @@ export function TargetDetailModal({
                   </tr>
                 );
               })}
+              {visible.length < rows.length && (
+                <tr className="border-t" style={{ borderColor: COLORS.line }}>
+                  <td colSpan={kind === "renew" ? 5 : 2} className="py-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAll(true)}
+                      className="text-[11.5px] font-medium hover:underline"
+                      style={{ color: COLORS.brand }}
+                    >
+                      Show all {rows.length} accounts
+                    </button>
+                  </td>
+                </tr>
+              )}
             </tbody>
             <tfoot>
               <tr className="border-t-2 font-semibold" style={{ borderColor: COLORS.lineStrong, color: COLORS.ink0 }}>
@@ -257,6 +286,36 @@ export function TargetDetailModal({
           )}
         </div>
       )}
+    </>
+  );
+}
+
+export function TargetDetailModal({
+  title,
+  stream,
+  kind,
+  initialPeriod,
+  onClose,
+}: {
+  title: string;
+  stream: RevenueStream;
+  kind: StreamKind;
+  initialPeriod: TargetPeriod;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      width={880}
+      title={title}
+      description={
+        kind === "renew"
+          ? "Target by account, most behind first. Source: revenue Sheet (Targets and Factures tabs)."
+          : "Accounts billed as New. Source: revenue Sheet (Factures tab)."
+      }
+    >
+      <TargetDetailPanel stream={stream} kind={kind} initialPeriod={initialPeriod} />
     </Modal>
   );
 }

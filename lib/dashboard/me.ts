@@ -6,6 +6,8 @@
 
 import { db } from "@/lib/db";
 import { readUserSalesFields } from "@/lib/users/read-sales-roles";
+import { findIncentivePlan } from "@/lib/incentives/plans";
+import { buildIncentiveSummary } from "@/lib/incentives/summary";
 import type { MeDashboardResponse, RepSnapshot } from "@/lib/ae-activity/types";
 
 export async function buildMeDashboard(userId: string): Promise<MeDashboardResponse> {
@@ -18,18 +20,24 @@ export async function buildMeDashboard(userId: string): Promise<MeDashboardRespo
     return { rep: null, roles, isSales: hasDashboard, hasOwnerId: ownerId != null, refreshedAt: null };
   }
 
-  const { data: snap } = await db
-    .from("ae_activity_snapshots")
-    .select("payload, refreshed_at")
-    .eq("rep_owner_id", ownerId)
-    .maybeSingle();
+  const [{ data: snap }, { data: user }] = await Promise.all([
+    db.from("ae_activity_snapshots").select("payload, refreshed_at").eq("rep_owner_id", ownerId).maybeSingle(),
+    db.from("users").select("email").eq("id", userId).maybeSingle(),
+  ]);
+  const rep = (snap?.payload as RepSnapshot | undefined) ?? null;
+
+  // La prime se calcule ici, à la lecture, à partir du facturé du snapshot :
+  // seuls ce dashboard et "Voir comme" (admin) passent par cette fonction.
+  const plan = findIncentivePlan(user?.email as string | undefined, new Date().getUTCFullYear());
+  const incentive = plan && rep ? buildIncentiveSummary(plan, rep.revenue[plan.stream]) : null;
 
   return {
-    rep: (snap?.payload as RepSnapshot | undefined) ?? null,
+    rep,
     roles,
     isSales: true,
     hasOwnerId: true,
     refreshedAt: (snap?.refreshed_at as string | undefined) ?? null,
+    incentive,
   };
 }
 

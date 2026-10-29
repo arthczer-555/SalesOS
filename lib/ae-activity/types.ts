@@ -6,6 +6,8 @@
 // `ae_activity_snapshots` EST un RepSnapshot.
 // ────────────────────────────────────────────────────────────────────────
 
+import type { IncentiveSummary } from "@/lib/incentives/summary";
+
 // Granularités du sélecteur UI.
 export type Granularity = "week" | "month" | "quarter" | "semester" | "year";
 
@@ -167,4 +169,7 @@ export type MeDashboardResponse = {
   isSales: boolean;
   hasOwnerId: boolean;
   refreshedAt: string | null;
+  // Prime calculée à la lecture (lib/incentives), null si le rep n'a pas de
+  // barème. Jamais exposée hors du dashboard du rep et de "Voir comme".
+  incentive?: IncentiveSummary | null;
 };

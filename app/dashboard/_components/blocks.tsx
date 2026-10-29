@@ -8,17 +8,17 @@ import { useState } from "react";
 import Link from "next/link";
 import type { QuarterAmount, RevenueStream } from "@/lib/ae-activity/types";
 import type { RepRevenueLine } from "@/lib/dashboard/global-overview";
+import type { IncentiveSummary } from "@/lib/incentives/summary";
 import { COLORS } from "@/lib/design/tokens";
 import {
   fmtEUR,
   fmtEURCompact,
   ragColor,
   revenueAttainment,
-  yearAccounts,
   type Kpi,
 } from "@/app/admin/ae-activity/_components/helpers";
 import {
-  TargetDetailModal,
+  TargetDetailPanel,
   lateAccountCount,
   type StreamKind,
 } from "@/app/admin/ae-activity/_components/target-detail";
@@ -96,7 +96,11 @@ const TONE: Record<string, { fg: string; bg: string }> = {
   muted: { fg: COLORS.ink3, bg: COLORS.bgSoft },
 };
 
-/** Bloc de revenu d'un flux (New / Renew / Renew CSM) : année + trimestre. */
+/**
+ * Bloc de revenu d'un flux (New / Renew / Renew CSM) : année + trimestre, puis
+ * le détail par compte directement sous les chiffres (trimestre en cours par
+ * défaut), sans clic : c'est ce que le rep vient chercher.
+ */
 export function StreamBlock({
   title,
   hint,
@@ -110,7 +114,6 @@ export function StreamBlock({
   stream: RevenueStream;
   accent: string;
 }) {
-  const [detailOpen, setDetailOpen] = useState(false);
   const q = currentQuarter();
   const year = new Date().getUTCFullYear();
   const quarter = stream.quarters.find((x) => x.quarter === q);
@@ -119,8 +122,6 @@ export function StreamBlock({
   const yearRag = ragColor(yearAtt);
   const qRag = ragColor(qAtt);
   const pace = paceMessage(qAtt);
-  const accounts = yearAccounts(stream);
-  const top = accounts.slice(0, 5);
   const late = kind === "renew" ? lateAccountCount(stream, q) : 0;
 
   return (
@@ -185,52 +186,176 @@ export function StreamBlock({
             >
               {pace.text}
             </span>
-            {/* La porte vers le détail par compte : le compteur dit tout de
-                suite s'il y a des comptes en retard ce trimestre. */}
-            <button
-              type="button"
-              onClick={() => setDetailOpen(true)}
-              className="text-[11px] font-semibold px-2.5 py-0.5 rounded-full border transition-colors hover:bg-[#fde8ef]"
-              style={{ color: COLORS.brand, borderColor: "#f9c4d6" }}
-            >
-              {late > 0
-                ? `${late} account${late > 1 ? "s" : ""} behind · details →`
-                : kind === "renew"
-                  ? "Target by account →"
-                  : "Accounts billed →"}
-            </button>
+            {late > 0 && (
+              <span
+                className="text-[11px] font-semibold px-2 py-0.5 rounded-full"
+                style={{ color: TONE.bad.fg, background: TONE.bad.bg }}
+              >
+                {late} account{late > 1 ? "s" : ""} behind
+              </span>
+            )}
           </div>
         </div>
       </div>
 
-      {detailOpen && (
-        <TargetDetailModal
-          title={`${title} · ${hint}`}
-          stream={stream}
-          kind={kind}
-          initialPeriod={q}
-          onClose={() => setDetailOpen(false)}
-        />
-      )}
+      <div className="mt-4 pt-3 border-t" style={{ borderColor: COLORS.line }}>
+        <TargetDetailPanel compact stream={stream} kind={kind} initialPeriod={q} />
+      </div>
+    </Card>
+  );
+}
 
-      {top.length > 0 && (
-        <div className="mt-4 pt-3 border-t" style={{ borderColor: COLORS.line }}>
-          <div className="text-[11px] mb-1.5" style={{ color: COLORS.ink4 }}>
-            Top accounts
-            {accounts.length > top.length && ` · ${top.length} of ${accounts.length}`}
+const INCENTIVE_STATUS: Record<IncentiveSummary["quarters"][number]["status"], string> = {
+  closed: "Closed",
+  in_progress: "In progress",
+  upcoming: "Upcoming",
+};
+
+const STREAM_TAB: Record<IncentiveSummary["stream"], string> = {
+  newBiz: "Suivi New",
+  renew: "Suivi Renew",
+  csmRenew: "Suivi CSM",
+};
+
+// Une décimale : à 29,6 % sous un plancher de 30 %, afficher "30%" mentirait.
+const attLabel = (r: number | null) => (r == null ? "-" : `${(r * 100).toFixed(1).replace(/\.0$/, "")}%`);
+
+/**
+ * Prime du rep (lib/incentives) : l'année cumulée, le trimestre en cours et ce
+ * qu'il reste à facturer pour franchir le prochain cap, puis un trimestre par
+ * ligne. Visible du seul rep et des admins ("Voir comme").
+ */
+export function IncentiveBlock({ incentive, accent }: { incentive: IncentiveSummary; accent: string }) {
+  const [showRules, setShowRules] = useState(false);
+  const current = incentive.quarters.find((x) => x.quarter === incentive.currentQuarter) ?? null;
+  const next = incentive.nextUnlock;
+  const num = "py-2 pl-3 text-right tabular-nums whitespace-nowrap";
+
+  return (
+    <Card>
+      <SectionTitle title="My incentive" hint={`${incentive.year} plan · paid per quarter`} />
+
+      <div className="grid gap-5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))" }}>
+        <div>
+          <div className="text-[15px] font-bold tracking-tight" style={{ color: COLORS.ink0 }}>
+            {incentive.year}{" "}
+            <span className="font-medium" style={{ color: COLORS.ink3 }}>
+              earned so far
+            </span>
           </div>
-          <ul className="space-y-1">
-            {top.map((a, i) => (
-              <li key={`${a.company}-${i}`} className="flex justify-between gap-3 text-[12.5px]">
-                <span className="truncate" style={{ color: COLORS.ink1 }}>
-                  {a.company}
-                </span>
-                <span className="font-medium tabular-nums shrink-0" style={{ color: COLORS.ink0 }}>
-                  {fmtEUR(a.billed)}
-                </span>
-              </li>
+          <div className="text-[32px] leading-none font-bold tabular-nums mt-1" style={{ color: accent }}>
+            {fmtEUR(incentive.total)}
+          </div>
+          {incentive.incomplete && (
+            <div className="text-[11.5px] mt-1.5" style={{ color: COLORS.warn }}>
+              Some quarters could not be computed, see below.
+            </div>
+          )}
+        </div>
+
+        {current && (
+          <div>
+            <div className="text-[15px] font-bold tracking-tight" style={{ color: COLORS.ink0 }}>
+              {current.quarter} {incentive.year}{" "}
+              <span className="font-medium" style={{ color: COLORS.ink3 }}>
+                in progress
+              </span>
+            </div>
+            <div className="text-[32px] leading-none font-bold tabular-nums mt-1" style={{ color: COLORS.ink0 }}>
+              {fmtEUR(current.amount)}
+            </div>
+            <div className="text-[12px] mt-1.5" style={{ color: current.error ? COLORS.warn : COLORS.ink3 }}>
+              {current.error
+                ? current.error
+                : current.belowFloor
+                  ? `${attLabel(current.attainment)} of quota: below the floor, no incentive yet`
+                  : `${attLabel(current.attainment)} of quota so far`}
+            </div>
+            {next && (
+              <span
+                className="inline-block text-[11px] px-2 py-0.5 rounded-full mt-2"
+                style={{ color: TONE.good.fg, background: TONE.good.bg }}
+              >
+                {fmtEUR(next.toBill)} more to reach {attLabel(next.threshold)}: {next.label}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="overflow-x-auto mt-4 pt-3 border-t" style={{ borderColor: COLORS.line }}>
+        <table className="w-full text-[12.5px]">
+          <thead>
+            <tr className="text-[11px] text-left" style={{ color: COLORS.ink4 }}>
+              <th className="pb-1.5 font-medium">Quarter</th>
+              <th className="pb-1.5 pl-3 font-medium text-right">Quota</th>
+              <th className="pb-1.5 pl-3 font-medium text-right">Billed</th>
+              <th className="pb-1.5 pl-3 font-medium text-right">Attainment</th>
+              <th className="pb-1.5 pl-3 font-medium text-right">Incentive</th>
+            </tr>
+          </thead>
+          <tbody>
+            {incentive.quarters.map((x) => (
+              <tr key={x.quarter} className="border-t align-top" style={{ borderColor: COLORS.line }}>
+                <td className="py-2" style={{ color: COLORS.ink0 }}>
+                  <span className="font-medium">{x.quarter}</span>
+                  <span className="text-[10.5px] ml-2" style={{ color: COLORS.ink4 }}>
+                    {INCENTIVE_STATUS[x.status]}
+                  </span>
+                </td>
+                <td className={num} style={{ color: COLORS.ink2 }}>
+                  {fmtEUR(x.quota)}
+                </td>
+                <td className={num} style={{ color: COLORS.ink2 }}>
+                  {x.status === "upcoming" ? "-" : fmtEUR(x.billed)}
+                </td>
+                <td className={num} style={{ color: COLORS.ink2 }}>
+                  {attLabel(x.attainment)}
+                </td>
+                <td className={`${num} font-semibold`} style={{ color: COLORS.ink0 }}>
+                  {fmtEUR(x.amount)}
+                  {(x.error || x.belowFloor || x.capped) && (
+                    <div
+                      className="text-[10.5px] font-normal mt-0.5"
+                      style={{ color: x.error ? COLORS.warn : COLORS.ink3 }}
+                    >
+                      {x.error ?? (x.belowFloor ? "Below the floor" : "Capped at the top band")}
+                    </div>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="border-t-2 font-semibold" style={{ borderColor: COLORS.lineStrong, color: COLORS.ink0 }}>
+              <td className="py-2" colSpan={4}>
+                Total {incentive.year}
+              </td>
+              <td className={num}>{fmtEUR(incentive.total)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+
+      <button
+        type="button"
+        onClick={() => setShowRules((v) => !v)}
+        className="text-[12px] mt-3 font-medium hover:underline"
+        style={{ color: COLORS.brand }}
+      >
+        {showRules ? "Hide how it's computed" : "How it's computed"}
+      </button>
+      {showRules && (
+        <div className="mt-2 rounded-xl px-3.5 py-3 text-[12px]" style={{ background: COLORS.bgSoft, color: COLORS.ink1 }}>
+          <ul className="space-y-1 list-disc pl-4">
+            {incentive.rules.map((r) => (
+              <li key={r}>{r}</li>
             ))}
           </ul>
+          <p className="text-[11px] mt-2" style={{ color: COLORS.ink3 }}>
+            Quota and billed come from the revenue Sheet ({STREAM_TAB[incentive.stream]} and Factures tabs), the same
+            figures as the block above. Plan: {incentive.source}. The current quarter is an estimate until it closes.
+          </p>
         </div>
       )}
     </Card>
