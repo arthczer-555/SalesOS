@@ -23,6 +23,7 @@ import { computeHealth, computeInsights } from "./health";
 import { generateHealthSummary, judgeRecentTone } from "./health-summary";
 import { generateInsightsAI } from "./insights-ai";
 import { generateCoachBrief } from "./coach-brief";
+import { generateDealRecap } from "./deal-recap";
 import { generateHubspotSuggestions } from "./hubspot-suggestions";
 import { fetchHubspotDealFields } from "./hubspot-fields";
 import { fetchClientSlackActivity, type ClientSlackActivity } from "./slack-context";
@@ -67,8 +68,9 @@ import { withForcedTool } from "../models/compat";
 // Recalcule toujours health, Next actions, news ; régénère le coach brief si le
 // périmètre a changé (sauf retouche manuelle) et les suggestions HubSpot ;
 // resynchronise le billing (sauf en cron, où il est synchronisé en lot).
-// Ne régénère pas le deal recap (histoire de la signature). Ne touche jamais
-// enrichment_status.
+// Ne régénère pas le deal recap (histoire de la signature), sauf son pain quand
+// il manque (recaps d'avant le 2026-10-29) : seul ce champ est ajouté. Ne touche
+// jamais enrichment_status.
 //
 // removedRecordingIds : refresh lancé après le retrait à la main d'un meeting
 // Claap (decline-meeting). Les fields sont ré-extraits même sans activité
@@ -448,6 +450,17 @@ export async function runClientRefresh(
     if (briefOutdated && briefEditedByHand) {
       notes.push("The program changed but the coach brief was edited by hand, so it was not regenerated. Check it before sharing.");
     }
+    // Recap d'avant le pain : on le génère avec le prompt du recap et on n'en
+    // garde que le pain, le reste du recap (et ses retouches) ne bouge pas.
+    const painPromise =
+      row.deal_recap && !row.deal_recap.pain
+        ? generateDealRecap(ctx, userId, dealFields)
+            .then((r) => r?.pain ?? null)
+            .catch((e) => {
+              console.warn(`[clients/refresh/${clientId}] recap pain failed:`, e instanceof Error ? e.message : e);
+              return null;
+            })
+        : Promise.resolve(null);
 
     // Ton des derniers meetings (signal du health). Un échec n'arrête rien :
     // le signal n'est pas noté et la carte le signale.
@@ -459,13 +472,19 @@ export async function runClientRefresh(
       },
     );
 
-    const [freshNews, billing, suggestions, coachBrief, toneRes] = await Promise.all([
+    const [freshNews, billing, suggestions, coachBrief, toneRes, recapPain] = await Promise.all([
       newsPromise,
       billingPromise,
       suggestionsPromise,
       briefPromise,
       tonePromise,
+      painPromise,
     ]);
+    if (recapPain && row.deal_recap) {
+      // Part de la timeline déjà filtrée plus haut (meeting retiré), s'il y en a une.
+      const baseRecap = (updatePayload.deal_recap as DealRecap | undefined) ?? row.deal_recap;
+      updatePayload.deal_recap = { ...baseRecap, pain: recapPain };
+    }
 
     let newsNew = 0;
     let newsError: string | null = null;

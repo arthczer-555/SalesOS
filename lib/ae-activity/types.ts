@@ -87,6 +87,10 @@ export type AccountTarget = {
 // Renew en tant que CSM). Même forme dans les trois cas.
 export type RevenueStream = {
   target: number | null;
+  // "Obj Actualisé" / "Target actu" de l'onglet Suivi : target annuel révisé en
+  // cours d'année (le "% Atteinte" du Sheet est calculé dessus). Null = cellule
+  // vide ou à 0 ; absent des snapshots calculés avant le 2026-10-29.
+  revisedTarget?: number | null;
   billed: number | null;
   quarters: QuarterAmount[]; // Q1..Q4
   accounts: AccountRevenue[]; // détail des comptes, montant décroissant
@@ -97,7 +101,7 @@ export type RevenueStream = {
 };
 
 export function emptyRevenueStream(): RevenueStream {
-  return { target: null, billed: null, quarters: [], accounts: [] };
+  return { target: null, revisedTarget: null, billed: null, quarters: [], accounts: [] };
 }
 
 export type RevenuePerf = {

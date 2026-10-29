@@ -93,18 +93,19 @@ function quarterCols(header: string[]): { obj: Record<number, number>; fac: Reco
 
 /**
  * Bloc de performance d'un onglet "Suivi *" :
- * `AE | <target> | <billed> | % Atteinte | Obj Q1 | Facturé Q1 | … | Facturé Q4`
- * puis une ligne par rep jusqu'à "TOTAL" ou une ligne vide.
+ * `AE | <target> | <target actualisé> | <billed> | % Atteinte | Obj Q1 | Facturé Q1 | … | Facturé Q4`
+ * puis une ligne par rep jusqu'à "TOTAL" ou une ligne vide. Le target
+ * actualisé n'existe qu'à l'année (pas de colonne trimestrielle).
  *
  * Le libellé de la colonne rep est toujours "AE", y compris dans les onglets
  * Renew et CSM où il désigne en réalité l'AM ou le CSM.
  */
 function parsePerfBlock(
   grid: Grid,
-  targetLabel: string,
-  billedLabel: string,
-): Map<string, Pick<RevenueStream, "target" | "billed" | "quarters">> {
-  const out = new Map<string, Pick<RevenueStream, "target" | "billed" | "quarters">>();
+  labels: { target: string; revised: string; billed: string },
+): Map<string, Pick<RevenueStream, "target" | "revisedTarget" | "billed" | "quarters">> {
+  const { target: targetLabel, revised: revisedLabel, billed: billedLabel } = labels;
+  const out = new Map<string, Pick<RevenueStream, "target" | "revisedTarget" | "billed" | "quarters">>();
   const headerIdx = grid.findIndex(
     (r) => Array.isArray(r) && r.some((c) => norm(c) === "ae") && r.some((c) => norm(c).includes(targetLabel)),
   );
@@ -113,6 +114,8 @@ function parsePerfBlock(
   const header = grid[headerIdx].map((c) => norm(c));
   const aeCol = header.findIndex((h) => h === "ae");
   const targetCol = header.findIndex((h) => h.includes(targetLabel));
+  // Libellé exact : "% Atteinte Renew Actu" contient aussi "actu".
+  const revisedCol = header.findIndex((h) => h === revisedLabel);
   const billedCol = header.findIndex((h) => h.includes(billedLabel));
   const { obj, fac } = quarterCols(header);
 
@@ -124,6 +127,8 @@ function parsePerfBlock(
     if (!key) continue;
     out.set(key, {
       target: targetCol >= 0 ? parseAmount(r[targetCol]) : null,
+      // 0 ou vide = non renseigné (Kanishk : 0), jamais un target à 0.
+      revisedTarget: revisedCol >= 0 ? parseAmount(r[revisedCol]) || null : null,
       billed: billedCol >= 0 ? parseAmount(r[billedCol]) : null,
       quarters: ([1, 2, 3, 4] as const).map((q) => ({
         quarter: `Q${q}` as QuarterAmount["quarter"],
@@ -196,10 +201,10 @@ function emptyRepRevenue(): RepRevenue {
   };
 }
 
-const STREAM_LABELS: Record<StreamKey, { target: string; billed: string }> = {
-  newBiz: { target: "objectif new", billed: "new facture" },
-  renew: { target: "target renew", billed: "renew facture" },
-  csmRenew: { target: "target renew", billed: "renew facture" },
+const STREAM_LABELS: Record<StreamKey, { target: string; revised: string; billed: string }> = {
+  newBiz: { target: "objectif new", revised: "obj actualise", billed: "new facture" },
+  renew: { target: "target renew", revised: "target actu", billed: "renew facture" },
+  csmRenew: { target: "target renew", revised: "target actu", billed: "renew facture" },
 };
 
 /**
@@ -215,8 +220,7 @@ function parseWorkbook(wb: XLSX.WorkBook, byRep: Map<string, RepRevenue>): Set<S
     const stream = detectStream(sheetName, grid);
     if (!stream || found.has(stream)) continue;
 
-    const labels = STREAM_LABELS[stream];
-    const perf = parsePerfBlock(grid, labels.target, labels.billed);
+    const perf = parsePerfBlock(grid, STREAM_LABELS[stream]);
     if (perf.size === 0) continue;
     const accounts = parseAccountsBlock(grid);
 

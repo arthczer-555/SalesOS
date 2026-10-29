@@ -19,8 +19,7 @@
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
-import { norm, sheetGrid } from "@/lib/billing/drive-xlsx";
-import { cellNumber, cellText, findHeader, getRevenueWorkbook } from "@/lib/billing/revenue-workbook";
+import { norm } from "@/lib/billing/drive-xlsx";
 import { fetchClientTargets, type ClientTarget, type Quarter } from "@/lib/billing/client-targets";
 import { fetchForecast, fetchWeeklyForecast } from "@/lib/billing/forecast";
 import { fetchRevenueSheet, repKeyFromName } from "@/lib/ae-activity/revenue-sheet";
@@ -95,40 +94,13 @@ const fuzzy = (value: string | null | undefined, query: string) => {
   return v.includes(query) || query.includes(v);
 };
 
-type StreamKey = "new" | "renew" | "csm";
-
-/**
- * Objectifs ACTUALISÉS par commercial (colonne "Obj Actualisé" / "Target
- * Actu" des onglets Suivi). Le parseur du dashboard AE ne lit que l'objectif
- * initial, alors que le "% Atteinte" du sheet est calculé sur l'actualisé : on
- * expose les deux. Un actualisé à 0 ou vide = non renseigné.
- */
-async function updatedTargets(): Promise<Record<StreamKey, Map<string, number>>> {
-  const out: Record<StreamKey, Map<string, number>> = { new: new Map(), renew: new Map(), csm: new Map() };
-  const wb = await getRevenueWorkbook();
-  const spec: [StreamKey, string, string][] = [
-    ["new", "Suivi New", "obj actualise"],
-    ["renew", "Suivi Renew", "target actu"],
-    ["csm", "Suivi CSM", "target actu"],
-  ];
-  for (const [key, tab, label] of spec) {
-    const grid = sheetGrid(wb, tab);
-    const head = findHeader(grid, ["ae", label]);
-    if (!head) continue;
-    for (const row of grid.slice(head.row + 1)) {
-      const name = cellText(row[head.col("ae")]);
-      if (!name || /^total/i.test(name)) break;
-      const v = cellNumber(row[head.col(label)]);
-      if (v) out[key].set(repKeyFromName(name), v);
-    }
-  }
-  return out;
-}
-
-function streamOut(s: RevenueStream, updated: number | undefined, withAccounts: boolean) {
+// target_updated = "Obj Actualisé" / "Target actu" des onglets Suivi, lu par le
+// même parseur que le dashboard. Le "% Atteinte" du sheet est calculé dessus.
+function streamOut(s: RevenueStream, withAccounts: boolean) {
+  const updated = s.revisedTarget ?? null;
   return {
     target: s.target,
-    target_updated: updated ?? null,
+    target_updated: updated,
     billed: s.billed,
     achievement: s.billed != null && s.target ? round(s.billed / s.target) : null,
     achievement_vs_updated: s.billed != null && updated ? round(s.billed / updated) : null,
@@ -248,7 +220,7 @@ const module_: ToolModule = {
     get_sales_targets: async (input, ctx) => {
       try {
         ctx.onProgress("Reading sales targets...");
-        const [sheet, me, updated] = await Promise.all([fetchRevenueSheet(), viewer(ctx), updatedTargets().catch(() => null)]);
+        const [sheet, me] = await Promise.all([fetchRevenueSheet(), viewer(ctx)]);
         if (!sheet.ok) return "Onglets Suivi New / Renew / CSM du sheet revenue illisibles. Ne donne aucun objectif commercial ; dis que la source est indisponible.";
         ctx.onSource({ kind: "billing", title: "Sheet revenue (Suivi New, Suivi Renew, Suivi CSM)" });
 
@@ -265,9 +237,9 @@ const module_: ToolModule = {
           .filter((p) => !!p.rep)
           .map(({ key, rep }) => ({
             person: key.charAt(0).toUpperCase() + key.slice(1),
-            ...(stream === "all" || stream === "new" ? { new_as_ae: streamOut(rep!.newBiz, updated?.new.get(key), withAccounts) } : {}),
-            ...(stream === "all" || stream === "renew" ? { renew_as_am: streamOut(rep!.renew, updated?.renew.get(key), withAccounts) } : {}),
-            ...(stream === "all" || stream === "csm" ? { renew_as_csm: streamOut(rep!.csmRenew, updated?.csm.get(key), withAccounts) } : {}),
+            ...(stream === "all" || stream === "new" ? { new_as_ae: streamOut(rep!.newBiz, withAccounts) } : {}),
+            ...(stream === "all" || stream === "renew" ? { renew_as_am: streamOut(rep!.renew, withAccounts) } : {}),
+            ...(stream === "all" || stream === "csm" ? { renew_as_csm: streamOut(rep!.csmRenew, withAccounts) } : {}),
           }))
           // Un CSM n'a pas de New, un AE pur pas de Renew CSM : on ne liste pas les flux vides.
           .map((p) => Object.fromEntries(Object.entries(p).filter(([, v]) => typeof v !== "object" || v === null || (v as { target: unknown; billed: unknown }).target != null || (v as { target: unknown; billed: unknown }).billed != null)))

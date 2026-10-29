@@ -4,11 +4,17 @@
 // données déjà prêtes. C'est ce qui permet à /dashboard (données réelles) et à
 // /dashboard/demo (données fictives) de partager exactement le même rendu.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import type { QuarterAmount, RevenueStream } from "@/lib/ae-activity/types";
 import type { RepRevenueLine } from "@/lib/dashboard/global-overview";
-import type { IncentiveSummary } from "@/lib/incentives/summary";
+import type {
+  IncentiveStatus,
+  IncentiveSummary,
+  IncentiveYearBasis,
+  QuarterlyIncentiveSummary,
+  YearlyIncentiveSummary,
+} from "@/lib/incentives/summary";
 import { COLORS } from "@/lib/design/tokens";
 import {
   fmtEUR,
@@ -205,7 +211,7 @@ export function StreamBlock({
   );
 }
 
-const INCENTIVE_STATUS: Record<IncentiveSummary["quarters"][number]["status"], string> = {
+const INCENTIVE_STATUS: Record<IncentiveStatus, string> = {
   closed: "Closed",
   in_progress: "In progress",
   upcoming: "Upcoming",
@@ -221,12 +227,51 @@ const STREAM_TAB: Record<IncentiveSummary["stream"], string> = {
 const attLabel = (r: number | null) => (r == null ? "-" : `${(r * 100).toFixed(1).replace(/\.0$/, "")}%`);
 
 /**
- * Prime du rep (lib/incentives) : l'année cumulée, le trimestre en cours et ce
- * qu'il reste à facturer pour franchir le prochain cap, puis un trimestre par
- * ligne. Visible du seul rep et des admins ("Voir comme").
+ * Prime du rep (lib/incentives), visible du seul rep et des admins ("Voir
+ * comme") : par trimestre (Mehdi) ou sur l'année, sur les deux targets (Julie).
  */
 export function IncentiveBlock({ incentive, accent }: { incentive: IncentiveSummary; accent: string }) {
-  const [showRules, setShowRules] = useState(false);
+  return incentive.period === "year" ? (
+    <YearlyIncentive incentive={incentive} accent={accent} />
+  ) : (
+    <QuarterlyIncentive incentive={incentive} accent={accent} />
+  );
+}
+
+/** "How it's computed" : le barème déroulé, puis d'où viennent les chiffres. */
+function IncentiveRules({ rules, children }: { rules: string[]; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-[12px] mt-3 font-medium hover:underline"
+        style={{ color: COLORS.brand }}
+      >
+        {open ? "Hide how it's computed" : "How it's computed"}
+      </button>
+      {open && (
+        <div className="mt-2 rounded-xl px-3.5 py-3 text-[12px]" style={{ background: COLORS.bgSoft, color: COLORS.ink1 }}>
+          <ul className="space-y-1 list-disc pl-4">
+            {rules.map((r) => (
+              <li key={r}>{r}</li>
+            ))}
+          </ul>
+          <p className="text-[11px] mt-2" style={{ color: COLORS.ink3 }}>
+            {children}
+          </p>
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Plan trimestriel : l'année cumulée, le trimestre en cours et ce qu'il reste
+ * à facturer pour franchir le prochain cap, puis un trimestre par ligne.
+ */
+function QuarterlyIncentive({ incentive, accent }: { incentive: QuarterlyIncentiveSummary; accent: string }) {
   const current = incentive.quarters.find((x) => x.quarter === incentive.currentQuarter) ?? null;
   const next = incentive.nextUnlock;
   const num = "py-2 pl-3 text-right tabular-nums whitespace-nowrap";
@@ -337,27 +382,122 @@ export function IncentiveBlock({ incentive, accent }: { incentive: IncentiveSumm
         </table>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setShowRules((v) => !v)}
-        className="text-[12px] mt-3 font-medium hover:underline"
-        style={{ color: COLORS.brand }}
-      >
-        {showRules ? "Hide how it's computed" : "How it's computed"}
-      </button>
-      {showRules && (
-        <div className="mt-2 rounded-xl px-3.5 py-3 text-[12px]" style={{ background: COLORS.bgSoft, color: COLORS.ink1 }}>
-          <ul className="space-y-1 list-disc pl-4">
-            {incentive.rules.map((r) => (
-              <li key={r}>{r}</li>
-            ))}
-          </ul>
-          <p className="text-[11px] mt-2" style={{ color: COLORS.ink3 }}>
-            Quota and billed come from the revenue Sheet ({STREAM_TAB[incentive.stream]} and Factures tabs), the same
-            figures as the block above. Plan: {incentive.source}. The current quarter is an estimate until it closes.
-          </p>
+      <IncentiveRules rules={incentive.rules}>
+        Quota and billed come from the revenue Sheet ({STREAM_TAB[incentive.stream]} and Factures tabs), the same
+        figures as the block above. Plan: {incentive.source}. The current quarter is an estimate until it closes.
+      </IncentiveRules>
+    </Card>
+  );
+}
+
+const BASIS_LABEL: Record<IncentiveYearBasis["basis"], { title: string; target: string }> = {
+  revised: { title: "On revised target", target: "Revised target" },
+  initial: { title: "On original target", target: "Original target" },
+};
+
+/**
+ * Plan annuel : la prime calculée sur le target actualisé et sur le target
+ * initial, côte à côte (aucun des deux n'est désigné comme le seul qui paie),
+ * puis l'échelle des paliers avec le facturé qu'il faut pour chacun.
+ */
+function YearlyIncentive({ incentive, accent }: { incentive: YearlyIncentiveSummary; accent: string }) {
+  const num = "py-2 pl-3 text-right tabular-nums whitespace-nowrap";
+  const inProgress = incentive.status === "in_progress";
+
+  return (
+    <Card>
+      <SectionTitle title="My incentive" hint={`${incentive.year} plan · paid on the year`} />
+
+      <div className="text-[12px] -mt-1 mb-4" style={{ color: COLORS.ink3 }}>
+        {incentive.year} billed{inProgress ? " so far" : ""}:{" "}
+        <span className="font-semibold tabular-nums" style={{ color: COLORS.ink0 }}>
+          {fmtEUR(incentive.billed)}
+        </span>
+        {inProgress && " · what the year would pay if it closed today"}
+      </div>
+
+      <div className="grid gap-5" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
+        {incentive.bases.map((b, i) => (
+          <div key={b.basis}>
+            <div className="text-[15px] font-bold tracking-tight" style={{ color: COLORS.ink0 }}>
+              {BASIS_LABEL[b.basis].title}
+            </div>
+            <div
+              className="text-[32px] leading-none font-bold tabular-nums mt-1"
+              style={{ color: i === 0 ? accent : COLORS.ink0 }}
+            >
+              {fmtEUR(b.amount)}
+            </div>
+            <div className="text-[12px] mt-1.5" style={{ color: b.error ? COLORS.warn : COLORS.ink3 }}>
+              {b.error ??
+                `${BASIS_LABEL[b.basis].target} ${fmtEUR(b.target)} · ${attLabel(b.attainment)} reached${
+                  b.amount === 0 ? ", no incentive yet" : b.capped ? ", top step" : ""
+                }`}
+            </div>
+            {b.nextUnlock && (
+              <span
+                className="inline-block text-[11px] px-2 py-0.5 rounded-full mt-2"
+                style={{ color: TONE.good.fg, background: TONE.good.bg }}
+              >
+                {fmtEUR(b.nextUnlock.toBill)} more to reach {attLabel(b.nextUnlock.threshold)}: {b.nextUnlock.label}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {incentive.steps && (
+        <div className="overflow-x-auto mt-4 pt-3 border-t" style={{ borderColor: COLORS.line }}>
+          <table className="w-full text-[12.5px]">
+            <thead>
+              <tr className="text-[11px] text-left" style={{ color: COLORS.ink4 }}>
+                <th className="pb-1.5 font-medium">Step</th>
+                <th className="pb-1.5 pl-3 font-medium text-right">Incentive</th>
+                {incentive.bases.map((b) => (
+                  <th key={b.basis} className="pb-1.5 pl-3 font-medium text-right">
+                    Billed needed · {BASIS_LABEL[b.basis].target.toLowerCase()}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {incentive.steps.map((st) => (
+                <tr key={st.at} className="border-t" style={{ borderColor: COLORS.line }}>
+                  <td className="py-2 font-medium" style={{ color: COLORS.ink0 }}>
+                    {attLabel(st.at)}
+                  </td>
+                  <td className={`${num} font-semibold`} style={{ color: COLORS.ink0 }}>
+                    {fmtEUR(st.amount)}
+                  </td>
+                  {incentive.bases.map((b) => {
+                    const needed = b.target != null && b.target > 0 ? Math.ceil(st.at * b.target) : null;
+                    const reached = b.attainment != null && b.attainment >= st.at;
+                    return (
+                      <td
+                        key={b.basis}
+                        className={num}
+                        style={{
+                          color: reached ? TONE.good.fg : COLORS.ink2,
+                          fontWeight: b.reached === st.at ? 600 : undefined,
+                        }}
+                      >
+                        {fmtEUR(needed)}
+                        {reached && <span className="ml-1.5">✓</span>}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
+
+      <IncentiveRules rules={incentive.rules}>
+        Original target, revised target and billed come from the revenue Sheet ({STREAM_TAB[incentive.stream]} tab);
+        billed and original target are the same figures as the block above. The incentive is shown on both targets.
+        Plan: {incentive.source}.{inProgress && " The year is an estimate until it closes."}
+      </IncentiveRules>
     </Card>
   );
 }
