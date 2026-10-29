@@ -3,7 +3,13 @@ import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { anthropicClient } from "@/lib/anthropic-client";
-import { searchSlackForCompany } from "@/lib/slack/search";
+import {
+  fetchDealCompany,
+  fetchDealSlackMentions,
+  fetchEngagementPreviews,
+  fetchSalesCoachRecaps,
+  slackDay,
+} from "./context-sources";
 import { withForcedTool } from "@/lib/models/compat";
 
 const DEFAULT_ANALYZE_MODEL = "claude-sonnet-5-5";
@@ -124,31 +130,6 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
   return res.json();
 }
 
-export type ClaapRecapRow = {
-  meeting_title: string | null;
-  meeting_started_at: string | null;
-  meeting_kind: string | null;
-  audience: string | null;
-  meeting_recap: {
-    context?: string | null;
-    need?: string | null;
-    risks_competition?: string | null;
-    opportunities?: string | null;
-    next_steps?: string | null;
-  } | null;
-};
-
-export async function fetchSalesCoachRecaps(dealId: string): Promise<ClaapRecapRow[]> {
-  if (!process.env.SUPABASE_URL) return [];
-  const { data } = await db
-    .from("sales_coach_analyses")
-    .select("meeting_title, meeting_started_at, meeting_kind, audience, meeting_recap")
-    .eq("hubspot_deal_id", dealId)
-    .eq("status", "done")
-    .order("meeting_started_at", { ascending: false });
-  return (data ?? []) as ClaapRecapRow[];
-}
-
 export type DealAnalysisResult =
   | { ok: true; analysis: unknown; model: string }
   | { ok: false; error: string };
@@ -195,15 +176,12 @@ export async function runDealAnalysis(dealId: string, userId: string | null): Pr
       ? (engagementAssoc.value?.results ?? []).map((r: { id: string }) => r.id)
       : [];
 
-    const dealCompanyName = p.dealname?.replace(/\s*[-–|/].*$/, "").trim() ?? "";
+    const company = await fetchDealCompany(dealId, p.dealname);
 
     const [engResult, scoreResult, modelResult, slackResult, claapRecapsResult] = await Promise.allSettled([
       engIds.length > 0
         ? Promise.allSettled([
-            hubspot("/crm/v3/objects/engagements/batch/read", "POST", {
-              inputs: engIds.map((id) => ({ id })),
-              properties: ["hs_engagement_type", "hs_body_preview", "hs_createdate"],
-            }),
+            fetchEngagementPreviews(engIds),
             hubspot("/crm/v3/objects/meetings/search", "POST", {
               filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: dealId }] }],
               properties: ["hs_meeting_title", "hs_meeting_body", "hs_timestamp", "hs_meeting_outcome"],
@@ -225,23 +203,18 @@ export async function runDealAnalysis(dealId: string, userId: string | null): Pr
         ? db.from("deal_scores").select("score, reasoning, next_action, scored_at").eq("deal_id", dealId).maybeSingle()
         : Promise.resolve({ data: null }),
       db.from("guide_defaults").select("content").eq("key", "model_preferences").single(),
-      searchSlackForCompany(dealCompanyName),
-      fetchSalesCoachRecaps(dealId),
+      fetchDealSlackMentions(company.name, { count: 20 }),
+      fetchSalesCoachRecaps(dealId, { companyId: company.id }),
     ]);
 
     if (engResult.status === "fulfilled" && engResult.value) {
-      const [batchRes, meetingsRes, callsRes, notesRes] = engResult.value as PromiseSettledResult<{ results: { properties: Record<string, string> }[] }>[];
+      const [batchRes, meetingsRes, callsRes, notesRes] = engResult.value as [
+        PromiseSettledResult<Awaited<ReturnType<typeof fetchEngagementPreviews>>>,
+        ...PromiseSettledResult<{ results: { properties: Record<string, string> }[] }>[],
+      ];
 
       const engLines = batchRes.status === "fulfilled"
-        ? (batchRes.value.results ?? [])
-          .map((e) => {
-            const ep = e.properties ?? {};
-            const type = ep.hs_engagement_type ?? "Activité";
-            const date = ep.hs_createdate ? new Date(ep.hs_createdate).toLocaleDateString("fr-FR") : "";
-            const body = stripHtml(ep.hs_body_preview ?? "").slice(0, 500);
-            return body ? `[${type} ${date}] ${body}` : "";
-          })
-          .filter(Boolean)
+        ? batchRes.value.map((e) => `[${e.type} ${e.createdAt ? new Date(e.createdAt).toLocaleDateString("fr-FR") : ""}] ${e.body}`)
         : [];
 
       const meetingLines = meetingsRes.status === "fulfilled"
@@ -305,18 +278,15 @@ export async function runDealAnalysis(dealId: string, userId: string | null): Pr
       }
     }
 
-    const slackMessages = slackResult.status === "fulfilled" ? slackResult.value : [];
+    const slackMessages = slackResult.status === "fulfilled" ? slackResult.value.messages : [];
     const slackSection = slackMessages.length > 0
-      ? "\n\nConversations Slack internes mentionnant cette entreprise :\n" +
-        slackMessages.map((m: { channel: string; text: string; timestamp: string }) => {
-          const date = m.timestamp ? new Date(parseFloat(m.timestamp) * 1000).toLocaleDateString("fr-FR") : "";
-          return `[#${m.channel} ${date}] ${m.text}`;
-        }).join("\n\n")
+      ? `\n\nConversations Slack internes mentionnant ${company.name} :\n` +
+        slackMessages.map((m) => `[#${m.channel} ${slackDay(m.timestamp)}] ${m.text}`).join("\n\n")
       : "";
 
     const claapRecaps = claapRecapsResult.status === "fulfilled" ? claapRecapsResult.value : [];
     const claapSection = claapRecaps.length > 0
-      ? "\n\nRécaps Sales Coach (meetings Claap analysés, rattachés à ce deal) :\n" +
+      ? "\n\nRécaps Sales Coach (meetings Claap analysés, rattachés à ce deal ou à son entreprise) :\n" +
         claapRecaps.map((m) => {
           const date = m.meeting_started_at ? new Date(m.meeting_started_at).toLocaleDateString("fr-FR") : "?";
           const title = m.meeting_title ?? "Meeting";
@@ -338,9 +308,11 @@ export async function runDealAnalysis(dealId: string, userId: string | null): Pr
       p.description ? `Description : ${p.description}` : null,
       contactLines ? `Contacts : ${contactLines}` : "Contacts : aucun",
       `\n${scoreContext}`,
-      engagementLines ? `\nTous les échanges HubSpot :\n${engagementLines}` : "\nÉchanges : aucun enregistré",
-      slackSection || null,
+      // Récaps Claap et Slack AVANT les échanges HubSpot : le contexte est coupé
+      // à 14k caractères et ils étaient les premiers à disparaître.
       claapSection || null,
+      slackSection || null,
+      engagementLines ? `\nTous les échanges HubSpot :\n${engagementLines}` : "\nÉchanges : aucun enregistré",
     ].filter(Boolean).join("\n").slice(0, 14000);
 
     const client = anthropicClient({ timeout: 600_000 });

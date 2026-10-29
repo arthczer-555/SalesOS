@@ -23,11 +23,13 @@ import { buildSystem } from "./prompt/build";
 import { runLoop } from "./loop";
 import { ChatAuthError, type ChatEvent, type ChatResult } from "./events";
 import { anthropicClient } from "@/lib/anthropic-client";
+import { buildDealCoachBrief } from "@/lib/deals/coach-brief";
 
 // Sonnet par défaut : l'agent porte lui-même la décision de charger les bons
 // guides (pattern manifest), ce qui demande mieux que Haiku. Surchargeable par
 // l'admin via /admin > Modèles IA (clé "chat").
 const DEFAULT_CHAT_MODEL = "claude-sonnet-5-5";
+const DEAL_COACH_MODEL = "claude-sonnet-5-5";
 
 /**
  * Texte de la dernière question de l'utilisateur (ignore les documents joints
@@ -60,8 +62,13 @@ export async function runChat(args: {
   channelName?: string;
   /** Mode "réflexion approfondie" (toggle de la barre de chat web). */
   betterThinking?: boolean;
+  /**
+   * Chat coach ouvert depuis la fiche d'un deal : brief du deal (KUNA, Next
+   * move, committee, Claap) ajouté au system prompt, modèle forcé sur Sonnet.
+   */
+  dealId?: string;
 }): Promise<ChatResult> {
-  const { userId, messages, onEvent, channelName, betterThinking } = args;
+  const { userId, messages, onEvent, channelName, betterThinking, dealId } = args;
   const emit = onEvent ?? (() => {});
 
   // 1) Clé Claude chiffrée du user (ou fallback .env en dev sans Supabase)
@@ -98,7 +105,8 @@ export async function runChat(args: {
       db.from("users").select("user_prompt, email, name, hubspot_owner_id").eq("id", userId).single(),
       getModelPreference("chat", DEFAULT_CHAT_MODEL),
     ]);
-    chatModel = model;
+    // Chat coach d'un deal : Sonnet quelle que soit la préférence "chat".
+    chatModel = dealId ? DEAL_COACH_MODEL : model;
     userPrompt = userData?.user_prompt?.trim() ?? "";
     userOwnerId = userData?.hubspot_owner_id ?? null;
     userEmail = userData?.email ?? null;
@@ -106,7 +114,15 @@ export async function runChat(args: {
   }
 
   // 3) System prompt (socle + catalogue cachés, contexte dynamique en fin)
+  let dealBrief: string | undefined;
+  if (dealId) {
+    dealBrief = await buildDealCoachBrief(dealId).catch((e) => {
+      console.error(`[chat] deal brief ${dealId} failed:`, e);
+      return `Deal HubSpot ${dealId} : le brief n'a pas pu être chargé (${e instanceof Error ? e.message : "erreur"}). Lis le deal avec tes outils HubSpot.`;
+    });
+  }
   const { system } = await buildSystem({
+    dealBrief,
     userDisplay,
     userOwnerId,
     userPrompt,

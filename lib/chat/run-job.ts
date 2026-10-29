@@ -26,6 +26,7 @@ type JobRow = {
   status: string;
   input_messages: Anthropic.MessageParam[] | null;
   better_thinking: boolean | null;
+  deal_id?: string | null;
 };
 
 /**
@@ -86,7 +87,9 @@ export async function runChatJob(input: { jobId: string }): Promise<{ ok: boolea
   try {
     const { data, error } = await db
       .from("chat_jobs")
-      .select("user_id, status, input_messages, better_thinking")
+      // "*" : deal_id vient d'une migration, un select nommé casserait tout le
+      // chat tant qu'elle n'est pas appliquée.
+      .select("*")
       .eq("id", jobId)
       .single<JobRow>();
     if (error || !data) throw new Error(error?.message ?? "job not found");
@@ -154,6 +157,7 @@ export async function runChatJob(input: { jobId: string }): Promise<{ ok: boolea
         messages,
         onEvent,
         betterThinking: data.better_thinking === true,
+        dealId: data.deal_id ?? undefined,
       }),
       new Promise<typeof TIMED_OUT>((resolve) =>
         setTimeout(() => resolve(TIMED_OUT), WATCHDOG_MS)

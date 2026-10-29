@@ -23,7 +23,10 @@ export async function POST(req: NextRequest) {
   const user = await getAuthenticatedUser();
   if (!user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
-  const { messages, betterThinking, attachmentIds } = await req.json();
+  const { messages, betterThinking, attachmentIds, dealId } = await req.json();
+  // Question posée depuis la fiche d'un deal (chat coach) : le worker ajoute le
+  // brief du deal au system prompt. Id HubSpot numérique uniquement.
+  const scopedDealId = typeof dealId === "string" && /^\d+$/.test(dealId) ? dealId : null;
 
   // Pièces jointes (cahiers des charges, RFP...) : les IDs uploadés via
   // POST /api/chat/attachments sont expandés ici en blocs de contenu Anthropic
@@ -58,6 +61,9 @@ export async function POST(req: NextRequest) {
       status: "running",
       input_messages: inputMessages,
       better_thinking: betterThinking === true,
+      // Colonne de la migration deals_next_move_reopen_chat.sql : écrite
+      // seulement pour le chat coach, le chat général n'en dépend pas.
+      ...(scopedDealId ? { deal_id: scopedDealId } : {}),
     })
     .select("id")
     .single();

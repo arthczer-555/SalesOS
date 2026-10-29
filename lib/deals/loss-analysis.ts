@@ -63,8 +63,6 @@ export const CHAIN_LEVEL_LABELS: Record<ChainLevel, string> = {
   root_cause: "Root cause",
 };
 
-export type ReopenVerdict = "yes" | "maybe" | "no";
-
 export interface PhaseMetrics {
   meetings: number;
   replies: number;
@@ -96,12 +94,18 @@ export interface LossChainStep {
   proof: string;
 }
 
+// Un deal perdu vaut toujours une relance : la question est quand et comment.
 export interface LossReopen {
-  verdict: ReopenVerdict;
-  date: string | null; // YYYY-MM-DD, date de la tâche de relance
-  trigger: string;
-  wayIn: string;
+  date: string | null; // YYYY-MM-DD future ; null si l'IA n'a pas donné de date valide
+  timing: string; // pourquoi cette date
+  who: string; // qui contacter (nom et rôle, ou rôle à trouver)
+  how: string; // canal, angle, ce qui a changé depuis
+  watchFor: string; // signal qui justifierait d'avancer la relance
 }
+
+// 2 = plan de relance "quand et comment" (2026-10-29). Les analyses v1 avaient
+// un verdict yes/maybe/no : l'UI propose de les relancer.
+export const LOSS_ANALYSIS_SCHEMA_VERSION = 2;
 
 export interface LossSources {
   emails: number;
@@ -112,6 +116,7 @@ export interface LossSources {
 }
 
 export interface LossAnalysis {
+  schemaVersion?: number;
   // null = pas assez d'échanges pour trancher (jamais de raison inventée).
   primaryReason: LossReasonKey | null;
   secondaryReason: LossReasonKey | null;
@@ -264,23 +269,28 @@ function sanitizeChain(raw: unknown): LossChainStep[] {
     .slice(0, 4);
 }
 
-function sanitizeReopen(raw: unknown): LossReopen {
+// Date de relance : strictement future, sinon null (l'UI propose de relancer
+// l'analyse). Le code n'invente jamais de date de repli.
+function sanitizeReopen(raw: unknown, today: string): LossReopen {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-  const verdict = str(o.verdict) as ReopenVerdict;
-  const valid: ReopenVerdict[] = ["yes", "maybe", "no"];
-  const v = valid.includes(verdict) ? verdict : "no";
+  const date = isoDay(o.date);
   return {
-    verdict: v,
-    date: v === "no" ? null : isoDay(o.date),
-    trigger: str(o.trigger),
-    wayIn: str(o.way_in),
+    date: date && date > today ? date : null,
+    timing: str(o.timing),
+    who: str(o.who),
+    how: str(o.how),
+    watchFor: str(o.watch_for),
   };
+}
+
+export function isCurrentLossAnalysis(a: Pick<LossAnalysis, "schemaVersion"> | null | undefined): boolean {
+  return a?.schemaVersion === LOSS_ANALYSIS_SCHEMA_VERSION;
 }
 
 export function sanitizeLossOutput(
   raw: unknown,
   bounds: { start: string; end: string },
-): Omit<LossAnalysis, "phases" | "sources"> & { phases: LossPhaseDraft[] } {
+): Omit<LossAnalysis, "phases" | "sources" | "schemaVersion"> & { phases: LossPhaseDraft[] } {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const primaryReason = sanitizeReason(o.primary_reason);
   const secondary = sanitizeReason(o.secondary_reason);
@@ -294,7 +304,7 @@ export function sanitizeLossOutput(
     execution: sanitizeExecution(o.execution),
     phases: sanitizePhases(o.phases, bounds),
     chain: sanitizeChain(o.chain),
-    reopen: sanitizeReopen(o.reopen),
+    reopen: sanitizeReopen(o.reopen, new Date().toISOString().slice(0, 10)),
   };
 }
 

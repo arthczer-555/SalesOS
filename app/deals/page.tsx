@@ -4,7 +4,7 @@ import { Suspense, useState, useEffect, useCallback, useMemo, memo, useRef } fro
 import { useSearchParams } from "next/navigation";
 import { useUserMe } from "@/lib/hooks/use-user-me";
 import { useDeals } from "@/lib/hooks/use-deals";
-import { useLostDeals } from "@/lib/hooks/use-lost-deals";
+import { useLostDeals, type LostSort } from "@/lib/hooks/use-lost-deals";
 import { Zap, Search, RefreshCw, ArrowLeft } from "lucide-react";
 import { scoreBadge } from "@/lib/deal-scoring";
 import { DealFiltersBar, applyDealFilters, DEFAULT_DEAL_FILTERS, type DealFilters } from "./_components/deal-filters";
@@ -243,7 +243,8 @@ function DealsPageInner() {
   const [appliedQuery, setAppliedQuery] = useState("");
   const { stages, deals, owners, isLoading: loading, error, reload } = useDeals(appliedQuery, filters.ownerMode);
   // Colonne "Closed lost" : chargée à part, par pages (cf /api/deals/lost).
-  const lost = useLostDeals(appliedQuery, filters.ownerMode);
+  const [lostSort, setLostSort] = useState<LostSort>("lost");
+  const lost = useLostDeals(appliedQuery, filters.ownerMode, lostSort);
 
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [details, setDetails] = useState<DealDetails | null>(null);
@@ -686,6 +687,9 @@ function DealsPageInner() {
                     loadingMore={lost.loadingMore}
                     onLoadMore={lost.loadMore}
                     onSelect={openDeal}
+                    sort={lostSort}
+                    sortLocked={!!appliedQuery}
+                    onSortChange={setLostSort}
                   />
                 )}
                 {stages.length === 0 && (

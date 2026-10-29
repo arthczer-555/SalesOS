@@ -4,7 +4,7 @@ import { type DealScore } from "@/lib/deal-scoring";
 import { db } from "@/lib/db";
 import { stripHtml } from "@/lib/hubspot";
 import { getClaapRecording } from "@/lib/claap";
-import type { ActiveContact, DealThreading } from "@/lib/deals/kuna";
+import { computeThreading, sanitizeNextMove, type NextMove } from "@/lib/deals/kuna";
 import { daysBetween, normalizeDeclaredReason, stageBeforeLoss, type LostFacts } from "@/lib/deals/loss-analysis";
 
 export const dynamic = "force-dynamic";
@@ -242,28 +242,17 @@ export async function GET(req: NextRequest) {
       events.push({ kind: "created", label: "Deal created", iso: p.createdate });
     }
 
-    // Threading : contacts côté prospect "actifs" = ont envoyé un email loggé
-    // sur le deal (ou assisté à un meeting Claap, cf plus bas) dans les 30 derniers
-    // jours. Calcul déterministe, vérifiable dans HubSpot.
-    const THREAD_WINDOW_DAYS = 30;
-    const threadSince = Date.now() - THREAD_WINDOW_DAYS * 864e5;
+    // Threading (contacts actifs sur 30 jours) : emails entrants loggés sur le
+    // deal ici, participants des meetings Claap plus bas (computeThreading).
     const isInternal = (email: string) => /@coachello\./i.test(email);
-    const activeByEmail = new Map<string, ActiveContact>();
-    const markActive = (email: string, name: string | null, iso: string, via: ActiveContact["via"]) => {
-      const key = email.toLowerCase();
-      const prev = activeByEmail.get(key);
-      if (!prev || prev.lastInboundAt < iso) {
-        activeByEmail.set(key, { email: key, name: name || prev?.name || null, lastInboundAt: iso, via });
-      }
-    };
-    for (const row of rowsOf(emailsRes)) {
+    const inboundEmails = rowsOf(emailsRes).flatMap((row) => {
       const ep = row.properties ?? {};
       const from = ep.hs_email_from_email?.trim();
-      if (ep.hs_email_direction !== "INCOMING_EMAIL" || !from || isInternal(from)) continue;
-      if (tsNum(ep.hs_timestamp) < threadSince) continue;
+      if (ep.hs_email_direction !== "INCOMING_EMAIL" || !from) return [];
       const name = [ep.hs_email_from_firstname, ep.hs_email_from_lastname].filter(Boolean).join(" ").trim();
-      markActive(from, name || null, new Date(tsNum(ep.hs_timestamp)).toISOString(), "email");
-    }
+      return [{ from, name: name || null, at: tsNum(ep.hs_timestamp) }];
+    });
+    let claapRows: ClaapRow[] = [];
 
     // Fetch cached AI score
     let cachedScore: DealScore | null = null;
@@ -275,6 +264,7 @@ export async function GET(req: NextRequest) {
     let kuna: unknown[] | null = null;
     let committee: unknown = null;
     let goLiveDate: string | null = null;
+    let nextMove: NextMove | null = null;
     if (process.env.SUPABASE_URL) {
       const { data: cached } = await db
         .from("deal_scores")
@@ -308,6 +298,14 @@ export async function GET(req: NextRequest) {
         committee = kn.committee && typeof kn.committee === "object" ? kn.committee : null;
         goLiveDate = typeof kn.go_live_date === "string" ? kn.go_live_date : null;
       }
+
+      // Best-effort : colonne de la migration deals_next_move_reopen_chat.sql.
+      const { data: nm } = await db
+        .from("deal_scores")
+        .select("next_move")
+        .eq("deal_id", id)
+        .maybeSingle();
+      nextMove = sanitizeNextMove(nm?.next_move);
     }
 
     // Réunions Claap analysées rattachées au deal (sales_coach_analyses).
@@ -343,13 +341,7 @@ export async function GET(req: NextRequest) {
         .eq("status", "done")
         .order("meeting_started_at", { ascending: false });
       // Participants externes d'un meeting Claap récent = contacts actifs aussi.
-      for (const m of (rows ?? []) as ClaapRow[]) {
-        if (!m.meeting_started_at || tsNum(m.meeting_started_at) < threadSince) continue;
-        for (const pt of m.participants ?? []) {
-          if (!pt?.email || pt.attended === false || isInternal(pt.email)) continue;
-          markActive(pt.email, pt.name, new Date(tsNum(m.meeting_started_at)).toISOString(), "meeting");
-        }
-      }
+      claapRows = (rows ?? []) as ClaapRow[];
       meetings = ((rows ?? []) as ClaapRow[]).map((m) => ({
         id: m.id,
         claap_recording_id: m.claap_recording_id,
@@ -427,14 +419,11 @@ export async function GET(req: NextRequest) {
       };
     }
 
-    // Noms : on préfère celui du contact HubSpot quand l'email correspond.
-    const contactNameByEmail = new Map(contacts.filter((c) => c.email).map((c) => [c.email.toLowerCase(), c.name]));
-    const threading: DealThreading = {
-      windowDays: THREAD_WINDOW_DAYS,
-      active: [...activeByEmail.values()]
-        .map((a) => ({ ...a, name: contactNameByEmail.get(a.email) || a.name }))
-        .sort((a, b) => b.lastInboundAt.localeCompare(a.lastInboundAt)),
-    };
+    const threading = computeThreading({
+      inboundEmails,
+      meetings: claapRows.map((m) => ({ startedAt: m.meeting_started_at, participants: m.participants })),
+      contactNameByEmail: new Map(contacts.filter((c) => c.email).map((c) => [c.email.toLowerCase(), c.name])),
+    });
 
     return NextResponse.json({
       id,
@@ -454,6 +443,7 @@ export async function GET(req: NextRequest) {
       score: cachedScore ?? null,
       reasoning,
       next_action,
+      next_move: nextMove,
       scoredAt,
       qualification,
       contacts,

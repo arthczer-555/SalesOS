@@ -4,23 +4,42 @@ import * as React from "react";
 import { RefreshCw } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
 import { lossReasonLabel } from "@/lib/deals/loss-analysis";
+import type { LostSort } from "@/lib/hooks/use-lost-deals";
 import type { LostDeal } from "../_helpers";
 import { fmt, lostWhen } from "../_helpers";
 
 export const LOST_COLUMN_WIDTH = 280;
 const LOST_DOT = "#b91c1c";
 
-// Statut de la carte : analysée (cause trouvée), en cours, sinon la raison
-// saisie dans HubSpot telle quelle.
+const pill: React.CSSProperties = { fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 99 };
+
+// Date de relance de l'analyse : "Reopen Mar 2027", en orange une fois passée.
+function ReopenPill({ date }: { date: string }) {
+  const overdue = date < new Date().toISOString().slice(0, 10);
+  const label = new Date(`${date}T00:00:00Z`).toLocaleDateString("en-GB", { month: "short", year: "numeric", timeZone: "UTC" });
+  return (
+    <span
+      style={{ ...pill, background: overdue ? COLORS.warnBg : COLORS.ink0, color: overdue ? COLORS.warn : "#fff", whiteSpace: "nowrap" }}
+      title={overdue ? "Reopen date has passed" : "Suggested reopen date"}
+    >
+      {overdue ? `Reopen overdue · ${label}` : `Reopen ${label}`}
+    </span>
+  );
+}
+
+// Statut de la carte : analysée (date de relance + cause), en cours, sinon la
+// raison saisie dans HubSpot telle quelle.
 export function LostStatus({ deal }: { deal: LostDeal }) {
   const a = deal.lossAnalysis;
   if (a?.status === "done") {
     return (
       <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 99, background: COLORS.ink0, color: "#fff" }}>
-          Analyzed
-        </span>
-        <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 8px", borderRadius: 99, background: COLORS.errBg, color: LOST_DOT }}>
+        {a.reopenDate ? (
+          <ReopenPill date={a.reopenDate} />
+        ) : (
+          <span style={{ ...pill, background: COLORS.ink0, color: "#fff" }}>Analyzed</span>
+        )}
+        <span style={{ ...pill, background: COLORS.errBg, color: LOST_DOT }}>
           {lossReasonLabel(a.primaryReason)}
         </span>
       </span>
@@ -81,8 +100,14 @@ const LostCard = React.memo(function LostCard({ deal, onClick }: { deal: LostDea
   );
 });
 
-// Dernière colonne du board : deals perdus, le plus récent en haut. Pas de
-// total en euros (ce n'est pas du pipeline).
+const SORT_OPTIONS: { key: LostSort; label: string }[] = [
+  { key: "lost", label: "Lost date" },
+  { key: "reopen", label: "Reopen date" },
+];
+
+// Dernière colonne du board : deals perdus, triés par date de perte (le plus
+// récent en haut) ou par date de relance (la plus proche en haut, deals
+// analysés seulement). Pas de total en euros (ce n'est pas du pipeline).
 export function LostKanbanColumn({
   deals,
   loading,
@@ -91,6 +116,9 @@ export function LostKanbanColumn({
   loadingMore,
   onLoadMore,
   onSelect,
+  sort,
+  sortLocked,
+  onSortChange,
 }: {
   deals: LostDeal[];
   loading: boolean;
@@ -99,7 +127,12 @@ export function LostKanbanColumn({
   loadingMore: boolean;
   onLoadMore: () => void;
   onSelect: (d: LostDeal) => void;
+  sort: LostSort;
+  // Recherche active : elle passe par HubSpot et impose le tri par date de perte.
+  sortLocked: boolean;
+  onSortChange: (s: LostSort) => void;
 }) {
+  const effectiveSort: LostSort = sortLocked ? "lost" : sort;
   return (
     <div
       style={{
@@ -119,7 +152,43 @@ export function LostKanbanColumn({
           <span style={{ width: 8, height: 8, borderRadius: "50%", background: LOST_DOT, flexShrink: 0 }} aria-hidden="true" />
           <span style={{ fontWeight: 600, fontSize: 13, color: COLORS.ink0 }}>Closed lost</span>
         </div>
-        <div style={{ fontSize: 12, color: COLORS.ink2, marginTop: 3, paddingLeft: 15 }}>Newest loss first</div>
+        <div
+          role="radiogroup"
+          aria-label="Sort lost deals"
+          style={{ display: "flex", gap: 2, marginTop: 8, padding: 2, borderRadius: 8, background: COLORS.bgCard, border: `1px solid ${COLORS.line}` }}
+        >
+          {SORT_OPTIONS.map((o) => {
+            const active = effectiveSort === o.key;
+            const disabled = sortLocked && o.key === "reopen";
+            return (
+              <button
+                key={o.key}
+                type="button"
+                role="radio"
+                aria-checked={active}
+                disabled={disabled}
+                title={disabled ? "Clear the search to sort by reopen date" : undefined}
+                onClick={() => onSortChange(o.key)}
+                style={{
+                  flex: 1,
+                  padding: "5px 0",
+                  borderRadius: 6,
+                  border: "none",
+                  background: active ? COLORS.ink0 : "transparent",
+                  color: active ? "#fff" : disabled ? COLORS.ink4 : COLORS.ink1,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: disabled ? "default" : "pointer",
+                }}
+              >
+                {o.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ fontSize: 12, color: COLORS.ink2, marginTop: 6, paddingLeft: 2 }}>
+          {effectiveSort === "reopen" ? "Next reopening first, analyzed deals only" : "Newest loss first"}
+        </div>
       </div>
       <div className="thin-scrollbar" style={{ flex: 1, overflowY: "auto", paddingBottom: 8, paddingRight: 2 }}>
         {error ? (
@@ -129,7 +198,9 @@ export function LostKanbanColumn({
         ) : loading ? (
           <div style={{ fontSize: 12, color: COLORS.ink3, padding: "16px 0", textAlign: "center" }}>Loading…</div>
         ) : deals.length === 0 ? (
-          <div style={{ textAlign: "center", fontSize: 12, color: COLORS.ink4, padding: "16px 0" }}>No lost deal</div>
+          <div style={{ textAlign: "center", fontSize: 12, color: COLORS.ink4, padding: "16px 0" }}>
+            {effectiveSort === "reopen" ? "No analyzed lost deal yet" : "No lost deal"}
+          </div>
         ) : (
           <>
             {deals.map((d) => (

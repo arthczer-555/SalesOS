@@ -72,46 +72,11 @@ export async function searchSlackMessages(
   }
 }
 
-/**
- * Messages qui mentionnent une entreprise (analyse de deal). search.messages si
- * le user token est dispo, sinon scan des canaux du bot (historique récent,
- * filtre mot-clé). Best-effort : [] en cas d'échec.
- */
-export async function searchSlackForCompany(companyName: string): Promise<SlackMessage[]> {
-  if (!companyName || !process.env.SLACK_BOT_TOKEN) return [];
+// Canaux de flux automatiques (réservations, alertes, nouveaux leads…) : bruit
+// pour un contexte IA. Convention du workspace : préfixe "<chiffre><lettre>-"
+// (0x-development-updates, 1y-new-meetings, 2x-booking-notifications…).
+const NOISY_CHANNEL = /^\d[a-z]-|(^|-)(notifications?|bookings?|alerts?|logs?)($|-)/i;
 
-  const searched = await searchSlackMessages(companyName, { count: 20 });
-  if (!searched.error) {
-    return searched.messages.slice(0, 20).map((m) => ({ ...m, text: m.text.slice(0, 500) }));
-  }
-
-  const messages: SlackMessage[] = [];
-  const channels: { name: string; id: string }[] = [];
-  let cursor: string | undefined;
-  do {
-    const params: Record<string, string> = { limit: "200", types: "public_channel,private_channel" };
-    if (cursor) params.cursor = cursor;
-    const data = await slackBotGet<{ channels?: { name: string; id: string }[]; response_metadata?: { next_cursor?: string } }>(
-      "/conversations.list",
-      params,
-    );
-    if (!data.ok) break;
-    channels.push(...(data.channels ?? []));
-    cursor = data.response_metadata?.next_cursor || undefined;
-  } while (cursor);
-
-  const keyword = companyName.toLowerCase();
-  for (const ch of channels) {
-    if (messages.length >= 20) break;
-    const history = await slackBotGet<{ messages?: Array<{ text?: string; user?: string; ts?: string }> }>(
-      "/conversations.history",
-      { channel: ch.id, limit: "200" },
-    );
-    if (!history.ok) continue;
-    const matched = (history.messages ?? []).filter((m) => m.text?.toLowerCase().includes(keyword));
-    for (const m of matched.slice(0, 5)) {
-      messages.push({ channel: ch.name, text: m.text?.slice(0, 500) ?? "", user: m.user ?? "", timestamp: m.ts ?? "" });
-    }
-  }
-  return messages;
+export function isNoisySlackChannel(name: string): boolean {
+  return NOISY_CHANNEL.test(name);
 }

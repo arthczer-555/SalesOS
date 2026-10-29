@@ -41,7 +41,8 @@ import {
   outputLangRetryReminder,
   type OutputLang,
 } from "./language";
-import { scoreOneDeal } from "../deal-scoring";
+import { DEFAULT_SCORE_MODEL, persistDealScore, scoreOneDeal } from "../deal-scoring";
+import { getModelPreference } from "@/lib/models/get-model-preference";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { withForcedTool } from "@/lib/models/compat";
 
@@ -519,6 +520,19 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
     // "external" pour qu'il sorte du filtre de la liste Coaching.
     if (dealId) doneUpdate.meeting_type = "external";
     await db.from("sales_coach_analyses").update(doneUpdate).eq("id", id);
+
+    // Le meeting est maintenant `done` : on rescore le deal ET on persiste, pour
+    // que KUNA, Next move et Path to close l'intègrent sans attendre un Rescore
+    // manuel ou le cron. Le rescore lancé plus haut ne sert qu'au récap et ne
+    // voyait pas encore ce meeting (filtre status = done).
+    if (dealId && audience === "prospect") {
+      try {
+        const scoreModel = await getModelPreference("deals_score", DEFAULT_SCORE_MODEL);
+        await persistDealScore(dealId, await scoreOneDeal(dealId, row.user_id, scoreModel));
+      } catch (e) {
+        console.warn(`[sales-coach/analyze/${id}] deal score not persisted:`, e instanceof Error ? e.message : e);
+      }
+    }
 
     // Sales-coach Slack (DM coaching) - tire pour prospect ET client si
     // l'analyse a tourné. Le routing (mode test -> Arthur, mode prod -> deal

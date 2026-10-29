@@ -23,13 +23,12 @@ import { useUserMe } from "@/lib/hooks/use-user-me";
 import {
   type DealScore,
 } from "@/lib/deal-scoring";
-import { AskClaudePanel } from "@/components/ask-claude";
 import { COLORS } from "@/lib/design/tokens";
 import { Card } from "@/components/ui/card";
 import { SectionHeader } from "@/components/ui/section-header";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { IconButton } from "@/components/ui/icon-button";
-import type { DealCommittee, KunaEntry } from "@/lib/deals/kuna";
+import type { DealCommittee, KunaEntry, NextMove } from "@/lib/deals/kuna";
 import type { Analysis, AnalysisEvent, DealDetails, Stage } from "../_helpers";
 import { engagementTypeBadge, formatDealForSlack, timeAgo } from "../_helpers";
 import { DealLinkedinCard } from "./deal-linkedin-card";
@@ -38,6 +37,7 @@ import { DealEventsTimeline } from "./deal-timeline-card";
 import { DealKunaCard } from "./deal-kuna-card";
 import { DealHeaderSummary, DealScoreDetails } from "./deal-header-summary";
 import { DealNextMove, DealPathToClose } from "./deal-path-to-close";
+import { DealCoachChat } from "./deal-coach-chat";
 import {
   DealCommitteeCard,
   DealRetroplanningCard,
@@ -93,12 +93,15 @@ export function DealDetailPanel({
   const [showScoreDetails, setShowScoreDetails] = React.useState(false);
   const [showEngagements, setShowEngagements] = React.useState(false);
   const [engagementsShown, setEngagementsShown] = React.useState(5);
-  const [claudeOpen, setClaudeOpen] = React.useState(false);
+  // Chat coach (CoachelloAI ciblé sur le deal), sous le bandeau Next move.
+  const [coachOpen, setCoachOpen] = React.useState(false);
+  const coachRef = React.useRef<HTMLDivElement>(null);
   const [rescoring, setRescoring] = React.useState(false);
   const [localScore, setLocalScore] = React.useState<{
     score: DealScore;
     reasoning: string;
     next_action: string;
+    next_move: NextMove | null;
     scoredAt: string;
     qualification: Record<string, string | null> | null;
     key_events: AnalysisEvent[];
@@ -120,7 +123,7 @@ export function DealDetailPanel({
     setShowScoreDetails(false);
     setShowEngagements(false);
     setEngagementsShown(5);
-    setClaudeOpen(false);
+    setCoachOpen(false);
     setLocalScore(null);
     setSlackSent(false);
   }, [details?.id]);
@@ -291,6 +294,12 @@ export function DealDetailPanel({
     }
   }, [emailTo, emailSubject, emailBody, hasSignature, includeSignature]);
 
+  // Ouvre le chat coach et l'amène à l'écran (bouton du header ou du bandeau).
+  const openCoach = React.useCallback(() => {
+    setCoachOpen(true);
+    setTimeout(() => coachRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  }, []);
+
   const rescore = React.useCallback(async () => {
     if (!details) return;
     setRescoring(true);
@@ -307,6 +316,7 @@ export function DealDetailPanel({
           score: newScore,
           reasoning: data.reasoning ?? "",
           next_action: data.next_action ?? "",
+          next_move: data.next_move ?? null,
           scoredAt: new Date().toISOString(),
           qualification: data.qualification ?? null,
           key_events: Array.isArray(data.key_events) ? data.key_events : [],
@@ -377,6 +387,8 @@ export function DealDetailPanel({
   const activeScore = localScore?.score ?? details.score;
   const activeReasoning = localScore?.reasoning ?? details.reasoning;
   const activeNextAction = localScore?.next_action ?? details.next_action;
+  // Un rescore à l'ancien format (texte seul) ne doit pas laisser un next_move périmé.
+  const activeNextMove = localScore ? localScore.next_move : details.next_move;
   const activeScoredAt = localScore?.scoredAt ?? details.scoredAt;
   // Un rescore sans KUNA lisible garde la qualification précédente (cf persistDealScore).
   const activeKuna = localScore?.kuna ?? details.kuna;
@@ -477,9 +489,9 @@ export function DealDetailPanel({
           />
           <button
             type="button"
-            onClick={() => setClaudeOpen(true)}
-            aria-label="Ask Claude a question"
-            title="Ask Claude a question"
+            onClick={openCoach}
+            aria-label="Ask the deal coach"
+            title="Ask the deal coach"
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -612,49 +624,61 @@ export function DealDetailPanel({
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           {showScoreDetails && activeScore && <DealScoreDetails score={activeScore} reasoning={activeReasoning} />}
 
-          {/* Stratégie du deal : Path to close + Next move */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 14 }}>
-            {activeKuna ? (
-              <DealPathToClose kuna={activeKuna} activeThreads={threading.active.length} amount={isNaN(amountNum) ? 0 : amountNum} />
-            ) : (
-              <Card padding={20} style={{ flex: "999 1 520px", minWidth: 0, display: "flex", flexDirection: "column", gap: 10 }}>
-                <span style={{ fontSize: 15, fontWeight: 600, color: COLORS.ink0 }}>KUNA qualification not generated yet</span>
-                <span style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.5 }}>
-                  Rescore this deal to read the budget, decision date, Economic Buyer, buying committee and 7 other dimensions from the exchanges.
-                </span>
-                <button
-                  type="button"
-                  onClick={rescore}
-                  disabled={rescoring}
-                  style={{
-                    alignSelf: "flex-start",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 6,
-                    padding: "8px 14px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: COLORS.ink0,
-                    color: "#fff",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    cursor: rescoring ? "default" : "pointer",
-                    opacity: rescoring ? 0.7 : 1,
-                  }}
-                >
-                  {rescoring ? <RefreshCw size={13} className="animate-spin" /> : <Zap size={13} />}
-                  {rescoring ? "Scoring…" : "Rescore"}
-                </button>
-              </Card>
-            )}
-            {activeNextAction && <DealNextMove text={activeNextAction} />}
-          </div>
+          {/* Next move en tête (action + étapes), puis le chat coach qu'il ouvre. */}
+          {(activeNextMove || activeNextAction) && (
+            <DealNextMove
+              move={activeNextMove}
+              text={activeNextAction}
+              chatOpen={coachOpen}
+              onAsk={() => (coachOpen ? setCoachOpen(false) : openCoach())}
+            />
+          )}
+          {coachOpen && (
+            <div ref={coachRef} style={{ scrollMarginTop: 12 }}>
+              <DealCoachChat key={details.id} dealId={details.id} dealName={details.dealname} onClose={() => setCoachOpen(false)} />
+            </div>
+          )}
+
+          {/* Stratégie du deal : Path to close */}
+          {activeKuna ? (
+            <DealPathToClose kuna={activeKuna} activeThreads={threading.active.length} />
+          ) : (
+            <Card padding={20} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <span style={{ fontSize: 15, fontWeight: 600, color: COLORS.ink0 }}>KUNA qualification not generated yet</span>
+              <span style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.5 }}>
+                Rescore this deal to read the budget, decision date, Economic Buyer, buying committee and 7 other dimensions from the exchanges.
+              </span>
+              <button
+                type="button"
+                onClick={rescore}
+                disabled={rescoring}
+                style={{
+                  alignSelf: "flex-start",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  padding: "8px 14px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: COLORS.ink0,
+                  color: "#fff",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: rescoring ? "default" : "pointer",
+                  opacity: rescoring ? 0.7 : 1,
+                }}
+              >
+                {rescoring ? <RefreshCw size={13} className="animate-spin" /> : <Zap size={13} />}
+                {rescoring ? "Scoring…" : "Rescore"}
+              </button>
+            </Card>
+          )}
 
           {activeKuna && <DealKunaCard kuna={activeKuna} scoredAt={activeScoredAt} />}
 
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 14, alignItems: "start" }}>
             {activeCommittee && <DealCommitteeCard committee={activeCommittee} />}
-            <DealThreadingCard threading={threading} amount={isNaN(amountNum) ? 0 : amountNum} />
+            <DealThreadingCard threading={threading} />
             <DealRetroplanningCard goLiveDate={activeGoLive} />
           </div>
 
@@ -1059,67 +1083,6 @@ export function DealDetailPanel({
           </div>
       </div>
 
-      {/* Claude modal overlay — centered with backdrop */}
-      {claudeOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setClaudeOpen(false)}
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.4)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20,
-            zIndex: 1000,
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            style={{
-              width: "100%",
-              maxWidth: 640,
-              maxHeight: "80vh",
-              display: "flex",
-              flexDirection: "column",
-              background: "#fff",
-              borderRadius: 12,
-              boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
-              overflow: "hidden",
-            }}
-          >
-            <AskClaudePanel
-              context={{
-                deal: {
-                  name: details.dealname,
-                  stage: stageLabel,
-                  amount: details.amount,
-                  closeDate: details.closedate,
-                  probability: details.probability,
-                  type: details.dealType,
-                  description: details.description,
-                  score: details.score,
-                  reasoning: details.reasoning,
-                  nextAction: details.next_action,
-                  qualification: details.qualification,
-                  kuna: activeKuna,
-                  buyingCommittee: activeCommittee,
-                  goLiveDate: activeGoLive,
-                  activeContactsLast30Days: threading.active,
-                },
-                contacts: details.contacts,
-                company: details.company,
-                engagements: details.engagements,
-                analysis: analysis ?? undefined,
-              }}
-              placeholder="Ask a question about this deal…"
-              onClose={() => setClaudeOpen(false)}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }

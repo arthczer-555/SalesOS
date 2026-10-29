@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { COLORS } from "@/lib/design/tokens";
-import { KUNA_STATUS_LABELS, type KunaStatus } from "@/lib/deals/kuna";
+import { KUNA_STATUS_LABELS, type ConditionLevel, type KunaStatus } from "@/lib/deals/kuna";
 
 // Palette KUNA : A (hypothèse) est la plus sombre pour sauter aux yeux, la
 // lettre reste toujours visible (pas d'info portée par la couleur seule).
@@ -12,6 +12,14 @@ export const KUNA_STYLE: Record<KunaStatus | "off", React.CSSProperties> = {
   N: { background: "#f59e0b", color: "#451a03" },
   A: { background: "#b91c1c", color: "#fff" },
   off: { background: "#fff", color: "#a1a1aa", outline: `1px solid ${COLORS.lineStrong}`, outlineOffset: -1 },
+};
+
+// Niveau d'une condition du Path to close (et du threading) : vert = remplie,
+// orange = à moitié (2 contacts actifs sur 3), sinon neutre avec pastille rouge.
+export const LEVEL_STYLE: Record<ConditionLevel, { solid: string; onSolid: string; tileBg: string; tileBorder: string; text: string }> = {
+  met: { solid: "#15803d", onSolid: "#fff", tileBg: "#f0fdf4", tileBorder: "#bbf7d0", text: "#166534" },
+  partial: { solid: "#f59e0b", onSolid: "#451a03", tileBg: "#fffbeb", tileBorder: "#fde68a", text: "#92400e" },
+  missing: { solid: "#b91c1c", onSolid: "#fff", tileBg: COLORS.bgCard, tileBorder: COLORS.line, text: COLORS.ink1 },
 };
 
 export function KunaChip({

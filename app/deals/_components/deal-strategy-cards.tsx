@@ -5,16 +5,16 @@ import { COLORS } from "@/lib/design/tokens";
 import { Card } from "@/components/ui/card";
 import {
   COMMITTEE_ROLES,
-  requiredThreads,
   retroplan,
-  THREADS_BIG_DEAL_THRESHOLD,
+  TARGET_THREADS,
+  threadsLevel,
   type CommitteeStatus,
   type DealCommittee,
   type DealThreading,
 } from "@/lib/deals/kuna";
 import type { Stage } from "../_helpers";
 import { timeAgo } from "../_helpers";
-import { BlockTitle } from "./kuna-ui";
+import { BlockTitle, LEVEL_STYLE } from "./kuna-ui";
 
 const GO_LIVE_QUESTION =
   "“If everything goes well on our side, when would you like your first employees to have access to Coachello?”";
@@ -79,9 +79,10 @@ function committeeStatusLabel(status: CommitteeStatus, hasName: boolean): string
 
 // ─── Threading ─────────────────────────────────────────────────────────────
 
-export function DealThreadingCard({ threading, amount }: { threading: DealThreading; amount: number }) {
-  const needed = requiredThreads(amount);
+export function DealThreadingCard({ threading }: { threading: DealThreading }) {
+  const needed = TARGET_THREADS;
   const count = threading.active.length;
+  const level = threadsLevel(count);
   return (
     <Card padding={20}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -100,7 +101,7 @@ export function DealThreadingCard({ threading, amount }: { threading: DealThread
                 flex: 1,
                 height: 8,
                 borderRadius: 4,
-                background: i < count ? "#16a34a" : "#f1f1f4",
+                background: i < count ? LEVEL_STYLE[level].solid : "#f1f1f4",
                 outline: i < count ? "none" : "1px dashed #d4d4d8",
                 outlineOffset: -1,
               }}
@@ -124,7 +125,7 @@ export function DealThreadingCard({ threading, amount }: { threading: DealThread
           <p style={{ margin: 0, fontSize: 13, color: COLORS.ink2 }}>No reply from the prospect logged in the last {threading.windowDays} days.</p>
         )}
         <p style={{ margin: 0, fontSize: 11, lineHeight: 1.5, color: COLORS.ink3 }}>
-          Deals above {THREADS_BIG_DEAL_THRESHOLD / 1000}k€ need 3 active contacts, one of them close to the Economic Buyer. 2 below.
+          A deal needs {TARGET_THREADS} active contacts, one of them close to the Economic Buyer. {TARGET_THREADS - 1} is a medium thread.
         </p>
       </div>
     </Card>

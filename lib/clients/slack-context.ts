@@ -1,4 +1,4 @@
-import { searchSlackMessages, slackBotGet } from "@/lib/slack/search";
+import { isNoisySlackChannel, searchSlackMessages, slackBotGet } from "@/lib/slack/search";
 import { SLACK_APP_NAME, type ClientSlackChannel } from "./types";
 
 // Activité Slack d'un client pour le refresh : (1) les canaux dédiés au client
@@ -131,7 +131,7 @@ export async function listChannels(): Promise<{ channels: ListedChannel[]; error
 export function matchClientChannels<T extends { id: string; name: string }>(all: T[], companyName: string): T[] {
   return all
     .map((ch) => ({ ch, score: channelMatchScore(ch.name, companyName) }))
-    .filter(({ ch, score }) => score > 0 && !NOISY_CHANNEL.test(ch.name) && !isSharedChannel(ch.name))
+    .filter(({ ch, score }) => score > 0 && !isNoisySlackChannel(ch.name) && !isSharedChannel(ch.name))
     .sort((a, b) => b.score - a.score || a.ch.name.length - b.ch.name.length)
     .map(({ ch }) => ch);
 }
@@ -158,11 +158,6 @@ type RawSlackMessage = {
   latest_reply?: string;
   bot_profile?: { name?: string };
 };
-
-// Canaux de flux automatiques (réservations, alertes, nouveaux leads…) : bruit
-// pour la fiche. Convention du workspace : préfixe "<chiffre><lettre>-"
-// (0x-development-updates, 1y-new-meetings, 2x-booking-notifications…).
-const NOISY_CHANNEL = /^\d[a-z]-|(^|-)(notifications?|bookings?|alerts?|logs?)($|-)/i;
 
 // Messages système sans contenu utile pour la fiche.
 const SKIPPED_SUBTYPES = new Set(["channel_join", "channel_leave", "channel_topic", "channel_purpose", "channel_name", "pinned_item"]);
@@ -343,7 +338,7 @@ export async function fetchClientSlackActivity(opts: {
   }
   for (const m of searched.messages) {
     if (clientChannelNames.has(m.channel) || sharedNames.has(m.channel)) continue; // déjà lu plus haut
-    if (NOISY_CHANNEL.test(m.channel)) continue;
+    if (isNoisySlackChannel(m.channel)) continue;
     raws.push({ m: { ts: m.timestamp, text: m.text, user: m.user }, channel: m.channel, inClient: false, minTs: oldestTs });
   }
 

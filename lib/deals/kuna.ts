@@ -71,6 +71,47 @@ export interface DealThreading {
   windowDays: number;
 }
 
+// Threading : contacts côté prospect "actifs" = ont envoyé un email loggé sur
+// le deal ou assisté à un meeting Claap dans les 30 derniers jours. Calcul
+// déterministe, vérifiable dans HubSpot et Claap. Partagé par la fiche deal
+// (/api/deals/details) et le brief du chat coach.
+export const THREAD_WINDOW_DAYS = 30;
+
+const isInternalEmail = (email: string) => /@coachello\./i.test(email);
+
+export function computeThreading(input: {
+  inboundEmails: { from: string; name: string | null; at: number }[];
+  meetings: { startedAt: string | null; participants: { email: string; name: string | null; attended?: boolean | null }[] | null }[];
+  contactNameByEmail?: Map<string, string>;
+  now?: number;
+}): DealThreading {
+  const since = (input.now ?? Date.now()) - THREAD_WINDOW_DAYS * 864e5;
+  const byEmail = new Map<string, ActiveContact>();
+  const mark = (email: string, name: string | null, at: number, via: ActiveContact["via"]) => {
+    const key = email.toLowerCase();
+    const iso = new Date(at).toISOString();
+    const prev = byEmail.get(key);
+    if (!prev || prev.lastInboundAt < iso) byEmail.set(key, { email: key, name: name || prev?.name || null, lastInboundAt: iso, via });
+  };
+  for (const e of input.inboundEmails) {
+    if (e.from && !isInternalEmail(e.from) && e.at >= since) mark(e.from, e.name, e.at, "email");
+  }
+  for (const m of input.meetings) {
+    const at = m.startedAt ? Date.parse(m.startedAt) : NaN;
+    if (!Number.isFinite(at) || at < since) continue;
+    for (const pt of m.participants ?? []) {
+      if (pt?.email && pt.attended !== false && !isInternalEmail(pt.email)) mark(pt.email, pt.name, at, "meeting");
+    }
+  }
+  // Noms : on préfère celui du contact HubSpot quand l'email correspond.
+  return {
+    windowDays: THREAD_WINDOW_DAYS,
+    active: [...byEmail.values()]
+      .map((a) => ({ ...a, name: input.contactNameByEmail?.get(a.email) || a.name }))
+      .sort((a, b) => b.lastInboundAt.localeCompare(a.lastInboundAt)),
+  };
+}
+
 const STATUSES: KunaStatus[] = ["K", "U", "N", "A"];
 const COMMITTEE_STATUSES: CommitteeStatus[] = ["talked", "known", "unknown"];
 
@@ -160,21 +201,52 @@ export function kunaLabel(key: KunaKey): string {
   return KUNA_DIMENSIONS.find((d) => d.key === key)?.label ?? key;
 }
 
+// ─── Next move ─────────────────────────────────────────────────────────────
+// Prochaine action produite par le scoring : une action courte, 2-3 étapes et
+// le pourquoi, pour un bandeau lisible en tête de fiche (l'ancien texte libre
+// faisait un paragraphe de 400 caractères).
+
+export interface NextMove {
+  action: string;
+  by: string | null; // YYYY-MM-DD, seulement si une échéance est fondée
+  steps: string[];
+  why: string;
+}
+
+export function sanitizeNextMove(raw: unknown): NextMove | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const action = str(o.action);
+  if (!action) return null;
+  const steps = (Array.isArray(o.steps) ? o.steps : []).map(str).filter(Boolean).slice(0, 3);
+  return { action, by: sanitizeGoLiveDate(o.by), steps, why: str(o.why) };
+}
+
+// Version texte pour les lecteurs de deal_scores.next_action (briefing, digest
+// AE, leads marketing, liste).
+export function flattenNextMove(m: NextMove): string {
+  return m.steps.length > 0 ? `${m.action.replace(/[.\s]+$/, "")} : ${m.steps.join(" ; ")}` : m.action;
+}
+
 // ─── Path to close ─────────────────────────────────────────────────────────
-// Un deal est "forecastable" quand les 4 conditions sont vraies. Règle du deck :
-// 3 contacts actifs au-dessus de 30k€ ; en dessous on demande 2 (convention
-// CoachelloHQ, documentée dans le README).
+// Un deal est "forecastable" quand les 4 conditions sont vraies. Threading :
+// 3 contacts actifs pour tous les deals ; 2 = threading moyen (orange), qui ne
+// compte pas encore comme condition remplie (convention CoachelloHQ, README).
 
-export const THREADS_BIG_DEAL_THRESHOLD = 30_000;
+export const TARGET_THREADS = 3;
 
-export function requiredThreads(amount: number): number {
-  return amount > THREADS_BIG_DEAL_THRESHOLD ? 3 : 2;
+export type ConditionLevel = "met" | "partial" | "missing";
+
+export function threadsLevel(activeThreads: number): ConditionLevel {
+  if (activeThreads >= TARGET_THREADS) return "met";
+  return activeThreads === TARGET_THREADS - 1 ? "partial" : "missing";
 }
 
 export interface CloseCondition {
   key: "budget" | "decision_date" | "economic_buyer" | "threads";
   title: string;
   met: boolean;
+  level: ConditionLevel;
   // Statut KUNA de la dimension, ou "n/m" pour le threading.
   chip: string;
   chipStatus: KunaStatus | "threads";
@@ -183,11 +255,7 @@ export interface CloseCondition {
   action: string;
 }
 
-export function pathToClose(
-  kuna: KunaEntry[],
-  activeThreads: number,
-  amount: number,
-): CloseCondition[] {
+export function pathToClose(kuna: KunaEntry[], activeThreads: number): CloseCondition[] {
   const get = (key: KunaKey) => kuna.find((e) => e.key === key);
   const fromKuna = (key: "budget" | "decision_date" | "economic_buyer", title: string): CloseCondition => {
     const e = get(key);
@@ -196,6 +264,7 @@ export function pathToClose(
       key,
       title,
       met: status === "K",
+      level: status === "K" ? "met" : "missing",
       chip: status,
       chipStatus: status,
       state: KUNA_STATUS_LABELS[status],
@@ -203,22 +272,25 @@ export function pathToClose(
       action: e?.action ?? "",
     };
   };
-  const needed = requiredThreads(amount);
+  const level = threadsLevel(activeThreads);
   return [
     fromKuna("budget", "Budget confirmed"),
     fromKuna("decision_date", "Decision date"),
     fromKuna("economic_buyer", "Economic Buyer met"),
     {
       key: "threads",
-      title: `${needed} active contacts`,
-      met: activeThreads >= needed,
-      chip: `${activeThreads}/${needed}`,
+      title: `${TARGET_THREADS} active contacts`,
+      met: level === "met",
+      level,
+      chip: `${activeThreads}/${TARGET_THREADS}`,
       chipStatus: "threads",
-      state: activeThreads === 0 ? "No active contact" : activeThreads === 1 ? "Single thread" : activeThreads >= needed ? "Multi-threaded" : "Not enough threads",
-      now: activeThreads >= needed
-        ? `${activeThreads} contacts replied in the last 30 days.`
-        : `${activeThreads} contact${activeThreads > 1 ? "s" : ""} replied in the last 30 days.`,
-      action: activeThreads >= needed ? "Keep every thread warm." : "Ask the champion to introduce one more person.",
+      state: level === "met" ? "Multi-threaded" : level === "partial" ? "Medium threading" : activeThreads === 1 ? "Single thread" : "No active contact",
+      now: `${activeThreads} contact${activeThreads > 1 ? "s" : ""} replied in the last 30 days.`,
+      action: level === "met"
+        ? "Keep every thread warm."
+        : level === "partial"
+          ? "Get a third person involved, ideally close to the Economic Buyer."
+          : "Ask the champion to introduce more people.",
     },
   ];
 }

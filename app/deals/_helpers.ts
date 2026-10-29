@@ -1,5 +1,5 @@
 import type { DealScore } from "@/lib/deal-scoring";
-import type { DealCommittee, DealThreading, KunaEntry } from "@/lib/deals/kuna";
+import type { DealCommittee, DealThreading, KunaEntry, NextMove } from "@/lib/deals/kuna";
 import type { LossReasonKey, LostFacts } from "@/lib/deals/loss-analysis";
 
 export interface Deal {
@@ -28,7 +28,8 @@ export interface Deal {
 export interface LostDeal extends Deal {
   lostAt: string;
   declaredReason: string;
-  lossAnalysis: { status: string; primaryReason: LossReasonKey | null } | null;
+  // reopenDate : date de relance de l'analyse au format courant, sinon null.
+  lossAnalysis: { status: string; primaryReason: LossReasonKey | null; reopenDate: string | null } | null;
 }
 
 export interface DealMeeting {
@@ -58,6 +59,9 @@ export interface DealDetails extends Deal {
   keyEvents: AnalysisEvent[];
   reasoning: string | null;
   next_action: string | null;
+  // Next move structuré (action, échéance, étapes, pourquoi) ; null pour un
+  // score antérieur au format structuré : la fiche affiche alors next_action.
+  next_move: NextMove | null;
   scoredAt: string | null;
   qualification: Record<string, string | null> | null;
   // Qualification KUNA (null tant que le deal n'a pas été re-scoré, ou si la

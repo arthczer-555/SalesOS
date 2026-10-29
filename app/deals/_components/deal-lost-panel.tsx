@@ -7,7 +7,7 @@ import { Card } from "@/components/ui/card";
 import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { IconButton } from "@/components/ui/icon-button";
 import { scoreBadge } from "@/lib/deal-scoring";
-import { daysBetween, type LossAnalysis } from "@/lib/deals/loss-analysis";
+import { daysBetween, isCurrentLossAnalysis, type LossAnalysis } from "@/lib/deals/loss-analysis";
 import type { DealDetails } from "../_helpers";
 import { fmt } from "../_helpers";
 import { DealEventsTimeline } from "./deal-timeline-card";
@@ -425,6 +425,7 @@ export function DealLostPanel({
               <LossChainCard chain={analysis.chain} />
               <LossReopenCard
                 reopen={analysis.reopen}
+                current={isCurrentLossAnalysis(analysis)}
                 taskCreatedAt={taskCreatedAt}
                 creatingTask={creatingTask}
                 taskError={taskError}

@@ -419,57 +419,98 @@ export function LossChainCard({ chain }: { chain: LossChainStep[] }) {
 }
 
 // ─── Relance ───────────────────────────────────────────────────────────────
+// Un deal perdu vaut toujours une relance : la carte dit quand (date en grand)
+// et comment (pourquoi cette date, qui, comment, signal à surveiller).
+
+function untilLabel(date: string, today: string): { text: string; overdue: boolean } {
+  const days = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 864e5);
+  if (days < 0) return { text: `Overdue since ${dayMonth(date)}`, overdue: true };
+  if (days === 0) return { text: "Today", overdue: false };
+  if (days < 45) return { text: `In ${days} day${days > 1 ? "s" : ""}`, overdue: false };
+  const months = Math.round(days / 30.4);
+  return { text: `In ${months} months`, overdue: false };
+}
 
 export function LossReopenCard({
   reopen,
+  current,
   taskCreatedAt,
   creatingTask,
   taskError,
   onCreateTask,
 }: {
   reopen: LossReopen;
+  // false = analyse antérieure au plan de relance (verdict yes/maybe/no).
+  current: boolean;
   taskCreatedAt: string | null;
   creatingTask: boolean;
   taskError: string;
   onCreateTask: () => void;
 }) {
+  if (!current) {
+    return (
+      <Card padding={20} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <BlockTitle title="When and how to reopen" />
+        <span style={{ fontSize: 13, color: COLORS.ink2, lineHeight: 1.5 }}>
+          This analysis predates the reopening plan. Reanalyze the loss to get when and how to reopen this account.
+        </span>
+      </Card>
+    );
+  }
+
+  const today = new Date().toISOString().slice(0, 10);
   const monthYear = reopen.date
     ? new Date(`${reopen.date}T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" })
     : null;
-  const verdict =
-    reopen.verdict === "no"
-      ? { text: "Not worth reopening", color: COLORS.ink2 }
-      : {
-          text: `${reopen.verdict === "yes" ? "Yes" : "Maybe"}${monthYear ? `, in ${monthYear}` : ""}`,
-          color: reopen.verdict === "yes" ? COLORS.ok : COLORS.warn,
-        };
-  const pastDate = !!reopen.date && reopen.date < new Date().toISOString().slice(0, 10);
+  const until = reopen.date ? untilLabel(reopen.date, today) : null;
+  const rows = [
+    { label: "Why then", value: reopen.timing },
+    { label: "Who", value: reopen.who },
+    { label: "How", value: reopen.how },
+    { label: "Watch for", value: reopen.watchFor },
+  ].filter((r) => r.value);
+
   return (
-    <Card padding={20} style={{ display: "flex", flexDirection: "column", gap: 10, maxWidth: 520 }}>
-      <BlockTitle title="Worth reopening?" />
-      <span style={{ fontSize: 15, fontWeight: 600, color: verdict.color }}>{verdict.text}</span>
-      <span style={{ fontSize: 13, color: COLORS.ink1, lineHeight: 1.5 }}>
-        {reopen.trigger && <>Trigger: {reopen.trigger}. </>}
-        {reopen.verdict !== "no" && reopen.wayIn && <>Way in: {reopen.wayIn}</>}
-      </span>
-      {reopen.verdict !== "no" && reopen.date && (
-        taskCreatedAt ? (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: COLORS.ok }}>
-            <CheckCircle size={14} /> HubSpot task created for {dayMonth(reopen.date)}
-          </span>
-        ) : pastDate ? (
-          <span style={{ fontSize: 12, color: COLORS.ink2 }}>The suggested date has passed. Reanalyze to get a new one.</span>
+    <Card padding={20} style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      <BlockTitle title="When and how to reopen" />
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+        {monthYear && until ? (
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 22, fontWeight: 700, color: COLORS.ink0 }}>{monthYear}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: until.overdue ? COLORS.warn : COLORS.ink2 }}>{until.text}</span>
+          </div>
         ) : (
-          <button
-            type="button"
-            onClick={onCreateTask}
-            disabled={creatingTask}
-            style={{ ...btnDark, alignSelf: "flex-start", opacity: creatingTask ? 0.7 : 1, cursor: creatingTask ? "default" : "pointer" }}
-          >
-            {creatingTask && <RefreshCw size={13} className="animate-spin" />}
-            Create a HubSpot task for {dayMonth(reopen.date)}
-          </button>
-        )
+          <span style={{ fontSize: 13, color: COLORS.ink2 }}>No valid reopen date was suggested. Reanalyze the loss to get one.</span>
+        )}
+        {reopen.date && (
+          taskCreatedAt ? (
+            <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: COLORS.ok }}>
+              <CheckCircle size={14} /> HubSpot task created for {dayMonth(reopen.date)}
+            </span>
+          ) : until?.overdue ? (
+            <span style={{ fontSize: 12, color: COLORS.ink2 }}>The suggested date has passed. Reanalyze to get a new one.</span>
+          ) : (
+            <button
+              type="button"
+              onClick={onCreateTask}
+              disabled={creatingTask}
+              style={{ ...btnDark, opacity: creatingTask ? 0.7 : 1, cursor: creatingTask ? "default" : "pointer" }}
+            >
+              {creatingTask && <RefreshCw size={13} className="animate-spin" />}
+              Create a HubSpot task for {dayMonth(reopen.date)}
+            </button>
+          )
+        )}
+      </div>
+      {rows.length > 0 && (
+        <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", columnGap: 16, rowGap: 10, margin: 0 }}>
+          {rows.map((r) => (
+            <React.Fragment key={r.label}>
+              <dt style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, paddingTop: 1 }}>{r.label}</dt>
+              <dd style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: COLORS.ink0 }}>{r.value}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
       )}
       {taskError && <span style={{ fontSize: 12, color: COLORS.err }}>{taskError}</span>}
     </Card>

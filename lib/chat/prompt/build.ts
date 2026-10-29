@@ -48,6 +48,8 @@ export type BuildSystemArgs = {
   userPrompt?: string;
   channelName?: string;
   betterThinking?: boolean;
+  /** Brief du deal quand la question vient de la fiche deal (chat coach). */
+  dealBrief?: string;
   /**
    * Dernière question de l'utilisateur, en clair. Sert uniquement à ancrer la
    * langue de la réponse en fin de system (voir bloc LANGUE ci-dessous) : le
@@ -63,7 +65,7 @@ export type BuiltPrompt = {
 };
 
 export async function buildSystem(args: BuildSystemArgs): Promise<BuiltPrompt> {
-  const { userDisplay, userOwnerId, userPrompt, channelName, betterThinking, lastUserMessage } = args;
+  const { userDisplay, userOwnerId, userPrompt, channelName, betterThinking, dealBrief, lastUserMessage } = args;
 
   // Bloc 1 : socle + catalogue (stable, caché).
   let bundle: GuideBundle | null = null;
@@ -89,6 +91,11 @@ export async function buildSystem(args: BuildSystemArgs): Promise<BuiltPrompt> {
   // on demande d'abord (seule question de clarification autorisée).
   if (channelName) {
     dynamic += `\n\nCONTEXTE CANAL SLACK\nCette conversation a lieu dans le canal Slack #${channelName}. Tu sais donc toujours où tu te trouves : sers-toi de ce nom dans ta question.\nSi ce canal semble dédié à un client ou un compte précis (ex: #engie → Engie, #adyen → Adyen, #salomon → Salomon) et que la question ne précise pas le périmètre, NE déduis PAS le compte tout seul : pose d'abord une question courte qui cite le canal, du type « Je dois baser ma réponse seulement sur le canal #${channelName} (compte associé) ou chercher partout, avec tous mes outils (HubSpot, Slack, Drive, LinkedIn…) ? » (exemple en français, à formuler dans la langue de l'utilisateur), puis attends la réponse avant de lancer tes recherches. C'est la SEULE question de clarification autorisée (elle prime sur la règle "ne pose aucune question").\nLe périmètre est considéré comme "précisé" si l'utilisateur nomme un client, dit "partout" / "tous les outils" / "ce canal", ou a déjà répondu à cette question plus haut dans le fil : dans ce cas, respecte-le sans reposer la question. Un client explicitement nommé prime toujours sur le canal.\nPour un canal générique (ex: #general, #11-everything-prospects), ne déduis aucun compte et ne pose pas la question : réponds normalement.`;
+  }
+
+  // Chat coach : question posée depuis la fiche d'un deal.
+  if (dealBrief) {
+    dynamic += `\n\nMODE COACH DEAL\nL'utilisateur est sur la fiche du deal ci-dessous dans CoachelloHQ et te demande comment le faire avancer. Tu es son coach commercial senior.\n- Le brief ci-dessous est déjà chargé : ne relis pas ces informations dans HubSpot. Va chercher avec tes outils ce qui manque pour répondre précisément (emails et notes du deal, transcripts Claap, conversations Slack, Notion).\n- Charge les guides pertinents (pipeline, cost-of-inaction, meeting-prep, proposals) quand la question s'y prête.\n- Raisonne avec la méthode KUNA : quelles hypothèses (A) transformer en certitudes (K), quels inconnus bloquants (N) lever en premier, quel rôle du buying committee manque.\n- Réponds de façon actionnable : qui contacter, quoi dire (avec un exemple de message quand c'est utile), quand, et pourquoi. Pas de généralités de vente.\n- Sois concis (150 à 250 mots) sauf si l'utilisateur demande un livrable (email, plan d'appel, slide).\n\n${dealBrief}`;
   }
 
   // Mode "réflexion approfondie" (toggle "Better thinking" de la webapp).
