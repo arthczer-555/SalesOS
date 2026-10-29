@@ -754,9 +754,18 @@
   gap: 24px;
   align-items: start;
 }
+/* Colonne aperçu : scroll indépendant de la config (bornée à la hauteur de
+   <main>, qui est le conteneur scrollable de l'app). Padding + marge négative
+   pour ne pas rogner l'ombre des cartes. */
 .ag-preview-col {
   position: sticky;
   top: 16px;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  padding: 4px;
+  margin: -4px;
 }
 @media (max-width: 1180px) {
   .ag-editor-grid {
@@ -764,6 +773,8 @@
   }
   .ag-preview-col {
     position: static;
+    max-height: none;
+    overflow-y: visible;
   }
 }
 .ag-section-head {

@@ -5,9 +5,12 @@ import { AlertTriangle, Check, CircleSlash, ExternalLink, Hash, Loader2, Message
 import { COLORS } from "@/lib/design/tokens";
 import { ToolLogo, logoKeyForSourceKind, logoKeyForTool } from "@/app/_components/tool-logo";
 import { toSlackMrkdwn } from "@/lib/slack/mrkdwn";
-import { describeSchedule } from "@/lib/agents/schedule";
+import { computeNextRun, describeSchedule, normalizeSchedule } from "@/lib/agents/schedule";
 import type { AgentRow, AgentRunRow } from "@/lib/agents/types";
 import { Callout, fmtCost, fmtDuration, timeAgo } from "./ui";
+
+/** Depuis cette date, un aperçu simule le prochain envoi planifié (lib/agents/run.ts). */
+const PREVIEW_SIMULATES_NEXT_RUN_SINCE = "2026-10-29T11:20:00Z";
 
 // ── Rendu fidèle à Slack ────────────────────────────────────────────────────
 // Même chaîne que la livraison réelle (lib/agents/slack.ts) : markdown du
@@ -264,6 +267,19 @@ export function PreviewPanel({
   // avec l'envoi groupé ("Run now"). Celui du créateur part dans son DM.
   const sendable = !previewAs || previewAs.value === previewAs.ownerId;
   const isGroup = agent.destination.type === "audience";
+  // Un aperçu simule le prochain envoi planifié à partir de sa date de calcul
+  // (lib/agents/run.ts) : "Sun 1 Nov". Les aperçus d'avant ce changement ont
+  // été calculés à la date réelle : pas de libellé pour eux.
+  const runStart = run ? run.started_at ?? run.created_at : null;
+  const sendDay =
+    run?.kind === "preview" && runStart && Date.parse(runStart) >= Date.parse(PREVIEW_SIMULATES_NEXT_RUN_SINCE)
+      ? computeNextRun(agent.schedule, new Date(runStart)).toLocaleDateString("en-GB", {
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+          timeZone: normalizeSchedule(agent.schedule).timezone,
+        })
+      : null;
 
   return (
     <div className="ag-card" style={{ padding: 16 }}>
@@ -280,7 +296,7 @@ export function PreviewPanel({
               : running
                 ? "Running with real data, nothing is sent"
                 : run
-                  ? `${run.kind === "preview" ? "Preview" : "Last run"} · ${timeAgo(run.finished_at ?? run.created_at)}`
+                  ? `${sendDay ? `Preview of the ${sendDay} message` : "Last run"} · ${timeAgo(run.finished_at ?? run.created_at)}`
                   : "See the exact message before it goes out"}
           </div>
         </div>
@@ -367,7 +383,7 @@ export function PreviewPanel({
         </Callout>
       ) : run.status === "skipped" ? (
         <Callout tone="info" icon={CircleSlash}>
-          <b>Nothing to report.</b> With the current instructions, no message would be sent right now.{" "}
+          <b>Nothing to report.</b> With the current instructions, no message would be sent {sendDay ? `on ${sendDay}` : "right now"}.{" "}
           {forMe ? "Nothing matched for you." : "Turn off \"Skip when there's nothing new\" to always get a message."}
         </Callout>
       ) : (

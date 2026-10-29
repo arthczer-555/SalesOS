@@ -18,7 +18,7 @@ import { FALLBACK_SOCLE } from "@/lib/chat/prompt/fallback";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { MISSING_TOOL_MARKER_HELP, RECAP_MARKER_HELP } from "./missing-tools";
 import { audienceLabel } from "./audience-label";
-import { describeSchedule } from "./schedule";
+import { describeSchedule, normalizeSchedule } from "./schedule";
 import { sourceDef } from "./sources";
 import { SKIP_MARKER, type AgentRow } from "./types";
 
@@ -53,6 +53,8 @@ export async function buildAgentSystem(args: {
   lastDeliveredAt?: string | null;
   /** Run d'un envoi groupé personnalisé : demande le résumé [[RECAP: ...]] pour le créateur. */
   batchRecapFor?: string | null;
+  /** Aperçu : date du prochain envoi planifié, que le run simule (fenêtres "ce mois-ci", "cette semaine"...). */
+  previewFor?: Date | null;
 }): Promise<Anthropic.TextBlockParam[]> {
   const { agent, owner, now } = args;
   const forceDm = !!args.forceDm;
@@ -84,6 +86,15 @@ export async function buildAgentSystem(args: {
     ? `\n  Manques signalés lors d'exécutions précédentes : ${missing.map((m) => `"${m.need}"`).join(", ")}. De nouveaux outils ont pu être ajoutés depuis : vérifie chacun avec tes outils ACTUELS. Si c'est désormais faisable, fais-le normalement et ne pose pas de marqueur (le manque sera considéré comme résolu) ; repose le marqueur uniquement pour ceux qui restent impossibles.`
     : "";
 
+  // Un aperçu montre le message du PROCHAIN envoi : un agent mensuel du 1er
+  // prévisualisé le 29 doit calculer "ce mois-ci" sur le mois suivant, sinon
+  // il affiche "rien à signaler" alors que l'envoi réel aura du contenu.
+  const previewFor = args.previewFor ?? null;
+  const sched = normalizeSchedule(agent.schedule);
+  const previewLine = previewFor
+    ? `\nAPERÇU DU PROCHAIN ENVOI : ce run n'est pas publié, il montre à l'avance le message que recevra ${ownerName} au prochain envoi planifié, le ${previewFor.toLocaleDateString("fr-FR", { weekday: "long", timeZone: sched.timezone })} ${previewFor.toLocaleDateString("en-CA", { timeZone: sched.timezone })} à ${sched.time} (${sched.timezone}). Calcule "aujourd'hui", "cette semaine", "ce mois-ci", "le mois écoulé" et toute fenêtre des consignes par rapport à CETTE date, pas à la date réelle, et passe ces bornes explicitement aux outils (from / to, dates) : leurs valeurs par défaut suivent la date réelle. Les données s'arrêtent à maintenant : n'invente rien pour la période qui n'a pas encore eu lieu.`
+    : "";
+
   const nothingRule = agent.skip_when_empty
     ? `S'il n'y a RIEN à signaler au sens des consignes (aucun élément ne correspond), réponds exactement ${SKIP_MARKER} et rien d'autre : aucun message ne sera envoyé.`
     : "S'il n'y a rien à signaler, envoie quand même un message très court qui le dit clairement (une ligne), sans remplir artificiellement le template.";
@@ -108,7 +119,7 @@ RÈGLES DE SORTIE (absolues)
   }
 
 CONTEXTE DE L'EXÉCUTION
-Date et heure : ${now.toISOString().slice(0, 16).replace("T", " ")} UTC.
+Date et heure : ${now.toISOString().slice(0, 16).replace("T", " ")} UTC.${previewLine}
 Tu t'exécutes pour : ${ownerName} (${owner.email})${owner.hubspotOwnerId ? `, HubSpot owner ID ${owner.hubspotOwnerId}` : ", pas d'owner HubSpot associé"}.
 "Mes deals", "mes clients", "mes meetings", "mes emails" dans les consignes = ceux de ${ownerName} (my_deals_only: true / ses comptes / sa boîte), ${runsForSomeoneElse ? `jamais ceux de ${creator} qui a écrit les consignes` : "le créateur de l'agent"}.
 ${lastDelivery}

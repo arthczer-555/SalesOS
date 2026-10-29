@@ -29,3 +29,25 @@ Précise et surcharge les règles communes de `../CLAUDE.md`.
 - `users.is_sales` et `users.sales_roles` sont **indépendants** : le premier
   n'existe que pour le deal digest Slack, le second porte les objectifs de
   revenu et pilote les dashboards. Ne pas les refusionner.
+
+## Agents et CoachelloAI
+
+- **Chaque nouvelle feature est ajoutée aux Agents** (et donc à CoachelloAI),
+  dans le même chantier : toute donnée qu'un écran de CoachelloHQ produit ou
+  affiche doit être lisible par un outil. Sinon un agent la cherche ailleurs
+  (ex. une propriété HubSpot) et se déclare bloqué : cas de l'agent "Reopen
+  Radar" le 2026-10-29, la date de relance des deals perdus n'était lisible
+  par aucun outil.
+- Concrètement, pour chaque feature :
+  - un outil de lecture dans `lib/chat/tools/` (nouveau module ajouté **en
+    fin** de `MODULES` dans `registry.ts`, pour ne pas invalider le cache) ;
+  - le module branché sur la bonne source dans `lib/agents/tools.ts`
+    (`MODULES_BY_SOURCE`) ;
+  - la description de cette source complétée dans `lib/agents/sources.ts` :
+    le designer d'agents s'en sert pour juger ce qui est faisable ;
+  - un libellé dans `lib/chat/tool-labels.ts` ;
+  - l'outil documenté dans le README (section CoachelloAI / Agents).
+- L'outil réutilise la logique de la feature (même lib, mêmes chiffres que
+  l'écran) au lieu de la recalculer, applique la règle d'accès commune
+  (`lib/chat/tools/viewer.ts` : un non-admin ne voit que ses données) et dit
+  dans sa description d'où vient la donnée et ce qu'elle ne couvre pas.

@@ -24,6 +24,7 @@ import { deliverAgentMessage } from "./slack";
 import { extractMissingTools, extractRecap, mergeMissingTools, missingToolFooter } from "./missing-tools";
 import { stampSubscription } from "./subscriptions";
 import { resolveAudience } from "./audience";
+import { computeNextRun, normalizeSchedule } from "./schedule";
 import { maybeSendBatchRecap } from "./fanout";
 import { SKIP_MARKER, type AgentRow, type AgentRunRow, type AgentRunSource, type AgentToolStep } from "./types";
 import { canSeeOthersRuns } from "./access";
@@ -107,10 +108,13 @@ export async function runAgentJob(runId: string): Promise<{ ok: boolean; error?:
 
     const [client, model] = await Promise.all([agentClient(runAs, `Agent "${agent.name}"`), agentsModel()]);
     const now = new Date();
+    // Aperçu = le message du prochain envoi planifié, pas celui de maintenant.
+    const previewFor = claimed.kind === "preview" ? computeNextRun(agent.schedule, now) : null;
     const system = await buildAgentSystem({
       agent,
       owner: { name: owner.name, email: owner.email, hubspotOwnerId: owner.hubspot_owner_id },
       now,
+      previewFor,
       ...(isOwnerRun ? {} : { creatorName, forceDm: true, lastDeliveredAt: lastDelivered }),
       ...(wantsRecap ? { batchRecapFor: ownerName } : {}),
     });
@@ -143,7 +147,9 @@ export async function runAgentJob(runId: string): Promise<{ ok: boolean; error?:
         messages: [
           {
             role: "user",
-            content: `Exécute ta tâche maintenant (${now.toISOString().slice(0, 10)}) et écris le message final, prêt à être publié.`,
+            content: previewFor
+              ? `Prépare maintenant le message du prochain envoi (${previewFor.toLocaleDateString("en-CA", { timeZone: normalizeSchedule(agent.schedule).timezone })}) et écris-le, prêt à être publié.`
+              : `Exécute ta tâche maintenant (${now.toISOString().slice(0, 10)}) et écris le message final, prêt à être publié.`,
           },
         ],
         toolContext: { userId: runAs, userOwnerId: owner.hubspot_owner_id, userEmail: owner.email },

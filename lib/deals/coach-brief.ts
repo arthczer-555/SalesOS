@@ -27,7 +27,9 @@ type Props = Record<string, string | null | undefined>;
 
 const day = (v: string | null | undefined) => (v ? new Date(v).toISOString().slice(0, 10) : "?");
 
-export async function buildDealCoachBrief(dealId: string): Promise<string> {
+// withMethod : false pour l'outil get_deal_qualification (CoachelloAI et
+// agents), qui n'a besoin que des faits du deal.
+export async function buildDealCoachBrief(dealId: string, opts: { withMethod?: boolean } = {}): Promise<string> {
   const deal = await hubspotFetch<{ properties?: Props }>(
     `/crm/v3/objects/deals/${dealId}?properties=dealname,dealstage,amount,closedate,createdate,hubspot_owner_id,deal_type,description`,
   );
@@ -150,5 +152,6 @@ export async function buildDealCoachBrief(dealId: string): Promise<string> {
     "Retroplanning depuis le go-live : décision finale J-30, validation interne J-44, démo avec les parties prenantes J-54, proposition J-64, qualification approfondie J-74.",
   ].join("\n\n");
 
-  return `${lines.filter((l) => l !== null).join("\n").slice(0, BRIEF_MAX_CHARS)}\n\n${method}`;
+  const facts = lines.filter((l) => l !== null).join("\n").slice(0, BRIEF_MAX_CHARS);
+  return opts.withMethod === false ? facts : `${facts}\n\n${method}`;
 }

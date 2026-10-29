@@ -35,7 +35,7 @@ export const AGENT_SOURCES: AgentSourceDef[] = [
     key: "hubspot",
     label: "HubSpot CRM",
     description:
-      "Deals, pipeline, contacts, companies and their activity (emails, calls, meetings, notes). Sales activity per salesperson by week, month or quarter, same numbers as the AE Activity dashboard: calls (connected, cold), emails sent, meetings declared in #1y-new-meetings with their acquisition channel, inbound leads, deals opened, won and lost.",
+      "Deals, pipeline, contacts, companies and their activity (emails, calls, meetings, notes). Sales activity per salesperson by week, month or quarter, same numbers as the AE Activity dashboard: calls (connected, cold), emails sent, meetings declared in #1y-new-meetings with their acquisition channel, inbound leads, deals opened, won and lost. Lost deals to reopen, from the CoachelloHQ loss analyses (Deals page, Closed lost column): reopen date (filter by date window, overdue included on request), why the deal was lost (reason, root cause), who to contact and how to reopen. Deal qualification as shown on the Deals page: score /100, next move, path to close, KUNA on 10 dimensions, buying committee, active contacts.",
     logo: "hubspot",
   },
   {

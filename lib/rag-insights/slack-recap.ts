@@ -14,7 +14,7 @@
 
 import { db } from "@/lib/db";
 import { dmRecipient, findArthurFallbackRecipient, lookupSlackIdByEmail } from "@/lib/slack/lookup";
-import { computeStats, fetchAnalyses, thumbsDownTurns } from "./stats";
+import { computeStats, fetchAnalyses, thumbsDownTurns, usageByUser } from "./stats";
 import {
   RAG_CATEGORY_LABELS,
   type RagAnalysisRow,
@@ -24,6 +24,7 @@ import {
 
 const RECAP_WINDOW_DAYS = 7;
 const MAX_THUMBS_DOWN = 5;
+const MAX_USERS = 20;
 
 export type RecapResult = {
   ok: boolean;
@@ -92,6 +93,19 @@ export function renderRecap(args: {
         : ""),
   );
   lines.push(`- ${stats.unanswered} questions left unanswered, ${stats.thumbsDown} explicit :-1:`);
+
+  const usage = usageByUser(rows);
+  if (usage.length > 0) {
+    lines.push("");
+    lines.push("*Questions per person*");
+    for (const u of usage.slice(0, MAX_USERS)) {
+      const who = u.userId ? (names.get(u.userId) ?? "Unknown") : "Unlinked Slack user";
+      lines.push(`- ${who}: *${u.total}* (${u.web} web, ${u.slack} Slack)`);
+    }
+    if (usage.length > MAX_USERS) {
+      lines.push(`_+${usage.length - MAX_USERS} more in CoachelloHQ_`);
+    }
+  }
 
   if (stats.byCategory.length > 0) {
     lines.push("");

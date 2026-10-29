@@ -65,6 +65,25 @@ export function computeStats(rows: RagAnalysisRow[]): RagStats {
   };
 }
 
+/**
+ * Nombre de questions par auteur, web et Slack séparés, du plus gros
+ * utilisateur au plus petit. `userId` null = conversation Slack dont l'auteur
+ * n'est relié à aucun compte CoachelloHQ.
+ */
+export function usageByUser(
+  rows: RagAnalysisRow[],
+): { userId: string | null; total: number; web: number; slack: number }[] {
+  const byUser = new Map<string | null, { web: number; slack: number }>();
+  for (const r of rows) {
+    const entry = byUser.get(r.user_id) ?? { web: 0, slack: 0 };
+    entry[r.source] += 1;
+    byUser.set(r.user_id, entry);
+  }
+  return [...byUser.entries()]
+    .map(([userId, c]) => ({ userId, total: c.web + c.slack, ...c }))
+    .sort((a, b) => b.total - a.total);
+}
+
 /** Les tours à problème, du pire au moins pire (base des gaps et du recap). */
 export function failingTurns(rows: RagAnalysisRow[]): RagAnalysisRow[] {
   return rows
