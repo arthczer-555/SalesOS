@@ -4,11 +4,14 @@ import { Suspense, useState, useEffect, useCallback, useMemo, memo, useRef } fro
 import { useSearchParams } from "next/navigation";
 import { useUserMe } from "@/lib/hooks/use-user-me";
 import { useDeals } from "@/lib/hooks/use-deals";
+import { useLostDeals } from "@/lib/hooks/use-lost-deals";
 import { Zap, Search, RefreshCw, ArrowLeft } from "lucide-react";
 import { scoreBadge } from "@/lib/deal-scoring";
 import { DealFiltersBar, applyDealFilters, DEFAULT_DEAL_FILTERS, type DealFilters } from "./_components/deal-filters";
 import { DealListGrouped } from "./_components/deal-list-grouped";
 import { DealDetailPanel } from "./_components/deal-detail-panel";
+import { DealLostPanel } from "./_components/deal-lost-panel";
+import { LOST_COLUMN_WIDTH, LostKanbanColumn } from "./_components/deal-lost-column";
 import { type Deal, type DealDetails, fmt, fmtDate, isOverdue, stageColor, timeAgo } from "./_helpers";
 import { COLORS } from "@/lib/design/tokens";
 import { StatPill } from "@/components/ui/stat-pill";
@@ -239,6 +242,8 @@ function DealsPageInner() {
 
   const [appliedQuery, setAppliedQuery] = useState("");
   const { stages, deals, owners, isLoading: loading, error, reload } = useDeals(appliedQuery, filters.ownerMode);
+  // Colonne "Closed lost" : chargée à part, par pages (cf /api/deals/lost).
+  const lost = useLostDeals(appliedQuery, filters.ownerMode);
 
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [details, setDetails] = useState<DealDetails | null>(null);
@@ -349,6 +354,15 @@ function DealsPageInner() {
     return applyDealFilters(bySearch, filters);
   }, [deals, searchQuery, filters]);
 
+  // Deals perdus : recherche + filtres owner / montant / date de début. Les
+  // filtres d'activité et de score n'ont pas de sens sur un deal perdu.
+  const filteredLost = useMemo(() => {
+    const bySearch = searchQuery
+      ? lost.deals.filter((d) => d.dealname.toLowerCase().includes(searchQuery.toLowerCase()))
+      : lost.deals;
+    return applyDealFilters(bySearch, { ...filters, activity: "all", scoreTiers: [] });
+  }, [lost.deals, searchQuery, filters]);
+
   const nurtureStageIds = useMemo(
     () => new Set(stages.filter((s) => s.label.toLowerCase().includes("nurture")).map((s) => s.id)),
     [stages]
@@ -393,6 +407,9 @@ function DealsPageInner() {
   const openStages = useMemo(() => stages.filter((s) => !nurtureStageIds.has(s.id)), [stages, nurtureStageIds]);
 
   const selectedStage = stages.find((s) => s.id === selectedDeal?.dealstage);
+  // Fiche "closed lost" dès que les détails le confirment (deeplink compris),
+  // sinon d'après la colonne d'où vient le clic.
+  const selectedIsLost = details ? !!details.lost : !!selectedDeal && lost.deals.some((d) => d.id === selectedDeal.id);
   const stageIdx = selectedStage ? stages.indexOf(selectedStage) : 0;
   const isListMode = !!selectedDeal;
 
@@ -631,6 +648,7 @@ function DealsPageInner() {
               dealsByStage={dealsByStage}
               selectedId={selectedDeal?.id ?? null}
               onSelect={openDeal}
+              lostDeals={filteredLost}
             />
           ) : (
             <div style={{ flex: 1, overflowX: "auto", overflowY: "hidden" }}>
@@ -642,7 +660,7 @@ function DealsPageInner() {
                   padding: "14px 20px",
                   minWidth: stages.reduce(
                     (w, s) => w + (isStageCollapsed(s.id) ? COLLAPSED_WIDTH : OPEN_MIN_WIDTH) + 12,
-                    40
+                    40 + LOST_COLUMN_WIDTH + 12
                   ),
                 }}
               >
@@ -659,6 +677,17 @@ function DealsPageInner() {
                     }
                   />
                 ))}
+                {stages.length > 0 && (
+                  <LostKanbanColumn
+                    deals={filteredLost}
+                    loading={lost.isLoading}
+                    error={lost.error}
+                    hasMore={lost.hasMore}
+                    loadingMore={lost.loadingMore}
+                    onLoadMore={lost.loadMore}
+                    onSelect={openDeal}
+                  />
+                )}
                 {stages.length === 0 && (
                   <div
                     style={{
@@ -712,7 +741,10 @@ function DealsPageInner() {
         )}
 
         {/* Right: detail panel */}
-        {selectedDeal && (
+        {selectedDeal && selectedIsLost && (
+          <DealLostPanel details={details} loading={loadingDetails} onClose={closeDeal} onChanged={lost.reload} />
+        )}
+        {selectedDeal && !selectedIsLost && (
           <DealDetailPanel
             details={details}
             loading={loadingDetails}

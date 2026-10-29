@@ -37,6 +37,7 @@ const FEATURE_LABELS: Record<string, string> = {
   prospecting_propose:     "Prospecting - Sequence draft (AI)",
   prospecting_distill:     "Prospecting - Notion messaging",
   deals_analyze:           "Deals - Analysis",
+  deals_loss_analyze:      "Deals - Loss analysis",
   deals_email:             "Deals - Email",
   deals_score:             "Deals - Score",
   conversations:           "Chat - Auto title (Haiku)",

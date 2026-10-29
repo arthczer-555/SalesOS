@@ -1,5 +1,6 @@
 import type { DealScore } from "@/lib/deal-scoring";
 import type { DealCommittee, DealThreading, KunaEntry } from "@/lib/deals/kuna";
+import type { LossReasonKey, LostFacts } from "@/lib/deals/loss-analysis";
 
 export interface Deal {
   id: string;
@@ -20,6 +21,14 @@ export interface Deal {
   next_action: string | null;
   scoredAt: string | null;
   qualification: Record<string, string | null> | null;
+}
+
+// Carte de la colonne "Closed lost" (/api/deals/lost) : même forme qu'un Deal
+// pour réutiliser l'ouverture de fiche, plus les infos de perte.
+export interface LostDeal extends Deal {
+  lostAt: string;
+  declaredReason: string;
+  lossAnalysis: { status: string; primaryReason: LossReasonKey | null } | null;
 }
 
 export interface DealMeeting {
@@ -57,6 +66,9 @@ export interface DealDetails extends Deal {
   committee: DealCommittee | null;
   goLiveDate: string | null;
   threading: DealThreading;
+  // Faits de perte (étape d'où il est tombé, dernière réponse...) ; null si le
+  // deal n'est pas closed lost.
+  lost: LostFacts | null;
 }
 
 export interface Stage {
@@ -130,6 +142,15 @@ export function daysSince(dateStr: string | null | undefined): number | null {
   if (!dateStr) return null;
   const t = new Date(dateStr).getTime();
   return Number.isNaN(t) ? null : Math.floor((Date.now() - t) / 864e5);
+}
+
+// "Lost today", "Lost 3d ago", puis la date au-delà d'une semaine.
+export function lostWhen(dateStr: string): string {
+  const days = daysSince(dateStr);
+  if (days === null) return "Lost";
+  if (days === 0) return "Lost today";
+  if (days < 7) return `Lost ${days}d ago`;
+  return `Lost ${fmtDate(dateStr)}`;
 }
 
 export function timeAgo(dateStr: string): string {

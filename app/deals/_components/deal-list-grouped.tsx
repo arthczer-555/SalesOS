@@ -4,8 +4,11 @@ import * as React from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { scoreBadge } from "@/lib/deal-scoring";
 import { COLORS } from "@/lib/design/tokens";
-import type { Deal, Stage } from "../_helpers";
-import { fmt, fmtDate, isOverdue, stageColor } from "../_helpers";
+import type { Deal, LostDeal, Stage } from "../_helpers";
+import { fmt, fmtDate, isOverdue, lostWhen, stageColor } from "../_helpers";
+import { LostStatus } from "./deal-lost-column";
+
+const LOST_GROUP = "__closedlost__";
 
 // Texte des badges assombri pour le contraste (mêmes teintes que scoreBadge).
 const SCORE_TEXT: Record<string, string> = {
@@ -20,17 +23,22 @@ export function DealListGrouped({
   dealsByStage,
   selectedId,
   onSelect,
+  lostDeals = [],
 }: {
   stages: Stage[];
   dealsByStage: Record<string, Deal[]>;
   selectedId: string | null;
   onSelect: (d: Deal) => void;
+  // Groupe "Closed lost" en fin de liste (colonne du même nom sur le board).
+  lostDeals?: LostDeal[];
 }) {
   // Par défaut seul le groupe du deal ouvert est déplié ; un clic force l'état.
   const [toggles, setToggles] = React.useState<Record<string, boolean>>({});
   const selectedStageId = React.useMemo(
-    () => stages.find((s) => (dealsByStage[s.id] ?? []).some((d) => d.id === selectedId))?.id ?? null,
-    [stages, dealsByStage, selectedId]
+    () =>
+      stages.find((s) => (dealsByStage[s.id] ?? []).some((d) => d.id === selectedId))?.id ??
+      (lostDeals.some((d) => d.id === selectedId) ? LOST_GROUP : null),
+    [stages, dealsByStage, selectedId, lostDeals]
   );
   const isOpen = (id: string) => toggles[id] ?? id === selectedStageId;
 
@@ -169,6 +177,87 @@ export function DealListGrouped({
           </section>
         );
       })}
+      {lostDeals.length > 0 && (
+        <section style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <button
+            type="button"
+            onClick={() => setToggles((t) => ({ ...t, [LOST_GROUP]: !isOpen(LOST_GROUP) }))}
+            aria-expanded={isOpen(LOST_GROUP)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              width: "100%",
+              padding: "8px 10px",
+              borderRadius: 8,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = COLORS.bgSoft)}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            {isOpen(LOST_GROUP) ? (
+              <ChevronDown size={13} style={{ color: COLORS.ink3, flexShrink: 0 }} />
+            ) : (
+              <ChevronRight size={13} style={{ color: COLORS.ink3, flexShrink: 0 }} />
+            )}
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#b91c1c", flexShrink: 0 }} aria-hidden="true" />
+            <span style={{ flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: COLORS.ink0, lineHeight: 1.35 }}>Closed lost</span>
+            <span style={{ fontSize: 12, color: COLORS.ink2, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{lostDeals.length}</span>
+          </button>
+          {isOpen(LOST_GROUP) && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, paddingBottom: 6 }}>
+              {lostDeals.map((d) => {
+                const active = d.id === selectedId;
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => onSelect(d)}
+                    aria-current={active ? "true" : undefined}
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 5,
+                      width: "100%",
+                      padding: "9px 12px",
+                      borderRadius: 10,
+                      border: `1px solid ${active ? "#ffc2d6" : "transparent"}`,
+                      background: active ? "#fff1f6" : "transparent",
+                      cursor: "pointer",
+                      textAlign: "left",
+                      font: "inherit",
+                      color: "inherit",
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!active) e.currentTarget.style.background = COLORS.bgSoft;
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!active) e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    <span style={{ display: "flex", justifyContent: "space-between", gap: 8, width: "100%" }}>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: COLORS.ink0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        {d.dealname || "Untitled"}
+                      </span>
+                      <span style={{ fontSize: 12, fontWeight: 600, color: COLORS.ink2, flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>
+                        {fmt(d.amount)}
+                      </span>
+                    </span>
+                    <span style={{ fontSize: 12, color: COLORS.ink2 }}>
+                      {d.ownerName ? `${d.ownerName.split(" ")[0]} · ` : ""}
+                      <span style={{ color: "#b91c1c", fontWeight: 600 }}>{lostWhen(d.lostAt)}</span>
+                    </span>
+                    <LostStatus deal={d} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }

@@ -124,7 +124,7 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
   return res.json();
 }
 
-type ClaapRecapRow = {
+export type ClaapRecapRow = {
   meeting_title: string | null;
   meeting_started_at: string | null;
   meeting_kind: string | null;
@@ -138,7 +138,7 @@ type ClaapRecapRow = {
   } | null;
 };
 
-async function fetchSalesCoachRecaps(dealId: string): Promise<ClaapRecapRow[]> {
+export async function fetchSalesCoachRecaps(dealId: string): Promise<ClaapRecapRow[]> {
   if (!process.env.SUPABASE_URL) return [];
   const { data } = await db
     .from("sales_coach_analyses")

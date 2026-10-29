@@ -5,6 +5,7 @@ import { db } from "@/lib/db";
 import { stripHtml } from "@/lib/hubspot";
 import { getClaapRecording } from "@/lib/claap";
 import type { ActiveContact, DealThreading } from "@/lib/deals/kuna";
+import { daysBetween, normalizeDeclaredReason, stageBeforeLoss, type LostFacts } from "@/lib/deals/loss-analysis";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,7 @@ const DEAL_PROPS = [
   "hs_deal_stage_probability", "num_associated_contacts",
   "deal_type", "authority_status", "budget_status", "decision_timeline",
   "business_need_level", "strategic_fit", "description",
+  "hs_is_closed_lost", "closed_lost_reason", "hs_v2_date_entered_closedlost",
 ];
 
 export async function GET(req: NextRequest) {
@@ -391,6 +393,40 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Deal perdu : faits déterministes affichés en tête de la fiche closed lost
+    // (étape d'où il est tombé, dernière réponse du prospect, raison saisie).
+    let lost: LostFacts | null = null;
+    if (p.hs_is_closed_lost === "true") {
+      const lostAt = p.hs_v2_date_entered_closedlost || p.closedate || "";
+      const before = stageBeforeLoss(stageHistory, p.dealstage ?? "");
+      let lastReply: { at: string; via: "email" | "meeting" } | null = null;
+      const consider = (iso: string, via: "email" | "meeting") => {
+        if (iso && (!lastReply || iso > lastReply.at)) lastReply = { at: iso, via };
+      };
+      for (const row of rowsOf(emailsRes)) {
+        const ep = row.properties ?? {};
+        const from = ep.hs_email_from_email?.trim();
+        if (ep.hs_email_direction !== "INCOMING_EMAIL" || !from || isInternal(from) || !ep.hs_timestamp) continue;
+        consider(new Date(tsNum(ep.hs_timestamp)).toISOString(), "email");
+      }
+      // Les réunions Claap internes rattachées au deal ne sont pas un échange avec le prospect.
+      for (const m of meetings) {
+        if (m.meeting_started_at && !/intern/i.test(m.meeting_kind ?? "")) {
+          consider(new Date(m.meeting_started_at).toISOString(), "meeting");
+        }
+      }
+      const reply = lastReply as { at: string; via: "email" | "meeting" } | null;
+      lost = {
+        lostAt,
+        declaredReason: normalizeDeclaredReason(p.closed_lost_reason),
+        lostAtStage: before
+          ? { label: stageLabels[before.stageId] ?? before.stageId, enteredAt: before.enteredAt, days: daysBetween(before.enteredAt, lostAt) }
+          : null,
+        lastProspectReplyAt: reply?.at ?? null,
+        lastProspectReplyVia: reply?.via ?? null,
+      };
+    }
+
     // Noms : on préfère celui du contact HubSpot quand l'email correspond.
     const contactNameByEmail = new Map(contacts.filter((c) => c.email).map((c) => [c.email.toLowerCase(), c.name]));
     const threading: DealThreading = {
@@ -430,6 +466,7 @@ export async function GET(req: NextRequest) {
       committee,
       goLiveDate,
       threading,
+      lost,
     });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "Error" }, { status: 500 });
