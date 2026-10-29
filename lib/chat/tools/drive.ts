@@ -37,19 +37,76 @@ export async function getDriveAccessToken(): Promise<string> {
   return access_token;
 }
 
-/** Métadonnées légères d'un fichier (pour les sources UI). Best-effort. */
-async function fileMeta(token: string, fileId: string): Promise<{ name: string; link?: string } | null> {
+const GOOGLE_SHEET_MIME = "application/vnd.google-apps.spreadsheet";
+const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const SPREADSHEET_MIMES = new Set([GOOGLE_SHEET_MIME, XLSX_MIME, "application/vnd.ms-excel"]);
+const SHEET_CAP = 12000;
+
+/** Accepte un id nu ou une URL Drive/Docs (…/d/<id>/edit, ?id=<id>) : les
+ *  prompts d'agents collent souvent le lien du fichier tel quel. */
+function parseFileId(raw: string): string {
+  const s = raw.trim();
+  const m = s.match(/\/d\/([\w-]{10,})/) ?? s.match(/[?&]id=([\w-]{10,})/);
+  return m ? m[1] : s;
+}
+
+type FileMeta = { name: string; mimeType: string; link?: string };
+
+/** Métadonnées d'un fichier : nom et lien pour les sources UI, type MIME pour
+ *  choisir entre export et téléchargement. Best-effort. */
+async function fileMeta(token: string, fileId: string): Promise<FileMeta | null> {
   try {
     const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,webViewLink&supportsAllDrives=true`,
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType,webViewLink&supportsAllDrives=true`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     if (!res.ok) return null;
     const data = await res.json();
-    return { name: data.name ?? fileId, link: data.webViewLink };
+    return { name: data.name ?? fileId, mimeType: data.mimeType ?? "", link: data.webViewLink };
   } catch {
     return null;
   }
+}
+
+/** Classeur d'un fichier Drive. Un Google Sheet natif s'exporte en xlsx :
+ *  alt=media y renvoie 403 ("Only files with binary content can be
+ *  downloaded") et l'export text/plain n'existe pas pour les Sheets. */
+async function loadWorkbook(token: string, fileId: string, mimeType: string): Promise<XLSX.WorkBook> {
+  const url =
+    mimeType === GOOGLE_SHEET_MIME
+      ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(XLSX_MIME)}`
+      : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    const err = await res.text().catch(() => "");
+    throw new Error(`Drive API ${res.status}: ${err.slice(0, 200)}`);
+  }
+  return XLSX.read(new Uint8Array(await res.arrayBuffer()), { type: "array" });
+}
+
+/** Contenu d'un classeur pour le modèle : l'onglet demandé (nom tolérant à la
+ *  casse et aux espaces), sinon tous les onglets s'ils tiennent sous le
+ *  plafond, sinon la liste des onglets. */
+function renderWorkbook(wb: XLSX.WorkBook, sheetName?: string, range?: string): string {
+  const toCsv = (ws: XLSX.WorkSheet, r?: string) =>
+    XLSX.utils.sheet_to_csv(ws, { strip: true, blankrows: false, ...(r ? { range: r } : {}) });
+  const cap = (s: string) => (s.length > SHEET_CAP ? s.slice(0, SHEET_CAP) + `\n…(tronqué à ${SHEET_CAP} caractères)` : s);
+
+  if (sheetName) {
+    const wanted = sheetName.trim().toLowerCase();
+    const name = wb.SheetNames.find((n) => n === sheetName) ?? wb.SheetNames.find((n) => n.trim().toLowerCase() === wanted);
+    if (!name) return `Onglet introuvable. Onglets disponibles : ${wb.SheetNames.join(", ")}`;
+    return cap(toCsv(wb.Sheets[name], range));
+  }
+
+  const all = wb.SheetNames.map((n) => `=== Onglet "${n}" ===\n${toCsv(wb.Sheets[n])}`).join("\n\n");
+  if (all.length <= SHEET_CAP) return all;
+  const sheets = wb.SheetNames.map((n) => {
+    const ref = wb.Sheets[n]["!ref"] ?? "";
+    const r = ref ? XLSX.utils.decode_range(ref) : null;
+    return { name: n, rows: r ? r.e.r - r.s.r + 1 : 0, cols: r ? r.e.c - r.s.c + 1 : 0, range: ref };
+  });
+  return JSON.stringify({ sheets, hint: "Classeur trop gros pour être lu d'un coup : rappelle l'outil avec 'sheet_name' pour lire un onglet." });
 }
 
 // ── Définitions ──────────────────────────────────────────────────────────────
@@ -70,23 +127,26 @@ const defs: Anthropic.Tool[] = [
   },
   {
     name: "read_drive_file",
-    description: "Lit le contenu textuel d'un fichier Google Drive (Docs, Sheets, Slides exportés en texte). Pour un .xlsx, utilise read_drive_excel.",
+    description:
+      "Lit un fichier Google Drive : Docs et Slides en texte, Google Sheets et .xlsx en CSV onglet par onglet (tous les onglets si le classeur est petit, sinon passe 'sheet_name'). Accepte l'ID ou l'URL du fichier (docs.google.com/...).",
     input_schema: {
       type: "object" as const,
       properties: {
-        file_id: { type: "string", description: "ID du fichier Google Drive" },
-        mime_type: { type: "string", description: "Type MIME du fichier" },
+        file_id: { type: "string", description: "ID du fichier Google Drive, ou son URL" },
+        mime_type: { type: "string", description: "Type MIME du fichier (optionnel, détecté automatiquement)" },
+        sheet_name: { type: "string", description: "Classeur uniquement : nom de l'onglet à lire" },
       },
       required: ["file_id"],
     },
   },
   {
     name: "read_drive_excel",
-    description: "Lit un fichier Excel (.xlsx) stocké dans Google Drive.",
+    description:
+      "Lit un classeur stocké dans Google Drive (Google Sheet natif ou .xlsx) : un onglet précis avec 'sheet_name', sinon tous les onglets si le classeur est petit. Accepte l'ID ou l'URL du fichier.",
     input_schema: {
       type: "object" as const,
       properties: {
-        file_id: { type: "string", description: "ID du fichier Drive (.xlsx)" },
+        file_id: { type: "string", description: "ID du fichier Drive, ou son URL" },
         sheet_name: { type: "string", description: "Nom de l'onglet à lire" },
         range: { type: "string", description: "Plage Excel optionnelle (ex: 'A1:F50')" },
       },
@@ -137,22 +197,24 @@ const module_: ToolModule = {
     read_drive_file: async (input, ctx) => {
       try {
         const token = await getDriveAccessToken();
-        const fileId = input.file_id as string;
-        const mime = (input.mime_type as string) ?? "";
-        let url: string;
-        if (mime.startsWith("application/vnd.google-apps.")) {
-          url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/plain`;
-        } else {
-          url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+        const fileId = parseFileId(input.file_id as string);
+        // Le type réel prime sur celui passé par le modèle (souvent absent ou faux).
+        const meta = await fileMeta(token, fileId);
+        if (meta) ctx.onSource({ kind: "drive", title: meta.name, url: meta.link });
+        const mime = meta?.mimeType || ((input.mime_type as string) ?? "");
+        if (SPREADSHEET_MIMES.has(mime)) {
+          const wb = await loadWorkbook(token, fileId, mime);
+          return renderWorkbook(wb, input.sheet_name as string | undefined);
         }
+        const url = mime.startsWith("application/vnd.google-apps.")
+          ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/plain`
+          : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
         const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) {
           const err = await res.text().catch(() => "");
           throw new Error(`Drive API ${res.status}: ${err.slice(0, 200)}`);
         }
         const text = await res.text();
-        const meta = await fileMeta(token, fileId);
-        if (meta) ctx.onSource({ kind: "drive", title: meta.name, url: meta.link });
         return text.slice(0, 8000);
       } catch (e) {
         return `Erreur lecture Drive : ${e instanceof Error ? e.message : "inconnue"}`;
@@ -162,32 +224,11 @@ const module_: ToolModule = {
     read_drive_excel: async (input, ctx) => {
       try {
         const token = await getDriveAccessToken();
-        const fileId = input.file_id as string;
-        const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&supportsAllDrives=true`;
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) {
-          const err = await res.text().catch(() => "");
-          throw new Error(`Drive API ${res.status}: ${err.slice(0, 200)}`);
-        }
-        const buf = new Uint8Array(await res.arrayBuffer());
-        const wb = XLSX.read(buf, { type: "array" });
+        const fileId = parseFileId(input.file_id as string);
         const meta = await fileMeta(token, fileId);
         if (meta) ctx.onSource({ kind: "drive", title: meta.name, url: meta.link });
-        const sheetName = input.sheet_name as string | undefined;
-        if (!sheetName) {
-          const sheets = wb.SheetNames.map((n) => {
-            const ws = wb.Sheets[n];
-            const ref = ws["!ref"] ?? "";
-            const range = ref ? XLSX.utils.decode_range(ref) : null;
-            return { name: n, rows: range ? range.e.r - range.s.r + 1 : 0, cols: range ? range.e.c - range.s.c + 1 : 0, range: ref };
-          });
-          return JSON.stringify({ sheets, hint: "Rappelle read_drive_excel avec 'sheet_name' pour lire un onglet." });
-        }
-        const ws = wb.Sheets[sheetName];
-        if (!ws) return `Onglet introuvable. Onglets disponibles : ${wb.SheetNames.join(", ")}`;
-        const csv = XLSX.utils.sheet_to_csv(ws, { strip: true, ...(input.range ? { range: input.range as string } : {}) });
-        const cap = 12000;
-        return csv.length > cap ? csv.slice(0, cap) + `\n…(tronqué à ${cap} caractères)` : csv;
+        const wb = await loadWorkbook(token, fileId, meta?.mimeType ?? "");
+        return renderWorkbook(wb, input.sheet_name as string | undefined, input.range as string | undefined);
       } catch (e) {
         return `Erreur lecture Excel : ${e instanceof Error ? e.message : "inconnue"}`;
       }

@@ -425,6 +425,7 @@ Un seul écran, **trois couches qui se cumulent** selon le profil (un Head of Sa
 - **Redirect URI** : `{NEXT_PUBLIC_APP_URL}/api/gmail/callback`
 - **Variables** : `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 - **Drive (admin)** : un refresh token Drive global est stocké via `/api/admin/drive-token` (`GOOGLE_DRIVE_REFRESH_TOKEN` en fallback) pour les recherches Drive de l'agent IA
+- **Lecture Drive (CoachelloAI + agents, [lib/chat/tools/drive.ts](lib/chat/tools/drive.ts))** : le type réel du fichier est lu dans ses métadonnées, pas pris au modèle. Docs et Slides sont exportés en texte, un **Google Sheet natif est exporté en xlsx** (le téléchargement direct `alt=media` y renvoie 403 et l'export texte n'existe pas pour les Sheets), un .xlsx est téléchargé ; les classeurs sont rendus en CSV onglet par onglet (tous les onglets s'ils tiennent sous 12 000 caractères). Les outils acceptent un ID ou une URL `docs.google.com`. Un fichier n'est lisible que s'il est partagé avec le compte Google du refresh token Drive.
 - **Search Console** : `SEARCH_CONSOLE_SITE_URL` à configurer
 
 ### Tavily
