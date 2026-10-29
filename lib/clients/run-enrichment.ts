@@ -168,7 +168,11 @@ export async function runClientEnrichment(
       return null;
     });
 
-    const recapPromise = generateDealRecap(ctx, userId).catch((e) => {
+    // Champs HubSpot du deal (un GET rapide) : le recap attend la qualification
+    // "Need" pour le pain, le reste sert au health et aux next actions.
+    const dealFieldsPromise = fetchHubspotDealFields(row.hubspot_deal_id);
+
+    const recapPromise = dealFieldsPromise.then((hs) => generateDealRecap(ctx, userId, hs)).catch((e) => {
       console.warn(
         `[clients/enrich/${clientId}] deal recap generation failed:`,
         e instanceof Error ? e.message : e,
@@ -220,7 +224,6 @@ export async function runClientEnrichment(
         return { tone: null, error: e instanceof Error ? e.message : String(e) };
       },
     );
-    const dealFieldsPromise = fetchHubspotDealFields(row.hubspot_deal_id);
 
     const [msg, detectedPrograms, coachBrief, dealRecap, news, billing, hubspotSuggestions, toneRes, dealFields] = await Promise.all([
       fieldsPromise,

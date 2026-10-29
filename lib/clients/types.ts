@@ -498,6 +498,9 @@ export function programFieldApplies(def: ProgramFieldDefinition, fields: Program
 // ── Deal recap (généré plus tard, structuré façon CoachelloAI) ─────────
 export type DealRecap = {
   generated_at: string;
+  // Le pain : ce qui a poussé l'entreprise à chercher du coaching. Absent des
+  // recaps générés avant le 2026-10-29 (régénéré au prochain enrichissement).
+  pain?: string;
   timeline?: Array<{ when?: string; title: string; description: string; source?: ClientFieldSource | null }>;
   how_closed?: string;
   objections?: string[];

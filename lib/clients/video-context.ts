@@ -23,6 +23,7 @@ export function buildClientContextText(client: ClientRow): string {
 
   const dr = client.deal_recap as DealRecap | null;
   if (dr) {
+    if (dr.pain) lines.push(`Pain (ce qui a amené le client au coaching) : ${dr.pain}`);
     if (dr.how_closed) lines.push(`Comment le deal a été signé : ${dr.how_closed}`);
     if (dr.triggers?.length) lines.push(`Déclencheurs : ${dr.triggers.join(", ")}`);
     if (dr.sales_promises?.length) lines.push(`Promesses commerciales : ${dr.sales_promises.join(", ")}`);

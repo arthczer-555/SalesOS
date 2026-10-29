@@ -4,7 +4,7 @@ import { withAnthropicRetry } from "../anthropic-retry";
 import { getModelPreference } from "../models/get-model-preference";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
 import { renderClientContextForPrompt, type ClientEnrichmentContext } from "./context";
-import type { DealRecap } from "./types";
+import { HUBSPOT_CHECKLIST_FIELDS, type DealRecap, type HubspotDealFields } from "./types";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { withForcedTool } from "../models/compat";
 
@@ -19,6 +19,7 @@ contacts, company) + transcripts Claap des meetings sales.
 
 Ton job : raconter en format structuré COMMENT ce deal a été signé, pour que
 le CS qui prend la suite comprenne instantanément :
+  - le pain : ce qui a poussé l'entreprise à s'intéresser au coaching
   - le chemin du deal en 3-5 moments clés
   - ce qui a fait basculer le prospect
   - les objections rencontrées et comment elles ont été levées
@@ -33,6 +34,14 @@ Règles :
 - Langue : adapte-toi à la langue dominante des transcripts (FR si majoritaire,
   EN sinon).
 - N'invente rien. Si tu manques de contexte pour un field, mets null/[].
+- Le pain est le problème de fond de l'entreprise, dit avec les mots du client
+  quand c'est possible (ex: turnover des managers, promotions sans
+  accompagnement, fusion, engagement en baisse, programme de leadership à
+  passer à l'échelle). Ne le confonds pas avec les triggers (ce qui a fait
+  signer maintenant) ni avec l'offre Coachello. Les discovery et premiers
+  meetings sont la meilleure source ; la qualification HubSpot renseignée par
+  l'AE (Need, Need detailed), si elle est fournie, est une déclaration à
+  recouper avec les meetings, pas une vérité.
 - ${NO_EM_DASH_RULE}`;
 
 const DEAL_RECAP_TOOL: Anthropic.Tool = {
@@ -41,6 +50,11 @@ const DEAL_RECAP_TOOL: Anthropic.Tool = {
   input_schema: {
     type: "object",
     properties: {
+      pain: {
+        type: ["string", "null"],
+        description:
+          "Ce qui a poussé l'entreprise à s'intéresser au coaching (2-4 phrases courtes, 80 mots max) : le problème de fond, qui l'a exprimé, chiffré si le client l'a chiffré. null si le contexte ne le dit pas.",
+      },
       timeline: {
         type: "array",
         items: {
@@ -79,7 +93,7 @@ const DEAL_RECAP_TOOL: Anthropic.Tool = {
         description: "Risques d'onboarding détectés (champion fragile, scope flou, contraintes IT, etc.)",
       },
     },
-    required: ["timeline", "how_closed", "objections", "triggers", "sales_promises", "onboarding_risks"],
+    required: ["pain", "timeline", "how_closed", "objections", "triggers", "sales_promises", "onboarding_risks"],
   },
 };
 
@@ -96,6 +110,7 @@ type RawTimelineItem = {
 };
 
 type RawRecap = {
+  pain?: string | null;
   timeline?: RawTimelineItem[];
   how_closed?: string;
   objections?: string[];
@@ -122,14 +137,29 @@ function parseSourceField(s: string | null | undefined) {
   return { kind: "inferred" as const };
 }
 
+// Qualification "Need" saisie par l'AE dans HubSpot, ajoutée au contexte pour
+// le pain (le snapshot du deal ne porte pas ces propriétés). Vide si HubSpot
+// n'a rien ou n'a pas répondu.
+function renderHubspotNeedForPrompt(hs: HubspotDealFields | null | undefined): string {
+  if (!hs) return "";
+  const needDef = HUBSPOT_CHECKLIST_FIELDS.find((f) => f.property === "need");
+  const need = hs.need ? (needDef?.options?.find((o) => o.value === hs.need)?.label ?? hs.need) : null;
+  const lines = [
+    need ? `- Need : ${need}` : null,
+    hs.needs ? `- Need detailed : ${hs.needs.slice(0, 1500)}` : null,
+  ].filter(Boolean);
+  return lines.length ? `\n## Qualification HubSpot (renseignée par l'AE)\n${lines.join("\n")}` : "";
+}
+
 export async function generateDealRecap(
   ctx: ClientEnrichmentContext,
   userId: string | null = null,
+  hubspotFields: HubspotDealFields | null = null,
 ): Promise<DealRecap | null> {
   if (!process.env.ANTHROPIC_API_KEY) return null;
 
   const model = await getModelPreference("clients", DEAL_RECAP_MODEL);
-  const prompt = renderClientContextForPrompt(ctx);
+  const prompt = renderClientContextForPrompt(ctx) + renderHubspotNeedForPrompt(hubspotFields);
 
   const client = anthropicClient({ timeout: 600_000 });
   const msg = await withAnthropicRetry(
@@ -152,6 +182,7 @@ export async function generateDealRecap(
 
   return {
     generated_at: new Date().toISOString(),
+    pain: raw.pain?.trim() || undefined,
     timeline: (raw.timeline ?? []).map((t) => ({
       when: t.when ?? undefined,
       title: t.title,

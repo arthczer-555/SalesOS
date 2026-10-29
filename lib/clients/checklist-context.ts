@@ -48,6 +48,7 @@ export async function buildChecklistContext(clientId: string): Promise<Checklist
 
   const recapLines = recap
     ? [
+        recap.pain ? `Pain (pourquoi du coaching): ${recap.pain}` : null,
         recap.how_closed ? `Comment le deal a été signé: ${recap.how_closed}` : null,
         recap.objections?.length ? `Objections: ${recap.objections.join("; ")}` : null,
         recap.sales_promises?.length ? `Promesses commerciales: ${recap.sales_promises.join("; ")}` : null,
