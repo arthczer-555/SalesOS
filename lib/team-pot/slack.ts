@@ -3,8 +3,8 @@
 // lundi, clôture du 31/12. Templates déterministes (aucun LLM), en anglais,
 // passés par stripEmDashes.
 //
-// Mode TEAM_POT_SLACK_MODE : "test" (défaut) -> DM à Arthur, "prod" ->
-// #office-life (canal privé, le bot doit y être invité).
+// Envoi direct dans #office-life (canal privé, le bot y est membre). Seul
+// TEAM_POT_SLACK_MODE=test détourne les messages en DM vers Arthur.
 // ────────────────────────────────────────────────────────────────────────
 
 import { postMessage } from "@/lib/slack/api";
@@ -19,7 +19,7 @@ const MAX_WINS_LISTED = 8;
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six"];
 
 export function potSlackMode(): "test" | "prod" {
-  return process.env.TEAM_POT_SLACK_MODE === "prod" ? "prod" : "test";
+  return process.env.TEAM_POT_SLACK_MODE === "test" ? "test" : "prod";
 }
 
 function potLink(): string {

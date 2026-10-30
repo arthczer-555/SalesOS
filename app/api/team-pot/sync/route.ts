@@ -9,7 +9,8 @@ export const maxDuration = 60;
 /**
  * Synchro du pot d'équipe (lib/team-pot/sync.ts). Appelée par le cron horaire
  * netlify/functions/team-pot-sync-scheduled.mts (Bearer CRON_SECRET) ou par un
- * admin ; body { weekly: true } force le récap du lundi (test manuel).
+ * admin ; body { weekly: true } force le récap du lundi, posté dans
+ * #office-life sauf si TEAM_POT_SLACK_MODE=test.
  */
 export async function POST(req: NextRequest) {
   const auth = await authenticateCronOrUser(req);

@@ -350,10 +350,10 @@ Page **hors navigation** (lien direct, login CoachelloHQ requis ; ni sidebar ni 
   - Un palier atteint est **figé** en base à sa première détection (`team_pot_milestones`), avec la facture qui l'a franchi : jamais retiré, même si une correction fait redescendre le total. Le bonus AI suit le classeur (une facture AI supprimée retire son bonus).
   - Owner affiché : AE pour un New, AM pour un Renew. Le classeur ne distingue pas l'expansion (types New / Renewal).
 - **Synchro** ([lib/team-pot/sync.ts](lib/team-pot/sync.ts)) : cron horaire 8h-20h Paris. Relit l'onglet Factures, fige les paliers, écrit le snapshot du jour (lu par la page et `get_team_pot`). Classeur illisible : rien n'est écrit, la page garde le dernier état avec sa date et affiche un avertissement au-delà de 26h sans synchro.
-- **Slack** ([lib/team-pot/slack.ts](lib/team-pot/slack.ts), templates sans LLM) : un message quand des paliers sont franchis (groupés, avec le bonus AI de la facture qui les franchit) ; **récap le lundi dès 11h** (depuis le récap précédent : CA, pot, factures de la semaine, prochain palier, rythme pour 2,7M) ou "Guys, let's wake up" si rien n'a bougé ; **clôture le 31/12 à 20h**. Après le 31/12 23h59 : plus aucun calcul ni message, la page reste figée. Idempotence : clé réservée dans `team_pot_messages` avant l'envoi, libérée si Slack échoue (retentée au passage suivant). `TEAM_POT_SLACK_MODE` : `test` (défaut, DM Arthur) / `prod` (#office-life `C05FKK24563`). Les clés sont préfixées par le mode : passer en prod annonce d'un coup les paliers que #office-life n'a pas encore vus.
-- **Page** ([app/pot/](app/pot/)) : CSS de la maquette en module ([pot.module.css](app/pot/pot.module.css)), confettis et toast "since your last visit" (localStorage). Admin : `POST /api/team-pot/sync` relance une synchro, `{ "weekly": true }` force le récap (test).
+- **Slack** ([lib/team-pot/slack.ts](lib/team-pot/slack.ts), templates sans LLM) : un message quand des paliers sont franchis (groupés, avec le bonus AI de la facture qui les franchit) ; **récap le lundi dès 11h** (depuis le récap précédent : CA, pot, factures de la semaine, prochain palier, rythme pour 2,7M) ou "Guys, let's wake up" si rien n'a bougé ; **clôture le 31/12 à 20h**. Après le 31/12 23h59 : plus aucun calcul ni message, la page reste figée. Idempotence : clé réservée dans `team_pot_messages` avant l'envoi, libérée si Slack échoue (retentée au passage suivant). Envoi **direct dans #office-life** (`C05FKK24563`, canal privé, le bot y est membre) ; `TEAM_POT_SLACK_MODE=test` détourne les messages en DM vers Arthur. Les clés sont préfixées par le mode : revenir en prod annonce d'un coup les paliers que #office-life n'a pas encore vus.
+- **Page** ([app/pot/](app/pot/)) : CSS de la maquette en module ([pot.module.css](app/pot/pot.module.css)), confettis et toast "since your last visit" (localStorage). Admin : `POST /api/team-pot/sync` relance une synchro, `{ "weekly": true }` force le récap (posté dans #office-life hors mode test).
 
-> **À appliquer** : migration [team_pot.sql](supabase/migrations/team_pot.sql) (`team_pot_milestones`, `team_pot_snapshots`, `team_pot_messages`). Sans elle la page affiche une erreur explicite et la synchro échoue sans rien envoyer. **Avant de passer en prod** : inviter le bot CoachelloHQ dans #office-life (canal privé, sinon `not_in_channel`), puis `TEAM_POT_SLACK_MODE=prod` sur Netlify. En janvier : supprimer `netlify/functions/team-pot-sync-scheduled.mts` (il ne fait plus rien après le 31/12).
+> **Migration** [team_pot.sql](supabase/migrations/team_pot.sql) (`team_pot_milestones`, `team_pot_snapshots`, `team_pot_messages`). Appliquée le 2026-10-30. Sans elle la page affiche une erreur explicite et la synchro échoue sans rien envoyer. Le bot CoachelloHQ doit rester membre de #office-life (canal privé, sinon `not_in_channel`). En janvier : supprimer `netlify/functions/team-pot-sync-scheduled.mts` (il ne fait plus rien après le 31/12).
 
 ### Settings (`/settings`)
 - Statut des intégrations (Claude, Gmail, Google Calendar, HubSpot, Slack, GA4, Search Console, Drive)
@@ -599,7 +599,7 @@ RAG_INSIGHTS_RECIPIENTS=              # (optionnel) emails destinataires en prod
 NOTION_ROOT_PAGE_ID=                  # (optionnel) racine 🧭 DATABASE, partagée avec l'explorateur Notion. Défaut : la page actuelle.
 
 # Pot d'équipe (/pot + annonces #office-life)
-TEAM_POT_SLACK_MODE=                  # "prod" (#office-life) | "test" (défaut, DM Arthur)
+TEAM_POT_SLACK_MODE=                  # (optionnel) "test" = DM Arthur au lieu de #office-life. Défaut : #office-life
 
 # Boîte à idées (dashboard /dashboard → DM Slack)
 IDEAS_NOTIFY_SLACK_USER=              # (optionnel) nom affichage Slack qui reçoit le DM à chaque idée. Défaut : CLAAP_NOTE_SLACK_TEST_USER (Arthur)
@@ -952,7 +952,7 @@ Toutes scopées sur l'utilisateur (campagnes strictement perso). Erreurs `{ erro
 | Route | Méthode | Description |
 |-------|---------|-------------|
 | `/api/user/me` | GET / PATCH | Profil courant. |
-| `/api/team-pot/sync` | POST | Synchro du pot d'équipe (cron `Bearer CRON_SECRET` ou admin ; `{ weekly: true }` force le récap). |
+| `/api/team-pot/sync` | POST | Synchro du pot d'équipe (cron `Bearer CRON_SECRET` ou admin ; `{ weekly: true }` force le récap, posté dans #office-life hors mode test). |
 | `/api/settings/guide` | GET / POST | Guide prospection. |
 | `/api/settings/bot-guide` | GET / POST | Guide bot. |
 | `/api/settings/briefing-guide` | GET / POST | Guide briefing. |
