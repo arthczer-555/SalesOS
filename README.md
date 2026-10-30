@@ -57,6 +57,8 @@ Le cerveau (socle + packs sales + guide Notion) vit dans le repo GitHub privé `
 
 **Qualification d'un deal** : `get_deal_qualification` ([lib/chat/tools/deal-qualification.ts](lib/chat/tools/deal-qualification.ts), source agents "HubSpot") renvoie ce que la fiche `/deals` affiche (score /100, Next move, Path to close, KUNA, buying committee, contacts actifs, récaps Claap), via le même calcul que le brief du chat coach ([lib/deals/coach-brief.ts](lib/deals/coach-brief.ts)).
 
+**Pot d'équipe (2026-10-30)** : `get_team_pot` ([lib/chat/tools/team-pot.ts](lib/chat/tools/team-pot.ts), source agents "Revenue sheet") lit le dernier snapshot du pot (`/pot`) : montant, paliers atteints et la facture qui a franchi chacun, factures depuis le 30/10 avec leur bonus AI, prochain palier, rythme pour 2,7M / 3M, jours restants. Mêmes chiffres que la page et que #office-life. Donnée d'équipe, visible par tout utilisateur connecté (pas de filtre par rep). Ne remplace pas le facturé courant (`get_revenue_kpis`, `get_invoices`) : seules les factures datées à partir du 30/10 y comptent.
+
 Code : [lib/chat/run-agent.ts](lib/chat/run-agent.ts) (orchestration), [lib/chat/loop.ts](lib/chat/loop.ts) (boucle agentique, tool calls parallèles + filet d'auto-injection Notion), [lib/chat/tools/](lib/chat/tools/) (outils par famille, règles d'usage dans les descriptions), [lib/chat/prompt/build.ts](lib/chat/prompt/build.ts), [lib/notion/](lib/notion/) (client lecture seule). `lib/chat/core.ts` n'est plus qu'un shim de re-export.
 
 Env requises en plus : `NOTION_TOKEN` (intégration interne partagée sur `🧭 DATABASE`), `GITHUB_TOKEN` + `COACHELLO_RAG_REPO` (lecture du repo cerveau privé).
@@ -339,6 +341,20 @@ Placeholders « Coming Soon ». Réservés pour fonctionnalités à venir. (`/se
 ### Pokedex (`/pokedex`)
 Répertoire interne Coachello : grille de cartes vers les outils de la plateforme (Mail Agent, CoachelloHQ, Onboarding Checklist, Super Admin, Ticket Mafia) avec descriptions et liens externes.
 
+### The Coachello Pot (`/pot`) - pot d'équipe 2026 (2026-10-30)
+Page **hors navigation** (lien direct, login CoachelloHQ requis ; ni sidebar ni pastille CoachelloAI, comme `/pokedex`), reprise de la maquette d'Arthur : chaque palier de 50k de CA 2026 franchi met de l'argent dans un pot d'équipe, annoncé dans **#office-life**. Pas de saisie manuelle : le chiffre vient du classeur revenue.
+
+- **Règles** ([lib/team-pot/config.ts](lib/team-pot/config.ts)) : +1 000 € par palier de 50k de 2,2M à 2,7M, +2 000 € de 2,75M à 3,0M (pot max 23 000 € hors bonus). Une facture **AI** (colonne Type = "AI" de l'onglet Factures) compte **1,5x** sa part du pot : bonus = 0,5 x montant x 1 000/50k dans la zone 2,15M-2,7M (x 2 000/50k dans 2,7M-3,0M, rien au-delà).
+- ⚠ **Conventions** :
+  - Chiffre suivi = facturé 2026 **New + Renew** de l'onglet **Factures** (même total que "Revenue par Trimestre" et le dashboard), mais **seules les factures datées du 30/10 au 31/12/2026** font bouger le pot. Point de départ **figé** à 2 160 184 € (facturé 2026 daté avant le 30/10, mesuré le 2026-10-30) : une facture antérieure saisie en retard ne compte pas, le "2026 revenue" de la page peut donc s'écarter du facturé courant du sheet.
+  - Un palier atteint est **figé** en base à sa première détection (`team_pot_milestones`), avec la facture qui l'a franchi : jamais retiré, même si une correction fait redescendre le total. Le bonus AI suit le classeur (une facture AI supprimée retire son bonus).
+  - Owner affiché : AE pour un New, AM pour un Renew. Le classeur ne distingue pas l'expansion (types New / Renewal).
+- **Synchro** ([lib/team-pot/sync.ts](lib/team-pot/sync.ts)) : cron horaire 8h-20h Paris. Relit l'onglet Factures, fige les paliers, écrit le snapshot du jour (lu par la page et `get_team_pot`). Classeur illisible : rien n'est écrit, la page garde le dernier état avec sa date et affiche un avertissement au-delà de 26h sans synchro.
+- **Slack** ([lib/team-pot/slack.ts](lib/team-pot/slack.ts), templates sans LLM) : un message quand des paliers sont franchis (groupés, avec le bonus AI de la facture qui les franchit) ; **récap le lundi dès 11h** (depuis le récap précédent : CA, pot, factures de la semaine, prochain palier, rythme pour 2,7M) ou "Guys, let's wake up" si rien n'a bougé ; **clôture le 31/12 à 20h**. Après le 31/12 23h59 : plus aucun calcul ni message, la page reste figée. Idempotence : clé réservée dans `team_pot_messages` avant l'envoi, libérée si Slack échoue (retentée au passage suivant). `TEAM_POT_SLACK_MODE` : `test` (défaut, DM Arthur) / `prod` (#office-life `C05FKK24563`). Les clés sont préfixées par le mode : passer en prod annonce d'un coup les paliers que #office-life n'a pas encore vus.
+- **Page** ([app/pot/](app/pot/)) : CSS de la maquette en module ([pot.module.css](app/pot/pot.module.css)), confettis et toast "since your last visit" (localStorage). Admin : `POST /api/team-pot/sync` relance une synchro, `{ "weekly": true }` force le récap (test).
+
+> **À appliquer** : migration [team_pot.sql](supabase/migrations/team_pot.sql) (`team_pot_milestones`, `team_pot_snapshots`, `team_pot_messages`). Sans elle la page affiche une erreur explicite et la synchro échoue sans rien envoyer. **Avant de passer en prod** : inviter le bot CoachelloHQ dans #office-life (canal privé, sinon `not_in_channel`), puis `TEAM_POT_SLACK_MODE=prod` sur Netlify. En janvier : supprimer `netlify/functions/team-pot-sync-scheduled.mts` (il ne fait plus rien après le 31/12).
+
 ### Settings (`/settings`)
 - Statut des intégrations (Claude, Gmail, Google Calendar, HubSpot, Slack, GA4, Search Console, Drive)
 - Connexion Gmail / Calendar / Drive / GA4 / GSC via OAuth Google
@@ -582,6 +598,9 @@ RAG_INSIGHTS_SLACK_MODE=              # "prod" (DM Arthur + RAG_INSIGHTS_RECIPIE
 RAG_INSIGHTS_RECIPIENTS=              # (optionnel) emails destinataires en prod, séparés par des virgules. Défaut : gaspard@coachello.io
 NOTION_ROOT_PAGE_ID=                  # (optionnel) racine 🧭 DATABASE, partagée avec l'explorateur Notion. Défaut : la page actuelle.
 
+# Pot d'équipe (/pot + annonces #office-life)
+TEAM_POT_SLACK_MODE=                  # "prod" (#office-life) | "test" (défaut, DM Arthur)
+
 # Boîte à idées (dashboard /dashboard → DM Slack)
 IDEAS_NOTIFY_SLACK_USER=              # (optionnel) nom affichage Slack qui reçoit le DM à chaque idée. Défaut : CLAAP_NOTE_SLACK_TEST_USER (Arthur)
 
@@ -623,6 +642,7 @@ app/
     admin/ae-activity/page.tsx      # Pilotage sales : onglets AE Activity + Deal Review (?tab=deals)
     admin/rag/page.tsx              # RAG Insights (questions, satisfaction, trous Notion)
   pokedex/page.tsx                  # Répertoire outils Coachello
+  pot/page.tsx                      # Pot d'équipe 2026 (hors navigation, lien direct)
 
   # Placeholders « Coming Soon »
   scoring/ search/ sequences/ knowledge/ followup/ slack/ health/
@@ -761,6 +781,7 @@ Voir section 1 pour la description fonctionnelle de chaque module. Cette section
 | `/admin` | [app/admin/page.tsx](app/admin/page.tsx) | — |
 | `/admin/ae-activity` | [app/admin/ae-activity/page.tsx](app/admin/ae-activity/page.tsx) | Onglets : [_components/tabs.tsx](app/admin/ae-activity/_components/tabs.tsx) — Activité : [lib/ae-activity/](lib/ae-activity/) — Deal Review : [lib/deal-review/build.ts](lib/deal-review/build.ts) + [app/api/admin/deal-review/route.ts](app/api/admin/deal-review/route.ts) |
 | `/prompt` | [app/prompt/page.tsx](app/prompt/page.tsx) | — |
+| `/pot` | [app/pot/page.tsx](app/pot/page.tsx) | Règles : [lib/team-pot/config.ts](lib/team-pot/config.ts) - Calcul : [lib/team-pot/compute.ts](lib/team-pot/compute.ts) - Messages : [lib/team-pot/slack.ts](lib/team-pot/slack.ts) |
 
 ---
 
@@ -931,6 +952,7 @@ Toutes scopées sur l'utilisateur (campagnes strictement perso). Erreurs `{ erro
 | Route | Méthode | Description |
 |-------|---------|-------------|
 | `/api/user/me` | GET / PATCH | Profil courant. |
+| `/api/team-pot/sync` | POST | Synchro du pot d'équipe (cron `Bearer CRON_SECRET` ou admin ; `{ weekly: true }` force le récap). |
 | `/api/settings/guide` | GET / POST | Guide prospection. |
 | `/api/settings/bot-guide` | GET / POST | Guide bot. |
 | `/api/settings/briefing-guide` | GET / POST | Guide briefing. |
@@ -998,6 +1020,7 @@ Voir section 11 pour les détails.
 - **[intel-types.ts](lib/intel-types.ts)** - Types du builder de listes / enrichissement (`EnrichmentList`, `EnrichmentProfile`, `HubspotCriteria`, `HubspotPushState`).
 - **[intel/company-contact-ids.ts](lib/intel/company-contact-ids.ts)** + **[intel/push-list-to-hubspot.ts](lib/intel/push-list-to-hubspot.ts)** - Résolution contacts HubSpot + push d'une liste vers HubSpot (création contacts, dédup email).
 - **[models/get-model-preference.ts](lib/models/get-model-preference.ts)** - Résout le modèle Claude configuré dans l'admin (`guide_defaults.model_preferences`) pour une feature, avec fallback. Utilisé par chat, deals, prospection, sales-coach, clients, marketing…
+- **[team-pot/](lib/team-pot/)** - Pot d'équipe 2026 (`/pot`) : `config.ts` (règles du jeu), `compute.ts` (calcul pur), `sync.ts` (synchro horaire + envois idempotents), `slack.ts` (messages #office-life), `read.ts` (dernier snapshot).
 - **[scope-companies.ts](lib/scope-companies.ts)** - CRUD `scope_companies`, parsing/sérialisation CSV, helper `maybeCreateSalesRep`.
 - **lib/clients/** - Enrichissement des comptes post-signature : `run-enrichment.ts` / `run-refresh.ts` (orchestration), `trigger-refresh.ts` (inline local / background Netlify), `prompt.ts` (extraction des fields, dont IT & accès, avec `evidence_date`), `merge-fields.ts` (règle de merge manuel vs IA), `programs.ts` (détection et fusion des programmes du compte) + `program-summary.ts` (lecture des programmes pour handover, To do, checklist, CoachelloAI), `slack-context.ts` (canaux client + #12-everything-clients), `health.ts` + `health-summary.ts`, `insights-ai.ts` + `lifecycle.ts` (Next actions), `todo.ts` (état To do / HubSpot cleaner), `coach-brief.ts`, `deal-recap.ts`, `news.ts` + `rank-news.ts`, `notify-handover.ts` / `notify-reassign.ts` (DM Slack AM/CS).
 - **lib/watchlist/** - Brief generation pour la Watch List :
@@ -1421,6 +1444,13 @@ CREATE TABLE rag_gap_reports (
 CREATE TABLE rag_insights_meta (id INT PRIMARY KEY DEFAULT 1, status TEXT NOT NULL DEFAULT 'idle', ...);
 ```
 
+### Pot d'équipe (`/pot`)
+
+Migration : [team_pot.sql](supabase/migrations/team_pot.sql).
+- `team_pot_milestones` (`level` PK, `bonus`, `reached_at`, `total_at_reach`, `crossed_by` JSONB) : paliers figés à la première détection.
+- `team_pot_snapshots` (`day` PK en heure de Paris, `total`, `pot`, `payload` JSONB = état complet `PotState`, `synced_at`) : écrasé à chaque synchro du jour.
+- `team_pot_messages` (`key` PK `<mode>:milestone:<level>` / `<mode>:weekly:<date>` / `<mode>:final`, `slack_ts`, `payload`, `sent_at`) : idempotence des envois ; le `payload` d'un récap du lundi sert de base au suivant.
+
 ### Agents (`/agents`)
 
 Migration : [agents.sql](supabase/migrations/agents.sql).
@@ -1492,6 +1522,7 @@ Implémentées en tant que **Netlify Scheduled / Background Functions** dans [ne
 | `clients-weekly-refresh-scheduled.mts` | `0 4 * * 1` (lundi, 4h UTC) | `clients-weekly-refresh-background` | `X-Internal-Secret` | Sync billing en lot puis un refresh par client (Claap, HubSpot, Slack, news, fields, Next actions). |
 | `ae-activity-refresh-scheduled.mts` | `0 6 * * *` (tous les jours 6h UTC) | `POST /.netlify/functions/ae-activity-refresh-background` | `Bearer CRON_SECRET` | Recalcule le dashboard **AE Sales Activity** (activité HubSpot + revenu Sheet + Claap + Slack + note Claap mensuelle) pour tous les reps sales. **Aucun appel LLM** : tout est recalculé à chaque passage depuis les sources. Aussi déclenchable via le bouton "Refresh" (`X-Internal-Secret`), ou pour **un seul rep** via `{ ownerIds: [...] }` depuis `/api/me/dashboard/refresh`. |
 | `rag-insights-scheduled.mts` | `0 7 * * 1` (tous les lundis 7h UTC) | `POST /.netlify/functions/rag-insights-background` | `Bearer CRON_SECRET` | Analyse les nouveaux tours de CoachelloAI (**RAG Insights**), reconstruit le rapport de trous Notion et envoie le **recap Slack hebdo** (DM Arthur en test, + `RAG_INSIGHTS_RECIPIENTS` en prod). Aussi déclenchable via les boutons "Refresh analysis" / "Send Slack recap" de `/admin/rag` (`X-Internal-Secret`). |
+| `team-pot-sync-scheduled.mts` | `0 7-19 * * *` (toutes les heures, 8h-20h Paris) | `POST /api/team-pot/sync` | `Bearer CRON_SECRET` | **Pot d'équipe** ([lib/team-pot/sync.ts](lib/team-pot/sync.ts)) : relit l'onglet Factures, fige les paliers de 50k franchis et les annonce dans #office-life, récap le lundi dès 11h, clôture le 31/12 à 20h. Inactif après le 31/12. Aucun appel LLM. |
 | `signals-sweep-scheduled.mts` | `0 5 * * *` (tous les jours 5h UTC) | `POST /.netlify/functions/signals-sweep-background` | `Bearer CRON_SECRET` | Sweep **Signals** : scan marché global, scoring Claude, dédup, recherche d'un lead joignable, insert des 10 meilleurs, rétention 14 j. |
 | `marketing-posts-scrape-scheduled.mts` | `0 6 * * 1` (tous les lundis 6h UTC) | `POST /.netlify/functions/marketing-posts-scrape-background` | `Bearer CRON_SECRET` | Scrape les posts LinkedIn des sources `LINKEDIN_OWN_POST_SOURCES` (dataset Bright Data, poll 6 min). |
 | `agents-dispatch-scheduled.mts` | `*/10 * * * *` (toutes les 10 min) | `dispatchDueAgents` ([lib/agents/dispatch.ts](lib/agents/dispatch.ts)) puis `agents-run-background` par agent échu | `X-Internal-Secret` | **Agents** : lance les agents actifs dont `next_run_at` est passé (réservation du créneau par UPDATE conditionnel), clôt les runs et designs bloqués depuis plus de 20 min. |

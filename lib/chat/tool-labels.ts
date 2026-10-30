@@ -34,6 +34,7 @@ const TOOL_LABELS: Record<string, { emoji: string; label: string }> = {
   get_sales_activity: { emoji: "📞", label: "Reading sales activity" },
   get_lost_deals_to_reopen: { emoji: "🔁", label: "Reading lost deals to reopen" },
   get_deal_qualification: { emoji: "🧭", label: "Reading deal qualification" },
+  get_team_pot: { emoji: "💰", label: "Reading the team pot" },
   send_slack_message: { emoji: "📤", label: "Sending Slack message" },
   web_search: { emoji: "🌐", label: "Searching the web" },
   search_drive: { emoji: "📂", label: "Searching Google Drive" },

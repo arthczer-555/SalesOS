@@ -26,6 +26,7 @@ import { salesActivityTools } from "./sales-activity";
 import { slackFeedsTools } from "./slack-feeds";
 import { lostDealsTools } from "./lost-deals";
 import { dealQualificationTools } from "./deal-qualification";
+import { teamPotTools } from "./team-pot";
 import type { ToolContext, ToolHandler } from "./types";
 
 // Ordre stable : ne pas réordonner sans raison (chaque changement d'ordre
@@ -51,6 +52,7 @@ const MODULES = [
   slackFeedsTools,
   lostDealsTools,
   dealQualificationTools,
+  teamPotTools,
 ];
 
 export const TOOLS: Anthropic.Tool[] = MODULES.flatMap((m) => m.defs);

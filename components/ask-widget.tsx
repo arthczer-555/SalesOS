@@ -16,8 +16,8 @@ import { MessageCircle, X, ArrowUp, CornerDownLeft } from "lucide-react";
 import { COLORS, SHADOWS } from "@/lib/design/tokens";
 
 // Pages où la pastille ne doit pas apparaître : le chat lui-même (redondant),
-// la page de connexion, et le pokédex qui masque déjà toute la navigation.
-const HIDDEN_PREFIXES = ["/sign-in", "/pokedex"];
+// la page de connexion, le pokédex et le pot qui masquent déjà toute la navigation.
+const HIDDEN_PREFIXES = ["/sign-in", "/pokedex", "/pot"];
 // `/` redirige vers l'accueil et ne rend rien, mais reste listée : la pastille
 // n'a aucune raison d'y clignoter le temps de la redirection.
 const HIDDEN_EXACT = ["/", "/chat"];

@@ -83,7 +83,7 @@ export default function Sidebar() {
     [pathname, isAdmin, collapsed, toggle, user, closeMobile]
   );
 
-  if (pathname?.startsWith("/pokedex")) return null;
+  if (pathname?.startsWith("/pokedex") || pathname?.startsWith("/pot")) return null;
 
   const desktopWidth = collapsed ? 56 : 208;
 

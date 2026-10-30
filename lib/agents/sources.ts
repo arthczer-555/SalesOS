@@ -48,7 +48,7 @@ export const AGENT_SOURCES: AgentSourceDef[] = [
     key: "revenue",
     label: "Revenue sheet",
     description:
-      "Every invoice with its date, client, amount and AE/AM/CSM (any period: week, month, quarter), billed revenue per client and per year, target vs billed per client (year and quarters, YoY status: expansion, churn), target vs billed per salesperson, the 2026 forecast and weekly sales review, company KPIs vs targets. Source of truth for revenue, not HubSpot.",
+      "Every invoice with its date, client, amount and AE/AM/CSM (any period: week, month, quarter), billed revenue per client and per year, target vs billed per client (year and quarters, YoY status: expansion, churn), target vs billed per salesperson, the 2026 forecast and weekly sales review, company KPIs vs targets, the 2026 team pot (pot amount, €50k milestones reached and who pushed us over, invoices since 30 Oct, AI Roleplay bonus, pace to €2.7M / €3M). Source of truth for revenue, not HubSpot.",
     logo: "sheets",
   },
   {

@@ -29,6 +29,7 @@ import { salesActivityTools } from "@/lib/chat/tools/sales-activity";
 import { slackFeedsTools } from "@/lib/chat/tools/slack-feeds";
 import { lostDealsTools } from "@/lib/chat/tools/lost-deals";
 import { dealQualificationTools } from "@/lib/chat/tools/deal-qualification";
+import { teamPotTools } from "@/lib/chat/tools/team-pot";
 import type { ToolModule } from "@/lib/chat/tools/types";
 import type { AgentSourceKey } from "./sources";
 
@@ -37,7 +38,7 @@ const BLOCKED_TOOLS = new Set(["send_slack_message"]);
 const MODULES_BY_SOURCE: Record<AgentSourceKey, ToolModule[]> = {
   hubspot: [hubspotTools, salesActivityTools, lostDealsTools, dealQualificationTools],
   clients: [clientsTools],
-  revenue: [billingTools, revenueKpisTools, invoicesTools, revenuePlanTools],
+  revenue: [billingTools, revenueKpisTools, invoicesTools, revenuePlanTools, teamPotTools],
   claap: [claapTools],
   slack: [slackTools, slackFeedsTools],
   gmail: [gmailTools],

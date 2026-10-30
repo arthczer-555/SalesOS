@@ -11,6 +11,7 @@ const isPublicRoute = createRouteMatcher([
   "/api/slack/events(.*)", // Slack Events API — authenticated via HMAC SHA-256 (x-slack-signature) in handler
   "/api/sales-coach/analyze(.*)", // Fire-and-forget internal trigger — authenticated via x-internal-secret in handler
   "/api/sales-coach/recover-stuck(.*)", // Cron / UI — accepts Bearer CRON_SECRET OR Clerk session (admin)
+  "/api/team-pot/sync(.*)", // Cron / UI — accepts Bearer CRON_SECRET OR Clerk session (admin)
 ]);
 
 const handleRequest = clerkMiddleware(async (auth, request) => {
