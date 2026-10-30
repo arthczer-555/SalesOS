@@ -24,8 +24,8 @@ CREATE TABLE IF NOT EXISTS team_pot_snapshots (
 
 -- Journal des messages Slack, sert d'idempotence : la clé est réservée avant
 -- l'envoi et supprimée si Slack échoue. Clés préfixées par le mode :
--- "prod:milestone:2200000", "prod:weekly:2026-11-02", "prod:final".
--- payload (récap du lundi) = état au moment de l'envoi, base du récap suivant.
+-- "prod:milestone:2200000", "prod:weekly:2026-11-04", "prod:final".
+-- payload (récap du mercredi) = état au moment de l'envoi, base du récap suivant.
 CREATE TABLE IF NOT EXISTS team_pot_messages (
   key      TEXT        PRIMARY KEY,
   slack_ts TEXT,

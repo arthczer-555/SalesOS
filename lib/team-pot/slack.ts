@@ -1,6 +1,6 @@
 // ────────────────────────────────────────────────────────────────────────
 // Messages Slack du pot d'équipe (#office-life) : palier franchi, récap du
-// lundi, clôture du 31/12. Templates déterministes (aucun LLM), en anglais,
+// mercredi, clôture du 31/12. Templates déterministes (aucun LLM), en anglais,
 // passés par stripEmDashes.
 //
 // Envoi direct dans #office-life (canal privé, le bot y est membre). Seul

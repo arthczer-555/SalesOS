@@ -5,7 +5,7 @@ import type { Config } from "@netlify/functions";
  * Paris (07:00-19:00 UTC, CET jusqu'à la fin du jeu le 31/12).
  *
  * Relit l'onglet Factures, fige les paliers franchis et annonce dans
- * #office-life ; le lundi dès 11h, envoie aussi le récap hebdo ; le 31/12 à
+ * #office-life ; le mercredi dès 11h, envoie aussi le récap hebdo ; le 31/12 à
  * 20h, le message de clôture. Après le 31/12 la route ne fait plus rien.
  * Quelques secondes de travail : pas de background function.
  */

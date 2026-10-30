@@ -17,7 +17,8 @@ export const POT_LAST_DAY = "2026-12-31";
 export const POT_END = new Date("2026-12-31T23:59:59+01:00");
 /** Heure de Paris du message de clôture, le dernier jour. */
 export const POT_FINAL_HOUR = 20;
-/** Récap hebdo : le lundi à partir de 11h (Paris), au premier passage du cron. */
+/** Récap hebdo : le mercredi (0 = dimanche) à partir de 11h (Paris), au premier passage du cron. */
+export const POT_WEEKLY_DAY = 3;
 export const POT_WEEKLY_HOUR = 11;
 
 /**

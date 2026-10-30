@@ -6,7 +6,7 @@
 //   2. fige en base les paliers nouvellement atteints (team_pot_milestones) ;
 //   3. écrit le snapshot du jour (team_pot_snapshots), lu par la page et
 //      l'outil get_team_pot ;
-//   4. annonce les paliers pas encore annoncés, le récap du lundi (dès 11h),
+//   4. annonce les paliers pas encore annoncés, le récap du mercredi (dès 11h),
 //      la clôture du 31/12 à 20h.
 // Idempotence des envois : clé réservée dans team_pot_messages AVANT l'envoi
 // (insert ... on conflict do nothing), libérée si Slack échoue pour retenter
@@ -18,7 +18,7 @@ import { db } from "@/lib/db";
 import { fetchInvoices } from "@/lib/billing/invoices";
 import { DEFAULT_TIMEZONE } from "@/lib/agents/schedule";
 import { parisToday } from "@/lib/chat/tools/period";
-import { POT_BASELINE, POT_END, POT_FINAL_HOUR, POT_LAST_DAY, POT_WEEKLY_HOUR } from "./config";
+import { POT_BASELINE, POT_END, POT_FINAL_HOUR, POT_LAST_DAY, POT_WEEKLY_DAY, POT_WEEKLY_HOUR } from "./config";
 import { computePot, type FrozenMilestone, type PotCrosser, type PotState } from "./compute";
 import {
   deliverPotMessage,
@@ -34,7 +34,7 @@ export type PotSyncResult =
   | { ok: true; ended: false; total: number; pot: number; newMilestones: number[]; sent: string[]; errors: string[] }
   | { ok: false; error: string };
 
-/** État résumé stocké avec le récap du lundi : base de comparaison du suivant. */
+/** État résumé stocké avec le récap du mercredi : base de comparaison du suivant. */
 type WeeklyPayload = { total: number; pot: number; reachedCount: number; aiBonus: number; winKeys: string[] };
 
 async function loadFrozen(): Promise<FrozenMilestone[]> {
@@ -68,7 +68,7 @@ async function send(keys: string[], text: string, sent: string[], errors: string
   }
 }
 
-/** Dernier récap du lundi envoyé dans ce mode, sinon le point de départ. */
+/** Dernier récap du mercredi envoyé dans ce mode, sinon le point de départ. */
 async function weeklyBaseline(mode: string, currentKey: string): Promise<WeeklyBaseline> {
   const { data } = await db
     .from("team_pot_messages")
@@ -157,10 +157,10 @@ export async function syncTeamPot(opts: { weekly?: boolean; now?: Date } = {}): 
       }
     }
 
-    // Le lundi dès 11h : le premier passage envoie, les suivants retentent si
-    // Slack a échoué. `weekly` force l'envoi (test manuel d'un admin).
-    const isMonday = new Date(`${today}T12:00:00Z`).getUTCDay() === 1;
-    if (opts.weekly || (isMonday && parisHour(now) >= POT_WEEKLY_HOUR)) {
+    // Le mercredi dès 11h : le premier passage envoie, les suivants retentent
+    // si Slack a échoué. `weekly` force l'envoi (test manuel d'un admin).
+    const isWeeklyDay = new Date(`${today}T12:00:00Z`).getUTCDay() === POT_WEEKLY_DAY;
+    if (opts.weekly || (isWeeklyDay && parisHour(now) >= POT_WEEKLY_HOUR)) {
       const key = `${mode}:weekly:${today}`;
       const prev = await weeklyBaseline(mode, key);
       if ((await claim([key], weeklyPayload(state))).has(key)) {
