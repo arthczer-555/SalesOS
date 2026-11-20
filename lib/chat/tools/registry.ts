@@ -27,6 +27,7 @@ import { slackFeedsTools } from "./slack-feeds";
 import { lostDealsTools } from "./lost-deals";
 import { dealQualificationTools } from "./deal-qualification";
 import { teamPotTools } from "./team-pot";
+import { improvementPlanTools } from "./improvement-plan";
 import type { ToolContext, ToolHandler } from "./types";
 
 // Ordre stable : ne pas réordonner sans raison (chaque changement d'ordre
@@ -55,9 +56,15 @@ const MODULES = [
   teamPotTools,
 ];
 
+// Modules réservés aux Agents : leurs handlers sont exécutables (les agents
+// passent par executeTool), mais leurs définitions ne sont PAS dans TOOLS,
+// donc CoachelloAI (chat web et Slack) ne les voit pas. L'outil vérifie en
+// plus ctx.surface. Branchés sur une source dans lib/agents/tools.ts.
+const AGENT_ONLY_MODULES = [improvementPlanTools];
+
 export const TOOLS: Anthropic.Tool[] = MODULES.flatMap((m) => m.defs);
 
-const HANDLERS: Record<string, ToolHandler> = Object.assign({}, ...MODULES.map((m) => m.handlers));
+const HANDLERS: Record<string, ToolHandler> = Object.assign({}, ...[...MODULES, ...AGENT_ONLY_MODULES].map((m) => m.handlers));
 
 export async function executeTool(
   name: string,

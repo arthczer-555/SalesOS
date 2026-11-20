@@ -30,6 +30,7 @@ import { slackFeedsTools } from "@/lib/chat/tools/slack-feeds";
 import { lostDealsTools } from "@/lib/chat/tools/lost-deals";
 import { dealQualificationTools } from "@/lib/chat/tools/deal-qualification";
 import { teamPotTools } from "@/lib/chat/tools/team-pot";
+import { improvementPlanTools } from "@/lib/chat/tools/improvement-plan";
 import type { ToolModule } from "@/lib/chat/tools/types";
 import type { AgentSourceKey } from "./sources";
 
@@ -43,6 +44,8 @@ const MODULES_BY_SOURCE: Record<AgentSourceKey, ToolModule[]> = {
   slack: [slackTools, slackFeedsTools],
   gmail: [gmailTools],
   drive: [driveTools],
+  // Réservé aux agents : absent de CoachelloAI (registry.ts, AGENT_ONLY_MODULES).
+  improvement_plan: [improvementPlanTools],
   notion: [notionTools],
   linkedin: [linkedinTools],
   web: [webTools],

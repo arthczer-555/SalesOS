@@ -17,6 +17,7 @@ export type AgentSourceKey =
   | "slack"
   | "gmail"
   | "drive"
+  | "improvement_plan"
   | "notion"
   | "linkedin"
   | "web";
@@ -74,8 +75,15 @@ export const AGENT_SOURCES: AgentSourceDef[] = [
   {
     key: "drive",
     label: "Google Drive",
-    description: "Search and read Google Docs, Sheets and files shared with Coachello.",
+    description: "Search and read Google Docs, Sheets and files shared with Coachello. Not the improvement plan (see Improvement plan).",
     logo: "drive",
+  },
+  {
+    key: "improvement_plan",
+    label: "Improvement plan",
+    description:
+      "Coachello's improvement plan + ownership (Drive workbook, one tab per team: Cross team, Legal Security, HR, Finance, Founders, Marketing, Sales, Product-Dev, To do). Every task with its theme, concrete actions, priority, owner(s) matched to CoachelloHQ people or groups (Everyone, Founders, Sales team, AEs, AMs, CSMs, Marketing, Product), deadline (exact date, end of month, end of quarter, or continuous) and status (to do, in progress, done, not filled in), with an overdue flag. Filter by owner, tab, status, priority, deadline. Built for reminders: send each owner their open, overdue or upcoming tasks (personalized send to a group), or a weekly digest of what is due. Admins see the whole plan; anyone else only their own tasks. Read-only: cannot tick a task or edit the file, and the file has no history (no \"new tasks since\"). Agents only, not available in CoachelloAI.",
+    logo: "sheets",
   },
   {
     key: "notion",

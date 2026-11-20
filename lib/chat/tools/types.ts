@@ -17,6 +17,10 @@ export type ToolContext = {
   userOwnerId: string | null;
   /** Email de l'utilisateur connecté : sert aux filtres "mes clients" (owner/AM/CS). */
   userEmail: string | null;
+  /** D'où vient l'appel : "agent" pour un run d'agent (lib/agents/run.ts),
+   *  absent pour CoachelloAI (chat web et Slack). Sert aux outils réservés
+   *  aux agents (get_improvement_plan). */
+  surface?: "agent";
   onProgress: (msg: string) => void;
   onSource: (source: ChatSource) => void;
 };

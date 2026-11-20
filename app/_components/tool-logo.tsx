@@ -35,6 +35,7 @@ export function logoKeyForTool(toolName: string): LogoKey {
   if (toolName.includes("claap")) return "claap";
   if (toolName.includes("linkedin")) return "linkedin";
   if (toolName.includes("drive")) return "drive";
+  if (toolName === "get_improvement_plan") return "sheets";
   if (["get_billing_revenue", "get_revenue_kpis", "get_invoices", "get_client_targets", "get_sales_targets", "get_revenue_forecast"].includes(toolName)) return "sheets";
   if (toolName === "search_clients" || toolName === "get_client") return "coachello";
   if (toolName === "web_search") return "web";

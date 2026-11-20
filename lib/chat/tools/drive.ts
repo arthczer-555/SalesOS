@@ -1,11 +1,23 @@
 /**
  * Outils Google Drive de CoachelloAI (extraits de l'ancien lib/chat/core.ts).
  * Les fichiers lus sont émis comme sources (ctx.onSource) pour l'UI.
+ *
+ * Fichiers réservés : le plan d'amélioration n'est lisible que par les Agents,
+ * via get_improvement_plan (qui applique la règle d'accès). Ces outils le
+ * refusent et le retirent des résultats, pour CoachelloAI comme pour les
+ * agents : sinon un non-admin le lirait en entier.
  */
 
 import type Anthropic from "@anthropic-ai/sdk";
 import * as XLSX from "xlsx";
+import { IMPROVEMENT_PLAN_FILE_ID } from "@/lib/improvement-plan/config";
 import type { ToolModule } from "./types";
+
+const RESTRICTED_FILE_IDS = new Set([IMPROVEMENT_PLAN_FILE_ID]);
+const RESTRICTED_MESSAGE =
+  "Ce fichier (plan d'amélioration Coachello) est réservé aux Agents CoachelloHQ : il n'est pas lisible ici. Dans un agent, utilise l'outil get_improvement_plan (source Improvement plan). Ne cherche pas son contenu ailleurs.";
+
+type DriveListItem = { id: string; name: string; mimeType: string; modifiedTime: string; webViewLink: string };
 
 // ── Token Drive (partagé via env var) ────────────────────────────────────────
 
@@ -50,19 +62,25 @@ function parseFileId(raw: string): string {
   return m ? m[1] : s;
 }
 
-type FileMeta = { name: string; mimeType: string; link?: string };
+export type FileMeta = { name: string; mimeType: string; link?: string; modifiedTime?: string; modifiedBy?: string };
 
 /** Métadonnées d'un fichier : nom et lien pour les sources UI, type MIME pour
  *  choisir entre export et téléchargement. Best-effort. */
 async function fileMeta(token: string, fileId: string): Promise<FileMeta | null> {
   try {
     const res = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType,webViewLink&supportsAllDrives=true`,
+      `https://www.googleapis.com/drive/v3/files/${fileId}?fields=name,mimeType,webViewLink,modifiedTime,lastModifyingUser(displayName)&supportsAllDrives=true`,
       { headers: { Authorization: `Bearer ${token}` } }
     );
     if (!res.ok) return null;
     const data = await res.json();
-    return { name: data.name ?? fileId, mimeType: data.mimeType ?? "", link: data.webViewLink };
+    return {
+      name: data.name ?? fileId,
+      mimeType: data.mimeType ?? "",
+      link: data.webViewLink,
+      modifiedTime: data.modifiedTime,
+      modifiedBy: data.lastModifyingUser?.displayName,
+    };
   } catch {
     return null;
   }
@@ -82,6 +100,15 @@ async function loadWorkbook(token: string, fileId: string, mimeType: string): Pr
     throw new Error(`Drive API ${res.status}: ${err.slice(0, 200)}`);
   }
   return XLSX.read(new Uint8Array(await res.arrayBuffer()), { type: "array" });
+}
+
+/** Classeur Drive + ses métadonnées (nom, lien, dernière modification), pour
+ *  les features qui lisent un fichier précis (lib/improvement-plan/read.ts). */
+export async function fetchDriveWorkbook(fileId: string): Promise<{ wb: XLSX.WorkBook; meta: FileMeta | null }> {
+  const token = await getDriveAccessToken();
+  const meta = await fileMeta(token, fileId);
+  const wb = await loadWorkbook(token, fileId, meta?.mimeType ?? "");
+  return { wb, meta };
 }
 
 /** Contenu d'un classeur pour le modèle : l'onglet demandé (nom tolérant à la
@@ -184,9 +211,9 @@ const module_: ToolModule = {
           throw new Error(`Drive API ${res.status}: ${err.slice(0, 200)}`);
         }
         const data = await res.json();
-        const files = (data.files ?? []).map((f: { id: string; name: string; mimeType: string; modifiedTime: string; webViewLink: string }) => ({
-          id: f.id, name: f.name, type: f.mimeType, modified: f.modifiedTime?.slice(0, 10), link: f.webViewLink,
-        }));
+        const files = ((data.files ?? []) as DriveListItem[])
+          .filter((f) => !RESTRICTED_FILE_IDS.has(f.id))
+          .map((f) => ({ id: f.id, name: f.name, type: f.mimeType, modified: f.modifiedTime?.slice(0, 10), link: f.webViewLink }));
         if (files.length === 0) return `Aucun fichier trouvé pour "${input.query}".`;
         return JSON.stringify(files);
       } catch (e) {
@@ -198,6 +225,7 @@ const module_: ToolModule = {
       try {
         const token = await getDriveAccessToken();
         const fileId = parseFileId(input.file_id as string);
+        if (RESTRICTED_FILE_IDS.has(fileId)) return RESTRICTED_MESSAGE;
         // Le type réel prime sur celui passé par le modèle (souvent absent ou faux).
         const meta = await fileMeta(token, fileId);
         if (meta) ctx.onSource({ kind: "drive", title: meta.name, url: meta.link });
@@ -225,6 +253,7 @@ const module_: ToolModule = {
       try {
         const token = await getDriveAccessToken();
         const fileId = parseFileId(input.file_id as string);
+        if (RESTRICTED_FILE_IDS.has(fileId)) return RESTRICTED_MESSAGE;
         const meta = await fileMeta(token, fileId);
         if (meta) ctx.onSource({ kind: "drive", title: meta.name, url: meta.link });
         const wb = await loadWorkbook(token, fileId, meta?.mimeType ?? "");
@@ -249,7 +278,7 @@ const module_: ToolModule = {
           throw new Error(`Drive API ${res.status}: ${err.slice(0, 200)}`);
         }
         const data = await res.json();
-        const files = (data.files ?? []).map((f: { id: string; name: string; mimeType: string; modifiedTime: string; webViewLink: string }) => {
+        const files = ((data.files ?? []) as DriveListItem[]).filter((f) => !RESTRICTED_FILE_IDS.has(f.id)).map((f) => {
           const isFolder = f.mimeType === "application/vnd.google-apps.folder";
           return { id: f.id, name: f.name, type: isFolder ? "dossier" : f.mimeType, modified: f.modifiedTime?.slice(0, 10), link: f.webViewLink };
         });

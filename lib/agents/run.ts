@@ -152,7 +152,7 @@ export async function runAgentJob(runId: string): Promise<{ ok: boolean; error?:
               : `Exécute ta tâche maintenant (${now.toISOString().slice(0, 10)}) et écris le message final, prêt à être publié.`,
           },
         ],
-        toolContext: { userId: runAs, userOwnerId: owner.hubspot_owner_id, userEmail: owner.email },
+        toolContext: { userId: runAs, userOwnerId: owner.hubspot_owner_id, userEmail: owner.email, surface: "agent" },
         emit: onEvent,
         allowedTools: new Set(tools.map((t) => t.name)),
       }),
