@@ -43,10 +43,13 @@ interface DealsResponse {
   owners: Owner[];
 }
 
-export function useDeals(searchQuery: string, ownerFilter: "mine" | "all") {
+export type DealsBoard = "sales" | "prospection";
+
+export function useDeals(searchQuery: string, ownerFilter: "mine" | "all", board: DealsBoard = "sales") {
   const params = new URLSearchParams();
   if (searchQuery) params.set("q", searchQuery);
   if (ownerFilter === "all") params.set("owner", "all");
+  if (board === "prospection") params.set("pipeline", "prospection");
   const key = `/api/deals/list?${params.toString()}`;
 
   const { data, error, isLoading, mutate } = useSWR<DealsResponse>(key, {

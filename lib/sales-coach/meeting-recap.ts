@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { stageRole } from "@/lib/hubspot/pipeline-model";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { logUsage } from "../log-usage";
 import { NO_EM_DASH_RULE } from "@/lib/no-em-dash";
@@ -181,6 +182,10 @@ const CLOSED_WON_STAGE_KEYWORDS = ["closed won", "closedwon", "gagné", "gagne",
 export function resolveAudience(snapshot: DealSnapshot | null): Audience {
   if (!snapshot) return "prospect";
   if (snapshot.is_closed_won === true) return "client";
+  // Par identifiant d'étape d'abord (bascule du 30/11 : les libellés changent).
+  const role = stageRole(snapshot.stage);
+  if (role === "won" || role === "customer_success") return "client";
+  if (role) return "prospect";
   const stageLabel = (snapshot.stage_label ?? "").trim().toLowerCase();
   if (stageLabel && CLOSED_WON_STAGE_KEYWORDS.some((kw) => stageLabel.includes(kw))) {
     return "client";

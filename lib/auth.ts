@@ -10,6 +10,9 @@ export interface DbUser {
   is_admin: boolean;
   created_at: string;
   mappings_resolved_at: string | null;
+  // Lus par select("*") : présents sur la ligne, optionnels dans le type.
+  slack_user_id?: string | null;
+  hubspot_owner_id?: string | null;
 }
 
 export async function getAuthenticatedUser(): Promise<DbUser | null> {

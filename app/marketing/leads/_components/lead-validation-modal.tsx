@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Check, X, Sparkles } from "lucide-react";
+import { Loader2, Check, X, Sparkles, FlaskConical, ExternalLink } from "lucide-react";
 import type { LeadWithAnalysis, LeadAnalysis } from "@/lib/marketing-types";
+import { DEAL_ORIGINS, DEFAULT_DEAL_ORIGIN, OFFER_TYPES, isDealOrigin, originNeedsPartner } from "@/lib/leads/origin";
 
 const ACCENT = "#f01563";
 const GREEN = "#10b981";
@@ -24,9 +25,20 @@ interface AnalyzeResponse {
   error?: string;
 }
 
+type CreationMode = "legacy" | "prospection" | "frozen";
+
+interface CreationConfigResponse {
+  creation: CreationMode | null;
+  error: string | null;
+}
+
 interface FinalizeResponse {
   ok?: boolean;
   dealId?: string;
+  dealName?: string;
+  dealUrl?: string | null;
+  test?: boolean;
+  linked?: boolean;
   contactId?: string;
   companyId?: string;
   skipped?: boolean;
@@ -73,8 +85,15 @@ interface FormState {
   companyName: string;
   contactName: string;
   contactEmail: string;
+  /** Canal marketing ("How did you hear about us"), texte libre. */
   source: string;
   dealName: string;
+  /** Propriété HubSpot `origin` (Source), obligatoire. */
+  origin: string;
+  offerTypes: string[];
+  referringPartner: string;
+  asTest: boolean;
+  dealAction: "create" | "link";
 }
 
 const EMPTY_FORM: FormState = {
@@ -84,16 +103,26 @@ const EMPTY_FORM: FormState = {
   contactEmail: "",
   source: "",
   dealName: "",
+  origin: DEFAULT_DEAL_ORIGIN,
+  offerTypes: [],
+  referringPartner: "",
+  asTest: false,
+  dealAction: "create",
 };
 
 function buildForm(analysis: LeadAnalysis | null, myUserId: string | null): FormState {
+  // Une carte trouvée par l'email du lead et encore ouverte : on propose de la
+  // rattacher plutôt que d'en créer une seconde.
+  const sureOpenDeal = !!analysis?.hubspot_deal_id && analysis.match_strategy === "email" && analysis.deal_is_closed !== true;
   return {
+    ...EMPTY_FORM,
     userId: myUserId ?? "",
     companyName: analysis?.extracted_company ?? "",
     contactName: analysis?.extracted_name ?? "",
     contactEmail: analysis?.extracted_email ?? "",
     source: analysis?.extracted_source ?? "",
     dealName: analysis?.extracted_company ?? "",
+    dealAction: sureOpenDeal ? "link" : "create",
   };
 }
 
@@ -107,6 +136,9 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const [creationMode, setCreationMode] = useState<CreationMode | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ dealName: string; dealUrl: string | null } | null>(null);
 
   useEffect(() => {
     if (!lead) return;
@@ -114,6 +146,19 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
     return () => {
       document.body.style.overflow = "";
     };
+  }, [lead]);
+
+  useEffect(() => {
+    if (!lead) return;
+    setTestResult(null);
+    setConfigError(null);
+    fetch("/api/marketing/leads/creation-config")
+      .then((r) => r.json())
+      .then((data: CreationConfigResponse) => {
+        setCreationMode(data.creation);
+        setConfigError(data.error);
+      })
+      .catch(() => setConfigError("Failed to load the creation settings"));
   }, [lead]);
 
   useEffect(() => {
@@ -179,14 +224,29 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
   const missingHubspotOwner = Boolean(selectedUser && !selectedUser.hubspotOwnerId);
   const missingSlackDisplay = Boolean(selectedUser && !selectedUser.slackDisplayName);
 
+  const needsPartner = isDealOrigin(form.origin) && originNeedsPartner(form.origin);
+  const existingDealId = analysis?.hubspot_deal_id ?? null;
+  const showLinkChoice = !form.asTest && creationMode === "prospection" && !!existingDealId;
+  const frozen = creationMode === "frozen" && !form.asTest;
+
   const canSubmit =
     !submitting &&
     !loadingAnalysis &&
+    creationMode !== null &&
+    !frozen &&
     form.userId.trim().length > 0 &&
     !missingHubspotOwner &&
     form.companyName.trim().length > 0 &&
     form.contactEmail.trim().length > 0 &&
-    form.dealName.trim().length > 0;
+    form.dealName.trim().length > 0 &&
+    isDealOrigin(form.origin) &&
+    (!needsPartner || form.referringPartner.trim().length > 0);
+
+  const toggleOffer = (value: string) =>
+    setForm((prev) => ({
+      ...prev,
+      offerTypes: prev.offerTypes.includes(value) ? prev.offerTypes.filter((v) => v !== value) : [...prev.offerTypes, value],
+    }));
 
   const handleSubmit = async () => {
     if (!canSubmit || !lead) return;
@@ -204,6 +264,11 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
           contactEmail: form.contactEmail.trim().toLowerCase(),
           dealName: form.dealName.trim(),
           source: form.source.trim() || null,
+          origin: form.origin,
+          offerTypes: form.offerTypes,
+          referringPartner: needsPartner ? form.referringPartner.trim() : null,
+          asTest: form.asTest,
+          dealAction: showLinkChoice ? form.dealAction : "create",
         }),
       });
       // The server always tries to return JSON, but a Netlify sync-function
@@ -238,6 +303,11 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
       }
       if (data.slackWarnings && data.slackWarnings.length > 0) {
         setWarnings(data.slackWarnings);
+      }
+      if (data.test) {
+        // Carte TEST : le lead n'est pas consommé, on reste dans la fenêtre.
+        setTestResult({ dealName: data.dealName ?? form.dealName, dealUrl: data.dealUrl ?? null });
+        return;
       }
       onSuccess();
       onClose();
@@ -391,11 +461,55 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
               />
             </Field>
 
-            <Field label="Lead source">
+            <Field label="Source" required>
+              <select
+                value={form.origin}
+                onChange={(e) => setForm((prev) => ({ ...prev, origin: e.target.value }))}
+                disabled={submitting}
+                style={inputStyle()}
+              >
+                {DEAL_ORIGINS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            {needsPartner && (
+              <Field label="Referring partner" required>
+                <input
+                  type="text"
+                  value={form.referringPartner}
+                  placeholder="Partner company"
+                  onChange={(e) => setForm((prev) => ({ ...prev, referringPartner: e.target.value }))}
+                  disabled={submitting}
+                  style={inputStyle()}
+                />
+              </Field>
+            )}
+
+            <Field label="Offer">
+              <div style={{ display: "flex", gap: 16, paddingTop: 2 }}>
+                {OFFER_TYPES.map((o) => (
+                  <label key={o.value} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, color: "#111", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={form.offerTypes.includes(o.value)}
+                      onChange={() => toggleOffer(o.value)}
+                      disabled={submitting}
+                    />
+                    {o.label}
+                  </label>
+                ))}
+              </div>
+            </Field>
+
+            <Field label="Marketing channel">
               <input
                 type="text"
                 value={form.source}
-                placeholder="e.g. LinkedIn, Referral, Website…"
+                placeholder="How did you hear about us (e.g. LinkedIn, Google…)"
                 onChange={(e) => setForm((prev) => ({ ...prev, source: e.target.value }))}
                 disabled={submitting}
                 style={inputStyle()}
@@ -407,6 +521,41 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
                 </div>
               )}
             </Field>
+
+            {showLinkChoice && (
+              <div style={{ fontSize: 12, color: "#333", background: "#fafafa", border: "1px solid #eee", borderRadius: 8, padding: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                <div>
+                  An open card already exists for this lead: <strong>{analysis?.deal_name ?? existingDealId}</strong>
+                  {analysis?.deal_stage_label ? ` (${analysis.deal_stage_label})` : ""}
+                </div>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="radio" checked={form.dealAction === "link"} onChange={() => setForm((prev) => ({ ...prev, dealAction: "link" }))} disabled={submitting} />
+                  Link to this deal (no new card)
+                </label>
+                <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
+                  <input type="radio" checked={form.dealAction === "create"} onChange={() => setForm((prev) => ({ ...prev, dealAction: "create" }))} disabled={submitting} />
+                  Create a new card
+                </label>
+              </div>
+            )}
+
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "#555", background: form.asTest ? "#eff6ff" : "transparent", border: "1px dashed #c7d2fe", borderRadius: 8, padding: 10, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={form.asTest}
+                onChange={(e) => setForm((prev) => ({ ...prev, asTest: e.target.checked }))}
+                disabled={submitting}
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <span style={{ fontWeight: 600, color: "#1e3a8a", display: "inline-flex", alignItems: "center", gap: 4 }}>
+                  <FlaskConical size={12} /> Create as TEST
+                </span>
+                <br />
+                Creates a &quot;TEST - &quot; card in Prospection / R1 scheduled, linked to the test contact (never to this prospect).
+                The lead stays to validate and nothing is sent to the sales rep.
+              </span>
+            </label>
 
             {analysis?.extraction_notes && (
               <div
@@ -422,6 +571,32 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
                 <strong style={{ color: "#888" }}>Claude notes:</strong> {analysis.extraction_notes}
               </div>
             )}
+          </div>
+        )}
+
+        {configError && (
+          <div style={{ fontSize: 12, color: "#dc2626", background: "#fee2e2", padding: 10, borderRadius: 6 }}>
+            Creation settings unavailable: {configError}
+          </div>
+        )}
+
+        {frozen && (
+          <div style={{ fontSize: 12, color: "#b45309", background: "#fef3c7", padding: 10, borderRadius: 6 }}>
+            Deal creation is paused during the HubSpot cutover. Create the card in HubSpot for now, or tick &quot;Create as TEST&quot;.
+          </div>
+        )}
+
+        {testResult && (
+          <div style={{ fontSize: 12, color: "#1e3a8a", background: "#eff6ff", padding: 10, borderRadius: 6, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <FlaskConical size={13} /> TEST card created:
+            {testResult.dealUrl ? (
+              <a href={testResult.dealUrl} target="_blank" rel="noreferrer" style={{ color: "#1d4ed8", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                {testResult.dealName} <ExternalLink size={11} />
+              </a>
+            ) : (
+              <strong>{testResult.dealName}</strong>
+            )}
+            <span style={{ color: "#555" }}>(the lead was not validated)</span>
           </div>
         )}
 
@@ -495,14 +670,17 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
               gap: 6,
             }}
           >
-            {submitting ? <Loader2 size={14} className="animate-spin" /> : <Check size={14} />}
-            Create deal and validate
+            {submitting ? <Loader2 size={14} className="animate-spin" /> : form.asTest ? <FlaskConical size={14} /> : <Check size={14} />}
+            {form.asTest ? "Create TEST card" : showLinkChoice && form.dealAction === "link" ? "Link and validate" : "Create deal and validate"}
           </button>
         </div>
 
         <div style={{ fontSize: 11, color: "#888", textAlign: "center" }}>
-          This will create the company, contact, and deal on HubSpot
-          (default pipeline, Discovery stage) and notify the owner on Slack.
+          {form.asTest
+            ? "TEST card on the test contact, Prospection pipeline, R1 scheduled. You get the Slack message in DM."
+            : creationMode === "prospection"
+              ? "This will create the contact and the card on HubSpot (Prospection pipeline, R1 scheduled) and notify the owner on Slack. An existing company keeps its owner."
+              : "This will create the company, contact, and deal on HubSpot (Sales pipeline, Discovery stage) and notify the owner on Slack. An existing company keeps its owner."}
         </div>
 
         {!error && !loadingAnalysis && analysis?.extracted_email && (

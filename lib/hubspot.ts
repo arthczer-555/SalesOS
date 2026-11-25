@@ -859,6 +859,9 @@ export async function resolveDealFromParticipants(
   recorderEmail: string,
   prospectCompanyHint?: string | null,
   meetingTitle?: string | null,
+  // Signale l'étape qui a trouvé le deal (méthode de rapprochement, cf.
+  // lib/sales-coach/deal-match.ts). Optionnel : les appelants existants ne changent pas.
+  reportMethod?: (method: "participant_email" | "company_domain" | "deal_name" | "company_name" | "llm_title") => void,
 ): Promise<string | null> {
   if (!process.env.HUBSPOT_ACCESS_TOKEN) return null;
 
@@ -894,7 +897,10 @@ export async function resolveDealFromParticipants(
       for (const ids of assocMap.values()) for (const id of ids) dealIds.add(id);
       if (dealIds.size > 0) {
         const picked = await pickBestDealId([...dealIds]);
-        if (picked) return picked;
+        if (picked) {
+          reportMethod?.("participant_email");
+          return picked;
+        }
       }
     }
   }
@@ -936,7 +942,10 @@ export async function resolveDealFromParticipants(
     const byDomain = await dealFromCompanyIds(
       (companySearch.results ?? []).map((c) => c.id),
     );
-    if (byDomain) return byDomain;
+    if (byDomain) {
+      reportMethod?.("company_domain");
+      return byDomain;
+    }
   }
 
   // ── Stage 3: HubSpot name search (deals first, then companies) ────────────
@@ -978,7 +987,10 @@ export async function resolveDealFromParticipants(
   const dealNameIds = (dealNameSearch.results ?? []).map((d) => d.id);
   if (dealNameIds.length > 0) {
     const picked = await pickBestDealId(dealNameIds);
-    if (picked) return picked;
+    if (picked) {
+      reportMethod?.("deal_name");
+      return picked;
+    }
   }
 
   const companyNameSearch = await hubspotFetch<{ results?: { id: string }[] }>(
@@ -1000,7 +1012,10 @@ export async function resolveDealFromParticipants(
   ).catch(() => ({ results: [] }));
 
   const byCompanyName = await dealFromCompanyIds((companyNameSearch.results ?? []).map((c) => c.id));
-  if (byCompanyName) return byCompanyName;
+  if (byCompanyName) {
+    reportMethod?.("company_name");
+    return byCompanyName;
+  }
 
   // ── Stage 4: LLM semantic matching against the active deal pool ──────────
   // Reached when all token-based searches missed. The LLM sees the raw meeting
@@ -1010,7 +1025,9 @@ export async function resolveDealFromParticipants(
   // want to prefer the closed_won one to classify the meeting as a client.
   const llmTitle = meetingTitle?.trim() || hint;
   if (!llmTitle) return null;
-  return resolveDealViaLLM(llmTitle, recorderEmail);
+  const viaLlm = await resolveDealViaLLM(llmTitle, recorderEmail);
+  if (viaLlm) reportMethod?.("llm_title");
+  return viaLlm;
 }
 
 /* ─────────────────────────────────────────────────────────────────────── */

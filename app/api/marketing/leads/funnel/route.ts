@@ -43,7 +43,10 @@ function isWon(a: AnalysisRow): boolean {
 function isDiscoReached(a: AnalysisRow): boolean {
   if (!a.hubspot_deal_id) return false;
   if (a.deal_is_closed === true) return true;
-  if (a.deal_stage_label && /disco/i.test(a.deal_stage_label)) return true;
+  // Ancien pipeline : "Discovery Meeting scheduled". Depuis le 30/11, une carte
+  // créée par le Lead Manager entre en "R1 scheduled" (pipeline Prospection) ;
+  // toute étape au-delà vaut aussi R1 atteint.
+  if (a.deal_stage_label && /disco|r1 scheduled|scoping|opportunity|qualified|proposal|negotiation|agreement/i.test(a.deal_stage_label)) return true;
   return false;
 }
 

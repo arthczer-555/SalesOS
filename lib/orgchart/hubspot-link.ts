@@ -2,6 +2,7 @@
 // company du compte + write-back des liens). Aucun reveal d'email (donc aucun
 // crédit Apollo, et conforme à la règle "jamais reveal un contact déjà sur
 // HubSpot"). Best-effort : ne throw jamais (la personne existe déjà en base).
+import { contactLifecycleForCreation } from "@/lib/hubspot/cutover";
 import { db } from "@/lib/db";
 import { hubspotFetch, hubspotAssociate, createCompany, hubspotGetAssociations } from "@/lib/hubspot";
 import { findContactByEmail, findCompanyByName } from "@/lib/intel/hubspot-company-resolve";
@@ -22,7 +23,9 @@ function usableEmail(email: string | null): string | null {
 
 async function createContact(p: OrgPerson, email: string | null, ownerId: string | null): Promise<string> {
   const { firstname, lastname } = splitName(p.name);
-  const props: Record<string, string> = { lifecyclestage: "lead" };
+  const props: Record<string, string> = {};
+  const lifecycle = await contactLifecycleForCreation(); // plus de lifecycle après la bascule du 30/11
+  if (lifecycle) props.lifecyclestage = lifecycle;
   if (email) props.email = email.toLowerCase();
   if (firstname) props.firstname = firstname;
   if (lastname) props.lastname = lastname;

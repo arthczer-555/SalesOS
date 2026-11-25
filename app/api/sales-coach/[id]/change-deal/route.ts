@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { markManualLink } from "@/lib/sales-coach/card-flow";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { getClaapRecording, pickTranscriptUrl } from "@/lib/claap";
@@ -112,6 +113,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     `[change-deal/${id}] deal ${row.hubspot_deal_id ?? "none"} → ${dealId} (${snapshot.name ?? "?"}) by ${user.email}`,
   );
 
+  // Choix manuel : rapprochement "manual_link" (bascule HubSpot), et toute
+  // demande de confirmation en attente pour ce meeting est fermée.
+  await markManualLink(id);
   await triggerSalesCoachAnalysis({ origin: req.nextUrl.origin, id, transcriptUrl, logTag: "change-deal" });
 
   return NextResponse.json({ ok: true, dealId, name: snapshot.name ?? null });

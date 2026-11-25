@@ -19,8 +19,12 @@ export async function POST(req: NextRequest) {
     try { if (globalModelEntry?.content) scoreModel = (JSON.parse(globalModelEntry.content) as Record<string, string>).deals_score ?? DEFAULT_SCORE_MODEL; } catch { /* keep default */ }
     const result = await scoreOneDeal(dealId, user.id, scoreModel);
 
-    await persistDealScore(dealId, result);
-
+    const { kept } = await persistDealScore(dealId, result, { trigger: "manual" });
+    // Carte synchronisée avec HubSpot : le score affiché reste celui de HubSpot,
+    // le recalcul n'a rafraîchi que le reste (cf. persistDealScore).
+    if (kept) {
+      return NextResponse.json({ ...result, total: kept.total, components: kept.components, reliability: kept.reliability, scoreKept: true, recomputedTotal: result.total });
+    }
     return NextResponse.json(result);
   } catch (e) {
     console.error("[deals/score] ERROR:", e instanceof Error ? e.stack : e);

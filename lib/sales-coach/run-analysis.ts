@@ -1,4 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
+import { runCardFlowAfterAnalysis } from "./card-flow";
 import { db } from "../db";
 import { logUsage } from "../log-usage";
 import { sendSalesCoachSlack } from "./slack";
@@ -41,7 +42,7 @@ import {
   outputLangRetryReminder,
   type OutputLang,
 } from "./language";
-import { DEFAULT_SCORE_MODEL, persistDealScore, scoreOneDeal } from "../deal-scoring";
+import { DEFAULT_SCORE_MODEL, scoreOneDeal } from "../deal-scoring";
 import { getModelPreference } from "@/lib/models/get-model-preference";
 import { anthropicClient } from "@/lib/anthropic-client";
 import { withForcedTool } from "@/lib/models/compat";
@@ -526,12 +527,20 @@ export async function runSalesCoachAnalysis(id: string, transcriptUrl: string): 
     // manuel ou le cron. Le rescore lancé plus haut ne sert qu'au récap et ne
     // voyait pas encore ce meeting (filtre status = done).
     if (dealId && audience === "prospect") {
+      let fresh: Awaited<ReturnType<typeof scoreOneDeal>> | null = null;
       try {
         const scoreModel = await getModelPreference("deals_score", DEFAULT_SCORE_MODEL);
-        await persistDealScore(dealId, await scoreOneDeal(dealId, row.user_id, scoreModel));
+        fresh = await scoreOneDeal(dealId, row.user_id, scoreModel);
       } catch (e) {
-        console.warn(`[sales-coach/analyze/${id}] deal score not persisted:`, e instanceof Error ? e.message : e);
+        console.warn(`[sales-coach/analyze/${id}] deal score not computed:`, e instanceof Error ? e.message : e);
       }
+      // Bascule du 30/11 (lib/sales-coach/card-flow.ts) : le parcours range le
+      // score puis passe la carte en Scoping et écrit le score dans HubSpot si le
+      // rapprochement est sûr ; sinon le score attend une confirmation (rien
+      // n'est écrit sur le deal avant le ✅). Mode test par défaut : seules les
+      // cartes "TEST - " sont écrites dans HubSpot.
+      const flow = await runCardFlowAfterAnalysis(id, fresh);
+      console.log(`[sales-coach/analyze/${id}] card flow: ${flow.status}${flow.detail ? ` (${flow.detail})` : ""}`);
     }
 
     // Sales-coach Slack (DM coaching) - tire pour prospect ET client si

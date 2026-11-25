@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
       const results = await Promise.allSettled(
         batch.map(async (dealId) => {
           const result = await scoreOneDeal(dealId, userId, undefined, true);
-          await persistDealScore(dealId, result);
+          await persistDealScore(dealId, result, { trigger: "batch" });
         })
       );
       for (const r of results) {

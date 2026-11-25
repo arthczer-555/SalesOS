@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { PIPELINE_IDS } from "@/lib/hubspot/pipeline-model";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { hubspotFetch } from "@/lib/hubspot";
@@ -20,6 +21,9 @@ const PROPS = [
   "dealname", "dealstage", "amount", "closedate", "createdate", "hubspot_owner_id",
   "hs_lastmodifieddate", "notes_last_contacted", "deal_type",
   "closed_lost_reason", "hs_v2_date_entered_closedlost", "hs_is_closed_lost",
+  // Étape perdue du pipeline Prospection : pas de propriété dédiée, on lit la
+  // date d'entrée dans l'étape courante (la perte, pour un deal perdu).
+  "hs_v2_date_entered_current_stage", "pipeline",
 ];
 
 type SearchRes = {
@@ -111,8 +115,9 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ deals, nextAfter: page.nextAfter, total: page.total, error: null });
     }
 
+    const pipelineKey = searchParams.get("pipeline") === "prospection" ? "prospection" : "sales";
     const filters: { propertyName: string; operator: string; value?: string }[] = [
-      { propertyName: "pipeline", operator: "EQ", value: "default" },
+      { propertyName: "pipeline", operator: "EQ", value: PIPELINE_IDS[pipelineKey] },
       { propertyName: "hs_is_closed_lost", operator: "EQ", value: "true" },
     ];
     if (ownerFilter) filters.push({ propertyName: "hubspot_owner_id", operator: "EQ", value: ownerFilter });
@@ -122,7 +127,7 @@ export async function GET(req: NextRequest) {
         limit: PAGE_SIZE,
         properties: PROPS,
         filterGroups: [{ filters }],
-        sorts: [{ propertyName: "hs_v2_date_entered_closedlost", direction: "DESCENDING" }],
+        sorts: [{ propertyName: pipelineKey === "sales" ? "hs_v2_date_entered_closedlost" : "hs_v2_date_entered_current_stage", direction: "DESCENDING" }],
         ...(q ? { query: q } : {}),
         ...(after ? { after } : {}),
       }),
@@ -184,7 +189,7 @@ function toLostDeal(
     next_action: null,
     scoredAt: null,
     qualification: null,
-    lostAt: p.hs_v2_date_entered_closedlost || p.closedate || "",
+    lostAt: p.hs_v2_date_entered_closedlost || p.hs_v2_date_entered_current_stage || p.closedate || "",
     declaredReason: normalizeDeclaredReason(p.closed_lost_reason),
     lossAnalysis: analyses.get(d.id) ?? null,
   };

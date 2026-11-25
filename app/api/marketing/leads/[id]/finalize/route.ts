@@ -8,6 +8,13 @@ import {
   hubspotSearchAll,
   type DealSnapshot,
 } from "@/lib/hubspot";
+import { loadCutoverState } from "@/lib/hubspot/cutover";
+import { PIPELINE_IDS, getStageLabels } from "@/lib/hubspot/pipeline-model";
+
+// Étape d'entrée de l'ancien chemin (Sales Pipeline / Discovery Meeting scheduled).
+const LEGACY_DISCOVERY_STAGE_ID = "174474867";
+import { finalizeLeadAsTest, finalizeLeadProspection, type FinalizeInput } from "@/lib/leads/finalize";
+import { isDealOrigin, isOfferType, originNeedsPartner, type OfferType } from "@/lib/leads/origin";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -19,7 +26,16 @@ interface FinalizeBody {
   contactName?: string;
   contactEmail?: string;
   dealName?: string;
+  /** Canal marketing ("How did you hear about us"), gardé dans lead_analyses.extracted_source. */
   source?: string | null;
+  /** Propriété HubSpot `origin` (Source), une des valeurs de lib/leads/origin.ts. */
+  origin?: string | null;
+  offerTypes?: string[];
+  referringPartner?: string | null;
+  /** Carte TEST sur le contact de test : le lead n'est pas consommé. */
+  asTest?: boolean;
+  /** "link" : rattacher la carte déjà trouvée au lieu d'en créer une (nouveau chemin). */
+  dealAction?: "create" | "link";
 }
 
 interface SlackMember {
@@ -29,17 +45,6 @@ interface SlackMember {
   profile?: { real_name?: string; display_name?: string };
 }
 
-interface PipelineStage {
-  id: string;
-  label: string;
-  displayOrder?: number;
-  metadata?: { isClosed?: string };
-}
-interface RawPipeline {
-  id: string;
-  label: string;
-  stages: PipelineStage[];
-}
 
 interface DefaultStage {
   pipelineId: string;
@@ -52,27 +57,19 @@ let defaultStageCache: { ts: number; value: DefaultStage } | null = null;
 const STAGE_CACHE_TTL = 60 * 60 * 1000;
 
 async function resolveDefaultDealStage(): Promise<DefaultStage> {
+  // Ancien chemin (jusqu'à la bascule) : Sales Pipeline / "Discovery Meeting
+  // scheduled", par identifiant. Plus de recherche /disco/i sur les libellés ni
+  // de repli sur pipelines[0] : un renommage ne doit jamais envoyer la carte
+  // ailleurs. Les libellés ne servent qu'au message et à l'instantané.
   if (defaultStageCache && Date.now() - defaultStageCache.ts < STAGE_CACHE_TTL) {
     return defaultStageCache.value;
   }
-  const data = await hubspotFetch<{ results: RawPipeline[] }>("/crm/v3/pipelines/deals");
-  const pipelines = data.results ?? [];
-  if (pipelines.length === 0) throw new Error("No HubSpot pipeline found");
-  const pipeline = pipelines.find((p) => p.id === "default") ?? pipelines[0];
-  const openStages = (pipeline.stages ?? []).filter(
-    (s) => s.metadata?.isClosed !== "true",
-  );
-  const discovery = openStages.find((s) => /disco/i.test(s.label));
-  const fallbackOrdered = openStages
-    .slice()
-    .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0));
-  const stage = discovery ?? fallbackOrdered[0];
-  if (!stage) throw new Error("No open stage found in the pipeline");
+  const { stages, pipelines } = await getStageLabels();
   const value: DefaultStage = {
-    pipelineId: pipeline.id,
-    pipelineLabel: pipeline.label ?? null,
-    stageId: stage.id,
-    stageLabel: stage.label ?? null,
+    pipelineId: PIPELINE_IDS.sales,
+    pipelineLabel: pipelines[PIPELINE_IDS.sales] ?? "Sales Pipeline",
+    stageId: LEGACY_DISCOVERY_STAGE_ID,
+    stageLabel: stages[LEGACY_DISCOVERY_STAGE_ID] ?? "Discovery Meeting scheduled",
   };
   defaultStageCache = { ts: Date.now(), value };
   return value;
@@ -143,12 +140,6 @@ async function patchCompanyName(companyId: string, name: string): Promise<void> 
   });
 }
 
-async function patchCompanyOwner(companyId: string, ownerId: string): Promise<void> {
-  await hubspotFetch(`/crm/v3/objects/companies/${companyId}`, "PATCH", {
-    properties: { hubspot_owner_id: ownerId },
-  });
-}
-
 // Re-point the HubSpot owner of any object (used by the reassign path when a
 // deal already exists and the admin re-validates with a different sales rep).
 async function patchObjectOwner(
@@ -165,21 +156,19 @@ async function createContact(
   email: string,
   contactName: string,
   ownerId: string,
+  writeLifecycle: boolean,
 ): Promise<string> {
   const { firstname, lastname } = splitName(contactName);
-  const res = await hubspotFetch<{ id: string }>(
-    "/crm/v3/objects/contacts",
-    "POST",
-    {
-      properties: {
-        email: email.toLowerCase(),
-        firstname,
-        lastname,
-        lifecyclestage: "lead",
-        hubspot_owner_id: ownerId,
-      },
-    },
-  );
+  const properties: Record<string, string> = {
+    email: email.toLowerCase(),
+    firstname,
+    lastname,
+    hubspot_owner_id: ownerId,
+  };
+  // Réglage contact_lifecycle_write : plus de lifecycle à partir de la bascule
+  // (règle de Gaëlle : le SalesOS ne touche pas au lifecycle).
+  if (writeLifecycle) properties.lifecyclestage = "lead";
+  const res = await hubspotFetch<{ id: string }>("/crm/v3/objects/contacts", "POST", { properties });
   return res.id;
 }
 
@@ -238,6 +227,7 @@ async function createDeal(
   pipelineId: string,
   stageId: string,
   source: string | null,
+  chosenOrigin: string | null,
 ): Promise<string> {
   const properties: Record<string, string> = {
     dealname: dealName,
@@ -245,7 +235,7 @@ async function createDeal(
     pipeline: pipelineId,
     dealstage: stageId,
   };
-  const origin = dealOriginFromSource(source);
+  const origin = chosenOrigin && isDealOrigin(chosenOrigin) ? chosenOrigin : dealOriginFromSource(source);
   if (origin) properties.origin = origin;
   const res = await hubspotFetch<{ id: string }>("/crm/v3/objects/deals", "POST", {
     properties,
@@ -504,16 +494,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   let ownerId = fallbackOwnerId ?? "";
   let ownerSlackDisplayName: string | null = null;
   let ownerName: string | null = null;
+  let ownerSlackUserId: string | null = null;
+  let ownerEmail: string | null = null;
   if (requestedUserId) {
     const { data: sales } = await db
       .from("users")
-      .select("name, hubspot_owner_id, slack_display_name")
+      .select("name, email, hubspot_owner_id, slack_display_name, slack_user_id")
       .eq("id", requestedUserId)
       .maybeSingle();
     const salesRow = sales as {
       name: string | null;
+      email: string | null;
       hubspot_owner_id: string | null;
       slack_display_name: string | null;
+      slack_user_id: string | null;
     } | null;
     if (!salesRow?.hubspot_owner_id) {
       return NextResponse.json(
@@ -524,6 +518,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ownerId = salesRow.hubspot_owner_id;
     ownerSlackDisplayName = salesRow.slack_display_name?.trim() || null;
     ownerName = salesRow.name?.trim() || null;
+    ownerSlackUserId = salesRow.slack_user_id?.trim() || null;
+    ownerEmail = salesRow.email?.trim() || null;
   }
   if (!ownerId) {
     return NextResponse.json({ error: "HubSpot owner not found" }, { status: 400 });
@@ -566,6 +562,82 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     hubspot_deal_id: string | null;
   } | null;
 
+  // ── Nouveau chemin (bascule du 30/11) ────────────────────────────────────
+  // Source obligatoire parmi les valeurs autorisées, sur tous les chemins.
+  const origin = body.origin?.trim() || null;
+  const offerTypes = (body.offerTypes ?? []).filter(isOfferType) as OfferType[];
+  const referringPartner = body.referringPartner?.trim() || null;
+  if (!origin || !isDealOrigin(origin)) {
+    return NextResponse.json({ error: "Source is required (one of the allowed HubSpot values)." }, { status: 400 });
+  }
+  if (originNeedsPartner(origin) && !referringPartner) {
+    return NextResponse.json({ error: "Referring partner is required for this Source." }, { status: 400 });
+  }
+
+  let creationMode: string;
+  let writeLifecycle = true;
+  try {
+    const cutover = await loadCutoverState();
+    creationMode = cutover.values.hubspot_creation;
+    writeLifecycle = cutover.values.contact_lifecycle_write === "legacy";
+  } catch (e) {
+    // Échec fermé : sans réglages, on ne sait pas où créer la carte.
+    return NextResponse.json({ error: e instanceof Error ? e.message : "Settings unavailable" }, { status: 503 });
+  }
+
+  const finalizeInput: FinalizeInput = {
+    leadId,
+    analysisId: analysisRow?.id ?? leadRow.last_analysis_id,
+    validatedBy: {
+      id: user.id,
+      email: user.email ?? null,
+      slackUserId: user.slack_user_id ?? null,
+      name: user.name ?? null,
+      hubspotOwnerId: user.hubspot_owner_id ?? null,
+    },
+    owner: { userId: requestedUserId ?? null, hubspotOwnerId: ownerId, name: ownerName, slackUserId: ownerSlackUserId, slackDisplayName: ownerSlackDisplayName, email: ownerEmail },
+    companyName,
+    contactName,
+    contactEmail,
+    dealName,
+    origin,
+    offerTypes,
+    referringPartner,
+    marketingChannel: source,
+    linkDealId: body.dealAction === "link" ? analysisRow?.hubspot_deal_id ?? null : null,
+    slackChannelId: leadRow.slack_channel_id,
+    slackTs: leadRow.slack_ts,
+    slackPermalink: leadRow.slack_permalink,
+  };
+
+  if (body.asTest || creationMode === "prospection") {
+    try {
+      const result = body.asTest ? await finalizeLeadAsTest(finalizeInput) : await finalizeLeadProspection(finalizeInput);
+      if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
+      return NextResponse.json({
+        ok: true,
+        dealId: result.dealId,
+        dealName: result.dealName,
+        dealUrl: result.dealUrl,
+        contactId: result.contactId,
+        companyId: result.companyId,
+        test: result.test,
+        linked: result.linked,
+        slackWarnings: result.warnings.length > 0 ? result.warnings : undefined,
+      });
+    } catch (e) {
+      console.error("[leads/finalize] new path failed", e);
+      return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "Finalize failed" }, { status: 500 });
+    }
+  }
+  if (creationMode === "frozen") {
+    return NextResponse.json(
+      { ok: false, error: "Deal creation is paused during the HubSpot cutover. Create the card in HubSpot for now." },
+      { status: 409 },
+    );
+  }
+
+  // ── Ancien chemin (jusqu'à la bascule) ───────────────────────────────────
   // A deal already linked does NOT mean "do nothing": the admin may be
   // re-validating to fix a wrong assignment. In that case we reassign the
   // existing deal (+ its contact/company) to the selected owner, re-validate
@@ -598,10 +670,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (!contactId) contactId = await findContactByEmail(contactEmail);
       if (contactId && contactName) await patchContactName(contactId, contactName).catch(() => null);
       if (domain) companyId = (await findCompanyByDomain(domain))?.id ?? null;
+      // L'owner de l'entreprise n'est jamais modifié (demande de Gaëlle) : seuls
+      // le deal et le contact suivent le commercial choisi.
       await Promise.allSettled([
         patchObjectOwner("deals", dealId, ownerId),
         contactId ? patchObjectOwner("contacts", contactId, ownerId) : Promise.resolve(),
-        companyId ? patchObjectOwner("companies", companyId, ownerId) : Promise.resolve(),
       ]);
     } else {
       // ── Create path ────────────────────────────────────────────────────
@@ -614,7 +687,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       // lead" step, so when reusing an existing contact we still patch its name
       // with the value the admin confirmed.
       if (!contactId) contactId = await findContactByEmail(contactEmail);
-      if (!contactId) contactId = await createContact(contactEmail, contactName, ownerId);
+      if (!contactId) contactId = await createContact(contactEmail, contactName, ownerId, writeLifecycle);
       else if (contactName) await patchContactName(contactId, contactName).catch(() => null);
 
       // 3. Reuse or create Company (by domain). HubSpot auto-creates a nameless
@@ -626,13 +699,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         if (found) {
           companyId = found.id;
           if (!found.name) await patchCompanyName(found.id, companyName).catch(() => null);
-          if (found.ownerId !== ownerId) await patchCompanyOwner(found.id, ownerId).catch(() => null);
+          // L'owner d'une entreprise existante n'est jamais modifié (demande de Gaëlle).
         }
       }
       if (!companyId) companyId = await createCompany(companyName, domain, ownerId);
 
       // 4. Create Deal
-      dealId = await createDeal(dealName, ownerId, pipelineId, stageId, source);
+      dealId = await createDeal(dealName, ownerId, pipelineId, stageId, source, origin);
 
       // 5. Persist AVANT tout le reste : à partir d'ici le deal existe, la base
       // doit le savoir même si la requête est coupée juste après (Netlify tue

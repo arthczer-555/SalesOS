@@ -8,6 +8,7 @@
 // dernier filet, un 409 "Contact already exists. Existing ID: N" est rattrapé.
 import { hubspotAssociate, hubspotFetch, hubspotSearchAll, PUBLIC_EMAIL_DOMAINS_FOR_DEAL_LOOKUP } from "./hubspot";
 import { findCompanyByDomain } from "./intel/hubspot-company-resolve";
+import { contactLifecycleForCreation } from "./hubspot/cutover";
 
 export interface HubspotContactInput {
   email: string;
@@ -22,7 +23,7 @@ export interface HubspotContactInput {
   companyDomain?: string | null;
   /** Company HubSpot déjà connue (prioritaire sur la recherche par domaine). */
   companyId?: string | null;
-  /** Lifecycle stage à la création (défaut "lead", null pour ne rien poser). */
+  /** Lifecycle stage à la création (défaut : réglage contact_lifecycle_write, null pour ne rien poser). */
   lifecyclestage?: string | null;
 }
 
@@ -73,7 +74,9 @@ export async function findOrCreateHubspotContact(input: HubspotContactInput): Pr
   set("company", input.company);
   set("phone", input.phone);
   set("hubspot_owner_id", input.ownerId);
-  const stage = input.lifecyclestage === undefined ? "lead" : input.lifecyclestage;
+  // Défaut piloté par le réglage contact_lifecycle_write (bascule du 30/11) :
+  // "lead" jusqu'à la bascule, rien ensuite. Une valeur explicite de l'appelant prime.
+  const stage = input.lifecyclestage === undefined ? await contactLifecycleForCreation() : input.lifecyclestage;
   if (stage) properties.lifecyclestage = stage;
 
   let id: string;

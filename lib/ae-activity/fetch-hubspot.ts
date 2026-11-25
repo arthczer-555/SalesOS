@@ -12,6 +12,7 @@
 // ────────────────────────────────────────────────────────────────────────
 
 import { hubspotFetch, hubspotSearchAll, type HubspotObjectType } from "@/lib/hubspot";
+import { PIPELINE_IDS, stageRole } from "@/lib/hubspot/pipeline-model";
 import { normalizePerson, jaroWinkler } from "@/lib/fuzzy-match";
 import type { FunnelStage, LostReason } from "./types";
 import { emptyRawActivity, toDayString, type RawActivity } from "./aggregate";
@@ -91,14 +92,20 @@ export async function fetchSalesPipeline(): Promise<{
     }>("/crm/v3/pipelines/deals");
     const pipelines = res.results ?? [];
     if (pipelines.length === 0) return { pipelineId: null, pipelineLabel: null, stages: [] };
-    const wantedId = process.env.DEALS_SALES_PIPELINE_ID;
-    const pipeline = (wantedId && pipelines.find((p) => p.id === wantedId)) || pipelines[0];
+    // Pipeline Sales par identifiant (lib/hubspot/pipeline-model.ts), jamais
+    // pipelines[0] : l'ordre renvoyé par HubSpot change quand Gaëlle réordonne
+    // les pipelines (bascule du 30/11), et le pipeline Prospection passerait devant.
+    const wantedId = process.env.DEALS_SALES_PIPELINE_ID || PIPELINE_IDS.sales;
+    const pipeline = pipelines.find((p) => p.id === wantedId);
+    if (!pipeline) return { pipelineId: null, pipelineLabel: null, stages: [] };
     const stages = [...pipeline.stages]
       .sort((a, b) => (a.displayOrder ?? 0) - (b.displayOrder ?? 0))
       .map((s) => {
         const isClosed = s.metadata?.isClosed === "true";
         const prob = s.metadata?.probability;
-        const isLost = s.id === "closedlost" || /lost|perdu/i.test(s.label) || (isClosed && prob === "0.0");
+        // Rôle par identifiant d'abord ; le libellé ne sert que pour une étape inconnue du modèle.
+        const role = stageRole(s.id);
+        const isLost = role ? role === "lost" : /lost|perdu/i.test(s.label) || (isClosed && prob === "0.0");
         return { id: s.id, label: s.label, isClosed, isLost };
       });
     return { pipelineId: pipeline.id, pipelineLabel: pipeline.label ?? null, stages };

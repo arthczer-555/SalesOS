@@ -3,7 +3,7 @@
 import { Suspense, useState, useEffect, useCallback, useMemo, memo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useUserMe } from "@/lib/hooks/use-user-me";
-import { useDeals } from "@/lib/hooks/use-deals";
+import { useDeals, type DealsBoard } from "@/lib/hooks/use-deals";
 import { useLostDeals, type LostSort } from "@/lib/hooks/use-lost-deals";
 import { Zap, Search, RefreshCw, ArrowLeft } from "lucide-react";
 import { scoreBadge } from "@/lib/deal-scoring";
@@ -14,6 +14,7 @@ import { DealLostPanel } from "./_components/deal-lost-panel";
 import { LOST_COLUMN_WIDTH, LostKanbanColumn } from "./_components/deal-lost-column";
 import { type Deal, type DealDetails, fmt, fmtDate, isOverdue, stageColor, timeAgo } from "./_helpers";
 import { COLORS } from "@/lib/design/tokens";
+import { SegmentedControl } from "@/components/ui/segmented-control";
 import { StatPill } from "@/components/ui/stat-pill";
 
 // ─── Deal Card (kanban) ────────────────────────────────────────────────────────
@@ -241,10 +242,12 @@ function DealsPageInner() {
   const [filters, setFilters] = useState<DealFilters>(DEFAULT_DEAL_FILTERS);
 
   const [appliedQuery, setAppliedQuery] = useState("");
-  const { stages, deals, owners, isLoading: loading, error, reload } = useDeals(appliedQuery, filters.ownerMode);
+  // Deux boards depuis la bascule HubSpot du 30/11 : Sales (les deals) et Prospection (les leads).
+  const [board, setBoard] = useState<DealsBoard>("sales");
+  const { stages, deals, owners, isLoading: loading, error, reload } = useDeals(appliedQuery, filters.ownerMode, board);
   // Colonne "Closed lost" : chargée à part, par pages (cf /api/deals/lost).
   const [lostSort, setLostSort] = useState<LostSort>("lost");
-  const lost = useLostDeals(appliedQuery, filters.ownerMode, lostSort);
+  const lost = useLostDeals(appliedQuery, filters.ownerMode, lostSort, board);
 
   const [selectedDeal, setSelectedDeal] = useState<Deal | null>(null);
   const [details, setDetails] = useState<DealDetails | null>(null);
@@ -548,6 +551,18 @@ function DealsPageInner() {
             }}
           />
         </div>
+
+        <SegmentedControl<DealsBoard>
+          options={[
+            { value: "prospection", label: "Prospection" },
+            { value: "sales", label: "Sales pipeline" },
+          ]}
+          value={board}
+          onChange={(b) => {
+            setBoard(b);
+            closeDeal();
+          }}
+        />
 
         <DealFiltersBar filters={filters} onChange={setFilters} owners={owners} />
 

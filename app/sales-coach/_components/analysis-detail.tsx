@@ -46,6 +46,7 @@ import { SynthesisTab } from "./synthesis-tab";
 import { EmailDraftModal } from "./email-draft-modal";
 import { ManualDealResolution } from "./manual-deal-resolution";
 import { DealPicker, type DealSearchResult } from "./deal-picker";
+import { CardConfirmation } from "./card-confirmation";
 import { Sparkles } from "lucide-react";
 import { COLORS, scoreToColor } from "@/lib/design/tokens";
 import { ScoreGauge } from "@/components/ui/score-gauge";
@@ -787,6 +788,13 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
             <div className="text-xs mt-1" style={{ color: "#888" }}>Reason: {detail.error_message ?? "-"}</div>
           </>
         )}
+        {/* Meeting de test (rec_test_...) : pas d'analyse IA, mais la confirmation de carte reste testable. */}
+        {detail.status === "done" && !detail.analysis && detail.hubspot_deal_id && (
+          <div style={{ width: "100%", maxWidth: 520, textAlign: "left" }}>
+            <div className="text-sm font-medium" style={{ color: "#111" }}>Meeting without coaching analysis</div>
+            <CardConfirmation analysisId={analysisId} onDone={reload} />
+          </div>
+        )}
         <div className="mt-4 flex items-center gap-2">
           {(detail.status === "skipped" ||
             detail.status === "error" ||
@@ -1052,6 +1060,9 @@ export default function AnalysisDetail({ analysisId, onSlackSent, onDeleted }: P
           analysisId={analysisId}
           onDealUpdated={reload}
         />
+        {detail.hubspot_deal_id && detail.status === "done" && !isClient && (
+          <CardConfirmation analysisId={analysisId} onDone={reload} />
+        )}
       </div>
 
       {/* Tabs */}

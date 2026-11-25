@@ -1,3 +1,4 @@
+import { isSalesMotionPipeline } from "@/lib/hubspot/pipeline-model";
 import {
   hubspotFetch,
   hubspotGetAssociations,
@@ -35,10 +36,9 @@ const DEAL_PROPS = [
   "pipeline",
 ];
 
-// Pipeline Sales (prospection). Les deals Customer Success (clients déjà gagnés)
-// vivent dans une autre pipeline et ne doivent pas alimenter le contexte AE /
-// le draft email : ils fausseraient l'angle de prospection.
-const SALES_PIPELINE_ID = "default";
+// Pipelines de la vente (Prospection + Sales depuis la bascule du 30/11). Les
+// deals Customer Success (clients déjà gagnés) ne doivent pas alimenter le
+// contexte AE / le draft email : ils fausseraient l'angle de prospection.
 
 const ENGAGEMENT_CAP = 40;
 const CONTACT_CAP = 10;
@@ -124,7 +124,7 @@ export async function loadCompanyHubspotContext(scopeCompanyId: string): Promise
       const p = r.value.properties ?? {};
       // Sales-only : on ignore les deals d'une autre pipeline (Customer Success).
       // Pipeline absente = on garde (HubSpot la renvoie toujours, mais prudence).
-      if (p.pipeline && p.pipeline !== SALES_PIPELINE_ID) continue;
+      if (p.pipeline && !isSalesMotionPipeline(p.pipeline)) continue;
       deals.push({
         id: r.value.id,
         dealname: p.dealname ?? null,

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
-  resolveDealFromParticipants,
   resolveDealFromMeetingContext,
   resolveCompanyFromParticipants,
   type CompanyMatchSnapshot,
 } from "@/lib/hubspot";
+import { resolveMeetingCard, type MatchMethod } from "@/lib/sales-coach/deal-match";
 import {
   extractExternalParticipants,
   extractInternalEmails,
@@ -52,6 +52,20 @@ type ClaapPayload = {
     recording?: ClaapRecording;
   };
 };
+
+
+// Méthode de rapprochement, écrite à part : tant que la migration
+// hubspot_pipeline_switch.sql n'est pas appliquée, l'écriture échoue sans
+// bloquer le webhook. N'écrase jamais un choix manuel ou une confirmation.
+async function saveMatchMethod(analysisId: string, method: string | null, detail: Record<string, unknown>) {
+  if (!method) return;
+  const { error } = await db
+    .from("sales_coach_analyses")
+    .update({ deal_match_method: method, deal_match_detail: detail })
+    .eq("id", analysisId)
+    .or("deal_match_method.is.null,deal_match_method.not.in.(manual_link,confirmed)");
+  if (error) console.warn(`[claap-webhook] match method not saved for ${analysisId}:`, error.message);
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -160,19 +174,29 @@ export async function POST(req: NextRequest) {
     // row for UI fallback when the deal can't be loaded. Does NOT participate
     // in prospect/client classification (that's deal-stage only).
     let companyMatch: CompanyMatchSnapshot | null = null;
+    // Méthode de rapprochement (lib/sales-coach/deal-match.ts) : décide si le
+    // meeting peut faire passer la carte en Scoping sans confirmation.
+    let matchMethod: MatchMethod | null = dealId ? "claap_link" : null;
+    let matchDetail: Record<string, unknown> = {};
     if (recorderEmail) {
       const [resolvedDeal, resolvedCompany] = await Promise.all([
-        dealId
-          ? Promise.resolve(dealId)
-          : resolveDealFromParticipants(
-              participantEmails,
-              recorderEmail,
-              titleHint,
-              rec.title ?? null,
-            ).catch((e) => {
-              console.warn("[claap-webhook] deal auto-resolve failed:", e);
-              return null;
-            }),
+        resolveMeetingCard({
+          claapDealId: dealId,
+          participantEmails,
+          recorderEmail,
+          titleHint,
+          meetingTitle: rec.title ?? null,
+          recordingId: rec.id,
+        })
+          .then((m) => {
+            matchMethod = m.method;
+            matchDetail = m.detail;
+            return m.dealId;
+          })
+          .catch((e) => {
+            console.warn("[claap-webhook] deal auto-resolve failed:", e);
+            return dealId;
+          }),
         resolveCompanyFromParticipants(
           participantEmails,
           recorderEmail,
@@ -219,6 +243,7 @@ export async function POST(req: NextRequest) {
             return null;
           });
           if (dealId) {
+            matchMethod = "llm_summary";
             console.log(
               `[claap-webhook] resolved deal ${dealId} from the Claap summary for recording ${rec.id}`,
             );
@@ -392,6 +417,7 @@ export async function POST(req: NextRequest) {
       console.error("[claap-webhook] upsert error:", insertErr);
       return NextResponse.json({ error: "Storage error" }, { status: 500 });
     }
+    await saveMatchMethod(inserted.id, matchMethod, matchDetail);
 
     // Trigger analysis. On Netlify we call the Background Function directly to
     // skip the intermediate Next.js sync route — fewer hops = fewer chances of

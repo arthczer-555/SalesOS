@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { type DealScore } from "@/lib/deal-scoring";
 import { db } from "@/lib/db";
+import { PIPELINE_IDS, isTestDealName } from "@/lib/hubspot/pipeline-model";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const ownerParam = searchParams.get("owner"); // null = not set, "all" = no filter, id = filter by id
   const q = searchParams.get("q")?.trim() ?? "";
+  // Deux boards depuis la bascule du 30/11 : Sales (défaut) et Prospection (les leads).
+  const pipelineKey = searchParams.get("pipeline") === "prospection" ? "prospection" : "sales";
 
   // Resolve owner filter: if param not set, default to user's HubSpot owner id
   let ownerFilter = "";
@@ -57,10 +60,12 @@ export async function GET(req: NextRequest) {
     const pipelines: { id: string; label: string; stages: { id: string; label: string; displayOrder: number; metadata?: { probability?: string; isClosed?: string } }[] }[] =
       pipelineData.results ?? [];
 
-    // Sales Pipeline (id "default"), stages fermés exclus. L'ordre des pipelines
-    // renvoyé par l'API n'est pas garanti : ne pas se fier à pipelines[0]
-    // (le pipeline Customer Success afficherait ses stages dans le kanban).
-    const defaultPipeline = pipelines.find((pl) => pl.id === "default") ?? pipelines[0];
+    // Pipeline du board, par identifiant (jamais pipelines[0] : l'ordre renvoyé
+    // par l'API n'est pas garanti). Stages fermés exclus.
+    const defaultPipeline = pipelines.find((pl) => pl.id === PIPELINE_IDS[pipelineKey]);
+    if (!defaultPipeline) {
+      return NextResponse.json({ error: `HubSpot pipeline ${PIPELINE_IDS[pipelineKey]} not found`, stages: [], deals: [], pipelineTotal: 0, weightedTotal: 0, myOwnerId, owners: [] }, { status: 502 });
+    }
     const stages = (defaultPipeline?.stages ?? [])
       .filter((s) => s.metadata?.isClosed !== "true")
       .sort((a, b) => a.displayOrder - b.displayOrder)
@@ -102,7 +107,9 @@ export async function GET(req: NextRequest) {
 
     type RawDeal = { id: string; properties: Record<string, string> };
 
-    const rawDeals = (data.results ?? []).map((d: RawDeal) => {
+    // Les cartes "TEST - " (tests de la bascule) ne sont visibles que des admins.
+    const visibleResults = (data.results ?? []).filter((d: RawDeal) => user.is_admin || !isTestDealName(d.properties?.dealname));
+    const rawDeals = visibleResults.map((d: RawDeal) => {
       const p = d.properties;
       return {
         id: d.id,

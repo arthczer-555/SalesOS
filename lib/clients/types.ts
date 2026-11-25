@@ -6,6 +6,7 @@
 // pour voir d'où il vient et afficher une pastille de confiance.
 
 import type { ClientTier } from "./tier";
+import { DEAL_ORIGINS } from "@/lib/leads/origin";
 
 export type ClientFieldSource =
   | { kind: "hubspot"; entity: "note" | "email" | "meeting" | "call" | "deal" | "company"; id?: string }
@@ -929,7 +930,8 @@ export const HUBSPOT_CHECKLIST_FIELDS: readonly HubspotChecklistFieldDef[] = [
   { property: "challenges", label: "Challenges", type: "enumeration", group: "deal_info", options: [o("Development of high potentials talents"), o("Transformation of organizations"), o("Leadership Development"), o("Women Leadership"), o("Organizational transformation"), o("Development of a coaching culture"), o("Well-being and resilience"), o("IA Coaching"), o("Internal Coaching")] },
   { property: "product", label: "Product", type: "enumeration", group: "deal_info", options: [o("Coaching"), o("IA Coaching"), o("Workshop"), o("White Label")] },
   { property: "hs_acv", label: "Annual contract value", type: "number", group: "deal_info" },
-  { property: "origin", label: "Source", type: "enumeration", group: "deal_info", options: [o("Linkedin"), o("Cold call"), o("Email"), o("Referral"), o("Tradeshows"), o("Webinar"), o("Partnerships")] },
+  // Valeurs autorisées depuis la bascule du 30/11 (lib/leads/origin.ts) : plus de Linkedin, Cold call, Email, Webinar.
+  { property: "origin", label: "Source", type: "enumeration", group: "deal_info", options: DEAL_ORIGINS.map((x) => o(x.value, x.label)) },
   // ── General information ──
   { property: "main_hr_contact", label: "Main HR Contact", type: "string", group: "general_info" },
   { property: "operational_hr_contact", label: "Operational HR Contact", type: "string", group: "general_info" },

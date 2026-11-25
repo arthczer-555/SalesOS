@@ -1,5 +1,6 @@
 import type { Config } from "@netlify/functions";
 import { fetchNurtureStageIds } from "../../lib/deals/stages";
+import { loadCutoverState } from "../../lib/hubspot/cutover";
 
 const CHUNK_SIZE = 5;
 
@@ -47,6 +48,20 @@ export default async () => {
   const cronSecret = process.env.CRON_SECRET;
   if (!siteUrl || !cronSecret) {
     console.error("[score-deals-bg] missing SITE_URL or CRON_SECRET");
+    return;
+  }
+
+  // Bascule HubSpot du 30/11 : le réglage scoring_cron = skip suspend le cron
+  // (scoring de masse et digest) pendant la migration des pipelines. Réglage
+  // illisible = on suspend aussi (rien ne doit écrire en masse sans contrôle).
+  try {
+    const cutover = await loadCutoverState();
+    if (cutover.values.scoring_cron === "skip") {
+      console.log("[score-deals-bg] skipped: scoring_cron = skip");
+      return;
+    }
+  } catch (e) {
+    console.error("[score-deals-bg] skipped: cutover settings unreadable:", e instanceof Error ? e.message : e);
     return;
   }
 

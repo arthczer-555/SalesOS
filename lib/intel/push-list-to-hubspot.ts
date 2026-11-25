@@ -1,3 +1,4 @@
+import { contactLifecycleForCreation } from "@/lib/hubspot/cutover";
 import { db } from "../db";
 import { hubspotAssociate, hubspotFetch, createCompany } from "../hubspot";
 import { normalizeCompany } from "../fuzzy-match";
@@ -49,7 +50,9 @@ async function createContact(p: EnrichmentProfile, email: string, ownerId: strin
   const fromFull = splitName(p.fullName);
   const firstname = (p.firstName ?? "").trim() || fromFull.firstname;
   const lastname = (p.lastName ?? "").trim() || fromFull.lastname;
-  const properties: Record<string, string> = { email: email.toLowerCase(), lifecyclestage: "lead" };
+  const properties: Record<string, string> = { email: email.toLowerCase() };
+  const lifecycle = await contactLifecycleForCreation(); // plus de lifecycle après la bascule du 30/11
+  if (lifecycle) properties.lifecyclestage = lifecycle;
   if (firstname) properties.firstname = firstname;
   if (lastname) properties.lastname = lastname;
   if (p.jobTitle) properties.jobtitle = p.jobTitle;

@@ -157,13 +157,18 @@ export async function fetchSalesCoachRecaps(
     : `hubspot_deal_id.eq.${dealId}`;
   let query = db
     .from("sales_coach_analyses")
-    .select("hubspot_deal_id, meeting_title, meeting_started_at, meeting_kind, audience, meeting_recap, participants")
+    .select("hubspot_deal_id, meeting_title, meeting_started_at, meeting_kind, audience, meeting_recap, participants, stage_move_result")
     .or(filter)
     .eq("status", "done")
     .order("meeting_started_at", { ascending: false });
   if (opts.limit) query = query.limit(opts.limit * 2);
   const { data } = await query;
-  const rows = (data ?? []) as ClaapRecapRow[];
+  // Bascule du 30/11 : un meeting dont le rattachement à ce deal attend une
+  // confirmation, ou a été refusé (❌), ne nourrit pas le deal (score, KUNA,
+  // coach, analyse de perte) tant que personne ne l'a confirmé.
+  const rows = ((data ?? []) as unknown as (ClaapRecapRow & { stage_move_result?: string | null })[]).filter(
+    (r) => r.stage_move_result !== "awaiting_confirmation" && r.stage_move_result !== "rejected_by_user",
+  );
 
   const kept: ClaapRecapRow[] = [];
   for (const r of rows) {

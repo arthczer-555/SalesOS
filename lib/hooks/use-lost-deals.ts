@@ -13,13 +13,14 @@ export type LostSort = "lost" | "reopen";
 // Colonne "Closed lost" du board : pages de 30 deals (/api/deals/lost), la
 // suivante chargée par "Show older". Tri par date de perte ou de relance (la
 // recherche texte impose le tri par date de perte, cf. la route).
-export function useLostDeals(searchQuery: string, ownerFilter: "mine" | "all", sort: LostSort = "lost") {
+export function useLostDeals(searchQuery: string, ownerFilter: "mine" | "all", sort: LostSort = "lost", board: "sales" | "prospection" = "sales") {
   const getKey = (index: number, prev: LostDealsPage | null) => {
     if (prev && !prev.nextAfter) return null;
     const params = new URLSearchParams();
     if (searchQuery) params.set("q", searchQuery);
     if (ownerFilter === "all") params.set("owner", "all");
     if (sort === "reopen") params.set("sort", "reopen");
+    if (board === "prospection") params.set("pipeline", "prospection");
     if (index > 0 && prev?.nextAfter) params.set("after", prev.nextAfter);
     return `/api/deals/lost?${params.toString()}`;
   };

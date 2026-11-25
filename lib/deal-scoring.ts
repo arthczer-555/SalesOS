@@ -866,22 +866,56 @@ ${NO_EM_DASH_RULE}`;
   };
 }
 
+/** Origine d'un scoring : un call analysé, un Rescore manuel, ou "Score all" (et le cron qui l'appelle). */
+export type DealScoreTrigger = "call" | "manual" | "batch";
+
 /**
  * Persiste un résultat de scoring dans `deal_scores`. Partagé par le Rescore
- * d'un deal et "Score all deals". Les colonnes optionnelles (key_events,
- * kuna, committee, go_live_date) sont écrites à part, en best-effort : tant que
- * leur migration n'est pas appliquée, le scoring continue de fonctionner.
+ * d'un deal, "Score all deals" et l'analyse d'un call. Les colonnes optionnelles
+ * (key_events, kuna, committee, go_live_date) sont écrites à part, en
+ * best-effort : tant que leur migration n'est pas appliquée, le scoring continue.
+ *
+ * Bascule HubSpot du 30/11 (plan, 5.3) : une carte dont le score a été écrit
+ * dans HubSpot (deal_scores.hubspot_score renseigné) ne change de score qu'après
+ * un call. Un Rescore ou "Score all" rafraîchit le reste (raisonnement, KUNA,
+ * next move) mais garde le score, sinon CoachelloHQ et HubSpot afficheraient
+ * deux chiffres. Le score recalculé est gardé dans deal_score_history.
+ * Retourne le score conservé dans ce cas, null sinon.
  */
-export async function persistDealScore(dealId: string, result: ScoreOneDealResult): Promise<void> {
+export async function persistDealScore(
+  dealId: string,
+  result: ScoreOneDealResult,
+  opts: { trigger?: DealScoreTrigger } = {},
+): Promise<{ kept: DealScore | null }> {
+  let kept: DealScore | null = null;
+  if (opts.trigger === "manual" || opts.trigger === "batch") {
+    // Colonne absente (migration du 30/11 non appliquée) : comportement d'avant.
+    const { data, error: readErr } = await db.from("deal_scores").select("score, hubspot_score").eq("deal_id", dealId).maybeSingle();
+    const row = data as { score: DealScore | null; hubspot_score: number | null } | null;
+    if (!readErr && row && typeof row.hubspot_score === "number" && row.score) kept = row.score;
+  }
+
   const { error } = await db.from("deal_scores").upsert({
     deal_id: dealId,
-    score: { total: result.total, components: result.components, reliability: result.reliability },
+    ...(kept ? {} : { score: { total: result.total, components: result.components, reliability: result.reliability } }),
     reasoning: result.reasoning,
     next_action: result.next_action,
     qualification: result.qualification ?? null,
     scored_at: new Date().toISOString(),
   }, { onConflict: "deal_id" });
   if (error) throw new Error(`deal_scores upsert: ${error.message}`);
+
+  if (kept) {
+    const { error: hErr } = await db.from("deal_score_history").insert({
+      deal_id: dealId,
+      score: Math.round(result.total),
+      score_model: "v1",
+      triggered_by: opts.trigger === "manual" ? "manual" : "cron",
+      hubspot_written: false,
+      detail: { kept_score: kept.total, reason: "synced_card_changes_only_after_a_call" },
+    });
+    if (hErr) console.warn("[deal-scoring] deal_score_history non écrit:", hErr.message);
+  }
 
   if (result.key_events?.length) {
     const { error: keErr } = await db
@@ -908,4 +942,5 @@ export async function persistDealScore(dealId: string, result: ScoreOneDealResul
     .update({ next_move: result.next_move })
     .eq("deal_id", dealId);
   if (nmErr) console.warn("[deal-scoring] next_move non persisté (migration deals_next_move_reopen_chat.sql ?):", nmErr.message);
+  return { kept };
 }

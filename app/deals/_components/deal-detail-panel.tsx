@@ -97,6 +97,8 @@ export function DealDetailPanel({
   const [coachOpen, setCoachOpen] = React.useState(false);
   const coachRef = React.useRef<HTMLDivElement>(null);
   const [rescoring, setRescoring] = React.useState(false);
+  // Carte synchronisée avec HubSpot : le Rescore garde le score (il ne change qu'après un call).
+  const [rescoreNote, setRescoreNote] = React.useState<string | null>(null);
   const [localScore, setLocalScore] = React.useState<{
     score: DealScore;
     reasoning: string;
@@ -303,6 +305,7 @@ export function DealDetailPanel({
   const rescore = React.useCallback(async () => {
     if (!details) return;
     setRescoring(true);
+    setRescoreNote(null);
     try {
       const r = await fetch("/api/deals/score", {
         method: "POST",
@@ -325,6 +328,11 @@ export function DealDetailPanel({
           goLiveDate: data.go_live_date ?? null,
         });
         onRescore(details.id, newScore, data.reasoning ?? "", data.next_action ?? "");
+        setRescoreNote(
+          data.scoreKept
+            ? `Score kept at ${data.total}: it is synced with HubSpot and only changes after a call. Recomputed now: ${data.recomputedTotal}. Qualification and next move are refreshed.`
+            : null,
+        );
       }
     } catch {
       /* ignore */
@@ -601,6 +609,11 @@ export function DealDetailPanel({
           <IconButton icon={X} aria-label="Close" onClick={onClose} variant="ghost" />
         </div>
       </div>
+      {rescoreNote && (
+        <div style={{ margin: "0 0 8px", padding: "8px 12px", borderRadius: 8, background: COLORS.bgSoft, border: `1px solid ${COLORS.line}`, fontSize: 12, color: COLORS.ink2 }}>
+          {rescoreNote}
+        </div>
+      )}
       <DealHeaderSummary
         score={activeScore}
         scoredAt={activeScoredAt}

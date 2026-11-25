@@ -7,6 +7,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { dealNameSearchFilters } from "@/lib/hubspot";
+import { isLostStage, isWonDealById, pipelineKeyOf } from "@/lib/hubspot/pipeline-model";
 import type { ToolModule } from "./types";
 
 // ── Helper API ───────────────────────────────────────────────────────────────
@@ -213,7 +214,9 @@ const module_: ToolModule = {
     },
 
     get_deals: async (input, ctx) => {
-      const props = getPropertyNames("deals");
+      // pipeline + hs_is_closed_won toujours lus : le statut perdu / gagné se
+      // décide par identifiant d'étape, sur les deux pipelines (bascule du 30/11).
+      const props = [...new Set([...getPropertyNames("deals"), "pipeline", "dealstage", "hs_is_closed_won"])];
       const allResults: { id: string; properties: Record<string, unknown> }[] = [];
       let after: string | undefined;
       const MAX_PAGES = 50;
@@ -248,10 +251,11 @@ const module_: ToolModule = {
         const p = d.properties;
         const date = p.createdate ? p.createdate.slice(0, 10) : "";
         const close = p.closedate ? p.closedate.slice(0, 10) : "";
-        const won = p.hs_is_closed_won === "true" ? "won" : (p.dealstage === "closedlost" ? "lost" : "open");
-        return `${d.id}|${p.dealname ?? ""}|${p.dealstage ?? ""}|${p.amount ?? ""}€|${date}|${close}|${won}`;
+        const status = isWonDealById({ hs_is_closed_won: p.hs_is_closed_won, pipeline: p.pipeline }) ? "won" : isLostStage(p.dealstage) ? "lost" : "open";
+        const pipe = pipelineKeyOf(p.pipeline) ?? p.pipeline ?? "";
+        return `${d.id}|${p.dealname ?? ""}|${pipe}|${p.dealstage ?? ""}|${p.amount ?? ""}€|${date}|${close}|${status}`;
       }).join("\n");
-      return `${note}\nformat: id|nom|stage|montant|createdate|closedate|statut\nPour obtenir les conversations d'un deal, utilise get_deal_activity avec son id.\n${compact}`;
+      return `${note}\nformat: id|nom|pipeline (prospection = leads, sales = deals, customerSuccess = clients)|stage|montant|createdate|closedate|statut\nPour obtenir les conversations d'un deal, utilise get_deal_activity avec son id.\n${compact}`;
     },
 
     get_companies: async (input) => {

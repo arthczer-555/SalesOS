@@ -3,6 +3,9 @@ import { verifySlackSignature } from "@/lib/slack/verify";
 import { getUserInfo, publishHomeView } from "@/lib/slack/api";
 import { buildHomeView } from "@/lib/slack/home-view";
 import { isThreadTracked } from "@/lib/slack/chat-thread";
+import { postMessage } from "@/lib/slack/api";
+import { findConfirmationByMessage, parseConfirmationAnswer } from "@/lib/slack/confirmations";
+import { loadCutoverState } from "@/lib/hubspot/cutover";
 
 export const dynamic = "force-dynamic";
 
@@ -37,18 +40,31 @@ export async function POST(req: NextRequest) {
     return new NextResponse("invalid signature", { status: 401 });
   }
 
-  // Slack retry automatiquement si pas de 200 en <3s. Sans dedup, chaque retry
-  // redéclenche la bg function et l'utilisateur reçoit le même message N fois.
-  // On ACK 200 immédiatement sur les retries, le 1er call a déjà été dispatché.
-  if (req.headers.get("x-slack-retry-num")) {
-    return NextResponse.json({ ok: true });
-  }
-
   let payload: SlackEventPayload;
   try {
     payload = JSON.parse(rawBody) as SlackEventPayload;
   } catch {
     return new NextResponse("invalid json", { status: 400 });
+  }
+
+  // ── Réponse à une demande de confirmation (✅ / ❌), bascule HubSpot ─────
+  // Traitée avant tout le reste, retries compris : la demande n'est exécutée
+  // qu'une fois (passage pending -> received atomique), donc un retry Slack
+  // ne fait que rattraper une première livraison perdue.
+  if (payload.type === "event_callback" && payload.event) {
+    try {
+      const handled = await handleConfirmationEvent(req, payload.event);
+      if (handled) return NextResponse.json({ ok: true });
+    } catch (e) {
+      console.error("[slack/events] confirmation handler error:", e);
+    }
+  }
+
+  // Slack retry automatiquement si pas de 200 en <3s. Sans dedup, chaque retry
+  // redéclenche la bg function et l'utilisateur reçoit le même message N fois.
+  // On ACK 200 immédiatement sur les retries, le 1er call a déjà été dispatché.
+  if (req.headers.get("x-slack-retry-num")) {
+    return NextResponse.json({ ok: true });
   }
 
   if (payload.type === "url_verification") {
@@ -138,6 +154,78 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({ ok: true });
 }
 
+
+// ── Confirmations Slack (✅ / ❌) ──────────────────────────────────────────────
+
+/**
+ * Réaction ✅ / ❌ sur un message de demande, ou réponse dans son fil. Renvoie
+ * true si l'événement concernait une demande (il ne part alors jamais chez
+ * CoachelloAI). Le traitement (lectures / écritures HubSpot) part dans la
+ * Background Function slack-confirm-background.
+ */
+async function handleConfirmationEvent(req: NextRequest, event: SlackEvent): Promise<boolean> {
+  // Réaction posée sur un message du bot en DM.
+  if (event.type === "reaction_added") {
+    const item = event.item;
+    if (!item || item.type !== "message" || !item.channel?.startsWith("D") || !item.ts || !event.user) return false;
+    const answer = parseConfirmationAnswer(event.reaction);
+    if (!answer) return false;
+    const row = await findConfirmationByMessage(item.channel, item.ts);
+    if (!row) return false;
+    const settings = await loadCutoverState().catch(() => null);
+    if (settings?.values.slack_confirm_reaction !== "on") return true;
+    await dispatchConfirmation(req, { channel: item.channel, ts: item.ts, answer, slackUserId: event.user });
+    return true;
+  }
+
+  // Réponse dans le fil d'une demande, en DM.
+  if (event.type === "message" && event.channel_type === "im" && event.thread_ts && event.channel) {
+    if (event.bot_id || event.subtype) return false;
+    const row = await findConfirmationByMessage(event.channel, event.thread_ts);
+    if (!row) return false;
+    const answer = parseConfirmationAnswer(event.text);
+    if (answer && event.user) {
+      await dispatchConfirmation(req, { channel: event.channel, ts: event.thread_ts, answer, slackUserId: event.user });
+    } else if (!req.headers.get("x-slack-retry-num")) {
+      await postMessage({
+        channel: event.channel,
+        thread_ts: event.thread_ts,
+        text: "Add a ✅ (confirm) or ❌ (not this deal) reaction on the message above, or reply with ✅ / ❌.",
+      }).catch(() => null);
+    }
+    return true;
+  }
+  return false;
+}
+
+async function dispatchConfirmation(
+  req: NextRequest,
+  payload: { channel: string; ts: string; answer: "yes" | "no"; slackUserId: string },
+) {
+  const isNetlifyEnv = !!(process.env.NETLIFY || process.env.URL || process.env.DEPLOY_URL);
+  if (!isNetlifyEnv || process.env.NODE_ENV === "development") {
+    const { processCardConfirmation } = await import("@/lib/sales-coach/card-flow");
+    await processCardConfirmation(payload);
+    return;
+  }
+  const internalSecret = process.env.INTERNAL_SECRET;
+  if (!internalSecret) {
+    console.error("[slack/events] INTERNAL_SECRET manquant (confirmation non traitée)");
+    return;
+  }
+  try {
+    await fetch(`${req.nextUrl.origin}/.netlify/functions/slack-confirm-background`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-secret": internalSecret },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("aborted") && !msg.includes("timeout")) console.error("[slack/events] confirmation dispatch failed:", msg);
+  }
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 async function handleAppHomeOpened(event: SlackEvent) {
@@ -223,6 +311,9 @@ type SlackEvent = {
   thread_ts?: string;
   bot_id?: string;
   subtype?: string;
+  // reaction_added
+  reaction?: string;
+  item?: { type?: string; channel?: string; ts?: string };
 };
 
 type SlackEventPayload =

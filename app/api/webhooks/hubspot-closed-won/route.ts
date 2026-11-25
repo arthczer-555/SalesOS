@@ -5,6 +5,14 @@ import { hubspotFetch } from "@/lib/hubspot";
 import { triggerPrepareMeetings } from "@/lib/clients/trigger-prepare";
 import { decideAutoEnrich } from "@/lib/clients/auto-enrich";
 import { findMergedDealIds } from "@/lib/clients/merge";
+import { STAGES } from "@/lib/hubspot/pipeline-model";
+
+// Étapes gagnées des trois pipelines (closedwon, "Renouvelé" du pipeline
+// Customer Success). Tri par identifiant AVANT tout appel HubSpot : le 30/11,
+// la migration des deals par Gaëlle arrive par lots d'événements ; lire chaque
+// deal ferait dépasser les 5 s de réponse attendues par HubSpot, qui rejouerait
+// alors chaque lot (jusqu'à 10 fois) en consommant le quota d'API.
+const WON_STAGE_IDS: ReadonlySet<string> = new Set(STAGES.filter((s) => s.role === "won").map((s) => s.id));
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -169,14 +177,16 @@ export async function POST(req: NextRequest) {
           (e) =>
             e.subscriptionType === "deal.propertyChange" &&
             e.propertyName === "dealstage" &&
-            !!e.objectId,
+            !!e.objectId &&
+            // Sans propertyValue (format inattendu), on garde l'ancien comportement : relecture du deal.
+            (!e.propertyValue || WON_STAGE_IDS.has(String(e.propertyValue))),
         )
         .map((e) => String(e.objectId)),
     ),
   );
 
   if (dealIds.length === 0) {
-    return NextResponse.json({ ok: true, ignored: "no dealstage event in payload" });
+    return NextResponse.json({ ok: true, ignored: "no move into a won stage in payload" });
   }
 
   // Pour chaque deal candidat : fetch HubSpot (les payloads webhook ne disent

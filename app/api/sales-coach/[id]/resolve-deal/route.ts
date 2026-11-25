@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { markManualLink } from "@/lib/sales-coach/card-flow";
+import { canEditAnalysis } from "@/lib/sales-coach/access";
 import { getAuthenticatedUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import {
@@ -52,18 +54,27 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const { data: row } = await db
     .from("sales_coach_analyses")
     .select(
-      "id, user_id, claap_recording_id, recorder_email, hubspot_deal_id, participants, status, slack_sent_at",
+      "id, user_id, claap_recording_id, recorder_email, internal_emails, hubspot_deal_id, participants, status, slack_sent_at",
     )
     .eq("id", id)
     .single();
 
   if (!row) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!canEditAnalysis(user, row)) {
+    return NextResponse.json(
+      { error: "Only the meeting's participants, the deal owner or an admin can link a deal." },
+      { status: 403 },
+    );
+  }
   if (!row.claap_recording_id) {
     return NextResponse.json({ error: "No Claap recording linked" }, { status: 400 });
   }
 
   // ── 1. Choisir un dealId selon le mode ─────────────────────────────────
   let dealId: string | null = body.dealId?.trim() || null;
+  // Méthode de rapprochement (bascule HubSpot) : un choix de l'utilisateur vaut
+  // manual_link, la recherche automatique garde la méthode du résolveur.
+  let matchMethod: string | null = dealId || body.dealName ? "manual_link" : null;
 
   if (!dealId && body.dealName) {
     const matches = await findDealsByExactName(body.dealName).catch(() => [] as DealSearchResult[]);
@@ -108,6 +119,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       recorderEmail,
       titleHint,
       rec.title ?? null,
+      (m) => {
+        matchMethod = m;
+      },
     );
     if (!auto) return NextResponse.json({ ok: false, reason: "no_match" });
     dealId = auto;
@@ -153,6 +167,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     .eq("id", id);
   if (updateErr) {
     return NextResponse.json({ error: updateErr.message }, { status: 500 });
+  }
+  if (matchMethod === "manual_link") {
+    await markManualLink(id);
+  } else if (matchMethod) {
+    const { error: mErr } = await db.from("sales_coach_analyses").update({ deal_match_method: matchMethod }).eq("id", id);
+    if (mErr) console.warn(`[resolve-deal/${id}] match method not saved:`, mErr.message);
   }
 
   // ── 3. Déclenchement de l'analyse si la ligne attendait un deal ────────
