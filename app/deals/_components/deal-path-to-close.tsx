@@ -113,12 +113,10 @@ const dayMonth = (iso: string) =>
 export function DealNextMove({
   move,
   text,
-  chatOpen,
   onAsk,
 }: {
   move: NextMove | null;
   text: string | null;
-  chatOpen: boolean;
   onAsk: () => void;
 }) {
   const today = new Date().toISOString().slice(0, 10);
@@ -149,7 +147,7 @@ export function DealNextMove({
         <button
           type="button"
           onClick={onAsk}
-          aria-expanded={chatOpen}
+          aria-haspopup="dialog"
           style={{
             display: "inline-flex",
             alignItems: "center",
@@ -165,7 +163,7 @@ export function DealNextMove({
           }}
         >
           <Sparkles size={13} style={{ color: COLORS.brand }} aria-hidden="true" />
-          {chatOpen ? "Hide the coach" : "Ask how to proceed"}
+          Ask how to proceed
         </button>
       </div>
 

@@ -116,7 +116,10 @@ export async function runChat(args: {
   // 3) System prompt (socle + catalogue cachés, contexte dynamique en fin)
   let dealBrief: string | undefined;
   if (dealId) {
-    dealBrief = await buildDealCoachBrief(dealId).catch((e) => {
+    // Dossier complet (transcripts Claap, échanges HubSpot, Slack) : quelques
+    // secondes de chargement, affichées dans la bulle d'attente.
+    emit({ type: "tool_progress", message: "Loading the deal context (transcripts, emails, Slack)…" });
+    dealBrief = await buildDealCoachBrief(dealId, { withDossier: true }).catch((e) => {
       console.error(`[chat] deal brief ${dealId} failed:`, e);
       return `Deal HubSpot ${dealId} : le brief n'a pas pu être chargé (${e instanceof Error ? e.message : "erreur"}). Lis le deal avec tes outils HubSpot.`;
     });

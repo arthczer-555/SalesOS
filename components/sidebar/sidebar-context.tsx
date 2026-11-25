@@ -34,6 +34,20 @@ export function SidebarProvider({ children }: { children: React.ReactNode }) {
   return <SidebarCtx.Provider value={value}>{children}</SidebarCtx.Provider>;
 }
 
+/**
+ * Replie la sidebar tant que la page est montée (pages larges comme le board
+ * /deals) et remet l'état d'avant en la quittant. Le toggle reste utilisable.
+ */
+export function useAutoCollapseSidebar() {
+  const { collapsed, setCollapsed } = useSidebar();
+  const initial = React.useRef(collapsed);
+  React.useEffect(() => {
+    const previous = initial.current;
+    setCollapsed(true);
+    return () => setCollapsed(previous);
+  }, [setCollapsed]);
+}
+
 export function useSidebar(): Ctx {
   const ctx = React.useContext(SidebarCtx);
   if (!ctx) {

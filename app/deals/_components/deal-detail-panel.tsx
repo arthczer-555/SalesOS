@@ -3,7 +3,6 @@
 import * as React from "react";
 import {
   X,
-  Mail,
   Zap,
   AlertCircle,
   CheckCircle,
@@ -12,14 +11,9 @@ import {
   Linkedin,
   Copy,
   Check,
-  Send,
   ChevronDown,
   Sparkles,
-  Wand2,
-  PenLine,
 } from "lucide-react";
-import Link from "next/link";
-import { useUserMe } from "@/lib/hooks/use-user-me";
 import {
   type DealScore,
 } from "@/lib/deal-scoring";
@@ -30,7 +24,7 @@ import { CompanyAvatar } from "@/components/ui/company-avatar";
 import { IconButton } from "@/components/ui/icon-button";
 import type { DealCommittee, KunaEntry, NextMove } from "@/lib/deals/kuna";
 import type { Analysis, AnalysisEvent, DealDetails, Stage } from "../_helpers";
-import { engagementTypeBadge, formatDealForSlack, timeAgo } from "../_helpers";
+import { engagementTypeBadge, timeAgo } from "../_helpers";
 import { DealLinkedinCard } from "./deal-linkedin-card";
 import { DealNewsCard } from "./deal-news-card";
 import { DealEventsTimeline } from "./deal-timeline-card";
@@ -52,7 +46,6 @@ interface Props {
   onRescore: (dealId: string, score: DealScore, reasoning: string, next_action: string) => void;
   stageLabel: string;
   stageColor: string;
-  slackName: string | null;
   lastGlobalScoringAt?: string | null;
   // Étapes ouvertes du Sales Pipeline (hors nurture) pour le stepper.
   stages?: Stage[];
@@ -65,37 +58,17 @@ export function DealDetailPanel({
   onRescore,
   stageLabel,
   stageColor: color,
-  slackName,
   stages = [],
 }: Props) {
   const [analysis, setAnalysis] = React.useState<Analysis | null>(null);
   const [analyzing, setAnalyzing] = React.useState(false);
   const [analysisStale, setAnalysisStale] = React.useState(false);
   const [analyzeError, setAnalyzeError] = React.useState("");
-  const [slackSending, setSlackSending] = React.useState(false);
-  const [slackSent, setSlackSent] = React.useState(false);
-
-  const [emailDraft, setEmailDraft] = React.useState<{ subject: string; body: string; toEmail: string } | null>(null);
-  const [generating, setGenerating] = React.useState(false);
-  const [emailSubject, setEmailSubject] = React.useState("");
-  const [emailBody, setEmailBody] = React.useState("");
-  const [emailTo, setEmailTo] = React.useState("");
-  const [sending, setSending] = React.useState(false);
-  const [sent, setSent] = React.useState(false);
-  const [showComposer, setShowComposer] = React.useState(false);
-  const [emailInstructions, setEmailInstructions] = React.useState("");
-  const [emailError, setEmailError] = React.useState("");
-
-  // Signature perso (configurée dans Settings), injectée à l'envoi par /api/gmail/send.
-  const { signature } = useUserMe();
-  const hasSignature = Boolean(signature?.enabled);
-  const [includeSignature, setIncludeSignature] = React.useState(true);
   const [showScoreDetails, setShowScoreDetails] = React.useState(false);
   const [showEngagements, setShowEngagements] = React.useState(false);
   const [engagementsShown, setEngagementsShown] = React.useState(5);
-  // Chat coach (CoachelloAI ciblé sur le deal), sous le bandeau Next move.
+  // Pop-up "Discuss this deal" (CoachelloAI ciblé sur le deal, dossier complet).
   const [coachOpen, setCoachOpen] = React.useState(false);
-  const coachRef = React.useRef<HTMLDivElement>(null);
   const [rescoring, setRescoring] = React.useState(false);
   // Carte synchronisée avec HubSpot : le Rescore garde le score (il ne change qu'après un call).
   const [rescoreNote, setRescoreNote] = React.useState<string | null>(null);
@@ -117,17 +90,11 @@ export function DealDetailPanel({
     setAnalysisStale(false);
     setAnalyzeError("");
     setAnalyzing(false);
-    setEmailDraft(null);
-    setShowComposer(false);
-    setSent(false);
-    setEmailInstructions("");
-    setEmailError("");
     setShowScoreDetails(false);
     setShowEngagements(false);
     setEngagementsShown(5);
     setCoachOpen(false);
     setLocalScore(null);
-    setSlackSent(false);
   }, [details?.id]);
 
   // À l'ouverture du deal, on récupère l'analyse précédente si elle existe.
@@ -189,15 +156,6 @@ export function DealDetailPanel({
     return () => { cancelled = true; clearInterval(interval); };
   }, [analyzing, details?.id]);
 
-  React.useEffect(() => {
-    if (emailDraft) {
-      setEmailSubject(emailDraft.subject);
-      setEmailBody(emailDraft.body);
-      setEmailTo(emailDraft.toEmail);
-      setShowComposer(true);
-    }
-  }, [emailDraft]);
-
   const analyze = React.useCallback(async (opts?: { force?: boolean }) => {
     if (!details) return;
     setAnalyzeError("");
@@ -235,72 +193,6 @@ export function DealDetailPanel({
       setAnalyzing(false);
     }
   }, [details]);
-
-  /**
-   * Sans argument : génère un brouillon de zéro. Avec `rewrite`, retouche le
-   * brouillon courant (éditions manuelles comprises) selon les instructions.
-   */
-  const generateEmail = React.useCallback(async (rewrite?: string) => {
-    if (!details) return;
-    setGenerating(true);
-    setEmailError("");
-    try {
-      const r = await fetch("/api/deals/generate-email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          dealId: details.id,
-          ...(rewrite
-            ? { instructions: rewrite, currentSubject: emailSubject, currentBody: emailBody }
-            : {}),
-        }),
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error ?? "Error");
-      if (rewrite) {
-        // Retouche : on ne touche pas au destinataire éventuellement édité.
-        setEmailSubject(data.subject ?? "");
-        setEmailBody(data.body ?? "");
-        setEmailInstructions("");
-      } else {
-        setEmailDraft(data);
-      }
-    } catch (e) {
-      setEmailError(e instanceof Error ? e.message : "Error");
-    } finally {
-      setGenerating(false);
-    }
-  }, [details, emailSubject, emailBody]);
-
-  const sendEmail = React.useCallback(async () => {
-    if (!emailTo || !emailSubject || !emailBody) return;
-    setSending(true);
-    setEmailError("");
-    try {
-      // /api/gmail/send lit un FormData (pièces jointes possibles), pas du JSON.
-      const fd = new FormData();
-      fd.set("to", emailTo);
-      fd.set("subject", emailSubject);
-      fd.set("body", emailBody);
-      fd.set("source", "deals_email");
-      if (hasSignature && includeSignature) fd.set("include_signature", "1");
-      const r = await fetch("/api/gmail/send", { method: "POST", body: fd });
-      const data = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(data.error ?? "Failed to send");
-      setSent(true);
-      setShowComposer(false);
-    } catch (e) {
-      setEmailError(e instanceof Error ? e.message : "Error");
-    } finally {
-      setSending(false);
-    }
-  }, [emailTo, emailSubject, emailBody, hasSignature, includeSignature]);
-
-  // Ouvre le chat coach et l'amène à l'écran (bouton du header ou du bandeau).
-  const openCoach = React.useCallback(() => {
-    setCoachOpen(true);
-    setTimeout(() => coachRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
-  }, []);
 
   const rescore = React.useCallback(async () => {
     if (!details) return;
@@ -340,32 +232,6 @@ export function DealDetailPanel({
       setRescoring(false);
     }
   }, [details, onRescore]);
-
-  const sendToSlack = React.useCallback(async () => {
-    if (!details) return;
-    setSlackSending(true);
-    try {
-      const activeScore = localScore?.score ?? details.score;
-      const activeReasoning = localScore?.reasoning ?? details.reasoning;
-      const activeNextAction = localScore?.next_action ?? details.next_action;
-      const activeQualification = localScore?.qualification ?? details.qualification;
-      const text = formatDealForSlack(details, stageLabel, activeScore, activeReasoning, activeNextAction, activeQualification);
-      const r = await fetch("/api/deals/send-slack", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
-      if (!r.ok) {
-        const data = await r.json();
-        throw new Error(data.error ?? "Error");
-      }
-      setSlackSent(true);
-    } catch (e) {
-      console.error("send-slack error:", e);
-    } finally {
-      setSlackSending(false);
-    }
-  }, [details, localScore, stageLabel]);
 
   if (loading || !details) {
     return (
@@ -488,87 +354,37 @@ export function DealDetailPanel({
           </div>
         </div>
         <div style={{ display: "inline-flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-          <IconButton
-            icon={Mail}
-            aria-label="Write an email"
-            onClick={() => generateEmail()}
-            disabled={generating}
-            title="Follow-up email"
-          />
           <button
             type="button"
-            onClick={openCoach}
-            aria-label="Ask the deal coach"
-            title="Ask the deal coach"
+            onClick={() => setCoachOpen(true)}
+            aria-haspopup="dialog"
+            title="Chat with CoachelloAI about this deal, with its transcripts, emails and Slack"
             style={{
               display: "inline-flex",
               alignItems: "center",
-              justifyContent: "center",
-              width: 36,
-              height: 36,
+              gap: 8,
+              padding: "6px 14px 6px 7px",
               borderRadius: 8,
-              background: COLORS.bgCard,
-              border: `1px solid ${COLORS.lineStrong}`,
+              background: COLORS.brandTintSoft,
+              color: COLORS.brand,
+              border: `1px solid ${COLORS.brand}`,
               cursor: "pointer",
-              padding: 0,
-              transition: "all 0.15s",
+              fontSize: 13,
+              fontWeight: 600,
+              letterSpacing: "-0.005em",
+              whiteSpace: "nowrap",
+              transition: "background 0.15s",
             }}
             onMouseEnter={(e) => {
-              e.currentTarget.style.borderColor = COLORS.brand;
-              e.currentTarget.style.background = COLORS.brandTintSoft;
+              e.currentTarget.style.background = COLORS.brandTint;
             }}
             onMouseLeave={(e) => {
-              e.currentTarget.style.borderColor = COLORS.lineStrong;
-              e.currentTarget.style.background = COLORS.bgCard;
+              e.currentTarget.style.background = COLORS.brandTintSoft;
             }}
           >
-            <img
-              src="/3d-claude-ai-logo.jpg"
-              alt="Claude"
-              style={{ width: 22, height: 22, borderRadius: 4 }}
-            />
+            <img src="/3d-claude-ai-logo.jpg" alt="" style={{ width: 22, height: 22, borderRadius: 5 }} />
+            Want to discuss this deal?
           </button>
-          <span style={{ width: 1, height: 22, background: COLORS.line, margin: "0 2px" }} />
-          {slackName && (
-            <button
-              type="button"
-              onClick={sendToSlack}
-              disabled={slackSending || slackSent}
-              aria-label="Send to Slack"
-              title="Send as Slack DM"
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "9px 16px",
-                borderRadius: 8,
-                background: slackSent ? COLORS.ok : COLORS.ink0,
-                color: "#fff",
-                border: "none",
-                cursor: slackSending || slackSent ? "default" : "pointer",
-                fontSize: 13,
-                fontWeight: 600,
-                letterSpacing: "-0.005em",
-                opacity: slackSending && !slackSent ? 0.7 : 1,
-                transition: "background 0.15s, opacity 0.15s",
-              }}
-              onMouseEnter={(e) => {
-                if (!slackSending && !slackSent) e.currentTarget.style.background = COLORS.ink1;
-              }}
-              onMouseLeave={(e) => {
-                if (!slackSending && !slackSent) e.currentTarget.style.background = COLORS.ink0;
-              }}
-            >
-              {slackSending ? (
-                <RefreshCw size={14} className="animate-spin" />
-              ) : slackSent ? (
-                <CheckCircle size={14} />
-              ) : (
-                <Send size={14} />
-              )}
-              {slackSent ? "Sent" : "Slack"}
-            </button>
-          )}
           <button
             type="button"
             onClick={rescore}
@@ -637,19 +453,9 @@ export function DealDetailPanel({
           <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           {showScoreDetails && activeScore && <DealScoreDetails score={activeScore} reasoning={activeReasoning} />}
 
-          {/* Next move en tête (action + étapes), puis le chat coach qu'il ouvre. */}
+          {/* Next move en tête (action + étapes) ; son bouton ouvre la pop-up de discussion. */}
           {(activeNextMove || activeNextAction) && (
-            <DealNextMove
-              move={activeNextMove}
-              text={activeNextAction}
-              chatOpen={coachOpen}
-              onAsk={() => (coachOpen ? setCoachOpen(false) : openCoach())}
-            />
-          )}
-          {coachOpen && (
-            <div ref={coachRef} style={{ scrollMarginTop: 12 }}>
-              <DealCoachChat key={details.id} dealId={details.id} dealName={details.dealname} onClose={() => setCoachOpen(false)} />
-            </div>
+            <DealNextMove move={activeNextMove} text={activeNextAction} onAsk={() => setCoachOpen(true)} />
           )}
 
           {/* Stratégie du deal : Path to close */}
@@ -814,182 +620,6 @@ export function DealDetailPanel({
           {/* News Tavily (signaux business) */}
           {details.id && <DealNewsCard dealId={details.id} />}
 
-          {/* Email composer */}
-          {sent && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.ok, fontSize: 13 }}>
-              <CheckCircle size={14} /> Email sent successfully
-            </div>
-          )}
-          {showComposer && !sent && (
-            <Card padding={14}>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <input
-                  value={emailTo}
-                  onChange={(e) => setEmailTo(e.target.value)}
-                  placeholder="To (email)"
-                  style={{
-                    fontSize: 13,
-                    padding: "7px 10px",
-                    borderRadius: 6,
-                    border: `1px solid ${COLORS.line}`,
-                    outline: "none",
-                  }}
-                />
-                <input
-                  value={emailSubject}
-                  onChange={(e) => setEmailSubject(e.target.value)}
-                  placeholder="Subject"
-                  style={{
-                    fontSize: 13,
-                    padding: "7px 10px",
-                    borderRadius: 6,
-                    border: `1px solid ${COLORS.line}`,
-                    outline: "none",
-                  }}
-                />
-                <textarea
-                  value={emailBody}
-                  onChange={(e) => setEmailBody(e.target.value)}
-                  rows={8}
-                  style={{
-                    fontSize: 13,
-                    padding: "8px 10px",
-                    borderRadius: 6,
-                    border: `1px solid ${COLORS.line}`,
-                    outline: "none",
-                    resize: "vertical",
-                    fontFamily: "inherit",
-                    lineHeight: 1.5,
-                  }}
-                />
-
-                {/* Reprompt : retouche le brouillon courant plutôt que de tout refaire */}
-                <div
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 6,
-                    padding: 10,
-                    borderRadius: 6,
-                    background: COLORS.bgSoft,
-                  }}
-                >
-                  <span style={{ display: "inline-flex", alignItems: "center", gap: 5, fontSize: 12, fontWeight: 600, color: COLORS.ink0 }}>
-                    <Sparkles size={12} style={{ color: COLORS.brand }} />
-                    Ask Claude to rewrite
-                  </span>
-                  <textarea
-                    value={emailInstructions}
-                    onChange={(e) => setEmailInstructions(e.target.value)}
-                    rows={2}
-                    disabled={generating}
-                    placeholder="e.g. Make it shorter, warmer tone, push for a meeting next week…"
-                    style={{
-                      fontSize: 12,
-                      padding: "7px 9px",
-                      borderRadius: 6,
-                      border: `1px solid ${COLORS.line}`,
-                      outline: "none",
-                      resize: "none",
-                      fontFamily: "inherit",
-                      background: "#fff",
-                    }}
-                  />
-                  <button
-                    onClick={() => generateEmail(emailInstructions.trim())}
-                    disabled={generating || !emailInstructions.trim()}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 5,
-                      padding: 7,
-                      borderRadius: 6,
-                      background: generating || !emailInstructions.trim() ? COLORS.bgSoft : COLORS.brand,
-                      color: generating || !emailInstructions.trim() ? COLORS.ink3 : "#fff",
-                      border: generating || !emailInstructions.trim() ? `1px solid ${COLORS.line}` : "none",
-                      fontSize: 12,
-                      fontWeight: 600,
-                      cursor: generating || !emailInstructions.trim() ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    <Wand2 size={12} />
-                    {generating ? "Rewriting…" : "Rewrite"}
-                  </button>
-                </div>
-
-                {hasSignature ? (
-                  <button
-                    onClick={() => setIncludeSignature((v) => !v)}
-                    title={includeSignature ? "Signature added to this email" : "Signature disabled for this email"}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 5,
-                      alignSelf: "flex-start",
-                      background: "none",
-                      border: "none",
-                      padding: 0,
-                      fontSize: 12,
-                      color: includeSignature ? COLORS.brand : COLORS.ink3,
-                      cursor: "pointer",
-                    }}
-                  >
-                    <PenLine size={13} />
-                    {includeSignature ? "Signature on" : "Signature off"}
-                  </button>
-                ) : (
-                  <Link
-                    href="/settings"
-                    title="Set up your signature in Settings"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 5, alignSelf: "flex-start", fontSize: 12, color: COLORS.ink3 }}
-                  >
-                    <PenLine size={13} />
-                    Add signature
-                  </Link>
-                )}
-
-                {emailError && (
-                  <div style={{ fontSize: 12, color: COLORS.err }}>{emailError}</div>
-                )}
-
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button
-                    onClick={sendEmail}
-                    disabled={sending || !emailTo}
-                    style={{
-                      flex: 1,
-                      padding: 8,
-                      borderRadius: 6,
-                      background: sending || !emailTo ? COLORS.bgSoft : COLORS.brand,
-                      color: sending || !emailTo ? COLORS.ink3 : "#fff",
-                      border: "none",
-                      fontSize: 13,
-                      fontWeight: 600,
-                      cursor: sending || !emailTo ? "not-allowed" : "pointer",
-                    }}
-                  >
-                    {sending ? "Sending…" : "Send via Gmail"}
-                  </button>
-                  <button
-                    onClick={() => setShowComposer(false)}
-                    style={{
-                      padding: "8px 14px",
-                      borderRadius: 6,
-                      background: "none",
-                      border: `1px solid ${COLORS.line}`,
-                      color: COLORS.ink2,
-                      fontSize: 13,
-                      cursor: "pointer",
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            </Card>
-          )}
-
           {/* Recent activity collapsible */}
           {details.engagements.length > 0 && (
             <Card padding={14}>
@@ -1096,6 +726,15 @@ export function DealDetailPanel({
           </div>
       </div>
 
+      {/* Toujours monté (pop-up fermée = rien d'affiché) : la conversation
+          survit à la fermeture, et repart de zéro au changement de deal. */}
+      <DealCoachChat
+        key={details.id}
+        dealId={details.id}
+        dealName={details.dealname}
+        open={coachOpen}
+        onClose={() => setCoachOpen(false)}
+      />
     </div>
   );
 }

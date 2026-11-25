@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, X } from "lucide-react";
+import { ChevronDown, ListFilter, X } from "lucide-react";
 import type { DealScore } from "@/lib/deal-scoring";
+import { COLORS } from "@/lib/design/tokens";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,7 +33,9 @@ export const DEFAULT_DEAL_FILTERS: DealFilters = {
   startedFrom: "",
   startedTo: "",
   scoreTiers: [],
-  ownerMode: "mine",
+  // Tous les owners par défaut : "My deals" donnait un board vide à qui n'a
+  // pas de deal ouvert, sans qu'on comprenne pourquoi.
+  ownerMode: "all",
   ownerIds: [],
   amounts: [],
   amountMin: "",
@@ -146,48 +149,36 @@ export function applyDealFilters<T extends DealLike>(deals: T[], f: DealFilters)
   });
 }
 
-export function countActiveFilters(f: DealFilters): number {
-  let n = 0;
-  if (f.activity !== "all") n++;
-  if (f.started !== "all") n++;
-  if (f.scoreTiers.length > 0) n++;
-  if (f.ownerMode !== "mine" || f.ownerIds.length > 0) n++;
-  if (f.amounts.length > 0 || f.amountMin || f.amountMax) n++;
-  return n;
-}
-
 // ─── Chip + popover primitive ─────────────────────────────────────────────────
 
 function Chip({
-  label, active, summary, onClick, onClear,
+  label, active, summary, open, onClick, onClear,
 }: {
   label: string;
   active: boolean;
   summary?: string;
+  open: boolean;
   onClick: () => void;
   onClear?: () => void;
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 5,
-        padding: "6px 10px", borderRadius: 8, fontSize: 12, fontWeight: 500,
-        border: "1px solid",
-        borderColor: active ? "#6366f1" : "#e5e7eb",
-        background: active ? "#eef2ff" : "white",
-        color: active ? "#4338ca" : "#6b7280",
-        cursor: "pointer", whiteSpace: "nowrap",
-      }}
+      aria-expanded={open}
+      className={`ds-filter-chip ${active ? "ds-filter-chip-active" : ""}`.trim()}
     >
       <span>{label}</span>
-      {active && summary && <span style={{ color: "#4338ca", fontWeight: 600 }}>: {summary}</span>}
+      {active && summary && <span className="ds-filter-chip-value">{summary}</span>}
       {active && onClear ? (
         <span
+          role="button"
+          aria-label={`Clear ${label} filter`}
+          title="Clear"
+          className="ds-filter-chip-clear"
           onClick={(e) => { e.stopPropagation(); onClear(); }}
-          style={{ display: "inline-flex", padding: 1, marginLeft: 2 }}
         >
-          <X size={11} />
+          <X size={11} strokeWidth={2.5} />
         </span>
       ) : (
         <ChevronDown size={12} />
@@ -240,15 +231,15 @@ function RadioRow({ checked, label, onSelect }: { checked: boolean; label: strin
       onClick={onSelect}
       style={{
         width: "100%", textAlign: "left", padding: "6px 8px", borderRadius: 6,
-        background: checked ? "#eef2ff" : "transparent", border: "none",
-        fontSize: 12, color: checked ? "#4338ca" : "#374151", fontWeight: checked ? 600 : 500,
+        background: checked ? COLORS.brandTint : "transparent", border: "none",
+        fontSize: 12, color: checked ? COLORS.brandDark : "#374151", fontWeight: checked ? 600 : 500,
         cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
       }}
     >
       <span style={{
         width: 12, height: 12, borderRadius: "50%", flexShrink: 0,
-        border: `1.5px solid ${checked ? "#6366f1" : "#d1d5db"}`,
-        background: checked ? "#6366f1" : "white",
+        border: `1.5px solid ${checked ? COLORS.brand : "#d1d5db"}`,
+        background: checked ? COLORS.brand : "white",
         boxShadow: checked ? "inset 0 0 0 2px white" : undefined,
       }} />
       {label}
@@ -262,15 +253,15 @@ function CheckRow({ checked, label, onToggle }: { checked: boolean; label: strin
       onClick={onToggle}
       style={{
         width: "100%", textAlign: "left", padding: "6px 8px", borderRadius: 6,
-        background: checked ? "#eef2ff" : "transparent", border: "none",
-        fontSize: 12, color: checked ? "#4338ca" : "#374151", fontWeight: checked ? 600 : 500,
+        background: checked ? COLORS.brandTint : "transparent", border: "none",
+        fontSize: 12, color: checked ? COLORS.brandDark : "#374151", fontWeight: checked ? 600 : 500,
         cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
       }}
     >
       <span style={{
         width: 14, height: 14, borderRadius: 3, flexShrink: 0,
-        border: `1.5px solid ${checked ? "#6366f1" : "#d1d5db"}`,
-        background: checked ? "#6366f1" : "white",
+        border: `1.5px solid ${checked ? COLORS.brand : "#d1d5db"}`,
+        background: checked ? COLORS.brand : "white",
         display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: 10, color: "white",
       }}>{checked ? "✓" : ""}</span>
@@ -290,6 +281,7 @@ function ActivityChip({ value, onChange }: { value: ActivityFilter; onChange: (v
         label="Activity"
         active={value !== "all"}
         summary={value !== "all" ? ACTIVITY_LABELS[value] : undefined}
+        open={open}
         onClick={() => setOpen((o) => !o)}
         onClear={value !== "all" ? () => onChange("all") : undefined}
       />
@@ -321,6 +313,7 @@ function StartedChip({
         label="Started"
         active={value !== "all"}
         summary={summary}
+        open={open}
         onClick={() => setOpen((o) => !o)}
         onClear={value !== "all" ? () => onChange("all", "", "") : undefined}
       />
@@ -370,6 +363,7 @@ function ScoreChip({
         label="Score"
         active={active}
         summary={summary}
+        open={open}
         onClick={() => setOpen((o) => !o)}
         onClear={active ? () => onChange([]) : undefined}
       />
@@ -393,11 +387,12 @@ function OwnerChip({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
-  const active = mode !== "mine" || ownerIds.length > 0;
+  // Filtré = "My deals" ou des owners précis. "All owners" est l'état neutre.
+  const active = mode === "mine" || ownerIds.length > 0;
   const summary = ownerIds.length === 1
-    ? (owners.find((o) => o.id === ownerIds[0])?.name ?? "1")
+    ? (owners.find((o) => o.id === ownerIds[0])?.name || "1 owner")
     : ownerIds.length > 1 ? `${ownerIds.length} owners`
-    : mode === "mine" ? undefined : "All";
+    : mode === "mine" ? "My deals" : undefined;
   const toggle = (id: string) => {
     const next = ownerIds.includes(id) ? ownerIds.filter((x) => x !== id) : [...ownerIds, id];
     onChange("all", next);
@@ -410,35 +405,36 @@ function OwnerChip({
       <Chip
         label="Owner"
         active={active}
-        summary={mode === "mine" && ownerIds.length === 0 ? "My deals" : summary}
+        summary={summary}
+        open={open}
         onClick={() => setOpen((o) => !o)}
-        onClear={active ? () => onChange("mine", []) : undefined}
+        onClear={active ? () => onChange("all", []) : undefined}
       />
       <Popover open={open} anchorRef={ref} onClose={() => setOpen(false)} width={260}>
         <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-          <button
-            onClick={() => { onChange("mine", []); setOpen(false); }}
-            style={{
-              fontSize: 11, padding: "4px 10px", borderRadius: 99,
-              border: "1px solid #e5e7eb",
-              background: mode === "mine" && ownerIds.length === 0 ? "#eef2ff" : "white",
-              color: mode === "mine" && ownerIds.length === 0 ? "#4338ca" : "#6b7280",
-              cursor: "pointer", fontWeight: 500,
-            }}
-          >
-            My deals
-          </button>
           <button
             onClick={() => onChange("all", [])}
             style={{
               fontSize: 11, padding: "4px 10px", borderRadius: 99,
               border: "1px solid #e5e7eb",
-              background: mode === "all" && ownerIds.length === 0 ? "#eef2ff" : "white",
-              color: mode === "all" && ownerIds.length === 0 ? "#4338ca" : "#6b7280",
+              background: mode === "all" && ownerIds.length === 0 ? COLORS.brandTint : "white",
+              color: mode === "all" && ownerIds.length === 0 ? COLORS.brandDark : "#6b7280",
               cursor: "pointer", fontWeight: 500,
             }}
           >
             All owners
+          </button>
+          <button
+            onClick={() => { onChange("mine", []); setOpen(false); }}
+            style={{
+              fontSize: 11, padding: "4px 10px", borderRadius: 99,
+              border: "1px solid #e5e7eb",
+              background: mode === "mine" && ownerIds.length === 0 ? COLORS.brandTint : "white",
+              color: mode === "mine" && ownerIds.length === 0 ? COLORS.brandDark : "#6b7280",
+              cursor: "pointer", fontWeight: 500,
+            }}
+          >
+            My deals
           </button>
         </div>
         {mode === "all" && (
@@ -456,7 +452,7 @@ function OwnerChip({
               {filtered.length === 0 ? (
                 <div style={{ fontSize: 11, color: "#9ca3af", padding: "6px 8px" }}>No owner</div>
               ) : filtered.map((o) => (
-                <CheckRow key={o.id} checked={ownerIds.includes(o.id)} label={o.name || "—"} onToggle={() => toggle(o.id)} />
+                <CheckRow key={o.id} checked={ownerIds.includes(o.id)} label={o.name || "Unnamed owner"} onToggle={() => toggle(o.id)} />
               ))}
             </div>
           </>
@@ -490,6 +486,7 @@ function AmountChip({
         label="Amount"
         active={active}
         summary={summary}
+        open={open}
         onClick={() => setOpen((o) => !o)}
         onClear={active ? () => onChange([], "", "") : undefined}
       />
@@ -525,6 +522,8 @@ function AmountChip({
 
 // ─── Bar ──────────────────────────────────────────────────────────────────────
 
+// La réinitialisation vit dans ActiveFiltersStrip, affiché sous le header dès
+// qu'un filtre est actif.
 export function DealFiltersBar({
   filters, onChange, owners,
 }: {
@@ -532,7 +531,6 @@ export function DealFiltersBar({
   onChange: (next: DealFilters) => void;
   owners: { id: string; name: string }[];
 }) {
-  const activeCount = countActiveFilters(filters);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
       <OwnerChip
@@ -561,17 +559,150 @@ export function DealFiltersBar({
         max={filters.amountMax}
         onChange={(amounts, amountMin, amountMax) => onChange({ ...filters, amounts, amountMin, amountMax })}
       />
-      {activeCount > 0 && (
-        <button
-          onClick={() => onChange(DEFAULT_DEAL_FILTERS)}
-          style={{
-            fontSize: 11, color: "#6b7280", background: "none", border: "none",
-            cursor: "pointer", textDecoration: "underline", padding: "4px 6px",
-          }}
-        >
-          Reset ({activeCount})
-        </button>
-      )}
+    </div>
+  );
+}
+
+// ─── Active filters strip ─────────────────────────────────────────────────────
+
+interface ActiveFilter {
+  key: string;
+  label: string;
+  value: string;
+  reset: Partial<DealFilters>;
+}
+
+/** Filtres actifs en clair (valeurs complètes, contrairement aux chips). */
+export function describeActiveFilters(f: DealFilters, owners: { id: string; name: string }[]): ActiveFilter[] {
+  const out: ActiveFilter[] = [];
+  if (f.ownerIds.length > 0) {
+    const names = f.ownerIds.map((id) => owners.find((o) => o.id === id)?.name || "Unnamed owner");
+    out.push({ key: "owner", label: "Owner", value: names.join(", "), reset: { ownerMode: "all", ownerIds: [] } });
+  } else if (f.ownerMode === "mine") {
+    out.push({ key: "owner", label: "Owner", value: "My deals", reset: { ownerMode: "all", ownerIds: [] } });
+  }
+  if (f.activity !== "all") {
+    out.push({ key: "activity", label: "Activity", value: ACTIVITY_LABELS[f.activity], reset: { activity: "all" } });
+  }
+  if (f.started !== "all") {
+    const value = f.started === "custom"
+      ? [f.startedFrom, f.startedTo].filter(Boolean).join(" → ") || "Custom range"
+      : STARTED_LABELS[f.started];
+    out.push({ key: "started", label: "Started", value, reset: { started: "all", startedFrom: "", startedTo: "" } });
+  }
+  if (f.scoreTiers.length > 0) {
+    out.push({ key: "score", label: "Score", value: f.scoreTiers.map((t) => SCORE_LABELS[t]).join(", "), reset: { scoreTiers: [] } });
+  }
+  if (f.amounts.length > 0 || f.amountMin || f.amountMax) {
+    const parts = f.amounts.map((b) => AMOUNT_LABELS[b]);
+    if (f.amountMin || f.amountMax) parts.push(`${f.amountMin || "0"}–${f.amountMax || "∞"}€`);
+    out.push({ key: "amount", label: "Amount", value: parts.join(", "), reset: { amounts: [], amountMin: "", amountMax: "" } });
+  }
+  return out;
+}
+
+/**
+ * Bandeau "Filtered view" sous le header : dit en toutes lettres que le board
+ * est filtré, par quoi, combien de deals restent, et permet de tout effacer.
+ * `shown` / `total` : deals ouverts hors To nurture. `total` n'est passé que
+ * s'il est comparable (vue tous owners), sinon on n'affiche que `shown`.
+ */
+export function ActiveFiltersStrip({
+  filters, owners, onChange, search, onClearSearch, shown, total,
+}: {
+  filters: DealFilters;
+  owners: { id: string; name: string }[];
+  onChange: (next: DealFilters) => void;
+  search: string;
+  onClearSearch: () => void;
+  shown: number;
+  total?: number;
+}) {
+  const active = describeActiveFilters(filters, owners);
+  const searchTerm = search.trim();
+  if (active.length === 0 && !searchTerm) return null;
+
+  const tokens = [
+    ...(searchTerm ? [{ key: "search", label: "Search", value: `"${searchTerm}"`, onClear: onClearSearch }] : []),
+    ...active.map((a) => ({ key: a.key, label: a.label, value: a.value, onClear: () => onChange({ ...filters, ...a.reset }) })),
+  ];
+  // Même base que la pastille "Deals" du header (To nurture exclu).
+  const countText = total !== undefined && total !== shown
+    ? `${shown} of ${total} deals match`
+    : `${shown} deal${shown === 1 ? "" : "s"} match${shown === 1 ? "es" : ""}`;
+
+  return (
+    <div
+      role="status"
+      style={{
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 10,
+        flexWrap: "wrap",
+        padding: "7px 20px",
+        background: COLORS.brandTintSoft,
+        borderBottom: `1px solid ${COLORS.brandTint}`,
+        fontSize: 12,
+        color: COLORS.ink1,
+      }}
+    >
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700, color: COLORS.brandDark }}>
+        <ListFilter size={14} />
+        Filtered view
+      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", minWidth: 0 }}>
+        {tokens.map((t) => (
+          <span
+            key={t.key}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "2px 4px 2px 9px",
+              borderRadius: 999,
+              background: COLORS.bgCard,
+              border: `1px solid ${COLORS.brandTint}`,
+              color: COLORS.ink1,
+              maxWidth: 360,
+            }}
+          >
+            <span style={{ color: COLORS.ink3 }}>{t.label}</span>
+            <span style={{ fontWeight: 600, color: COLORS.ink0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.value}</span>
+            <button
+              type="button"
+              aria-label={`Remove ${t.label} filter`}
+              title="Remove"
+              onClick={t.onClear}
+              className="ds-filter-chip-clear"
+              style={{ marginRight: 0 }}
+            >
+              <X size={11} strokeWidth={2.5} />
+            </button>
+          </span>
+        ))}
+      </div>
+      <span style={{ color: COLORS.ink2, fontVariantNumeric: "tabular-nums" }}>{countText}</span>
+      <button
+        type="button"
+        onClick={() => {
+          onChange(DEFAULT_DEAL_FILTERS);
+          if (searchTerm) onClearSearch();
+        }}
+        style={{
+          marginLeft: "auto",
+          border: "none",
+          background: "transparent",
+          padding: "3px 6px",
+          borderRadius: 6,
+          fontSize: 12,
+          fontWeight: 600,
+          color: COLORS.brand,
+          cursor: "pointer",
+        }}
+      >
+        Clear all
+      </button>
     </div>
   );
 }

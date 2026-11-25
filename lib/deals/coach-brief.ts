@@ -1,6 +1,12 @@
 import { db } from "../db";
 import { hubspotFetch } from "@/lib/hubspot";
-import { fetchDealCompany, fetchSalesCoachRecaps } from "./context-sources";
+import {
+  fetchDealCompany,
+  fetchDealExchanges,
+  fetchDealSlackMentions,
+  fetchSalesCoachRecaps,
+  slackDay,
+} from "./context-sources";
 import { COMMITTEE_METHOD_PROMPT, KUNA_METHOD_PROMPT } from "./kuna-method";
 import {
   COMMITTEE_ROLES,
@@ -23,13 +29,162 @@ import {
 
 const BRIEF_MAX_CHARS = 16_000;
 
+// Dossier du chat coach (withDossier) : de quoi répondre sans outil sur un deal
+// courant. ~50k tokens au maximum (mesuré sur Helpline le 2026-11-25 : un
+// transcript compte ~2,5 caractères par token), mis en cache Anthropic avec le
+// reste du system (lib/chat/prompt/build.ts). Au-delà, la conversation (tours +
+// transcripts relus par outil) risquerait de dépasser la fenêtre du modèle.
+// Les meetings sans transcript chargé restent couverts par leur résumé Claap,
+// loggé en note HubSpot et donc présent dans les échanges.
+const TRANSCRIPTS_MAX_CHARS = 60_000;
+const TRANSCRIPT_MIN_CHARS = 8_000; // en dessous, un transcript coupé ne sert plus à rien
+const EXCHANGES_MAX_CHARS = 40_000;
+const SLACK_MAX_CHARS = 10_000;
+
+/**
+ * Transcript Claap compacté : l'horodatage saute ("12:34 Marie Dupont: texte"
+ * devient "Marie Dupont: texte", "speaker_1" devient "S1") et les répliques
+ * consécutives d'un même locuteur sont fusionnées. Les horodatages coûtent
+ * cher en tokens et ne servent pas au coach.
+ */
+function compactTranscript(text: string): string {
+  const out: string[] = [];
+  let current: string | null = null;
+  for (const line of text.split("\n")) {
+    const m = line.match(/^\s*(?:\d{1,2}:)?\d{1,2}:\d{2}\s+([^:]{1,60}):\s*(.*)$/);
+    if (!m) {
+      if (line.trim()) out.push(line.trim());
+      current = null;
+      continue;
+    }
+    const speaker = m[1].trim().replace(/^speaker_(\d+)$/, "S$1");
+    if (speaker === current && out.length) out[out.length - 1] += ` ${m[2]}`;
+    else out.push(`${speaker}: ${m[2]}`);
+    current = speaker;
+  }
+  return out.join("\n");
+}
+
 type Props = Record<string, string | null | undefined>;
 
 const day = (v: string | null | undefined) => (v ? new Date(v).toISOString().slice(0, 10) : "?");
 
+/**
+ * Contenu brut du deal pour le chat coach : transcripts Claap (table
+ * sales_coach_analyses), emails / notes / calls / meetings HubSpot complets,
+ * messages Slack internes qui citent l'entreprise. Chaque source illisible est
+ * signalée comme telle, jamais confondue avec "rien".
+ */
+async function buildDealDossier(dealId: string, company: { id: string | null; name: string }): Promise<string> {
+  const [meetingsRes, exchangesRes, slackRes] = await Promise.allSettled([
+    fetchSalesCoachRecaps(dealId, { companyId: company.id, limit: 12, withTranscript: true }),
+    fetchDealExchanges(dealId),
+    fetchDealSlackMentions(company.name, { count: 25, textChars: 1000 }),
+  ]);
+
+  // 1. Transcripts Claap, du plus récent au plus ancien, dans la limite du budget.
+  let transcripts: string;
+  if (meetingsRes.status === "rejected") {
+    transcripts = "TRANSCRIPTS CLAAP : pas pu être lus (erreur base). Utilise search_claap_meetings avec deal_id puis get_claap_meeting_transcript.";
+  } else if (meetingsRes.value.length === 0) {
+    transcripts = "TRANSCRIPTS CLAAP : aucun meeting analysé par Sales Coach pour ce deal ou son entreprise. Vérifie avec search_claap_meetings (deal_id) s'il existe des meetings non rattachés.";
+  } else {
+    let budget = TRANSCRIPTS_MAX_CHARS;
+    const loaded: string[] = [];
+    const listed: string[] = [];
+    for (const m of meetingsRes.value) {
+      const who = (m.participants ?? [])
+        .filter((p) => p.attended !== false)
+        .map((p) => p.name || p.email)
+        .filter(Boolean)
+        .slice(0, 10)
+        .join(", ");
+      const head = [
+        `[${day(m.meeting_started_at)}] ${m.meeting_title ?? "Meeting"}`,
+        m.audience ? `audience ${m.audience}` : null,
+        m.claap_recording_id ? `recording_id ${m.claap_recording_id}` : null,
+        m.hubspot_deal_id ? null : "rattaché à l'entreprise seulement",
+      ].filter(Boolean).join(" | ");
+      const text = compactTranscript(m.transcript_text?.trim() ?? "");
+      if (!text) {
+        listed.push(`- ${head} : transcript indisponible`);
+        continue;
+      }
+      if (budget < TRANSCRIPT_MIN_CHARS) {
+        listed.push(`- ${head}`);
+        continue;
+      }
+      let body = text;
+      if (text.length > budget) {
+        // Début (contexte, besoin) et fin (prochaines étapes) : le milieu saute.
+        const keep = budget - 200;
+        const headLen = Math.floor(keep * 0.4);
+        body = `${text.slice(0, headLen)}\n[… milieu du meeting coupé : lis-le en entier avec get_claap_meeting_transcript …]\n${text.slice(text.length - (keep - headLen))}`;
+      }
+      budget -= body.length;
+      loaded.push(`### ${head}${who ? `\nParticipants : ${who}` : ""}\n${body}`);
+    }
+    transcripts = [
+      "TRANSCRIPTS CLAAP (meetings du deal ou de son entreprise, du plus récent au plus ancien ; un locuteur S0, S1... est à identifier par le contexte et la liste des participants)",
+      ...loaded,
+      listed.length
+        ? `Meetings plus anciens, transcript non chargé ici (get_claap_meeting_transcript avec le recording_id si besoin) :\n${listed.join("\n")}`
+        : null,
+    ].filter(Boolean).join("\n\n");
+  }
+
+  // 2. Échanges HubSpot complets.
+  let exchanges: string;
+  if (exchangesRes.status === "rejected") {
+    exchanges = "ÉCHANGES HUBSPOT : pas pu être lus. Utilise get_deal_activity.";
+  } else {
+    const { exchanges: rows, errors } = exchangesRes.value;
+    let budget = EXCHANGES_MAX_CHARS;
+    const kept: string[] = [];
+    for (const e of rows) {
+      const line = `[${e.kind} ${day(e.at)}${e.meta ? `, ${e.meta}` : ""}]${e.title ? ` ${e.title}` : ""}\n${e.body}`;
+      if (line.length > budget) break;
+      budget -= line.length;
+      kept.push(line);
+    }
+    exchanges = [
+      "ÉCHANGES HUBSPOT DU DEAL (emails sans l'historique cité, notes, calls, meetings ; du plus récent au plus ancien)",
+      errors.length ? `Attention : ${errors.join(", ")} pas pu être lus dans HubSpot.` : null,
+      kept.length ? kept.join("\n\n") : "Aucun échange enregistré sur le deal dans HubSpot.",
+      rows.length > kept.length ? `${rows.length - kept.length} échange(s) plus ancien(s) non chargé(s) ici (get_deal_activity).` : null,
+    ].filter(Boolean).join("\n\n");
+  }
+
+  // 3. Slack interne.
+  let slack: string;
+  if (slackRes.status === "rejected" || slackRes.value.error) {
+    const reason = slackRes.status === "rejected" ? "erreur" : slackRes.value.error;
+    slack = `SLACK : recherche sur "${company.name}" impossible (${reason}). Utilise search_slack si la question l'exige.`;
+  } else if (slackRes.value.messages.length === 0) {
+    slack = `SLACK : aucun message interne ne cite "${company.name}".`;
+  } else {
+    const lines = slackRes.value.messages
+      .map((m) => `[#${m.channel} ${slackDay(m.timestamp)}] ${m.text}`)
+      .join("\n\n")
+      .slice(0, SLACK_MAX_CHARS);
+    slack = `CONVERSATIONS SLACK INTERNES QUI CITENT "${company.name}"\n${lines}`;
+  }
+
+  return [
+    "DOSSIER COMPLET DU DEAL (chargé pour cette question : ne le relis pas avec tes outils)",
+    transcripts,
+    exchanges,
+    slack,
+  ].join("\n\n────────\n\n");
+}
+
 // withMethod : false pour l'outil get_deal_qualification (CoachelloAI et
-// agents), qui n'a besoin que des faits du deal.
-export async function buildDealCoachBrief(dealId: string, opts: { withMethod?: boolean } = {}): Promise<string> {
+// agents), qui n'a besoin que des faits du deal. withDossier : true pour le
+// chat coach de la fiche deal (transcripts, échanges et Slack en plus).
+export async function buildDealCoachBrief(
+  dealId: string,
+  opts: { withMethod?: boolean; withDossier?: boolean } = {},
+): Promise<string> {
   const deal = await hubspotFetch<{ properties?: Props }>(
     `/crm/v3/objects/deals/${dealId}?properties=dealname,dealstage,amount,closedate,createdate,hubspot_owner_id,deal_type,description`,
   );
@@ -67,7 +222,12 @@ export async function buildDealCoachBrief(dealId: string, opts: { withMethod?: b
     : "";
   const contacts = contactsRes.status === "fulfilled" ? (contactsRes.value.results ?? []).map((c) => c.properties ?? {}) : [];
   const company = companyRes.status === "fulfilled" ? companyRes.value : { id: null, name: "" };
-  const recaps = await fetchSalesCoachRecaps(dealId, { companyId: company.id, limit: 5 }).catch(() => []);
+  const [recaps, dossier] = await Promise.all([
+    fetchSalesCoachRecaps(dealId, { companyId: company.id, limit: 5 }).catch(() => []),
+    opts.withDossier
+      ? buildDealDossier(dealId, company).catch((e) => `DOSSIER DU DEAL : pas pu être chargé (${e instanceof Error ? e.message : "erreur"}). Lis les échanges avec tes outils.`)
+      : Promise.resolve(null),
+  ]);
 
   // Même calcul que la fiche : emails entrants + meetings Claap du deal (pas
   // ceux rattachés seulement à la company) sur 30 jours.
@@ -153,5 +313,6 @@ export async function buildDealCoachBrief(dealId: string, opts: { withMethod?: b
   ].join("\n\n");
 
   const facts = lines.filter((l) => l !== null).join("\n").slice(0, BRIEF_MAX_CHARS);
-  return opts.withMethod === false ? facts : `${facts}\n\n${method}`;
+  const brief = opts.withMethod === false ? facts : `${facts}\n\n${method}`;
+  return dossier ? `${brief}\n\n${dossier}` : brief;
 }

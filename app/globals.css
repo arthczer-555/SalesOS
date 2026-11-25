@@ -367,6 +367,68 @@
   color: var(--c-info);
 }
 
+/* Filter chip (barres de filtres) : neutre au repos, rose plein une fois actif
+   pour qu'on voie d'un coup d'oeil que la vue est filtrée. */
+.ds-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--c-line-strong);
+  background: var(--c-bg-card);
+  color: var(--c-ink-1);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.ds-filter-chip:hover {
+  border-color: #d6d6dc;
+  background: var(--c-bg-soft);
+  color: var(--c-ink-0);
+}
+.ds-filter-chip[aria-expanded="true"] {
+  border-color: var(--c-ink-4);
+  color: var(--c-ink-0);
+}
+.ds-filter-chip-active,
+.ds-filter-chip-active[aria-expanded="true"] {
+  border-color: var(--c-brand);
+  background: var(--c-brand-tint);
+  color: var(--c-brand-dark);
+}
+.ds-filter-chip-active:hover {
+  border-color: var(--c-brand-dark);
+  background: #fbdbe6;
+  color: var(--c-brand-dark);
+}
+.ds-filter-chip-value {
+  font-weight: 700;
+}
+.ds-filter-chip-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: -3px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--c-brand);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.ds-filter-chip-clear:hover {
+  background: var(--c-brand);
+  color: #fff;
+}
+
 /* Icon button */
 .ds-icon-btn {
   display: inline-flex;

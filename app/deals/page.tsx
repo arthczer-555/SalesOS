@@ -7,15 +7,17 @@ import { useDeals, type DealsBoard } from "@/lib/hooks/use-deals";
 import { useLostDeals, type LostSort } from "@/lib/hooks/use-lost-deals";
 import { Zap, Search, RefreshCw, ArrowLeft } from "lucide-react";
 import { scoreBadge } from "@/lib/deal-scoring";
-import { DealFiltersBar, applyDealFilters, DEFAULT_DEAL_FILTERS, type DealFilters } from "./_components/deal-filters";
+import { ActiveFiltersStrip, DealFiltersBar, applyDealFilters, describeActiveFilters, DEFAULT_DEAL_FILTERS, type DealFilters } from "./_components/deal-filters";
 import { DealListGrouped } from "./_components/deal-list-grouped";
 import { DealDetailPanel } from "./_components/deal-detail-panel";
 import { DealLostPanel } from "./_components/deal-lost-panel";
 import { LOST_COLUMN_WIDTH, LostKanbanColumn } from "./_components/deal-lost-column";
 import { type Deal, type DealDetails, fmt, fmtDate, isOverdue, stageColor, timeAgo } from "./_helpers";
 import { COLORS } from "@/lib/design/tokens";
+import { Button } from "@/components/ui/button";
+import { IconButton } from "@/components/ui/icon-button";
 import { SegmentedControl } from "@/components/ui/segmented-control";
-import { StatPill } from "@/components/ui/stat-pill";
+import { useAutoCollapseSidebar } from "@/components/sidebar/sidebar-context";
 
 // ─── Deal Card (kanban) ────────────────────────────────────────────────────────
 
@@ -233,9 +235,48 @@ const KanbanColumn = memo(function KanbanColumn({
   );
 });
 
+// ─── Pipeline KPIs (header) ────────────────────────────────────────────────────
+
+// Une seule pastille segmentée, alignée sur la hauteur des boutons (32 px).
+function PipelineKpis({ items, filtered }: { items: { label: string; value: string }[]; filtered: boolean }) {
+  return (
+    <div
+      title={filtered ? "Totals of the deals shown (filters applied, To nurture excluded)" : "Open deals, To nurture excluded"}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        height: 32,
+        borderRadius: 8,
+        border: `1px solid ${filtered ? COLORS.brandTint : COLORS.line}`,
+        background: filtered ? COLORS.brandTintSoft : COLORS.bgSoft,
+        flexShrink: 0,
+      }}
+    >
+      {items.map((it, i) => (
+        <span
+          key={it.label}
+          style={{
+            display: "inline-flex",
+            alignItems: "baseline",
+            gap: 6,
+            padding: "0 12px",
+            borderLeft: i ? `1px solid ${filtered ? COLORS.brandTint : COLORS.line}` : "none",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <span style={{ fontSize: 11, fontWeight: 500, color: COLORS.ink3 }}>{it.label}</span>
+          <span style={{ fontSize: 13, fontWeight: 700, color: COLORS.ink0, fontVariantNumeric: "tabular-nums" }}>{it.value}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 function DealsPageInner() {
+  // Board large : la sidebar se replie à l'ouverture de Deals.
+  useAutoCollapseSidebar();
   const [searchQuery, setSearchQuery] = useState("");
   const [scoring, setScoring] = useState(false);
   const [scoreResult, setScoreResult] = useState<{ scored: number; total: number } | null>(null);
@@ -254,7 +295,7 @@ function DealsPageInner() {
   const [loadingDetails, setLoadingDetails] = useState(false);
   const [lastGlobalScoringAt, setLastGlobalScoringAt] = useState<string | null>(null);
 
-  const { isAdmin, slackName } = useUserMe();
+  const { isAdmin } = useUserMe();
 
   useEffect(() => {
     fetch("/api/hubspot/auto-link-owner").catch(() => {});
@@ -358,6 +399,12 @@ function DealsPageInner() {
     return applyDealFilters(bySearch, filters);
   }, [deals, searchQuery, filters]);
 
+  // Même définition que le bandeau "Filtered view".
+  const isFiltered = useMemo(
+    () => !!searchQuery.trim() || describeActiveFilters(filters, owners).length > 0,
+    [searchQuery, filters, owners]
+  );
+
   // Deals perdus : recherche + filtres owner / montant / date de début. Les
   // filtres d'activité et de score n'ont pas de sens sur un deal perdu.
   const filteredLost = useMemo(() => {
@@ -375,6 +422,13 @@ function DealsPageInner() {
   const metricsDeals = useMemo(
     () => filteredDeals.filter((d) => !nurtureStageIds.has(d.dealstage)),
     [filteredDeals, nurtureStageIds]
+  );
+
+  // Même base que la pastille "Deals" (To nurture exclu) pour que le bandeau
+  // "Filtered view" et les KPIs affichent des nombres comparables.
+  const openDealsCount = useMemo(
+    () => deals.filter((d) => !nurtureStageIds.has(d.dealstage)).length,
+    [deals, nurtureStageIds]
   );
 
   const pipelineTotal = useMemo(
@@ -486,7 +540,7 @@ function DealsPageInner() {
           background: COLORS.bgCard,
           display: "flex",
           alignItems: "center",
-          gap: 12,
+          gap: 10,
           flexWrap: "wrap",
         }}
       >
@@ -566,79 +620,67 @@ function DealsPageInner() {
 
         <DealFiltersBar filters={filters} onChange={setFilters} owners={owners} />
 
-        <button
-          onClick={() => {
-            setAppliedQuery(searchQuery);
-            reload();
-          }}
-          aria-label="Refresh"
-          style={{
-            padding: "6px 10px",
-            borderRadius: 8,
-            border: `1px solid ${COLORS.line}`,
-            background: COLORS.bgCard,
-            color: COLORS.ink2,
-            cursor: "pointer",
-          }}
-        >
-          <RefreshCw size={14} />
-        </button>
-
-        {isAdmin && (
-          <>
-            <button
-              onClick={scoreAll}
-              disabled={scoring}
-              style={{
-                padding: "6px 12px",
-                borderRadius: 8,
-                fontSize: 12,
-                fontWeight: 500,
-                cursor: scoring ? "not-allowed" : "pointer",
-                border: `1px solid ${COLORS.brand}`,
-                background: scoring ? COLORS.bgSoft : COLORS.brandTint,
-                color: scoring ? COLORS.ink3 : COLORS.brand,
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-              }}
-            >
-              {scoring ? (
-                <>
-                  <RefreshCw size={12} className="animate-spin" /> Scoring…
-                </>
-              ) : (
-                <>
-                  <Zap size={12} /> Score all deals
-                </>
-              )}
-            </button>
-            {scoreResult && !scoring && (
-              <span style={{ fontSize: 11, color: COLORS.ink2 }}>
-                {scoreResult.scored}/{scoreResult.total} scored
-              </span>
-            )}
-          </>
-        )}
-
-        {/* KPIs du pipeline : board seulement (en vue fiche ils faisaient passer
-            le header sur deux lignes). */}
-        {!isListMode && (
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          {lastGlobalScoringAt && (
+        {/* Droite : KPIs (board seulement, en vue fiche ils faisaient passer le
+            header sur deux lignes) puis actions. */}
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          {(scoreResult && !scoring) || lastGlobalScoringAt ? (
             <span
-              title={new Date(lastGlobalScoringAt).toLocaleString("en-GB")}
-              style={{ fontSize: 11, color: COLORS.ink3 }}
+              title={lastGlobalScoringAt ? `Last scoring: ${new Date(lastGlobalScoringAt).toLocaleString("en-GB")}` : undefined}
+              style={{ fontSize: 11, color: COLORS.ink3, whiteSpace: "nowrap" }}
             >
-              Last scoring: {timeAgo(lastGlobalScoringAt)}
+              {scoreResult && !scoring
+                ? `${scoreResult.scored}/${scoreResult.total} scored`
+                : `Scored ${timeAgo(lastGlobalScoringAt!)}`}
             </span>
+          ) : null}
+          {!isListMode && (
+            <PipelineKpis
+              filtered={isFiltered}
+              items={[
+                { label: "Pipeline", value: `${(pipelineTotal / 1000).toFixed(0)}k€` },
+                { label: "Weighted", value: `${(weightedTotal / 1000).toFixed(0)}k€` },
+                { label: "Deals", value: String(metricsDeals.length) },
+              ]}
+            />
           )}
-          <StatPill label="Pipeline" value={`${(pipelineTotal / 1000).toFixed(0)}k€`} />
-          <StatPill label="Weighted" value={`${(weightedTotal / 1000).toFixed(0)}k€`} />
-          <StatPill label="Deals" value={metricsDeals.length} />
+          <IconButton
+            icon={RefreshCw}
+            iconSize={14}
+            aria-label="Refresh"
+            title="Reload from HubSpot"
+            onClick={() => {
+              setAppliedQuery(searchQuery);
+              reload();
+            }}
+            style={{ borderRadius: 8 }}
+          />
+          {isAdmin && (
+            <Button
+              size="sm"
+              icon={Zap}
+              loading={scoring}
+              onClick={scoreAll}
+              title="Rescore every open deal with the AI"
+              style={{ height: 32 }}
+            >
+              {scoring ? "Scoring…" : "Score all"}
+            </Button>
+          )}
         </div>
-        )}
       </div>
+
+      <ActiveFiltersStrip
+        filters={filters}
+        owners={owners}
+        onChange={setFilters}
+        search={searchQuery}
+        onClearSearch={() => {
+          setSearchQuery("");
+          setAppliedQuery("");
+        }}
+        shown={metricsDeals.length}
+        total={filters.ownerMode === "all" ? openDealsCount : undefined}
+      />
 
       {/* Board */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
@@ -771,7 +813,6 @@ function DealsPageInner() {
             onRescore={() => {}}
             stageLabel={selectedStage?.label ?? ""}
             stageColor={stageColor(stageIdx)}
-            slackName={slackName}
             lastGlobalScoringAt={lastGlobalScoringAt}
             stages={openStages}
           />

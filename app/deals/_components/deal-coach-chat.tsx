@@ -1,31 +1,80 @@
 "use client";
 
 import * as React from "react";
-import { ArrowUp, RefreshCw, X } from "lucide-react";
+import { ArrowUp, Check, Copy, RefreshCw, RotateCcw, Sparkles } from "lucide-react";
 import { COLORS } from "@/lib/design/tokens";
-import { Card } from "@/components/ui/card";
+import { Modal } from "@/components/ui/modal";
 import { AssistantBadge, ChatAnswerStyles, MessageBubble, type ChatSource, type Message } from "@/app/_components/chat-message";
 
-// Chat coach de la fiche deal : CoachelloAI (même agent que /chat, avec ses
-// outils et ses guides) ciblé sur ce deal. Le serveur ajoute le brief du deal
-// (KUNA, Next move, committee, Claap) au system prompt et force Sonnet.
+// Pop-up "Discuss this deal" de la fiche deal : CoachelloAI (même agent que
+// /chat, avec ses outils et ses guides) ciblé sur ce deal. Le serveur ajoute au
+// system prompt le brief du deal (score, KUNA, Next move, committee) ET son
+// dossier complet : transcripts Claap, emails / notes / calls HubSpot, Slack
+// (lib/deals/coach-brief.ts, withDossier). Sonnet forcé.
 // Même transport que le chat principal : POST /api/chat crée une job jouée en
 // Background Function, puis polling de GET /api/chat/[jobId] (pas de SSE, coupé
-// à ~26 s par Netlify). Conversation en mémoire seulement, remise à zéro quand
-// on change de deal.
+// à ~26 s par Netlify).
+// La conversation vit dans ce composant, monté tant que la fiche du deal est
+// ouverte : fermer la pop-up ne la perd pas (une réponse en cours continue et
+// s'affiche à la réouverture). Changer de deal la remet à zéro (key du parent).
 
 type ApiMessage = { role: "user" | "assistant"; content: unknown };
 
 const SUGGESTIONS = [
-  "How do I reach the Economic Buyer?",
-  "Draft the next email",
   "What could kill this deal?",
+  "Draft the next follow-up email",
+  "How do I reach the Economic Buyer?",
+  "Prepare my next call",
 ];
 
 // Heartbeat du worker toutes les ~8 s : au-delà, le process a été tué.
 const STALE_MS = 45_000;
 
-export function DealCoachChat({ dealId, dealName, onClose }: { dealId: string; dealName: string; onClose: () => void }) {
+function CopyAnswer({ text }: { text: string }) {
+  const [copied, setCopied] = React.useState(false);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        navigator.clipboard
+          .writeText(text)
+          .then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          })
+          .catch(() => {});
+      }}
+      aria-label="Copy the answer"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "3px 8px",
+        border: "none",
+        borderRadius: 6,
+        background: "transparent",
+        color: copied ? COLORS.ok : COLORS.ink3,
+        fontSize: 12,
+        cursor: "pointer",
+      }}
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+export function DealCoachChat({
+  dealId,
+  dealName,
+  open,
+  onClose,
+}: {
+  dealId: string;
+  dealName: string;
+  open: boolean;
+  onClose: () => void;
+}) {
   const [messages, setMessages] = React.useState<Message[]>([]);
   const [apiHistory, setApiHistory] = React.useState<ApiMessage[]>([]);
   const [input, setInput] = React.useState("");
@@ -39,10 +88,22 @@ export function DealCoachChat({ dealId, dealName, onClose }: { dealId: string; d
     if (pollRef.current) pollRef.current.cancelled = true;
   }, []);
 
+  // Bas de conversation à chaque nouveau contenu, et à la réouverture.
   React.useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, streamingText, step]);
+  }, [messages, streamingText, step, open]);
+
+  const reset = React.useCallback(() => {
+    if (pollRef.current) pollRef.current.cancelled = true;
+    pollRef.current = null;
+    setMessages([]);
+    setApiHistory([]);
+    setInput("");
+    setLoading(false);
+    setStreamingText("");
+    setStep("");
+  }, []);
 
   const send = React.useCallback(async (raw: string) => {
     const text = raw.trim();
@@ -114,129 +175,156 @@ export function DealCoachChat({ dealId, dealName, onClose }: { dealId: string; d
   }, [apiHistory, dealId, loading]);
 
   return (
-    <Card padding={0} style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      icon={Sparkles}
+      title="Discuss this deal"
+      description={`CoachelloAI with the full context of ${dealName}: Claap transcripts, HubSpot emails and notes, Slack, KUNA and the sales playbooks.`}
+      width={780}
+      bodyStyle={{ padding: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}
+    >
       <ChatAnswerStyles />
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-          padding: "12px 16px",
-          borderBottom: `1px solid ${COLORS.line}`,
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", gap: 2, minWidth: 0 }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: COLORS.ink0 }}>Deal coach</span>
-          <span style={{ fontSize: 12, color: COLORS.ink2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            CoachelloAI with the context of {dealName}: KUNA, buying committee, Claap meetings, Slack and the sales playbooks
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close the deal coach"
-          style={{ display: "inline-flex", padding: 6, border: "none", background: "transparent", color: COLORS.ink2, cursor: "pointer" }}
+      <div style={{ display: "flex", flexDirection: "column", height: "min(640px, calc(100vh - 170px))", marginTop: 14, borderTop: `1px solid ${COLORS.line}` }}>
+        <div
+          ref={scrollRef}
+          className="thin-scrollbar"
+          style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: 20, display: "flex", flexDirection: "column", gap: 14, background: COLORS.bgPage }}
         >
-          <X size={16} />
-        </button>
-      </div>
+          {messages.length === 0 && !loading && (
+            <div style={{ margin: "auto 0", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, textAlign: "center" }}>
+              <span style={{ fontSize: 14, color: COLORS.ink1, maxWidth: 460, lineHeight: 1.5 }}>
+                Ask anything about this deal: how to move it forward, what the prospect really said, who to reach next, or a follow-up to send.
+              </span>
+              <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 8 }}>
+                {SUGGESTIONS.map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => send(s)}
+                    style={{
+                      padding: "7px 12px",
+                      borderRadius: 99,
+                      border: `1px solid ${COLORS.lineStrong}`,
+                      background: COLORS.bgCard,
+                      color: COLORS.ink1,
+                      fontSize: 13,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {messages.map((m, i) => (
+            <div key={i} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <MessageBubble message={m} />
+              {m.role === "assistant" && m.jobId && m.content && (
+                <div style={{ paddingLeft: 38 }}>
+                  <CopyAnswer text={m.content} />
+                </div>
+              )}
+            </div>
+          ))}
+          {loading && (
+            <div className="flex justify-start">
+              <AssistantBadge />
+              <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.ink2 }}>
+                  <RefreshCw size={12} className="animate-spin" />
+                  {step || "Thinking…"}
+                </span>
+                {streamingText && (
+                  <div style={{ fontSize: 14, lineHeight: 1.55, color: COLORS.ink1, whiteSpace: "pre-wrap" }}>{streamingText}</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
-      <div ref={scrollRef} className="thin-scrollbar" style={{ maxHeight: 520, overflowY: "auto", padding: 16, display: "flex", flexDirection: "column", gap: 14 }}>
-        {messages.length === 0 && !loading && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {SUGGESTIONS.map((s) => (
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            send(input);
+          }}
+          style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 16px", borderTop: `1px solid ${COLORS.line}`, background: COLORS.bgCard }}
+        >
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
+            <textarea
+              data-autofocus
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  send(input);
+                }
+              }}
+              rows={2}
+              placeholder="Ask about this deal…"
+              aria-label="Question about this deal"
+              style={{
+                flex: 1,
+                resize: "none",
+                minHeight: 44,
+                maxHeight: 160,
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: `1px solid ${COLORS.lineStrong}`,
+                fontSize: 14,
+                fontFamily: "inherit",
+                color: COLORS.ink0,
+                outline: "none",
+              }}
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              aria-label="Send"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 44,
+                height: 44,
+                borderRadius: 10,
+                border: "none",
+                background: loading || !input.trim() ? COLORS.line : COLORS.brand,
+                color: "#fff",
+                cursor: loading || !input.trim() ? "default" : "pointer",
+                flexShrink: 0,
+              }}
+            >
+              <ArrowUp size={17} />
+            </button>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 22 }}>
+            <span style={{ fontSize: 11, color: COLORS.ink3 }}>Enter to send, Shift + Enter for a new line</span>
+            {messages.length > 0 && (
               <button
-                key={s}
                 type="button"
-                onClick={() => send(s)}
+                onClick={reset}
                 style={{
-                  padding: "7px 12px",
-                  borderRadius: 99,
-                  border: `1px solid ${COLORS.lineStrong}`,
-                  background: COLORS.bgCard,
-                  color: COLORS.ink1,
-                  fontSize: 13,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 4,
+                  padding: "2px 6px",
+                  border: "none",
+                  background: "transparent",
+                  color: COLORS.ink2,
+                  fontSize: 12,
                   cursor: "pointer",
                 }}
               >
-                {s}
+                <RotateCcw size={12} />
+                New conversation
               </button>
-            ))}
+            )}
           </div>
-        )}
-        {messages.map((m, i) => (
-          <MessageBubble key={i} message={m} />
-        ))}
-        {loading && (
-          <div className="flex justify-start">
-            <AssistantBadge />
-            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 6 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: COLORS.ink2 }}>
-                <RefreshCw size={12} className="animate-spin" />
-                {step || "Thinking…"}
-              </span>
-              {streamingText && (
-                <div style={{ fontSize: 14, lineHeight: 1.55, color: COLORS.ink1, whiteSpace: "pre-wrap" }}>{streamingText}</div>
-              )}
-            </div>
-          </div>
-        )}
+        </form>
       </div>
-
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          send(input);
-        }}
-        style={{ display: "flex", alignItems: "flex-end", gap: 8, padding: 12, borderTop: `1px solid ${COLORS.line}` }}
-      >
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              send(input);
-            }
-          }}
-          rows={1}
-          placeholder="Ask how to move this deal forward…"
-          aria-label="Question for the deal coach"
-          style={{
-            flex: 1,
-            resize: "none",
-            minHeight: 38,
-            maxHeight: 140,
-            padding: "9px 12px",
-            borderRadius: 8,
-            border: `1px solid ${COLORS.lineStrong}`,
-            fontSize: 14,
-            fontFamily: "inherit",
-            color: COLORS.ink0,
-            outline: "none",
-          }}
-        />
-        <button
-          type="submit"
-          disabled={loading || !input.trim()}
-          aria-label="Send"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 38,
-            height: 38,
-            borderRadius: 8,
-            border: "none",
-            background: loading || !input.trim() ? COLORS.line : COLORS.brand,
-            color: "#fff",
-            cursor: loading || !input.trim() ? "default" : "pointer",
-          }}
-        >
-          <ArrowUp size={16} />
-        </button>
-      </form>
-    </Card>
+    </Modal>
   );
 }

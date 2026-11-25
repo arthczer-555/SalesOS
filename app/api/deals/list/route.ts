@@ -3,6 +3,7 @@ import { getAuthenticatedUser } from "@/lib/auth";
 import { type DealScore } from "@/lib/deal-scoring";
 import { db } from "@/lib/db";
 import { PIPELINE_IDS, isTestDealName } from "@/lib/hubspot/pipeline-model";
+import { hubspotSearchAll } from "@/lib/hubspot";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +22,8 @@ async function hubspot(path: string, method = "GET", body?: unknown) {
   }
   return res.json();
 }
+
+type RawDeal = { id: string; properties: Record<string, string> };
 
 const DEAL_PROPS = [
   "dealname", "dealstage", "amount", "closedate", "createdate", "pipeline",
@@ -87,16 +90,15 @@ export async function GET(req: NextRequest) {
       filters.push({ propertyName: "hubspot_owner_id", operator: "EQ", value: ownerFilter });
     }
 
-    const searchBody: Record<string, unknown> = {
-      limit: 200,
-      properties: DEAL_PROPS,
-      filterGroups: [{ filters }],
-      sorts: [{ propertyName: "amount", direction: "DESCENDING" }],
-    };
-    if (q) searchBody.query = q;
-
-    const [data, ownersData] = await Promise.all([
-      hubspot("/crm/v3/objects/deals/search", "POST", searchBody),
+    // Paginé (pages de 100, plafond 1000) : la vue "All owners" est celle par
+    // défaut, un seul appel limité à 200 tronquait le board sans le dire.
+    const [results, ownersData] = await Promise.all([
+      hubspotSearchAll<RawDeal>("deals", {
+        properties: DEAL_PROPS,
+        filterGroups: [{ filters }],
+        sorts: [{ propertyName: "amount", direction: "DESCENDING" }],
+        ...(q ? { query: q } : {}),
+      }),
       hubspot("/crm/v3/owners?limit=100").catch(() => ({ results: [] })),
     ]);
 
@@ -105,10 +107,8 @@ export async function GET(req: NextRequest) {
         .map((o) => [o.id, o.firstName ?? o.lastName ?? ""])
     );
 
-    type RawDeal = { id: string; properties: Record<string, string> };
-
     // Les cartes "TEST - " (tests de la bascule) ne sont visibles que des admins.
-    const visibleResults = (data.results ?? []).filter((d: RawDeal) => user.is_admin || !isTestDealName(d.properties?.dealname));
+    const visibleResults = results.filter((d) => user.is_admin || !isTestDealName(d.properties?.dealname));
     const rawDeals = visibleResults.map((d: RawDeal) => {
       const p = d.properties;
       return {

@@ -56,6 +56,138 @@ export async function fetchEngagementPreviews(ids: string[], max = 100, bodyChar
     .slice(0, max);
 }
 
+// ─── Échanges HubSpot complets (chat coach) ────────────────────────────────
+
+export interface DealExchange {
+  kind: "EMAIL" | "NOTE" | "CALL" | "MEETING";
+  at: string; // ISO
+  title: string | null; // sujet de l'email, titre du call ou du meeting
+  meta: string | null; // sens et expéditeur de l'email, issue du call...
+  body: string;
+}
+
+/**
+ * Coupe l'historique cité sous un email ("Le ... a écrit :", "On ... wrote:",
+ * lignes "> "...) : chaque email du fil est déjà lu pour lui-même, le garder
+ * ferait lire trois fois le même échange.
+ */
+export function stripQuotedReply(raw: string): string {
+  // \r\n d'Outlook : "." ne traverse pas \r, les motifs multi-lignes échouaient.
+  const text = raw.replace(/\r\n?/g, "\n");
+  const cut = text.search(
+    /\n\s*(?:Le .{4,200}a écrit\s?:|On .{4,200}wrote:|-{2,}\s*Original Message|-{2,}\s*Message d'origine|De\s?: .{1,200}\n\s*(?:Envoyé|Date)\s?:|From: .{1,200}\n\s*(?:Sent|Date):)/i,
+  );
+  const head = cut > 0 ? text.slice(0, cut) : text;
+  return head
+    .split("\n")
+    .filter((l) => !l.trimStart().startsWith(">"))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+type SearchRes = { results?: { properties?: Record<string, string | null> }[] };
+
+// Emails d'agenda (invitations, réponses) : du bruit pour le contexte, les
+// meetings eux-mêmes sont lus via HubSpot et Claap.
+const CALENDAR_SUBJECT = /^(?:invitation|updated invitation|invitation mise à jour|nouvel événement|new event|accepted|accepté|declined|refusé|tentatively accepted|accepté provisoirement|canceled|cancelled|annulé|événement annulé)(?=[\s:]|$)/i;
+
+/**
+ * Contenu complet des emails, notes, calls et meetings HubSpot d'un deal, du
+ * plus récent au plus ancien (fetchEngagementPreviews ne donne que des aperçus
+ * de 500 caractères, trop courts pour rédiger une relance). `errors` liste les
+ * types d'objets illisibles, pour dire "pas pu lire" plutôt que "rien".
+ */
+export async function fetchDealExchanges(
+  dealId: string,
+  opts: { bodyChars?: number } = {},
+): Promise<{ exchanges: DealExchange[]; errors: string[] }> {
+  const bodyChars = opts.bodyChars ?? 4000;
+  const search = (object: string, properties: string[], limit: number) =>
+    hubspotFetch<SearchRes>(`/crm/v3/objects/${object}/search`, "POST", {
+      filterGroups: [{ filters: [{ propertyName: "associations.deal", operator: "EQ", value: dealId }] }],
+      sorts: [{ propertyName: "hs_timestamp", direction: "DESCENDING" }],
+      properties,
+      limit,
+    });
+
+  const [emails, notes, calls, meetings] = await Promise.allSettled([
+    search("emails", ["hs_email_subject", "hs_email_text", "hs_email_html", "hs_email_direction", "hs_email_from_email", "hs_email_from_firstname", "hs_email_from_lastname", "hs_email_to_email", "hs_timestamp"], 40),
+    search("notes", ["hs_note_body", "hs_timestamp"], 30),
+    search("calls", ["hs_call_title", "hs_call_body", "hs_call_disposition", "hs_call_direction", "hs_timestamp"], 20),
+    search("meetings", ["hs_meeting_title", "hs_meeting_body", "hs_internal_meeting_notes", "hs_meeting_outcome", "hs_timestamp"], 20),
+  ]);
+
+  const errors: string[] = [];
+  const rows = (res: PromiseSettledResult<SearchRes>, label: string) => {
+    if (res.status === "rejected") {
+      errors.push(label);
+      return [];
+    }
+    return (res.value.results ?? []).map((r) => r.properties ?? {});
+  };
+  const clip = (s: string) => (s.length > bodyChars ? `${s.slice(0, bodyChars)} […]` : s);
+  const out: DealExchange[] = [];
+
+  for (const p of rows(emails, "emails")) {
+    if (CALENDAR_SUBJECT.test((p.hs_email_subject ?? "").trim())) continue;
+    const raw = p.hs_email_text?.trim() || stripHtml(p.hs_email_html ?? "");
+    const body = stripQuotedReply(raw);
+    if (!body) continue;
+    const from = [p.hs_email_from_firstname, p.hs_email_from_lastname].filter(Boolean).join(" ").trim();
+    const dir = p.hs_email_direction === "INCOMING_EMAIL" ? "reçu" : "envoyé";
+    out.push({
+      kind: "EMAIL",
+      at: p.hs_timestamp ?? "",
+      title: p.hs_email_subject ?? null,
+      meta: `${dir}, de ${from ? `${from} ` : ""}<${p.hs_email_from_email ?? "?"}>${p.hs_email_to_email ? ` à ${p.hs_email_to_email}` : ""}`,
+      body: clip(body),
+    });
+  }
+  for (const p of rows(notes, "notes")) {
+    const body = stripHtml(p.hs_note_body ?? "").trim();
+    if (body) out.push({ kind: "NOTE", at: p.hs_timestamp ?? "", title: null, meta: null, body: clip(body) });
+  }
+  for (const p of rows(calls, "calls")) {
+    const body = stripHtml(p.hs_call_body ?? "").trim();
+    if (!body && !p.hs_call_title) continue;
+    out.push({
+      kind: "CALL",
+      at: p.hs_timestamp ?? "",
+      title: p.hs_call_title ?? null,
+      meta: [p.hs_call_direction, p.hs_call_disposition].filter(Boolean).join(", ") || null,
+      body: clip(body),
+    });
+  }
+  for (const p of rows(meetings, "meetings")) {
+    const body = [stripHtml(p.hs_meeting_body ?? ""), stripHtml(p.hs_internal_meeting_notes ?? "")]
+      // Marqueur technique de l'intégration Claap en tête du corps du meeting.
+      .map((s) => s.replace(/^hubspot-note-content-start-\S*\s*/, "").trim())
+      .filter(Boolean)
+      .join("\n");
+    if (!body && !p.hs_meeting_title) continue;
+    out.push({
+      kind: "MEETING",
+      at: p.hs_timestamp ?? "",
+      title: p.hs_meeting_title ?? null,
+      meta: p.hs_meeting_outcome ?? null,
+      body: clip(body),
+    });
+  }
+
+  // Claap logge le même résumé en note ET en meeting HubSpot : un seul suffit.
+  out.sort((a, b) => b.at.localeCompare(a.at));
+  const seen = new Set<string>();
+  const unique = out.filter((e) => {
+    if (e.body.length < 200) return true;
+    const key = e.body.slice(0, 300).replace(/\s+/g, " ");
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { exchanges: unique, errors };
+}
+
 // ─── Entreprise du deal ────────────────────────────────────────────────────
 
 /**
@@ -125,6 +257,9 @@ export function slackDay(ts: string): string {
 
 export type ClaapRecapRow = {
   hubspot_deal_id: string | null; // null = rattaché seulement à la company
+  // Présents seulement avec withTranscript (chat coach du deal).
+  claap_recording_id?: string;
+  transcript_text?: string | null;
   meeting_title: string | null;
   meeting_started_at: string | null;
   meeting_kind: string | null;
@@ -149,15 +284,20 @@ const recapSize = (r: ClaapRecapRow) => JSON.stringify(r.meeting_recap ?? {}).le
  */
 export async function fetchSalesCoachRecaps(
   dealId: string,
-  opts: { companyId?: string | null; limit?: number } = {},
+  opts: { companyId?: string | null; limit?: number; withTranscript?: boolean } = {},
 ): Promise<ClaapRecapRow[]> {
   if (!process.env.SUPABASE_URL || !isHubspotId(dealId)) return [];
   const filter = isHubspotId(opts.companyId)
     ? `hubspot_deal_id.eq.${dealId},and(hubspot_company_id.eq.${opts.companyId},hubspot_deal_id.is.null)`
     : `hubspot_deal_id.eq.${dealId}`;
+  // Colonnes passées en string (non littérale) : le parseur de types de
+  // supabase-js ne les lit pas, d'où le cast via unknown plus bas.
+  const columns: string = opts.withTranscript
+    ? "hubspot_deal_id, meeting_title, meeting_started_at, meeting_kind, audience, meeting_recap, participants, stage_move_result, claap_recording_id, transcript_text"
+    : "hubspot_deal_id, meeting_title, meeting_started_at, meeting_kind, audience, meeting_recap, participants, stage_move_result";
   let query = db
     .from("sales_coach_analyses")
-    .select("hubspot_deal_id, meeting_title, meeting_started_at, meeting_kind, audience, meeting_recap, participants, stage_move_result")
+    .select(columns)
     .or(filter)
     .eq("status", "done")
     .order("meeting_started_at", { ascending: false });

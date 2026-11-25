@@ -3,6 +3,8 @@
  *
  *  Bloc 1 (STABLE, prompt caching) : socle (Coachello.RAG/coachellohq/socle.md) +
  *    catalogue des packs auto-généré depuis leurs frontmatters.
+ *  Bloc deal (chat coach de la fiche deal seulement, caché aussi) : consignes
+ *    du coach + brief et dossier complet du deal (transcripts, échanges, Slack).
  *  Bloc 2 (dynamique, hors cache) : utilisateur connecté, équipe HubSpot
  *    (cachée 1h et triée pour ne pas invalider le cache à chaque appel),
  *    date, canal Slack éventuel, better thinking, instructions perso.
@@ -93,10 +95,13 @@ export async function buildSystem(args: BuildSystemArgs): Promise<BuiltPrompt> {
     dynamic += `\n\nCONTEXTE CANAL SLACK\nCette conversation a lieu dans le canal Slack #${channelName}. Tu sais donc toujours où tu te trouves : sers-toi de ce nom dans ta question.\nSi ce canal semble dédié à un client ou un compte précis (ex: #engie → Engie, #adyen → Adyen, #salomon → Salomon) et que la question ne précise pas le périmètre, NE déduis PAS le compte tout seul : pose d'abord une question courte qui cite le canal, du type « Je dois baser ma réponse seulement sur le canal #${channelName} (compte associé) ou chercher partout, avec tous mes outils (HubSpot, Slack, Drive, LinkedIn…) ? » (exemple en français, à formuler dans la langue de l'utilisateur), puis attends la réponse avant de lancer tes recherches. C'est la SEULE question de clarification autorisée (elle prime sur la règle "ne pose aucune question").\nLe périmètre est considéré comme "précisé" si l'utilisateur nomme un client, dit "partout" / "tous les outils" / "ce canal", ou a déjà répondu à cette question plus haut dans le fil : dans ce cas, respecte-le sans reposer la question. Un client explicitement nommé prime toujours sur le canal.\nPour un canal générique (ex: #general, #11-everything-prospects), ne déduis aucun compte et ne pose pas la question : réponds normalement.`;
   }
 
-  // Chat coach : question posée depuis la fiche d'un deal.
-  if (dealBrief) {
-    dynamic += `\n\nMODE COACH DEAL\nL'utilisateur est sur la fiche du deal ci-dessous dans CoachelloHQ et te demande comment le faire avancer. Tu es son coach commercial senior.\n- Le brief ci-dessous est déjà chargé : ne relis pas ces informations dans HubSpot. Va chercher avec tes outils ce qui manque pour répondre précisément (emails et notes du deal, transcripts Claap, conversations Slack, Notion).\n- Charge les guides pertinents (pipeline, cost-of-inaction, meeting-prep, proposals) quand la question s'y prête.\n- Raisonne avec la méthode KUNA : quelles hypothèses (A) transformer en certitudes (K), quels inconnus bloquants (N) lever en premier, quel rôle du buying committee manque.\n- Réponds de façon actionnable : qui contacter, quoi dire (avec un exemple de message quand c'est utile), quand, et pourquoi. Pas de généralités de vente.\n- Sois concis (150 à 250 mots) sauf si l'utilisateur demande un livrable (email, plan d'appel, slide).\n\n${dealBrief}`;
-  }
+  // Chat coach : question posée depuis la fiche d'un deal. Bloc à part, mis en
+  // cache : le dossier (transcripts, échanges, Slack) pèse jusqu'à ~60k tokens
+  // et reste identique d'un tour à l'autre, alors que le bloc dynamique change
+  // à chaque question (rappel de langue).
+  const dealBlock = dealBrief
+    ? `MODE COACH DEAL\nL'utilisateur est sur la fiche du deal ci-dessous dans CoachelloHQ et veut en discuter : le faire avancer, préparer un call, rédiger une relance, comprendre un risque. Tu es son coach commercial senior.\n- Le brief et le dossier ci-dessous sont déjà chargés : fiche CoachelloHQ (score, Next move, KUNA, buying committee, threading), transcripts des meetings Claap récents, emails / notes / calls / meetings HubSpot du deal, messages Slack internes qui citent l'entreprise. Pars de là, cite tes sources (type + date, ex. "call Claap du 18/11", "email de Marie du 20/11") et ne relis pas ces informations avec tes outils (pas de get_deal_activity, get_deal_qualification ni search_slack sur l'entreprise pour ce qui est déjà là).\n- Utilise tes outils seulement pour ce qui manque : transcript d'un meeting listé sans transcript (get_claap_meeting_transcript avec son recording_id), meeting Claap absent du dossier (search_claap_meetings avec deal_id), emails Gmail non loggés dans HubSpot (search_gmail), Notion, LinkedIn, web, échanges plus anciens signalés comme non chargés.\n- Charge les guides pertinents (pipeline, cost-of-inaction, meeting-prep, proposals) quand la question s'y prête.\n- Raisonne avec la méthode KUNA : quelles hypothèses (A) transformer en certitudes (K), quels inconnus bloquants (N) lever en premier, quel rôle du buying committee manque.\n- Réponds de façon actionnable : qui contacter, quoi dire (avec un exemple de message quand c'est utile), quand, et pourquoi. Pas de généralités de vente. N'invente aucun fait absent du dossier ou de tes outils : dis ce que tu ne sais pas.\n- Un email ou un message destiné au prospect se rédige dans la langue de ses échanges (emails, transcripts), prêt à copier, sans tiret long ; ton commentaire autour reste dans la langue de l'utilisateur.\n- Sois concis (150 à 250 mots) sauf si l'utilisateur demande un livrable (email, plan d'appel, slide).\n\n${dealBrief}`
+    : null;
 
   // Mode "réflexion approfondie" (toggle "Better thinking" de la webapp).
   if (betterThinking) {
@@ -115,9 +120,12 @@ export async function buildSystem(args: BuildSystemArgs): Promise<BuiltPrompt> {
     dynamic += `\n\n--- INSTRUCTIONS PERSONNELLES DE L'UTILISATEUR ---\n${userPrompt.trim()}`;
   }
 
+  // Points de cache : tools (run-agent), socle, bloc deal, dernier message
+  // (loop.ts) = 4, le maximum accepté par l'API. Ne pas en ajouter un 5e.
   return {
     system: [
       { type: "text", text: socle, cache_control: { type: "ephemeral" } },
+      ...(dealBlock ? [{ type: "text" as const, text: dealBlock, cache_control: { type: "ephemeral" as const } }] : []),
       { type: "text", text: dynamic },
     ],
     bundle,
