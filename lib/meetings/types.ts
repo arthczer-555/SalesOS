@@ -17,7 +17,9 @@ export type AnnouncementStatus =
   | "expired"
   | "failed"
   | "duplicate"
-  | "cancelled";
+  | "cancelled"
+  /** Une carte ouverte existe déjà : le bot la signale, rien n'est créé ni écrit ("new card" pour en créer une). */
+  | "existing_card";
 
 /** Une décision est prise : la proposition ne bouge plus. */
 export const FINAL_STATUSES: ReadonlySet<AnnouncementStatus> = new Set(["ignored", "created", "linked", "skipped", "expired", "duplicate", "cancelled"]);

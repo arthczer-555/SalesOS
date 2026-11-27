@@ -44,7 +44,7 @@ Fields:
 - offer_types: "ai-roleplay" and/or "human-coaching", only when stated.
 - sale_type: "rfp" when it is a tender / RFP / appel d'offres, "direct" when the rep says it is not.
 - card_action: "link" (attach the meeting to the existing open card), "new_card" (create a separate card anyway), "create_card_anyway" (create a card although the bot thought it was a partner or non-sales meeting).
-- reply: one short English sentence for the thread: what you understood, or the answer to the question. Empty for "none".
+- reply: one short English sentence for the thread: what you changed or understood, or the answer to the question. Plain words for a sales rep: no field names, no system names, no technical details. Empty for "none".
 
 When the card already exists (after creation), only meeting_date / meeting_time changes and notes are possible.`;
 

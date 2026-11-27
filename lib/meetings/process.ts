@@ -13,7 +13,7 @@ import { decide, refreshProposal, type DecideContext } from "./confirm";
 import { buildProposal } from "./enrich";
 import { extractAnnouncement } from "./extract";
 import { announcementFiles, announcementText, contentHash, humanizeMentions, quickAnswer, type IncomingSlackMessage } from "./message";
-import { renderOutcome, renderProposal } from "./proposal";
+import { missingText, renderOutcome, renderProposal } from "./proposal";
 import { loadRoster, memberBySlackId, type TeamMember } from "./roster";
 import { botReplyInThread, botUserId, replyInThread, updateBotMessage } from "./slack-io";
 import { postMessage } from "@/lib/slack/api";
@@ -28,10 +28,27 @@ import {
   type AnnouncementEvent,
 } from "./store";
 import { interpretThreadMessage, mergeOverrides } from "./thread";
-import { FINAL_STATUSES, OPEN_STATUSES, type AnnouncementRow, type ThreadLogEntry } from "./types";
+import { FINAL_STATUSES, OPEN_STATUSES, type AnnouncementRow, type Proposal, type ThreadLogEntry } from "./types";
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const ADMIN_FORCE_NO_EMAIL = /\bcreate without (?:an )?email\b/i;
+
+/** Le message n'est qu'une adresse email (Slack l'écrit <mailto:x|x>) : elle est renvoyée. */
+function soleEmail(text: string): string | null {
+  const plain = text.replace(/<mailto:([^|>]+)(?:\|[^>]*)?>/gi, "$1").trim();
+  return /^[^\s@<>]+@[^\s@<>]+\.[a-z]{2,}$/i.test(plain) ? plain.toLowerCase() : null;
+}
+
+/**
+ * Création directe sans ✅ : le message d'une personne autorisée a complété un
+ * champ qui manquait et la proposition est maintenant complète (ou un ✅ avait
+ * déjà été donné). Une simple correction d'un champ déjà rempli attend le ✅.
+ */
+function shouldCreateNow(before: Proposal | null, after: Proposal, confirmIntent: string | null): boolean {
+  if (after.action !== "create" || after.missing.length || after.duplicateOf) return false;
+  if (confirmIntent) return true;
+  return !!before && before.missing.some((m) => !after.missing.includes(m));
+}
 
 async function context(): Promise<DecideContext> {
   return {
@@ -88,13 +105,13 @@ async function analyze(row: AnnouncementRow, ctx: DecideContext): Promise<Announ
     await patchAnnouncement(row.id, { status: "ignored" });
     // Une annonce de test écrite dans le DM reçoit une explication ; un vrai message du canal, rien.
     if (row.source_kind === "dm_test") {
-      await postMessage({ channel: row.thread_channel, thread_ts: row.thread_ts, text: stripEmDashes(`:test_tube: Test: not read as a meeting announcement (${extraction.reason || "no meeting found"}). Nothing would be posted in #1y-new-meetings.`) }).catch(() => null);
+      await postMessage({ channel: row.thread_channel, thread_ts: row.thread_ts, text: stripEmDashes(`:test_tube: Test: not a meeting announcement (${extraction.reason || "no meeting found"}). The bot would not reply.`) }).catch(() => null);
     }
     return { ...withExtraction, status: "ignored" };
   }
 
   const proposal = await buildProposal(withExtraction, extraction, { roster: ctx.roster, testMode: row.mode === "test", testUserSlackId: ctx.testUserSlackId });
-  const status = proposal.duplicateOf ? "duplicate" : "proposed";
+  const status = proposal.duplicateOf ? "duplicate" : proposal.action === "link" ? "existing_card" : "proposed";
   const draft = { ...withExtraction, proposal, status } as AnnouncementRow;
   const posted = await postProposal(draft, renderProposal(draft, proposal, posterName(row, ctx.roster)));
   const patch: Partial<AnnouncementRow> = {
@@ -156,11 +173,22 @@ async function handleThreadMessage(row: AnnouncementRow, ev: AnnouncementEvent, 
       return "refused: force without email (not admin)";
     }
     const next = await appendLog(row, { ...baseEntry, action: "update: create without email" });
-    const { row: refreshed } = await refreshProposal({ ...next, overrides: { ...next.overrides, forceNoEmail: true } }, ctx);
+    const { row: refreshed, proposal } = await refreshProposal({ ...next, overrides: { ...next.overrides, forceNoEmail: true } }, ctx);
     await patchAnnouncement(row.id, { overrides: { ...next.overrides, forceNoEmail: true } });
-    await replyInThread(refreshed, "OK: the card can be created without the email. The Sales Coach will not attach the recording automatically.");
-    if (refreshed.confirm_intent_by) return decide(refreshed, "yes", refreshed.confirm_intent_by, ctx);
+    if (shouldCreateNow(row.proposal, proposal, refreshed.confirm_intent_by)) return decide(refreshed, "yes", refreshed.confirm_intent_by ?? user, ctx);
+    await replyInThread(refreshed, `OK: the card will be created without the email.${proposal.missing.length ? ` Missing: ${missingText(proposal.missing)}.` : " React ✅ to create it."}`);
     return "updated: force without email";
+  }
+
+  const email = afterCreation ? null : soleEmail(text);
+  if (email) {
+    const overrides = mergeOverrides(row.overrides ?? {}, { contactEmail: email });
+    const next = await appendLog(row, { ...baseEntry, action: "update: contactEmail" });
+    await patchAnnouncement(row.id, { overrides });
+    const { row: refreshed, proposal } = await refreshProposal({ ...next, overrides }, ctx);
+    if (shouldCreateNow(row.proposal, proposal, refreshed.confirm_intent_by)) return decide(refreshed, "yes", refreshed.confirm_intent_by ?? user, ctx);
+    await replyInThread(refreshed, `Email saved.${proposal.missing.length ? ` Missing: ${missingText(proposal.missing)}.` : " React ✅ to create the card."}`);
+    return "updated: email";
   }
 
   const decision = await interpretThreadMessage({
@@ -178,7 +206,7 @@ async function handleThreadMessage(row: AnnouncementRow, ev: AnnouncementEvent, 
   if (afterCreation) {
     if (decision.meetingDate || decision.meetingTime) {
       await patchAnnouncement(row.id, { meeting_date: decision.meetingDate ?? row.meeting_date });
-      await replyInThread(next, decision.reply || "Noted: meeting date updated. The card itself is unchanged.");
+      await replyInThread(next, decision.reply || "Noted: new meeting date saved.");
       return "updated: meeting date after creation";
     }
     if (decision.intent === "cancel") {
@@ -198,10 +226,12 @@ async function handleThreadMessage(row: AnnouncementRow, ev: AnnouncementEvent, 
     next = { ...next, overrides };
     const { row: refreshed, proposal } = await refreshProposal(next, ctx);
     next = refreshed;
-    const still = proposal.missing.length ? ` Still missing: ${proposal.missing.join(", ")}.` : "";
+    // Le message a comblé ce qui manquait (ou un ✅ attendait) : la carte part tout de suite, sans nouveau ✅.
+    if (shouldCreateNow(row.proposal, proposal, next.confirm_intent_by)) {
+      return decide(next, "yes", next.confirm_intent_by ?? user, ctx);
+    }
+    const still = proposal.missing.length ? ` Missing: ${missingText(proposal.missing)}.` : "";
     if (decision.intent !== "confirm") await replyInThread(next, `${decision.reply || "Updated."}${still}`);
-    // ✅ déjà donné alors qu'il manquait un champ : la carte part dès que tout est là.
-    if (next.confirm_intent_by && !proposal.missing.length) return decide(next, "yes", next.confirm_intent_by, ctx);
   } else if (decision.intent === "question" && decision.reply) {
     await replyInThread(next, decision.reply);
   } else if (decision.intent === "note") {

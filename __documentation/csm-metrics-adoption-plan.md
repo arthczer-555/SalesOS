@@ -3,15 +3,15 @@
 > Remplacer le Google Sheet des CSM ("CSM Suivi Cohorte Coaching v2") par une vue native
 > CoachelloHQ alimentée automatiquement, et brancher l'adoption plateforme dans le health score.
 > Statut : **plan, rien n'est construit**. Exploration de l'API le 2026-11-19, réponse du dev
-> plateforme le 2026-11-25 (cf. §5).
+> plateforme le 2026-11-25 (cf. §5), liste des programmes ouverte à la clé le 2026-11-27 (cf. §3).
 
 ## 1. Objectif
 
 Aujourd'hui les CSM suivent leur portefeuille dans un Sheet rempli à la main (1 ligne = 1 programme,
 33 lignes, 26 comptes) avec un health score maison, des alertes et un Top 12 des priorités.
 CoachelloHQ a déjà la relation client (contacts, meetings, ton, news, Next actions) mais **aucune
-donnée d'usage**. Cible : un seul endroit où le CSM voit, par client (et par programme si la donnée
-arrive), l'adoption réelle, la consommation, la satisfaction et la relation, avec un score unique
+donnée d'usage**. Cible : un seul endroit où le CSM voit, par client et par programme, l'adoption
+réelle, la consommation, la satisfaction et la relation, avec un score unique
 et des alertes.
 
 ## 2. Ce que fait le Sheet aujourd'hui (et ses limites)
@@ -44,15 +44,17 @@ Paramètres, Historique, Listes, Guide & Légende.
   une activité récente. Or c'est la composante la plus lourde du score (30 %, décrite comme
   "meilleur signal d'usage réel"). Un compte où tout le monde a démarré vite puis arrêté reste vert.
   Les nouveaux champs `active_30d_count` / `active_60d_count` (cf. §5) donnent enfin le vrai chiffre.
-- Les chiffres par programme ne sont pas reproductibles depuis l'API (niveau entreprise) :
-  Stoiximan 7 users dans le Sheet vs 22 dans l'API, Allianz 29 vs 53, Vinci 14 vs 43.
+- Les chiffres par programme n'étaient pas reproductibles depuis l'API (niveau entreprise) :
+  Stoiximan 7 users dans le Sheet vs 22 dans l'API, Allianz 29 vs 53, Vinci 14 vs 43. Possible
+  depuis le 2026-11-27 (liste des programmes, §3) : à vérifier sur ces 3 comptes au premier refresh.
 
 ## 3. L'API disponible
 
 `GET https://api.coachello.io/api/super-admin/csm/kpi-metrics`, header `X-API-Key` (clé fournie par
 le dev le 2026-11-19, à stocker en env Netlify `PLATFORM_KPI_API_KEY`, jamais dans le code).
 
-- Clé limitée à cet endpoint (tout le reste répond 401).
+- Clé limitée à cet endpoint et, depuis le 2026-11-27, à la liste des programmes (ci-dessous). Tout
+  le reste répond 401.
 - Appel complet = ~20 s, 126 entreprises, champs agrégés **par entreprise**. Filtré sur une
   entreprise = 0,1 à 3,5 s. Consigne du dev : ne pas l'appeler souvent (requête lourde, elle
   alimente aussi la page KPI de l'admin).
@@ -89,6 +91,32 @@ le dev le 2026-11-19, à stocker en env Netlify `PLATFORM_KPI_API_KEY`, jamais d
 - En AI : statuts à 0, crédits à null. En `license_used` : credits_total = 0, pas de taux.
 - Noms différents de HubSpot (MicrosoftModernWork, XplorTechnologies, CRFEG-CRFE).
 
+**Liste des programmes** (ouverte le 2026-11-27, consigne du dev : "don't over use it")
+
+`GET https://api.coachello.io/api/super-admin/csm/company/{company_id}/programs`, même header
+`X-API-Key`. Une entreprise par appel.
+
+```json
+{ "company_id": 172, "total": 4,
+  "programs": [{ "program_id": 1063, "program_name": "Executive coaching", "coaching_type": "human",
+                 "launched": true, "start_date": "2026-05-19", "end_date": null, "is_archived": false }] }
+```
+
+Testé sur 2 entreprises (172, 225), 9 programmes :
+- **Latence** : 24,7 s au 1er appel (démarrage à froid), 0,7 s au suivant. Timeout à 30 s et un
+  seul retry, appels séquentiels.
+- `program_name` **null** sur les programmes non lancés (brouillons), et des noms génériques
+  ("default", "Executive", "Manager") : le rapprochement automatique par nom avec nos
+  `ClientProgram` sera faible, le mapping manuel reste la règle.
+- `coaching_type` **null** sur les programmes anciens (2024-2025) : à traiter comme `human` pour
+  l'appel `kpi-metrics`, à vérifier au premier refresh (users à 0 = essayer `ai`).
+- `end_date` null sur les 9 : pas de date de fin par programme. La fin de contrat vient de
+  `contract_end_date` (entreprise, §5) et de HubSpot.
+- `launched` = false : programme créé mais pas lancé, utile pour proposer Not started / Set up dans
+  le kanban. `is_archived` = true : exclu des appels de métriques, gardé pour l'historique.
+- Métriques d'un programme : `kpi-metrics?company_id=X&program_id=Y&coaching_type=<type du
+  programme>` (filtre testé le 2026-11-19). Les **crédits restent au niveau entreprise**.
+
 ## 4. Colonne par colonne : d'où viendra la donnée
 
 ✅ disponible · 🔜 annoncé par le dev · ⚠ partiel ou approximatif · ❌ refusé ou fermé à la clé
@@ -96,11 +124,11 @@ le dev le 2026-11-19, à stocker en env Netlify `PLATFORM_KPI_API_KEY`, jamais d
 | Bloc Sheet | Colonne | Source cible | État |
 |---|---|---|---|
 | Identification | Compte | `clients` (HubSpot) | ✅ |
-| | Programme | `clients.programs` (kanban, IA) ; programmes plateforme via la liste promise | ✅ côté HQ, 🔜 lien avec le programme plateforme |
+| | Programme | `clients.programs` (kanban, IA) ; programmes plateforme via l'endpoint `programs` (§3) | ✅ (mapping à construire) |
 | | Secteur / Industrie | HubSpot company `industry` | ✅ |
 | | Contexte / notes | Fiche client (résumé, notes) | ✅ |
 | | Statut | Kanban programme + phase du compte + risque IA | ✅ (vocabulaire différent, cf. §12) |
-| | Date lancement / ancienneté | `programs.start_date`, kickoff | ✅ |
+| | Date lancement / ancienneté | `start_date` du programme plateforme, sinon `programs.start_date` et kickoff | ✅ |
 | Contrat | Modèle de facturation | API `subscription_method` (entreprise) | ✅ |
 | | Licences achetées | Refusé dans l'API ; `programs.licences` (IA), deal HubSpot | ⚠ |
 | | Crédits achetés | API `credits_total` (entreprise, humain) | ✅ entreprise, ❌ par programme |
@@ -108,8 +136,8 @@ le dev le 2026-11-19, à stocker en env Netlify `PLATFORM_KPI_API_KEY`, jamais d
 | | New / Renew | Field `relation_commerciale` | ✅ |
 | | Date renouvellement | `contract_end_date` plateforme, croisé avec HubSpot | 🔜 |
 | | Expiration des crédits | `latest_credit_expiry_date` | 🔜 |
-| Adoption | Nb utilisateurs | API `total_users` ; par programme via `program_id` | ✅ entreprise, 🔜 par programme |
-| | Nb activés / taux d'activation | API `users_with_atleast_a_session` / `start_rate` ; par programme via `program_id` | ✅ entreprise, 🔜 par programme |
+| Adoption | Nb utilisateurs | API `total_users` ; par programme via `program_id` | ✅ entreprise et programme |
+| | Nb activés / taux d'activation | API `users_with_atleast_a_session` / `start_rate` ; par programme via `program_id` | ✅ entreprise et programme |
 | | % actifs 30 j / 60 j (vrai sens) | `active_30d_count`, `active_60d_count`, `last_session_at` | 🔜 |
 | | Users avec session bookée / taux de booking | `users_with_booked_session` | 🔜 |
 | | Sessions réalisées (total, année) | `sessions_completed`, `sessions_completed_ytd` | 🔜 |
@@ -117,7 +145,7 @@ le dev le 2026-11-19, à stocker en env Netlify `PLATFORM_KPI_API_KEY`, jamais d
 | | Taux de complétion | `sessions_completed` / `sessions_allocated` | 🔜 |
 | | Crédits consommés / restants / % | API (entreprise, humain) | ✅ |
 | | Usage AI / Role-play | API `coaching_type=ai` (entreprise) ; split par module refusé | ✅ global, ❌ par module |
-| Satisfaction | CSAT plateforme / session / AI | Refusé dans `kpi-metrics` ; endpoint `ratings` par entreprise demandé (§5) | demandé |
+| Satisfaction | CSAT plateforme / session / AI | Refusé dans `kpi-metrics` ; endpoint `ratings` par entreprise demandé, à l'étude côté dev (§5) | demandé |
 | Santé | Health score, niveau, tendance | Health CoachelloHQ + nouveau bloc adoption | ✅ à étendre |
 | | Ajustement CSM ± | À ajouter (override daté avec raison) | à construire |
 | Engagement CSM | Dernier contact / jours sans contact | Déjà calculé (HubSpot + Claap) | ✅ |
@@ -151,24 +179,24 @@ en licence : `sessions_completed / sessions_allocated` vs % du contrat écoulé 
 | `expired` | Les expirées sont déjà exclues de l'appel complet | Disparition entre 2 snapshots = expirée |
 | `is_test` | Liste interne périmée, en cours de mise à jour | Liste d'exclusion de secours |
 | `licenses_purchased` | Calcul entreprise par entreprise selon le type d'abonnement | `sessions_allocated` comme dénominateur ; licences depuis HubSpot ou `programs.licences` |
-| Ratings | Split coachs internes / Coachello calculé entreprise par entreprise | Contre-proposition ci-dessous |
-| Tableau `programs` | Recalculer chaque métrique par programme, risque de timeout | Contre-proposition ci-dessous |
+| Ratings | Split coachs internes / Coachello calculé entreprise par entreprise | Endpoint `ratings` par entreprise, à l'étude (ci-dessous) |
+| Tableau `programs` | Recalculer chaque métrique par programme, risque de timeout | Liste des programmes livrée le 2026-11-27 (§3) |
 | Split AI par module (role-play / AI coach) | Calculs séparés par module | Aucune pour l'instant, priorité basse |
 | `coaching_type=all` | Deux fois plus long, risque de timeout | 2 appels (déjà prévu) |
 
-**Demande simplifiée, acceptée sur le principe le 2026-11-25** ("I'll expose something") : pas de
-tableau `programs`, seulement la **liste des programme ids** par entreprise (accès de la clé à
-`GET /api/company/{id}/programs` ou équivalent). On appelle ensuite
-`kpi-metrics?company_id=X&program_id=Y`, filtre déjà supporté par la clé (testé), une entreprise
-et un programme à la fois, jamais en parallèle.
-- À vérifier à la livraison : les nouveaux champs (activité récente, sessions) répondent bien au
-  filtre `program_id`. Les **crédits restent au niveau entreprise** même filtrés (testé).
-- **CSAT, prochaine demande** : ouvrir la clé sur `GET /api/super-admin/csm/company/{id}/ratings`,
-  qui existe déjà (page entreprise CSM de l'admin) et fait le calcul pour **une seule** entreprise,
-  donc sans risque de timeout. Renvoie avg + count plateforme, session, AI, et le split coachs
-  (attention : dans le front, `_internal` = coachs Coachello et `_external` = coachs internes du
-  client, nommage inversé). Accepte `start_date`/`end_date`, pas de `program_id` côté front (à
-  demander). Appel 1x/semaine, entreprise par entreprise, jamais en parallèle.
+**Demande simplifiée, livrée le 2026-11-27** : pas de tableau `programs`, seulement la **liste des
+programmes** par entreprise (`GET /api/super-admin/csm/company/{id}/programs`, détail et pièges en
+§3). On appelle ensuite `kpi-metrics?company_id=X&program_id=Y`, une entreprise et un programme à
+la fois, jamais en parallèle.
+- À vérifier à la livraison des nouveaux champs : ils répondent bien au filtre `program_id`. Les
+  **crédits restent au niveau entreprise** même filtrés (testé).
+- **CSAT, demandé, à l'étude** ("I'll see what we can do for ratings", 2026-11-27) : ouvrir la clé
+  sur `GET /api/super-admin/csm/company/{id}/ratings`, qui existe déjà (page entreprise CSM de
+  l'admin) et fait le calcul pour **une seule** entreprise, donc sans risque de timeout. Renvoie
+  avg + count plateforme, session, AI, et le split coachs (attention : dans le front, `_internal` =
+  coachs Coachello et `_external` = coachs internes du client, nommage inversé). Accepte
+  `start_date`/`end_date`, pas de `program_id` côté front (à demander). Appel 1x/semaine,
+  entreprise par entreprise, jamais en parallèle.
 - Toujours absents : licences achetées, split role-play / AI coach. Option de dernier recours :
   accès lecture à la DB plateforme.
 
@@ -177,11 +205,14 @@ et un programme à la fois, jamais en parallèle.
 ```
 Netlify scheduled fn (1x/nuit) ──► platform-kpi-refresh-background.mts
                                       │ 2 appels kpi-metrics (human, ai), ~40 s
-                                      │ (+ 1x/semaine : liste des programmes puis kpi-metrics
-                                      │  par programme, ratings si l'accès est ouvert)
+                                      │ (+ 1x/semaine, entreprises reliées seulement :
+                                      │  programs puis kpi-metrics par programme lancé non
+                                      │  archivé, ratings si l'accès est ouvert)
                                       ▼
                        Supabase : platform_kpi_snapshots
                        (snapshot_date, company_id, coaching_type, program_id null|id, payload jsonb)
+                       + platform_programs (company_id, program_id, name, coaching_type,
+                         launched, start_date, is_archived, last_seen_at)
                                       │
              lib/clients/adoption.ts  │ dernier snapshot + tendance vs snapshots précédents
                                       ▼
@@ -195,8 +226,15 @@ Netlify scheduled fn (1x/nuit) ──► platform-kpi-refresh-background.mts
 - **Mapping entreprise** : `clients.platform_company_ids int[]` (plusieurs possibles : Enedis +
   Enedis-Pilot, CRFEG-CRFE + CRFEG-LFS). Pré-rempli par rapprochement de noms, corrigé à la main via
   un modal calqué sur `billing-link-modal.tsx`. Liste d'exclusion de secours des comptes de test.
-- **Mapping programme** (dès que la liste des programmes est exposée) : programme plateforme →
-  `ClientProgram` via `aliases`, comme prévu dans Program scope v2.
+- **Programmes, charge minimale** (consigne "don't over use it") : la liste n'est appelée que
+  pour les entreprises reliées à un client et hors liste d'exclusion, 1x/semaine, en séquentiel,
+  timeout 30 s (1er appel à froid ~25 s). Un seul passage complet au lancement pour aider le
+  mapping. Programme disparu de la liste = `last_seen_at` figé, jamais supprimé.
+- **Mapping programme** : programme plateforme → `ClientProgram` via `aliases`, comme prévu dans
+  Program scope v2. Pré-rempli quand l'entreprise n'a qu'un programme lancé, sinon choix manuel
+  (noms null ou génériques, cf. §3). Plusieurs programmes plateforme peuvent pointer vers le même
+  `ClientProgram` (éditions successives). Programme non relié = affiché "Unmapped", jamais
+  fusionné en silence.
 - **Règle de fiabilité** (CLAUDE.md) : API en échec ou client non relié = état d'erreur explicite,
   jamais un 0. Dans le health : signal `skipped` + `data_gaps`, aucune pénalité.
 
@@ -232,7 +270,7 @@ Avec les programmes : un score par programme, le score du compte = pire programm
   Consumption pace). Tri "Priority" reprenant le score priorité du Sheet. Pas de nouvelle page.
 - **Fiche client** : carte "Adoption" (enrolled, started, activation, active 30d, last session,
   sessions completed / upcoming / no-show, completion, credits used vs contract elapsed, human vs
-  AI, tendance), puis par programme si la donnée arrive.
+  AI, tendance), puis par programme (mêmes chiffres hors crédits, rafraîchis chaque semaine).
 - Libellés produit en anglais (CLAUDE.md), vocabulaire HubSpot conservé.
 
 ## 9. Agents et CoachelloAI (obligatoire, même chantier)
@@ -240,9 +278,9 @@ Avec les programmes : un score par programme, le score du compte = pire programm
 - Outil `get_client_adoption` dans `lib/chat/tools/` (module ajouté **en fin** de `MODULES` dans
   `registry.ts`), même lib et mêmes chiffres que l'écran, règle `viewer.ts`.
 - Branché dans `MODULES_BY_SOURCE` (`lib/agents/tools.ts`), source décrite dans
-  `lib/agents/sources.ts` : ce que ça couvre (adoption par entreprise, snapshot quotidien) et ce que
-  ça ne couvre pas (pas de détail par programme ni de CSAT tant que l'accès n'est pas ouvert, pas de
-  split role-play / AI coach).
+  `lib/agents/sources.ts` : ce que ça couvre (adoption par entreprise en snapshot quotidien, par
+  programme en snapshot hebdo) et ce que ça ne couvre pas (crédits par programme, CSAT tant que
+  l'accès n'est pas ouvert, split role-play / AI coach).
 - Libellé dans `lib/chat/tool-labels.ts`, doc dans le README.
 
 ## 10. Phases
@@ -263,10 +301,14 @@ Avec les programmes : un score par programme, le score du compte = pire programm
   de contrat plateforme (croisée avec HubSpot), rythme de conso pour les comptes en licence.
 - Health quasi complet (tout sauf la satisfaction), comparable au Sheet.
 
-**Phase 2, dès que la liste des programmes est exposée**
-- Programmes plateforme reliés aux `ClientProgram`, métriques et score par programme, 1 ligne =
-  1 programme comme le Sheet (crédits au niveau entreprise). CSAT dans le score si la clé obtient
-  l'accès à l'endpoint `ratings` (§5).
+**Phase 2, programmes (débloquée le 2026-11-27, à faire après le mapping entreprise de la phase 0)**
+- Table `platform_programs`, refresh hebdo de la liste, mapping programme plateforme ↔
+  `ClientProgram` (pré-rempli si un seul programme lancé, sinon manuel).
+- Métriques et score par programme, 1 ligne = 1 programme comme le Sheet (crédits au niveau
+  entreprise). Avec les champs actuels tout de suite (users, activation), puis les champs de la
+  phase 1 dès leur livraison.
+- Contrôle sur Stoiximan, Allianz et Vinci (écarts Sheet vs API, §2).
+- CSAT dans le score si la clé obtient l'accès à l'endpoint `ratings` (§5, à l'étude).
 
 **Phase 3, décommissionnement du Sheet**
 - 2 à 4 semaines en parallèle avec les CSM, comparaison compte par compte, puis arrêt du Sheet.

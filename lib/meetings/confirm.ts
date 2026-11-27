@@ -13,7 +13,7 @@ import { TEST_FIXTURES, ensureTestFixture } from "@/lib/hubspot/test-fixtures";
 import { linkLeadToDeal } from "@/lib/leads/link-deal";
 import { attachDealToRecentRecordings } from "@/lib/sales-coach/attach-deal";
 import { buildProposal } from "./enrich";
-import { renderOutcome, renderProposal } from "./proposal";
+import { missingText, renderOutcome, renderProposal } from "./proposal";
 import { memberBySlackId, type TeamMember } from "./roster";
 import { patchAnnouncement, transitionStatus } from "./store";
 import { replyInThread, updateBotMessage } from "./slack-io";
@@ -49,6 +49,11 @@ export async function refreshProposal(row: AnnouncementRow, ctx: DecideContext):
     hubspot_company_id: proposal.company.hubspotCompanyId,
     lead_id: proposal.lead?.id ?? null,
   };
+  // Carte ouverte trouvée : on la signale sans rien demander. "new card" dans le fil repasse en proposition.
+  if (["proposed", "awaiting_info", "existing_card"].includes(row.status)) {
+    if (proposal.action === "link") patch.status = "existing_card";
+    else if (row.status === "existing_card") patch.status = "proposed";
+  }
   await patchAnnouncement(row.id, patch);
   const next = { ...row, ...patch } as AnnouncementRow;
   if (!FINAL_STATUSES.has(next.status)) await updateBotMessage(next, renderProposal(next, proposal, posterName(next, ctx.roster)));
@@ -67,7 +72,7 @@ export async function decide(row: AnnouncementRow, answer: "yes" | "no", actorSl
   if (!row.proposal.allowedSlackUserIds.includes(actorSlackId)) return `ignored: ${actorSlackId} is not allowed to decide`;
 
   if (answer === "no") {
-    const done = await transitionStatus(row.id, OPEN_STATUSES, "skipped", { decided_by: actorSlackId, decided_at: new Date().toISOString() });
+    const done = await transitionStatus(row.id, [...OPEN_STATUSES, "existing_card"], "skipped", { decided_by: actorSlackId, decided_at: new Date().toISOString() });
     if (!done) return "ignored: not open";
     await updateBotMessage(done, renderOutcome(row.proposal, { kind: "skipped", actor: actorSlackId }));
     return "skipped";
@@ -81,12 +86,16 @@ export async function decide(row: AnnouncementRow, answer: "yes" | "no", actorSl
     return "duplicate";
   }
   if (proposal.action === "none") {
-    await replyInThread(fresh, "Nothing to create for this meeting. Reply \"create a card\" if it is a sales opportunity.");
+    await replyInThread(fresh, "No card for this meeting. Reply \"create a card\" if it is a sales opportunity.");
     return "refused: no card proposed";
+  }
+  if (proposal.action === "link") {
+    await replyInThread(fresh, `Nothing to create: the card ${proposal.existingCard?.name ?? ""} is already open. Separate project? Reply "new card".`);
+    return "refused: card already open";
   }
   if (proposal.missing.length) {
     await patchAnnouncement(fresh.id, { status: "awaiting_info", confirm_intent_by: actorSlackId, confirm_intent_at: new Date().toISOString() });
-    await replyInThread(fresh, `Got your ✅. Still missing: ${proposal.missing.join(", ")}. Reply with it in this thread and I create the card right away.`);
+    await replyInThread(fresh, `Got your ✅. Missing: ${missingText(proposal.missing)}. Reply here with it and the card is created.`);
     return `awaiting_info: ${proposal.missing.join(", ")}`;
   }
 
@@ -99,6 +108,7 @@ export async function decide(row: AnnouncementRow, answer: "yes" | "no", actorSl
   } catch (e) {
     const reason = errMsg(e);
     await patchAnnouncement(claimed.id, { status: "failed", error: reason.slice(0, 500) });
+    console.error(`[meetings/${claimed.id}] creation failed:`, reason);
     await updateBotMessage(claimed, renderOutcome(proposal, { kind: "failed", reason }));
     return `failed: ${reason}`;
   }
@@ -106,11 +116,6 @@ export async function decide(row: AnnouncementRow, answer: "yes" | "no", actorSl
 
 /** Mode test : rien n'est écrit sur le vrai prospect ni sur une vraie carte. */
 async function executeTest(row: AnnouncementRow, p: Proposal, actor: string, ctx: DecideContext): Promise<string> {
-  if (p.action === "link") {
-    await patchAnnouncement(row.id, { status: "linked", deal_link_origin: "linked", hubspot_deal_id: null });
-    await updateBotMessage(row, renderOutcome(p, { kind: "linked", dealId: p.existingCard?.id ?? null, dealName: p.existingCard?.name ?? "the open card", actor, test: true }));
-    return "test: would link";
-  }
   const tester = memberBySlackId(ctx.roster, ctx.testUserSlackId);
   if (!tester?.hubspotOwnerId) throw new Error("your user has no HubSpot owner in CoachelloHQ: the TEST card is assigned to you");
   const fixture = await ensureTestFixture("a", tester.hubspotOwnerId, actor, "meeting_announcement");
@@ -143,7 +148,7 @@ async function executeTest(row: AnnouncementRow, p: Proposal, actor: string, ctx
   await attachDealToRecentRecordings({ dealId: created.dealId, emails: [TEST_FIXTURES.a.email], testMode: true, detail: { announcementId: row.id }, siteOrigin: ctx.siteOrigin }).catch(() => null);
   await updateBotMessage(row, renderOutcome(p, { kind: "created", dealId: created.dealId, dealName: created.dealName, actor, ownerName: tester.name, test: true }));
   const url = hubspotDealUrl(created.dealId);
-  await replyInThread(row, `<@${actor}> TEST card ready: ${url ? `<${url}|${created.dealName}>` : created.dealName}. In live mode the owner would be mentioned here.`);
+  await replyInThread(row, `<@${actor}> TEST card ready: ${url ? `<${url}|${created.dealName}>` : created.dealName}. In live mode, the owner is tagged here.`);
   return `test: created ${created.dealId}`;
 }
 
@@ -182,15 +187,11 @@ async function executeLive(row: AnnouncementRow, p: Proposal, actor: string, ctx
     }
   }
 
+  // Une carte ouverte n'arrive jamais ici (decide() la signale et s'arrête) : on crée toujours.
+  const via = "created" as const;
   let dealId: string;
   let dealName: string;
-  let via: "created" | "linked";
-  if (p.action === "link" && p.existingCard) {
-    dealId = p.existingCard.id;
-    dealName = p.existingCard.name;
-    via = "linked";
-    for (const id of contactIds) await hubspotAssociate("deals", dealId, "contacts", id).catch((e) => warnings.push(`Association: ${errMsg(e)}`));
-  } else {
+  {
     // Société : celle trouvée, sinon créée (son owner = celui de la carte).
     let companyId = p.company.hubspotCompanyId;
     if (!companyId && p.company.name) {
@@ -215,7 +216,6 @@ async function executeLive(row: AnnouncementRow, p: Proposal, actor: string, ctx
     if (!created.ok) throw new Error(`${REFUSAL_LABELS[created.reason]}${created.detail ? ` (${created.detail})` : ""}`);
     dealId = created.dealId;
     dealName = created.dealName;
-    via = "created";
     // Enregistré tout de suite : la suite (lead, tâche, Claap) peut échouer sans perdre la carte.
     await patchAnnouncement(row.id, { hubspot_deal_id: dealId, hubspot_company_id: companyId });
     for (const id of contactIds.slice(1)) await hubspotAssociate("deals", dealId, "contacts", id).catch((e) => warnings.push(`Association: ${errMsg(e)}`));
@@ -245,18 +245,10 @@ async function executeLive(row: AnnouncementRow, p: Proposal, actor: string, ctx
   const attach = await attachDealToRecentRecordings({ dealId, emails, testMode: false, detail: { announcementId: row.id }, siteOrigin: ctx.siteOrigin }).catch((e) => ({ attached: [], errors: [errMsg(e)] }));
   warnings.push(...attach.errors);
 
-  const outcome = via === "created"
-    ? renderOutcome(p, { kind: "created", dealId, dealName, actor, ownerName: p.owner?.name ?? null, test: false })
-    : renderOutcome(p, { kind: "linked", dealId, dealName, actor, test: false });
-  await updateBotMessage(row, outcome);
+  await updateBotMessage(row, renderOutcome(p, { kind: "created", dealId, dealName, actor, ownerName: p.owner?.name ?? null, test: false }));
   const url = hubspotDealUrl(dealId);
   const ownerTag = p.owner?.slackUserId ? `<@${p.owner.slackUserId}>` : p.owner?.name ?? "";
-  await replyInThread(
-    row,
-    via === "created"
-      ? `${ownerTag} your card is ready: ${url ? `<${url}|${dealName}>` : dealName} (Prospection › R1 scheduled).`
-      : `${ownerTag} this meeting is now linked to ${url ? `<${url}|${dealName}>` : dealName}.`,
-  );
+  await replyInThread(row, `${ownerTag} your card is ready: ${url ? `<${url}|${dealName}>` : dealName} (Prospection › R1 scheduled).`);
   if (warnings.length) console.warn(`[meetings/${row.id}] ${via} with warnings:`, warnings.join(" | "));
   return `${via} ${dealId}${warnings.length ? ` (${warnings.length} warning(s))` : ""}`;
 }

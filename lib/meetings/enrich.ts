@@ -146,6 +146,24 @@ async function companyByExactName(name: string): Promise<{ id: string; name: str
   return rows.length === 1 ? { id: rows[0].id, name: rows[0].properties?.name?.trim() || null } : null;
 }
 
+/** Société au nom proche (faute de frappe) : recherche par préfixe, puis meilleur score unique >= 0.9. */
+async function companyByFuzzyName(name: string): Promise<{ id: string; name: string | null } | null> {
+  const norm = normalizeCompany(name);
+  const seed = norm.split(" ").find((t) => t.length >= 4);
+  if (!seed) return null;
+  const rows = await hubspotSearchAll<{ id: string; properties?: { name?: string | null } }>(
+    "companies",
+    { filterGroups: [{ filters: [{ propertyName: "name", operator: "CONTAINS_TOKEN", value: `${seed.slice(0, 4)}*` }] }], properties: ["name"], limit: 50 },
+    50,
+  );
+  const scored = rows
+    .map((r) => ({ id: r.id, name: r.properties?.name?.trim() || null, score: jaroWinkler(normalizeCompany(r.properties?.name ?? ""), norm) }))
+    .filter((r) => r.score >= 0.9)
+    .sort((a, b) => b.score - a.score);
+  if (!scored.length || (scored[1] && scored[1].score === scored[0].score)) return null;
+  return { id: scored[0].id, name: scored[0].name };
+}
+
 async function companyName(companyId: string): Promise<string | null> {
   const res = await hubspotFetch<{ properties?: { name?: string | null } }>(`/crm/v3/objects/companies/${encodeURIComponent(companyId)}?properties=name`);
   return res.properties?.name?.trim() || null;
@@ -179,6 +197,8 @@ interface LeadMatch {
   saleType: SaleType | null;
   ownerHubspotId: string | null;
   taskId: string | null;
+  /** Comment le lead a été retrouvé (les deux derniers cas sont signalés dans la proposition). */
+  matchedBy: "email" | "name" | "name_only" | "company_only";
 }
 
 type LeadDbRow = {
@@ -194,7 +214,35 @@ type LeadDbRow = {
   analysis: { extracted_name: string | null; extracted_company: string | null; extracted_email: string | null } | { extracted_name: string | null; extracted_company: string | null; extracted_email: string | null }[] | null;
 };
 
-/** Lead validé des 120 derniers jours : par email, sinon par nom + société. */
+const tokensOf = (normalized: string) => normalized.split(" ").filter(Boolean);
+
+/**
+ * La personne annoncée est-elle celle du lead ? Tolère une faute de frappe
+ * (Jaro-Winkler), un nom composé ou un deuxième prénom ("Claire Martin" pour
+ * "Claire Martin-Dupont"), une initiale ("C. Martin"), et un prénom ou un nom
+ * seul quand la société correspond nettement (companyStrong).
+ */
+export function personMatches(announced: string, leadName: string, companyStrong: boolean): boolean {
+  const a = normalizePerson(announced);
+  const b = normalizePerson(leadName);
+  if (!a || !b) return false;
+  if (jaroWinkler(a, b) >= 0.9) return true;
+  const ta = tokensOf(a);
+  const tb = new Set(tokensOf(b));
+  const full = ta.filter((t) => t.length > 1);
+  const initials = ta.filter((t) => t.length === 1);
+  if (full.length >= 2 && full.every((t) => tb.has(t))) return true;
+  if (full.length >= 1 && initials.length >= 1 && full.every((t) => tb.has(t)) && initials.every((i) => [...tb].some((t) => t.startsWith(i)))) return true;
+  if (ta.length === 1 && companyStrong && tb.has(ta[0])) return true;
+  return false;
+}
+
+/**
+ * Lead validé des 120 derniers jours, dans cet ordre : par email ; par
+ * personne + société (fautes de frappe tolérées) ; par nom complet très proche
+ * même si la société diffère (sigle, marque) ; par société seule quand
+ * l'annonce ne nomme personne et qu'un seul lead correspond.
+ */
 async function findValidatedLead(emails: string[], name: string | null, company: string | null): Promise<LeadMatch | null> {
   const since = new Date(Date.now() - 120 * 86_400_000).toISOString();
   const { data, error } = await db
@@ -214,13 +262,33 @@ async function findValidatedLead(emails: string[], name: string | null, company:
     const a = first(r.analysis);
     return [r.contact_email, a?.extracted_email].some((e) => e && wanted.has(e.toLowerCase()));
   });
-  if (!hit && name && company) {
-    const n = normalizePerson(name);
-    const c = normalizeCompany(company);
+  let matchedBy: LeadMatch["matchedBy"] = "email";
+  const companySim = (r: LeadDbRow) => {
+    const a = first(r.analysis);
+    return company && a?.extracted_company ? jaroWinkler(normalizeCompany(a.extracted_company), normalizeCompany(company)) : 0;
+  };
+  if (!hit && name) {
     hit = rows.find((r) => {
       const a = first(r.analysis);
-      return !!a?.extracted_name && !!a.extracted_company && jaroWinkler(normalizePerson(a.extracted_name), n) >= 0.9 && jaroWinkler(normalizeCompany(a.extracted_company), c) >= 0.85;
+      const sim = companySim(r);
+      return !!a?.extracted_name && sim >= 0.85 && personMatches(name, a.extracted_name, sim >= 0.9);
     });
+    if (hit) matchedBy = "name";
+  }
+  if (!hit && name && tokensOf(normalizePerson(name)).length >= 2) {
+    // Nom complet quasi identique : la société annoncée peut être un sigle ou une marque ("SG", "Russell Stover").
+    hit = rows.find((r) => {
+      const a = first(r.analysis);
+      return !!a?.extracted_name && jaroWinkler(normalizePerson(a.extracted_name), normalizePerson(name)) >= 0.95;
+    });
+    if (hit) matchedBy = "name_only";
+  }
+  if (!hit && !name && company) {
+    const same = rows.filter((r) => companySim(r) >= 0.9);
+    if (same.length === 1) {
+      hit = same[0];
+      matchedBy = "company_only";
+    }
   }
   if (!hit) return null;
   const a = first(hit.analysis);
@@ -242,6 +310,7 @@ async function findValidatedLead(emails: string[], name: string | null, company:
     saleType: isSaleType(x?.sale_type) ? (x?.sale_type as SaleType) : null,
     ownerHubspotId: x?.owner_hubspot_id ?? null,
     taskId: x?.hubspot_task_id ?? null,
+    matchedBy,
   };
 }
 
@@ -303,8 +372,11 @@ export async function buildProposal(row: AnnouncementRow, extraction: Extraction
   try {
     lead = await findValidatedLead(knownEmails, primaryName, companyLabel);
   } catch (e) {
-    warnings.push(`Inbound leads not checked: ${errMsg(e)}`);
+    console.warn("[meetings/enrich] inbound leads not checked:", errMsg(e));
+    warnings.push("I could not check the inbound leads: some details may be missing.");
   }
+  if (lead?.matchedBy === "company_only") warnings.push(`Matched to the inbound lead of ${lead.companyName ?? "this company"} (${lead.contactName ?? "contact"}) : check it is the right contact.`);
+  if (lead?.matchedBy === "name_only") warnings.push(`Found the inbound lead of ${lead.contactName ?? "this contact"} at ${lead.companyName ?? "another company"}: check the company.`);
   if (lead) {
     if (!primaryEmail && lead.email) {
       primaryEmail = lead.email;
@@ -331,14 +403,15 @@ export async function buildProposal(row: AnnouncementRow, extraction: Extraction
       const ofCompany = companyId ? found.filter((c) => c.companyId === companyId) : [];
       const pick = ofCompany.length === 1 ? ofCompany[0] : found.length === 1 ? found[0] : null;
       if (pick) hsContact = pick;
-      else if (found.length > 1) warnings.push(`${found.length} HubSpot contacts are named ${primaryName}: reply with the right email.`);
+      else if (found.length > 1) warnings.push(`Several contacts are named ${primaryName}: reply with the right email.`);
     }
     if (hsContact) {
       if (!primaryEmail && hsContact.email) {
         primaryEmail = hsContact.email;
         emailSource = "hubspot";
       }
-      if (!primaryName && hsContact.name) primaryName = hsContact.name;
+      // Nom de la fiche HubSpot repris s'il manque ou s'il est proche (faute de frappe dans l'annonce).
+      if (hsContact.name && !o.contactName && (!primaryName || jaroWinkler(normalizePerson(hsContact.name), normalizePerson(primaryName)) >= 0.85 || personMatches(primaryName, hsContact.name, true))) primaryName = hsContact.name;
       if (!primaryTitle && hsContact.title) primaryTitle = hsContact.title;
       if (!companyId && hsContact.companyId) companyId = hsContact.companyId;
     }
@@ -348,16 +421,19 @@ export async function buildProposal(row: AnnouncementRow, extraction: Extraction
       if (c) companyId = c.id;
     }
     if (!companyId && companyLabel) {
-      const c = await companyByExactName(companyLabel);
+      const c = (await companyByExactName(companyLabel)) ?? (await companyByFuzzyName(companyLabel));
       if (c) companyId = c.id;
     }
     // Nom HubSpot de la société : il remplace le nom annoncé seulement si l'annonce
     // n'en donnait pas (une filiale ne prend pas le nom de sa maison mère).
     if (companyId) {
       hubspotCompanyName = await companyName(companyId).catch(() => null);
-      if (hubspotCompanyName && !companyLabel) {
+      const close = !!hubspotCompanyName && !!companyLabel && jaroWinkler(normalizeCompany(hubspotCompanyName), normalizeCompany(companyLabel)) >= 0.85;
+      // Nom HubSpot repris si l'annonce n'en donnait pas, ou s'il est proche (faute de frappe corrigée).
+      // Très différent (filiale, marque) : le nom annoncé reste, le nom HubSpot est affiché à côté.
+      if (hubspotCompanyName && !o.companyName && (!companyLabel || close)) {
         companyLabel = hubspotCompanyName;
-        companySource = "hubspot";
+        companySource = companySource ?? "hubspot";
       }
     }
     // Annonce sans nom ni email ("Head of Talent - Aviv Group") : contacts de la société par poste.
@@ -368,11 +444,12 @@ export async function buildProposal(row: AnnouncementRow, extraction: Extraction
         primaryEmail = hsContact.email;
         primaryName = hsContact.name;
         emailSource = "hubspot";
-        warnings.push(`Contact found in HubSpot by job title (${hsContact.title}): check it is the right person.`);
+        warnings.push(`Contact found by job title (${hsContact.title}): check it is the right person.`);
       }
     }
   } catch (e) {
-    warnings.push(`HubSpot lookup incomplete: ${errMsg(e)}`);
+    console.warn("[meetings/enrich] HubSpot lookup incomplete:", errMsg(e));
+    warnings.push("I could not check HubSpot completely: some details may be missing.");
   }
 
   const contacts: ProposalContact[] = [
@@ -394,7 +471,8 @@ export async function buildProposal(row: AnnouncementRow, extraction: Extraction
       existingCard = { id: pick.id, name: pick.dealname || pick.id, stageLabel: labels.stages[pick.dealstage] ?? null, pipelineLabel: labels.pipelines[pick.pipeline] ?? null };
     }
   } catch (e) {
-    warnings.push(`Open cards not checked: ${errMsg(e)}`);
+    console.warn("[meetings/enrich] open cards not checked:", errMsg(e));
+    warnings.push("I could not check for an existing card.");
   }
 
   // 4. Client, partenaire.
@@ -403,11 +481,10 @@ export async function buildProposal(row: AnnouncementRow, extraction: Extraction
     const client = await isExistingClient(companyId).catch(() => false);
     if (client) {
       if (kind === "prospect") kind = "client";
-      warnings.push(`${companyLabel ?? "This company"} is already a client (won deal or Customer Success).`);
+      warnings.push(`${companyLabel ?? "This company"} is already a client.`);
     }
   }
-  if (kind === "partner") warnings.push("This looks like a partner meeting: no card is proposed. Reply \"create a card\" if it is a sales opportunity.");
-  if (kind === "other") warnings.push("This does not look like a sales meeting: no card is proposed. Reply \"create a card\" if it is one.");
+  // Meeting partenaire ou non commercial : l'en-tête et la consigne du message le disent (proposal.ts).
 
   // 5. Owner : correction du fil, collègue qui mène le meeting, sinon l'auteur.
   const poster = memberBySlackId(roster, row.posted_by_slack_id);
@@ -418,7 +495,7 @@ export async function buildProposal(row: AnnouncementRow, extraction: Extraction
   if (fromThread) owner = asOwner(fromThread, "thread");
   else if (runner?.hubspotOwnerId) owner = asOwner(runner, "runner");
   else {
-    if (runner && !runner.hubspotOwnerId) warnings.push(`${runner.name} has no HubSpot owner in CoachelloHQ: the owner is the author instead.`);
+    if (runner && !runner.hubspotOwnerId) warnings.push(`${runner.name} cannot own cards yet: the owner is the author for now.`);
     if (poster) owner = asOwner(poster, "post");
   }
   if (!owner && lead?.ownerHubspotId) {

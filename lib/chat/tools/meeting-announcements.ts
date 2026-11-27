@@ -24,13 +24,14 @@ const STATUS_LABELS: Record<string, string> = {
   failed: "creation failed",
   duplicate: "already announced",
   cancelled: "announcement deleted",
+  existing_card: "an open card already exists: nothing created, nothing written",
 };
 
 const defs: Anthropic.Tool[] = [
   {
     name: "get_meeting_announcements",
     description:
-      "Meetings annoncés par les commerciaux dans Slack #1y-new-meetings, et ce que CoachelloHQ en a fait. Depuis le 30/11/2026, c'est la SEULE voie de création des cartes HubSpot (la validation d'un lead ne crée plus que le contact et une tâche d'appel) : le bot lit l'annonce, propose la carte Prospection / R1 scheduled dans le fil, et un ✅ de l'auteur, de l'owner proposé ou d'un admin la crée, ou relie le meeting à la carte déjà ouverte. Pour chaque annonce : date du post, auteur, owner, contact (nom, poste, email et sa provenance : annonce, fil, lead inbound, HubSpot), société, date du meeting, Source, offre, type de vente, lead inbound d'origine, statut (proposed = en attente du ✅, awaiting_info = il manque un champ, created ou linked = carte créée ou reliée, skipped, expired, ignored = pas une annonce, duplicate, failed, cancelled), carte HubSpot, ce qui manque, avertissements, notes du fil. Source : table CoachelloHQ meeting_announcements, PAS HubSpot (pour l'étape actuelle d'une carte, utilise get_deals). Ne couvre pas les cartes créées à la main dans HubSpot. Les annonces de test sont exclues par défaut. Un non-admin ne voit que les annonces dont il est l'auteur ou l'owner.",
+      "Meetings annoncés par les commerciaux dans Slack #1y-new-meetings, et ce que CoachelloHQ en a fait. Depuis le 30/11/2026, c'est la SEULE voie de création des cartes HubSpot (la validation d'un lead ne crée plus que le contact et une tâche d'appel) : le bot lit l'annonce, propose la carte Prospection / R1 scheduled dans le fil, et un ✅ de l'auteur, de l'owner proposé ou d'un admin la crée (ou une réponse qui complète l'info manquante). Si une carte ouverte existe déjà, le bot la signale et ne crée ni n'écrit rien (statut existing_card). Pour chaque annonce : date du post, auteur, owner, contact (nom, poste, email et sa provenance : annonce, fil, lead inbound, HubSpot), société, date du meeting, Source, offre, type de vente, lead inbound d'origine, statut (proposed = en attente du ✅, awaiting_info = il manque un champ, created ou linked = carte créée ou reliée, skipped, expired, ignored = pas une annonce, duplicate, failed, cancelled), carte HubSpot, ce qui manque, avertissements, notes du fil. Source : table CoachelloHQ meeting_announcements, PAS HubSpot (pour l'étape actuelle d'une carte, utilise get_deals). Ne couvre pas les cartes créées à la main dans HubSpot. Les annonces de test sont exclues par défaut. Un non-admin ne voit que les annonces dont il est l'auteur ou l'owner.",
     input_schema: {
       type: "object" as const,
       properties: {

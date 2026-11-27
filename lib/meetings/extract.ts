@@ -20,7 +20,7 @@ Read only what the message and its screenshots say. Never invent an email, a nam
 Fields:
 - contacts: the external people of the meeting, never Coachello colleagues (the team list is given). first_name, last_name, title (job title), email (only if written in the message or visible in a screenshot). A role without a name ("CEO", "Head of Talent") gives a contact with only a title.
 - company_name: the external company. company_website: a link or domain given for it.
-- meeting_date: YYYY-MM-DD, resolved against the posting date given below. French dates are day/month ("le 04/12" = 4 December). "on Friday", "this Tuesday" = the next such day after the posting date. A date without a year is the next occurrence after the posting date. Empty if there is no date.
+- meeting_date: YYYY-MM-DD, resolved against the posting date given below. French dates are day/month ("le 04/12" = 4 December). "on Friday", "this Tuesday" = the next such day after the posting date. A date without a year is the next occurrence after the posting date, unless it falls less than two months before the posting date (a late announcement of a past meeting): then it is that past date. Empty if there is no date.
 - meeting_time: HH:MM (24h) if a time is given, else empty.
 - runner_slack_id: if the message says a mentioned colleague will run the meeting ("meeting avec @Amélie", "for @Leon"), that colleague's Slack id; else empty.
 - meeting_kind: prospect (a sales opportunity), partner (a partnership discussion, no sale), client (an existing customer: upsell, renewal, follow-up), other.
@@ -160,5 +160,15 @@ export async function extractAnnouncement(input: {
     { type: "text", text: prompt },
   ];
   const raw = await callStructured<Partial<Extraction>>({ system: SYSTEM, content, schema: SCHEMA as unknown as Record<string, unknown>, label: "extract", maxTokens: 3000 });
-  return sanitizeExtraction(raw);
+  const extraction = sanitizeExtraction(raw);
+  // Garde-fou : un meeting annoncé à plus de 10 mois est une date passée lue dans l'année suivante.
+  if (extraction.meeting_date) {
+    const posted = Number(input.slackTs) * 1000;
+    const d = new Date(`${extraction.meeting_date}T12:00:00Z`);
+    if (d.getTime() - posted > 300 * 86_400_000) {
+      d.setUTCFullYear(d.getUTCFullYear() - 1);
+      extraction.meeting_date = d.toISOString().slice(0, 10);
+    }
+  }
+  return extraction;
 }

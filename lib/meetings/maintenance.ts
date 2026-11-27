@@ -6,7 +6,7 @@
 import { db } from "@/lib/db";
 import { dmRecipient } from "@/lib/slack/lookup";
 import { EXPIRY_AFTER_MEETING_MS, EXPIRY_AFTER_POST_MS, REMINDER_AFTER_MS, testUserSlackId } from "./config";
-import { renderOutcome } from "./proposal";
+import { missingText, renderOutcome } from "./proposal";
 import { patchAnnouncement, transitionStatus } from "./store";
 import { permalinkOf, replyInThread, updateBotMessage } from "./slack-io";
 import { OPEN_STATUSES, type AnnouncementRow } from "./types";
@@ -91,7 +91,7 @@ export async function runMaintenance(dispatch: (id: string) => Promise<void>, no
       const link = await permalinkOf(row.thread_channel, row.bot_message_ts);
       const p = row.proposal;
       const who = p ? `${p.contacts[0]?.name ?? "your contact"}${p.company.name ? ` (${p.company.name})` : ""}` : "your meeting";
-      const missing = p?.missing.length ? ` Still missing: ${p.missing.join(", ")}.` : "";
+      const missing = p?.missing.length ? ` Missing: ${missingText(p.missing)}.` : "";
       await dmRecipient(
         recipient,
         `${row.mode === "test" ? ":test_tube: Test · " : ""}:alarm_clock: Reminder: the meeting with ${who} has no card yet.${missing} React ✅ to create it or ❌ to skip${link ? `: ${link}` : " on my reply in #1y-new-meetings"}.`,
