@@ -20,13 +20,16 @@ export type WriteAction =
   | "contact_unqualified"
   | "create_contact"
   | "create_company"
-  | "archive_deal";
+  | "archive_deal"
+  | "create_task"
+  | "update_task"
+  | "complete_task";
 
-export type WriteTrigger = "lead_validation" | "claap_call" | "confirmation" | "manual" | "test_script";
+export type WriteTrigger = "lead_validation" | "claap_call" | "confirmation" | "manual" | "test_script" | "meeting_announcement";
 
 export interface OpenWriteInput {
   action: WriteAction;
-  objectType: "deals" | "contacts" | "companies";
+  objectType: "deals" | "contacts" | "companies" | "tasks";
   objectId?: string | null;
   dedupeKey?: string | null;
   triggeredBy: WriteTrigger;
@@ -83,6 +86,22 @@ export async function closeWrite(
   if (result.status === "failed") patch.dedupe_key = null; // libère la réservation, garde la trace
   const { error } = await db.from("hubspot_write_log").update(patch).eq("id", id);
   if (error) console.error(`[hubspot-write-log] close ${id} failed (the HubSpot write itself is ${result.status}):`, error.message);
+}
+
+/**
+ * Écriture déjà réservée par cette clé : "done" (objet créé, à réutiliser) ou
+ * "pending" (en cours, ou interrompue par un plantage). Une écriture "failed"
+ * libère sa clé (closeWrite), elle n'est donc jamais renvoyée ici.
+ */
+export async function findWriteByDedupeKey(dedupeKey: string): Promise<{ id: string; status: string; objectId: string | null } | null> {
+  const { data, error } = await db
+    .from("hubspot_write_log")
+    .select("id, status, object_id")
+    .eq("dedupe_key", dedupeKey)
+    .maybeSingle();
+  if (error) throw new WriteLogUnavailableError(`hubspot_write_log unavailable: ${error.message}`);
+  if (!data) return null;
+  return { id: data.id as string, status: data.status as string, objectId: (data.object_id as string | null) ?? null };
 }
 
 /** Le SalesOS a-t-il déjà passé cette carte de R1 scheduled à Scoping ? (sert à on_new) */

@@ -25,8 +25,17 @@ import {
   type ScoreBand,
 } from "./pipeline-model";
 import { gateByMode, loadCutoverState, type CutoverState } from "./cutover";
-import { closeWrite, listWrites, openWrite, wasMovedToScopingBySalesOS, WriteLogUnavailableError, type WriteTrigger } from "./write-log";
-import { isDealOrigin, isOfferType, offerTypesToHubspot, originNeedsPartner, type OfferType } from "@/lib/leads/origin";
+import { closeWrite, findWriteByDedupeKey, listWrites, openWrite, wasMovedToScopingBySalesOS, WriteLogUnavailableError, type WriteTrigger } from "./write-log";
+import {
+  DEFAULT_SALE_TYPE,
+  isDealOrigin,
+  isOfferType,
+  isSaleType,
+  offerTypesToHubspot,
+  originNeedsPartner,
+  type OfferType,
+  type SaleType,
+} from "@/lib/leads/origin";
 
 export type RefusalReason =
   | "settings_unavailable"
@@ -169,6 +178,8 @@ export interface CreateProspectionDealInput {
   origin: string;
   offerTypes?: readonly string[];
   referringPartner?: string | null;
+  /** Direct (défaut) ou RFP, choisi à la validation du lead. */
+  saleType?: SaleType;
   contactId?: string | null;
   companyId?: string | null;
   /** Carte de test : nom préfixé "TEST - ", autorisée quel que soit le réglage de création. */
@@ -176,6 +187,12 @@ export interface CreateProspectionDealInput {
   triggeredBy: WriteTrigger;
   actor: string | null;
   leadId?: string | null;
+  /**
+   * Clé de réservation (ex. create_deal:announcement:<id>) : une création déjà
+   * faite avec cette clé renvoie la même carte, une création en cours (ou
+   * interrompue par un plantage) est refusée, jamais relancée seule.
+   */
+  dedupeKey?: string | null;
 }
 
 // Types d'association HUBSPOT_DEFINED : deal -> contact = 3, deal -> company (primaire) = 5.
@@ -192,6 +209,8 @@ export async function createProspectionDeal(
   const partner = input.referringPartner?.trim() || null;
   if (originNeedsPartner(input.origin) && !partner) return refuse("partner_required");
   const offers = [...new Set((input.offerTypes ?? []).filter(isOfferType))] as OfferType[];
+  const saleType = input.saleType ?? DEFAULT_SALE_TYPE;
+  if (!isSaleType(saleType)) return refuse("invalid_input", `sale type "${saleType}"`);
 
   let dealName = input.dealName.trim();
   if (!dealName) return refuse("invalid_input", "deal name is required");
@@ -200,8 +219,24 @@ export async function createProspectionDeal(
 
   const settings = await loadSettings();
   if (isRefusal(settings)) return settings;
-  if (!input.isTest && settings.values.hubspot_creation !== "prospection") {
-    return refuse("creation_not_enabled", `hubspot_creation = ${settings.values.hubspot_creation}`);
+  // Chaque origine a son réglage : l'annonce d'un meeting (#1y-new-meetings,
+  // la voie normale depuis le 30/11) ou la validation d'un lead (secours).
+  if (!input.isTest) {
+    if (input.triggeredBy === "meeting_announcement") {
+      if (settings.values.meeting_deal_creation !== "on") return refuse("creation_not_enabled", `meeting_deal_creation = ${settings.values.meeting_deal_creation}`);
+    } else if (settings.values.hubspot_creation !== "prospection") {
+      return refuse("creation_not_enabled", `hubspot_creation = ${settings.values.hubspot_creation}`);
+    }
+  }
+
+  if (input.dedupeKey) {
+    try {
+      const existing = await findWriteByDedupeKey(input.dedupeKey);
+      if (existing?.status === "done" && existing.objectId) return { ok: true, logId: existing.id, dealId: existing.objectId, dealName, reused: true };
+      if (existing) return refuse("duplicate", "a creation with this key is in progress, or was interrupted: check the HubSpot write log");
+    } catch (e) {
+      return refuse("journal_unavailable", errMsg(e));
+    }
   }
 
   // Idempotence d'un nouvel essai (504 côté navigateur puis nouveau clic) :
@@ -226,7 +261,9 @@ export async function createProspectionDeal(
     dealstage: STAGE_IDS.r1Scheduled,
     origin: input.origin,
     // Le workflow [PIPE] 01 n'enrôle pas une carte où ces deux champs sont vides.
-    sale_type: "direct",
+    // Sale type choisi à la validation (Direct par défaut) ; Forced move reste
+    // la décision du Sales, cochée par lui seul dans HubSpot.
+    sale_type: saleType,
     forced_move: "false",
   };
   if (offers.length) properties.type_offre = offerTypesToHubspot(offers);
@@ -239,9 +276,10 @@ export async function createProspectionDeal(
   const log = await open({
     action: "create_deal",
     objectType: "deals",
+    dedupeKey: input.dedupeKey ?? null,
     triggeredBy: input.triggeredBy,
     actor: input.actor,
-    mode: input.isTest ? "test" : settings.values.hubspot_creation,
+    mode: input.isTest ? "test" : input.triggeredBy === "meeting_announcement" ? `meeting_${settings.values.meeting_deal_creation}` : settings.values.hubspot_creation,
     isTest: input.isTest,
     after: { properties, contactId: input.contactId ?? null, companyId: input.companyId ?? null },
     leadId: input.leadId ?? null,

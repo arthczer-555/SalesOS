@@ -23,7 +23,7 @@ import type { ToolModule } from "./types";
 import { viewer } from "./viewer";
 
 const ACTION_LABELS: Record<string, string> = {
-  create_deal: "card created in Prospection / R1 scheduled (lead validated)",
+  create_deal: "card created in Prospection / R1 scheduled",
   r1_to_scoping: "card moved from R1 scheduled to Scoping (SQL) after the R1",
   score: "qualification score written to HubSpot (score_medic_kuna)",
   type_offre: "offer written to HubSpot (type_offre)",
@@ -33,6 +33,9 @@ const ACTION_LABELS: Record<string, string> = {
   create_contact: "contact created",
   create_company: "company created",
   archive_deal: "test card archived",
+  create_task: "call task created for the owner (lead validated, no card)",
+  update_task: "call task reassigned to another owner",
+  complete_task: "call task completed (meeting booked)",
 };
 
 const TRIGGER_LABELS: Record<string, string> = {
@@ -41,6 +44,7 @@ const TRIGGER_LABELS: Record<string, string> = {
   confirmation: "confirmed by a person who attended the meeting",
   manual: "manual action in CoachelloHQ",
   test_script: "test script",
+  meeting_announcement: "meeting announced in #1y-new-meetings, confirmed with a check mark",
 };
 
 const defs: Anthropic.Tool[] = [

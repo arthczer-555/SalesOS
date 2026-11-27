@@ -114,8 +114,15 @@ export const FORECAST_PIPELINE_IDS: readonly string[] = [PIPELINE_IDS.sales];
 /** Préfixe obligatoire des cartes de test (consigne de Gaëlle : "utilise juste le mot TEST"). */
 export const TEST_DEAL_PREFIX = "TEST - ";
 
+/**
+ * Carte de test : "TEST - ..." (créées par CoachelloHQ), "TEST ..." et "TEST2 ..."
+ * (jeux de test des workflows de Gaëlle, 25 et 26/11). Seules ces cartes sont
+ * écrites quand un réglage est en mode test. Majuscules exigées : "test" seul
+ * (un vieux deal gagné porte ce nom) n'en est pas une.
+ */
 export function isTestDealName(name: string | null | undefined): boolean {
-  return (name ?? "").startsWith(TEST_DEAL_PREFIX);
+  const n = name ?? "";
+  return n.startsWith(TEST_DEAL_PREFIX) || /^TEST2?\b/.test(n);
 }
 
 export function stageDef(stageId: string | null | undefined): StageDef | null {
@@ -211,8 +218,8 @@ export const ENROLLMENT_REASON_LABELS: Record<Exclude<EnrollmentCheck, { enrolla
   closed: "the card is closed",
   forced_move: "forced move",
   rfp: "RFP",
-  missing_sale_type: "Sale type is empty",
-  missing_forced_move: "Forced move is empty",
+  missing_sale_type: "Sale type is empty: the workflow skips it unless its filter includes empty values",
+  missing_forced_move: "Forced move is empty: the workflow skips it unless its filter includes empty values",
   unknown_stage: "unknown stage",
 };
 

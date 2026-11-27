@@ -16,9 +16,10 @@
  *   log [--deal ID] [--limit N] journal des écritures
  *
  * Écritures (HubSpot) :
- *   create --card a|b [--source Inbound] [--offer ai-roleplay,human-coaching] [--name "Acme"] [--dry]
+ *   create --card a|b [--source Inbound] [--offer ai-roleplay,human-coaching] [--sale-type direct|rfp] [--name "Acme"] [--dry]
  *   move --deal ID [--dry]                 R1 scheduled -> Scoping (SQL)
  *   score --deal ID --value N [--dry]      écrit score_medic_kuna (le workflow 01 range la carte)
+ *   (move et score : --find "TEST2 Deal A" à la place de --deal, carte cherchée par son nom exact)
  *   meeting --card a|b [--deal ID] [--unsure] [--score N] [--kind discovery_r1]
  *                                          simule un meeting analysé (rec_test_...) et lance le parcours
  *                                          réel : rapprochement, passage en Scoping, score, ou demande de ✅
@@ -172,6 +173,8 @@ async function cmdCreate() {
   const source = opt("source") ?? DEFAULT_DEAL_ORIGIN;
   if (!isDealOrigin(source)) die(`--source must be one of: ${DEAL_ORIGINS.map((o) => `"${o.value}"`).join(", ")}`);
   const offers = (opt("offer") ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  const saleType = opt("sale-type") ?? "direct";
+  if (saleType !== "direct" && saleType !== "rfp") die("--sale-type must be direct or rfp");
   const badOffer = offers.find((o) => !isOfferType(o));
   if (badOffer) die(`unknown offer "${badOffer}" (ai-roleplay, human-coaching)`);
   const name = opt("name") ?? `${FIXTURES[card].company.replace(/^TEST - /, "")} - ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
@@ -179,7 +182,7 @@ async function cmdCreate() {
 
   if (dry) {
     console.log(`[dry] would ensure test contact ${FIXTURES[card].email} and company "${FIXTURES[card].company}", then create:`);
-    console.log(`      "TEST - ${name}" in Prospection / R1 scheduled, owner ${ownerId}, Source "${source}", offer ${offers.join(";") || "-"}, sale_type direct, forced_move false`);
+    console.log(`      "TEST - ${name}" in Prospection / R1 scheduled, owner ${ownerId}, Source "${source}", offer ${offers.join(";") || "-"}, sale_type ${saleType}, forced_move false`);
     return;
   }
   const { contactId, companyId, created } = await ensureTestFixture(card, ownerId, ACTOR);
@@ -189,6 +192,7 @@ async function cmdCreate() {
     ownerId,
     origin: source,
     offerTypes: offers,
+    saleType,
     contactId,
     companyId,
     isTest: true,
@@ -199,8 +203,25 @@ async function cmdCreate() {
   console.log(`✔ created ${res.dealId}: ${res.dealName}\n  next: move --deal ${res.dealId}`);
 }
 
+/** --deal ID, ou --find "Nom exact" (une seule carte de ce nom dans HubSpot). */
+async function resolveDealId(): Promise<string> {
+  const id = opt("deal");
+  if (id) return id;
+  const name = opt("find");
+  if (!name) die("--deal ID or --find \"Exact deal name\" is required");
+  const res = await hubspotFetch<{ results?: { id: string; properties: Record<string, string | null> }[] }>("/crm/v3/objects/deals/search", "POST", {
+    filterGroups: [{ filters: [{ propertyName: "dealname", operator: "EQ", value: name }] }],
+    properties: ["dealname", "pipeline", "dealstage"],
+    limit: 5,
+  });
+  const rows = res.results ?? [];
+  if (rows.length !== 1) die(`${rows.length} deals named "${name}"${rows.length ? `: ${rows.map((r) => r.id).join(", ")} (use --deal ID)` : " (created a few seconds ago? HubSpot search can lag, retry)"}`);
+  console.log(`  ${name} = deal ${rows[0].id}`);
+  return rows[0].id;
+}
+
 async function cmdMove() {
-  const dealId = opt("deal") ?? die("--deal is required");
+  const dealId = await resolveDealId();
   if (dry) {
     const d = await readGuardDeal(dealId);
     return console.log(`[dry] ${d.dealname}: pipeline ${d.pipeline}, stage ${d.dealstage}, TEST card: ${isTestDealName(d.dealname)}`);
@@ -211,7 +232,7 @@ async function cmdMove() {
 }
 
 async function cmdScore() {
-  const dealId = opt("deal") ?? die("--deal is required");
+  const dealId = await resolveDealId();
   const value = Number(opt("value"));
   if (!Number.isFinite(value)) die("--value N is required");
   if (dry) {

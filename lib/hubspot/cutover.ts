@@ -20,10 +20,11 @@ const HISTORY_MAX = 100;
 
 export const CUTOVER_SETTINGS = {
   hubspot_creation: {
-    values: ["legacy", "prospection", "frozen"],
+    values: ["legacy", "prospection", "contact_task", "frozen"],
     default: "legacy",
-    live: ["prospection"],
-    description: "Deal creation target. legacy = current path, prospection = Prospection / R1 scheduled with a mandatory Source, frozen = Validate disabled.",
+    live: ["prospection", "contact_task"],
+    description:
+      "What lead validation creates. legacy = old path (Sales pipeline deal), contact_task = the contact and a call task for the owner, no card (cards come from #1y-new-meetings), prospection = a Prospection / R1 scheduled card (fallback), frozen = Validate disabled. An unknown stored value reads as frozen.",
   },
   contact_lifecycle_write: {
     values: ["legacy", "off"],
@@ -115,6 +116,13 @@ export const CUTOVER_SETTINGS = {
     live: ["v3"],
     description: "Sales Coach grids (v3 = 3 families, criteria per meeting type).",
   },
+  meeting_deal_creation: {
+    values: ["off", "test", "on"],
+    default: "off",
+    live: ["on"],
+    description:
+      "Card creation from #1y-new-meetings announcements (bot reply in the thread, check mark to create). test = everything happens in Arthur's DM with the bot and only TEST cards are created.",
+  },
 } as const;
 
 export type CutoverKey = keyof typeof CUTOVER_SETTINGS;
@@ -131,7 +139,7 @@ export interface CutoverHistoryEntry {
 
 export interface CutoverState {
   values: CutoverValues;
-  /** Instant de la bascule (sert à on_new). Posé le 30/11 au passage de la création sur prospection. */
+  /** Instant de la bascule (sert à on_new). Posé le 30/11 au passage de la création sur contact_task ou prospection. */
   cutoverAt: string | null;
   history: CutoverHistoryEntry[];
 }
@@ -150,11 +158,20 @@ function isValidValue<K extends CutoverKey>(key: K, value: string): value is Cut
   return (CUTOVER_SETTINGS[key].values as readonly string[]).includes(value);
 }
 
-function resolveValues(stored: Partial<Record<string, string>> | undefined): CutoverValues {
+/**
+ * Valeurs effectives. Une valeur absente prend le défaut. Une valeur présente
+ * mais inconnue de ce code prend aussi le défaut, SAUF pour hubspot_creation :
+ * elle vaut alors "frozen" (échec fermé). Sinon un réglage posé avant le
+ * déploiement, ou un retour à un ancien code, relancerait l'ancienne création
+ * de deal ("legacy") sans que personne ne le voie.
+ */
+export function resolveValues(stored: Partial<Record<string, string>> | undefined): CutoverValues {
   const out = {} as Record<CutoverKey, string>;
   for (const key of Object.keys(CUTOVER_SETTINGS) as CutoverKey[]) {
     const v = stored?.[key];
-    out[key] = v && isValidValue(key, v) ? v : CUTOVER_SETTINGS[key].default;
+    if (v && isValidValue(key, v)) out[key] = v;
+    else if (v && key === "hubspot_creation") out[key] = "frozen";
+    else out[key] = CUTOVER_SETTINGS[key].default;
   }
   return out as CutoverValues;
 }
@@ -192,8 +209,8 @@ async function saveState(state: CutoverState): Promise<void> {
  * - avant le 30/11, une valeur "live" (qui écrit sur de vraies cartes) exige force ;
  * - après la bascule, hubspot_creation ne revient jamais à legacy (on ne recrée
  *   plus de deals dans l'ancien pipeline) ;
- * - le premier passage de hubspot_creation sur prospection, à partir du 30/11,
- *   fixe l'instant de bascule utilisé par on_new.
+ * - le premier passage de hubspot_creation sur prospection ou contact_task, à
+ *   partir du 30/11, fixe l'instant de bascule utilisé par on_new.
  */
 export async function setCutoverSetting(
   key: CutoverKey,
@@ -216,7 +233,7 @@ export async function setCutoverSetting(
   const now = new Date().toISOString();
   (state.values as Record<CutoverKey, string>)[key] = value;
   state.history.push({ key, from, to: value, by: actor, at: now });
-  if (key === "hubspot_creation" && value === "prospection" && !state.cutoverAt && isAfterCutoverDate()) {
+  if (key === "hubspot_creation" && (value === "prospection" || value === "contact_task") && !state.cutoverAt && isAfterCutoverDate()) {
     state.cutoverAt = now;
     state.history.push({ key: "cutover_at", from: null, to: now, by: actor, at: now });
   }

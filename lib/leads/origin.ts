@@ -60,3 +60,19 @@ export function offerTypesToHubspot(values: readonly OfferType[]): string {
 export function offerTypesFromHubspot(raw: string | null | undefined): OfferType[] {
   return (raw ?? "").split(";").map((v) => v.trim()).filter(isOfferType);
 }
+
+// ── Sale type (propriété HubSpot `sale_type`) ───────────────────────────────
+// "Direct sale or RFP (tender). Direct by default. Used to compare win rates."
+// Une carte RFP n'est pas déplacée par le workflow de score [PIPE] 01.
+export const SALE_TYPES = [
+  { value: "direct", label: "Direct" },
+  { value: "rfp", label: "RFP (tender)" },
+] as const;
+
+export type SaleType = (typeof SALE_TYPES)[number]["value"];
+
+export const DEFAULT_SALE_TYPE: SaleType = "direct";
+
+export function isSaleType(value: unknown): value is SaleType {
+  return value === "direct" || value === "rfp";
+}

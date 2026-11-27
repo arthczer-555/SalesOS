@@ -96,10 +96,10 @@ le dev le 2026-11-19, à stocker en env Netlify `PLATFORM_KPI_API_KEY`, jamais d
 | Bloc Sheet | Colonne | Source cible | État |
 |---|---|---|---|
 | Identification | Compte | `clients` (HubSpot) | ✅ |
-| | Programme | `clients.programs` (kanban, IA) | ✅ côté HQ, ❌ lien avec le programme plateforme |
+| | Programme | `clients.programs` (kanban, IA) ; programmes plateforme via la liste promise | ✅ côté HQ, 🔜 lien avec le programme plateforme |
 | | Secteur / Industrie | HubSpot company `industry` | ✅ |
 | | Contexte / notes | Fiche client (résumé, notes) | ✅ |
-| | Statut | Kanban programme + phase du compte + risque IA | ✅ (vocabulaire différent, cf. §11) |
+| | Statut | Kanban programme + phase du compte + risque IA | ✅ (vocabulaire différent, cf. §12) |
 | | Date lancement / ancienneté | `programs.start_date`, kickoff | ✅ |
 | Contrat | Modèle de facturation | API `subscription_method` (entreprise) | ✅ |
 | | Licences achetées | Refusé dans l'API ; `programs.licences` (IA), deal HubSpot | ⚠ |
@@ -108,8 +108,8 @@ le dev le 2026-11-19, à stocker en env Netlify `PLATFORM_KPI_API_KEY`, jamais d
 | | New / Renew | Field `relation_commerciale` | ✅ |
 | | Date renouvellement | `contract_end_date` plateforme, croisé avec HubSpot | 🔜 |
 | | Expiration des crédits | `latest_credit_expiry_date` | 🔜 |
-| Adoption | Nb utilisateurs | API `total_users` | ✅ entreprise, ❌ par programme |
-| | Nb activés / taux d'activation | API `users_with_atleast_a_session` / `start_rate` | ✅ entreprise |
+| Adoption | Nb utilisateurs | API `total_users` ; par programme via `program_id` | ✅ entreprise, 🔜 par programme |
+| | Nb activés / taux d'activation | API `users_with_atleast_a_session` / `start_rate` ; par programme via `program_id` | ✅ entreprise, 🔜 par programme |
 | | % actifs 30 j / 60 j (vrai sens) | `active_30d_count`, `active_60d_count`, `last_session_at` | 🔜 |
 | | Users avec session bookée / taux de booking | `users_with_booked_session` | 🔜 |
 | | Sessions réalisées (total, année) | `sessions_completed`, `sessions_completed_ytd` | 🔜 |
@@ -117,7 +117,7 @@ le dev le 2026-11-19, à stocker en env Netlify `PLATFORM_KPI_API_KEY`, jamais d
 | | Taux de complétion | `sessions_completed` / `sessions_allocated` | 🔜 |
 | | Crédits consommés / restants / % | API (entreprise, humain) | ✅ |
 | | Usage AI / Role-play | API `coaching_type=ai` (entreprise) ; split par module refusé | ✅ global, ❌ par module |
-| Satisfaction | CSAT plateforme / session / AI | Refusé dans `kpi-metrics` ; endpoint `ratings` par entreprise fermé | ❌ (contre-proposition §5) |
+| Satisfaction | CSAT plateforme / session / AI | Refusé dans `kpi-metrics` ; endpoint `ratings` par entreprise demandé (§5) | demandé |
 | Santé | Health score, niveau, tendance | Health CoachelloHQ + nouveau bloc adoption | ✅ à étendre |
 | | Ajustement CSM ± | À ajouter (override daté avec raison) | à construire |
 | Engagement CSM | Dernier contact / jours sans contact | Déjà calculé (HubSpot + Claap) | ✅ |
@@ -163,15 +163,22 @@ tableau `programs`, seulement la **liste des programme ids** par entreprise (acc
 et un programme à la fois, jamais en parallèle.
 - À vérifier à la livraison : les nouveaux champs (activité récente, sessions) répondent bien au
   filtre `program_id`. Les **crédits restent au niveau entreprise** même filtrés (testé).
-- Toujours absents : CSAT (endpoint `ratings` non demandé dans cette version), licences achetées,
-  split role-play / AI coach. Option de dernier recours : accès lecture à la DB plateforme.
+- **CSAT, prochaine demande** : ouvrir la clé sur `GET /api/super-admin/csm/company/{id}/ratings`,
+  qui existe déjà (page entreprise CSM de l'admin) et fait le calcul pour **une seule** entreprise,
+  donc sans risque de timeout. Renvoie avg + count plateforme, session, AI, et le split coachs
+  (attention : dans le front, `_internal` = coachs Coachello et `_external` = coachs internes du
+  client, nommage inversé). Accepte `start_date`/`end_date`, pas de `program_id` côté front (à
+  demander). Appel 1x/semaine, entreprise par entreprise, jamais en parallèle.
+- Toujours absents : licences achetées, split role-play / AI coach. Option de dernier recours :
+  accès lecture à la DB plateforme.
 
 ## 6. Architecture cible
 
 ```
 Netlify scheduled fn (1x/nuit) ──► platform-kpi-refresh-background.mts
                                       │ 2 appels kpi-metrics (human, ai), ~40 s
-                                      │ (+ 1x/semaine : endpoints par entreprise si accord du dev)
+                                      │ (+ 1x/semaine : liste des programmes puis kpi-metrics
+                                      │  par programme, ratings si l'accès est ouvert)
                                       ▼
                        Supabase : platform_kpi_snapshots
                        (snapshot_date, company_id, coaching_type, program_id null|id, payload jsonb)
@@ -188,7 +195,7 @@ Netlify scheduled fn (1x/nuit) ──► platform-kpi-refresh-background.mts
 - **Mapping entreprise** : `clients.platform_company_ids int[]` (plusieurs possibles : Enedis +
   Enedis-Pilot, CRFEG-CRFE + CRFEG-LFS). Pré-rempli par rapprochement de noms, corrigé à la main via
   un modal calqué sur `billing-link-modal.tsx`. Liste d'exclusion de secours des comptes de test.
-- **Mapping programme** (seulement si la contre-proposition est acceptée) : programme plateforme →
+- **Mapping programme** (dès que la liste des programmes est exposée) : programme plateforme →
   `ClientProgram` via `aliases`, comme prévu dans Program scope v2.
 - **Règle de fiabilité** (CLAUDE.md) : API en échec ou client non relié = état d'erreur explicite,
   jamais un 0. Dans le health : signal `skipped` + `data_gaps`, aucune pénalité.
@@ -208,14 +215,14 @@ des Paramètres du Sheet :
 | Activité récente | toutes | `active_30d_count` / users inscrits vs cible 50 % ; `last_session_at` ancien = − | 🔜 |
 | Rythme de consommation | running, renewal | crédits (ou sessions réalisées / allouées) en retard ≥ 20 % vs contrat écoulé = − ; ≥ 90 % = signal upsell | ✅ crédits, 🔜 licences |
 | Complétion | running, renewal | `sessions_completed / sessions_allocated` vs cible 60 % | 🔜 |
-| Satisfaction | toutes | CSAT 3,0 = 0, 4,5 = max ; session < 4,3 = alerte | ❌ (dépend de la contre-proposition) |
+| Satisfaction | toutes | CSAT 3,0 = 0, 4,5 = max ; session < 4,3 = alerte | demandé (endpoint `ratings`, §5) |
 | Ajustement CSM | toutes | ±30, daté, raison obligatoire, visible dans le détail | à construire |
 
 L'usage réel prédit mieux le churn que la fréquence des meetings : le bloc Adoption doit peser au
 moins autant que la relation (ordre de grandeur ±20 points par signal fort). Pondération exacte à
 caler en comparant nos scores aux 26 comptes du Sheet.
 
-Si les programmes arrivent : un score par programme, le score du compte = pire programme non arrêté
+Avec les programmes : un score par programme, le score du compte = pire programme non arrêté
 (ou moyenne pondérée par l'ARR, à décider).
 
 ## 8. UI (règle de densité : riche dans le détail, jamais sur la liste)
@@ -258,7 +265,8 @@ Si les programmes arrivent : un score par programme, le score du compte = pire p
 
 **Phase 2, dès que la liste des programmes est exposée**
 - Programmes plateforme reliés aux `ClientProgram`, métriques et score par programme, 1 ligne =
-  1 programme comme le Sheet (crédits au niveau entreprise). CSAT toujours hors du score.
+  1 programme comme le Sheet (crédits au niveau entreprise). CSAT dans le score si la clé obtient
+  l'accès à l'endpoint `ratings` (§5).
 
 **Phase 3, décommissionnement du Sheet**
 - 2 à 4 semaines en parallèle avec les CSM, comparaison compte par compte, puis arrêt du Sheet.

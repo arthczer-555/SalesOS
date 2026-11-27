@@ -8,13 +8,20 @@ import {
   hubspotSearchAll,
   type DealSnapshot,
 } from "@/lib/hubspot";
-import { loadCutoverState } from "@/lib/hubspot/cutover";
+import { isAfterCutoverDate, loadCutoverState } from "@/lib/hubspot/cutover";
 import { PIPELINE_IDS, getStageLabels } from "@/lib/hubspot/pipeline-model";
 
 // Étape d'entrée de l'ancien chemin (Sales Pipeline / Discovery Meeting scheduled).
 const LEGACY_DISCOVERY_STAGE_ID = "174474867";
-import { finalizeLeadAsTest, finalizeLeadProspection, type FinalizeInput } from "@/lib/leads/finalize";
-import { isDealOrigin, isOfferType, originNeedsPartner, type OfferType } from "@/lib/leads/origin";
+import {
+  finalizeLeadAsTest,
+  finalizeLeadContactTask,
+  finalizeLeadContactTaskAsTest,
+  finalizeLeadProspection,
+  type FinalizeInput,
+  type FinalizeResult,
+} from "@/lib/leads/finalize";
+import { isDealOrigin, isOfferType, originNeedsPartner, type OfferType, DEFAULT_SALE_TYPE, isSaleType } from "@/lib/leads/origin";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -32,7 +39,8 @@ interface FinalizeBody {
   origin?: string | null;
   offerTypes?: string[];
   referringPartner?: string | null;
-  /** Carte TEST sur le contact de test : le lead n'est pas consommé. */
+  saleType?: string | null;
+  /** Test sur le contact de test (carte en mode prospection, tâche sinon) : le lead n'est pas consommé. */
   asTest?: boolean;
   /** "link" : rattacher la carte déjà trouvée au lieu d'en créer une (nouveau chemin). */
   dealAction?: "create" | "link";
@@ -443,10 +451,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     dealId = (analysis as { hubspot_deal_id: string | null } | null)?.hubspot_deal_id ?? null;
   }
 
+  // Validation sans carte (contact + tâche d'appel, à partir du 30/11) : la
+  // tâche est le marqueur. Lecture tolérante (migration lead_call_task.sql).
+  let taskId: string | null = null;
+  const { data: extras, error: extrasErr } = await db.from("leads").select("hubspot_task_id").eq("id", leadId).maybeSingle();
+  if (!extrasErr) taskId = (extras as { hubspot_task_id: string | null } | null)?.hubspot_task_id ?? null;
+
   return NextResponse.json({
     validationStatus: leadRow.validation_status,
     dealId,
-    finalized: leadRow.validation_status === "validated" && !!dealId,
+    taskId,
+    finalized: leadRow.validation_status === "validated" && (!!dealId || !!taskId),
   });
 }
 
@@ -528,7 +543,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   // Read the lead + last analysis (idempotency + slack_ts for threading)
   const { data: lead, error: leadErr } = await db
     .from("leads")
-    .select("id, slack_ts, slack_channel_id, slack_permalink, last_analysis_id, validation_status")
+    .select("id, slack_ts, slack_channel_id, slack_permalink, last_analysis_id, validation_status, text")
     .eq("id", leadId)
     .single();
   if (leadErr || !lead) {
@@ -542,6 +557,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     slack_permalink: string | null;
     last_analysis_id: string | null;
     validation_status: string;
+    text: string | null;
   };
 
   if (!leadRow.last_analysis_id) {
@@ -567,6 +583,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const origin = body.origin?.trim() || null;
   const offerTypes = (body.offerTypes ?? []).filter(isOfferType) as OfferType[];
   const referringPartner = body.referringPartner?.trim() || null;
+  const saleType = body.saleType ?? DEFAULT_SALE_TYPE;
+  if (!isSaleType(saleType)) {
+    return NextResponse.json({ error: "Sale type must be Direct or RFP." }, { status: 400 });
+  }
   if (!origin || !isDealOrigin(origin)) {
     return NextResponse.json({ error: "Source is required (one of the allowed HubSpot values)." }, { status: 400 });
   }
@@ -603,38 +623,60 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     origin,
     offerTypes,
     referringPartner,
+    saleType,
     marketingChannel: source,
     linkDealId: body.dealAction === "link" ? analysisRow?.hubspot_deal_id ?? null : null,
     slackChannelId: leadRow.slack_channel_id,
     slackTs: leadRow.slack_ts,
     slackPermalink: leadRow.slack_permalink,
+    leadText: leadRow.text,
   };
 
-  if (body.asTest || creationMode === "prospection") {
+  // Une branche par valeur du réglage, échec fermé sur toute autre. "Create as
+  // TEST" suit le mode : carte de test en prospection, tâche de test sinon
+  // (ce qui permet de tester le chemin contact + tâche avant de le régler).
+  let runner: ((input: FinalizeInput) => Promise<FinalizeResult>) | null = null;
+  if (body.asTest) runner = creationMode === "prospection" ? finalizeLeadAsTest : finalizeLeadContactTaskAsTest;
+  else if (creationMode === "contact_task") runner = finalizeLeadContactTask;
+  else if (creationMode === "prospection") runner = finalizeLeadProspection;
+  else if (creationMode === "frozen") {
+    return NextResponse.json(
+      { ok: false, error: "Lead validation is paused during the HubSpot cutover. Create the contact in HubSpot for now." },
+      { status: 409 },
+    );
+  } else if (creationMode !== "legacy" || isAfterCutoverDate()) {
+    // legacy après le 30/11 recréerait des deals dans l'ancien pipeline.
+    return NextResponse.json(
+      { ok: false, error: `Lead validation is not configured for this mode (hubspot_creation = ${creationMode}). Nothing was created.` },
+      { status: 409 },
+    );
+  }
+
+  if (runner) {
     try {
-      const result = body.asTest ? await finalizeLeadAsTest(finalizeInput) : await finalizeLeadProspection(finalizeInput);
+      const result = await runner(finalizeInput);
       if (!result.ok) return NextResponse.json({ ok: false, error: result.error }, { status: result.status });
       return NextResponse.json({
         ok: true,
+        kind: result.kind,
         dealId: result.dealId,
         dealName: result.dealName,
         dealUrl: result.dealUrl,
+        taskId: result.taskId,
+        taskDueAt: result.taskDueAt,
         contactId: result.contactId,
+        contactUrl: result.contactUrl,
         companyId: result.companyId,
         test: result.test,
         linked: result.linked,
+        reused: result.reused,
+        reassigned: result.reassigned,
         slackWarnings: result.warnings.length > 0 ? result.warnings : undefined,
       });
     } catch (e) {
       console.error("[leads/finalize] new path failed", e);
       return NextResponse.json({ ok: false, error: e instanceof Error ? e.message : "Finalize failed" }, { status: 500 });
     }
-  }
-  if (creationMode === "frozen") {
-    return NextResponse.json(
-      { ok: false, error: "Deal creation is paused during the HubSpot cutover. Create the card in HubSpot for now." },
-      { status: 409 },
-    );
   }
 
   // ── Ancien chemin (jusqu'à la bascule) ───────────────────────────────────

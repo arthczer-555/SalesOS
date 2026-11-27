@@ -44,7 +44,7 @@ const defs: Anthropic.Tool[] = [
   {
     name: "get_inbound_leads",
     description:
-      `Leads entrants d'une période, depuis #${LEADS_CHANNEL.name} (${LEADS_CHANNEL.id}) lu en direct, avec le statut de validation posé par l'équipe dans CoachelloHQ (Marketing > Leads). Comptes calculés en code : posts, validated (= leads QUALIFIÉS), rejected, awaiting_review (pas encore revus). Chaque lead : date, posté par un formulaire ou par qui, statut, nom, société, domaine email, origine ("how did you hear"), owner, deal HubSpot rattaché, extrait du message. Un lead en attente n'est JAMAIS un lead qualifié : liste-les à part (tu peux signaler ceux qui ressemblent à un test, du spam ou une simple discussion). À utiliser pour "combien de leads entrants / qualifiés cette semaine", "d'où viennent les leads".`,
+      `Leads entrants d'une période, depuis #${LEADS_CHANNEL.name} (${LEADS_CHANNEL.id}) lu en direct, avec le statut de validation posé par l'équipe dans CoachelloHQ (Marketing > Leads). Comptes calculés en code : posts, validated (= leads QUALIFIÉS), rejected, awaiting_review (pas encore revus). Chaque lead : date, posté par un formulaire ou par qui, statut, nom, société, domaine email, origine ("how did you hear"), owner, deal HubSpot rattaché, tâche d'appel, extrait du message. Depuis le 30/11/2026, valider un lead crée le contact et une tâche d'appel HubSpot pour l'owner (has_call_task), PAS de carte : has_hubspot_deal ne devient vrai qu'une fois la carte créée à l'annonce du meeting (#1y-new-meetings) ou reliée. Un lead validé sans carte n'est donc pas une anomalie. Un lead en attente n'est JAMAIS un lead qualifié : liste-les à part (tu peux signaler ceux qui ressemblent à un test, du spam ou une simple discussion). À utiliser pour "combien de leads entrants / qualifiés cette semaine", "d'où viennent les leads".`,
     input_schema: {
       type: "object" as const,
       properties: {
@@ -128,6 +128,13 @@ async function getInboundLeads(input: Record<string, unknown>): Promise<string> 
     if (error) statusError = error.message;
     for (const row of (data ?? []) as unknown as LeadRow[]) byTs.set(row.slack_ts, row);
   }
+  // Tâche d'appel créée à la validation (colonne de la migration du 27/11) :
+  // lecture à part et tolérante, pour ne jamais rendre les statuts inconnus.
+  const taskTs = new Set<string>();
+  if (tsList.length > 0) {
+    const { data: tasks, error: taskErr } = await db.from("leads").select("slack_ts, hubspot_task_id").in("slack_ts", tsList);
+    if (!taskErr) for (const t of (tasks ?? []) as { slack_ts: string; hubspot_task_id: string | null }[]) if (t.hubspot_task_id) taskTs.add(t.slack_ts);
+  }
 
   const names = await resolveUserNames(posts.map((m) => m.user).filter((u): u is string => !!u));
 
@@ -157,6 +164,7 @@ async function getInboundLeads(input: Record<string, unknown>): Promise<string> 
         ? { owner: a.deal_owner_name || a.contact_owner_name || a.hubspot_lead_owner_name }
         : {}),
       ...(a ? { has_hubspot_deal: !!a.hubspot_deal_id } : {}),
+      ...(m.ts && taskTs.has(m.ts) ? { has_call_task: true } : {}),
       excerpt: leadExcerpt(messageText(m)),
     };
   });

@@ -29,6 +29,7 @@ import { dealQualificationTools } from "./deal-qualification";
 import { teamPotTools } from "./team-pot";
 import { improvementPlanTools } from "./improvement-plan";
 import { pipelineSyncTools } from "./pipeline-sync";
+import { meetingAnnouncementsTools } from "./meeting-announcements";
 import type { ToolContext, ToolHandler } from "./types";
 
 // Ordre stable : ne pas réordonner sans raison (chaque changement d'ordre
@@ -56,6 +57,7 @@ const MODULES = [
   dealQualificationTools,
   teamPotTools,
   pipelineSyncTools,
+  meetingAnnouncementsTools,
 ];
 
 // Modules réservés aux Agents : leurs handlers sont exécutables (les agents

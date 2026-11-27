@@ -2,6 +2,9 @@
 //
 // Ordre (décision d'Arthur : les leads d'abord, puis les deals) :
 //   1. lien Claap vers un deal, vérifié                         -> claap_link
+//   1b. meeting annoncé dans #1y-new-meetings et sa carte créée ou reliée
+//       par un ✅ (email du contact parmi les participants, date à ±14 jours)
+//                                                                -> meeting_announcement
 //   2. carte validée dans le Lead Manager pour l'email d'un participant,
 //      si elle est ouverte                                        -> lead_manager
 //      sinon carte ouverte du contact dans le pipeline Prospection -> participant_email
@@ -16,17 +19,17 @@
 
 import { db } from "@/lib/db";
 import { hubspotBatchAssociations, hubspotFetch, resolveDealFromParticipants } from "@/lib/hubspot";
+import { byRecent, isOpenSalesMotion, readDealsLite, type DealLite } from "@/lib/hubspot/cards";
 import {
-  isClosedStage,
   isCustomerSuccessPipelineId,
   isProspectionPipeline,
-  isSalesMotionPipeline,
   isSalesPipeline,
   isTestDealName,
 } from "@/lib/hubspot/pipeline-model";
 
 export type MatchMethod =
   | "claap_link"
+  | "meeting_announcement"
   | "lead_manager"
   | "participant_email"
   | "company_domain"
@@ -37,10 +40,11 @@ export type MatchMethod =
   | "manual_link"
   | "confirmed";
 
-export const SURE_MATCH_METHODS: ReadonlySet<string> = new Set(["claap_link", "lead_manager", "participant_email", "manual_link", "confirmed"]);
+export const SURE_MATCH_METHODS: ReadonlySet<string> = new Set(["claap_link", "meeting_announcement", "lead_manager", "participant_email", "manual_link", "confirmed"]);
 
 export const MATCH_METHOD_LABELS: Record<MatchMethod, string> = {
   claap_link: "Claap link",
+  meeting_announcement: "meeting announced in #1y-new-meetings",
   lead_manager: "Lead Manager lead",
   participant_email: "participant email",
   company_domain: "company domain (to confirm)",
@@ -59,35 +63,7 @@ export const isTestRecording = (recordingId: string | null | undefined) => (reco
 /** Types de meeting de vente (analyse prospect) : seuls ceux-ci peuvent déplacer une carte sans confirmation. */
 const SALES_MEETING_KINDS: ReadonlySet<string> = new Set(["discovery_r1", "discovery_deeper", "demo", "negotiation", "closing", "follow_up"]);
 
-interface DealLite {
-  id: string;
-  dealname: string;
-  pipeline: string;
-  dealstage: string;
-  wonFlag: boolean;
-  lastModified: string;
-}
-
-async function readDealsLite(ids: string[]): Promise<DealLite[]> {
-  const unique = [...new Set(ids)].slice(0, 100);
-  if (!unique.length) return [];
-  const res = await hubspotFetch<{ results?: { id: string; properties: Record<string, string | null> }[] }>(
-    "/crm/v3/objects/deals/batch/read",
-    "POST",
-    { inputs: unique.map((id) => ({ id })), properties: ["dealname", "pipeline", "dealstage", "hs_is_closed_won", "hs_lastmodifieddate"] },
-  );
-  return (res.results ?? []).map((d) => ({
-    id: String(d.id),
-    dealname: d.properties.dealname ?? "",
-    pipeline: d.properties.pipeline ?? "",
-    dealstage: d.properties.dealstage ?? "",
-    wonFlag: d.properties.hs_is_closed_won === "true",
-    lastModified: d.properties.hs_lastmodifieddate ?? "",
-  }));
-}
-
-const isOpenSalesMotion = (d: DealLite) => isSalesMotionPipeline(d.pipeline) && !isClosedStage(d.dealstage);
-const byRecent = (a: DealLite, b: DealLite) => b.lastModified.localeCompare(a.lastModified);
+// readDealsLite, isOpenSalesMotion et byRecent : lib/hubspot/cards.ts (partagés avec le Lead Manager).
 
 /** Un rejeu de test ne voit que les cartes TEST ; un vrai meeting ne les voit jamais. */
 const visibleFor = (testReplay: boolean) => (d: DealLite) => (testReplay ? isTestDealName(d.dealname) : !isTestDealName(d.dealname));
@@ -150,6 +126,38 @@ async function matchByLeadOrContact(externalEmails: string[], testReplay: boolea
   return { dealId: pick.id, method: "participant_email", detail: { pipeline: pick.pipeline, openCards: open.length } };
 }
 
+const ANNOUNCEMENT_WINDOW_MS = 14 * 86_400_000;
+
+/**
+ * 1b. Carte créée (ou reliée) depuis une annonce de #1y-new-meetings : un email
+ * de contact de l'annonce est parmi les participants externes, et le meeting a
+ * lieu à ±14 jours de la date annoncée (un report est courant). Une annonce de
+ * test ne sert qu'aux rejeux de test, et inversement. Table absente = étape sautée.
+ */
+async function matchByAnnouncement(externalEmails: string[], meetingStartedAt: string | null, testReplay: boolean): Promise<CardMatch | null> {
+  if (!externalEmails.length) return null;
+  const { data, error } = await db
+    .from("meeting_announcements")
+    .select("id, hubspot_deal_id, meeting_date, mode")
+    .in("status", ["created", "linked"])
+    .not("hubspot_deal_id", "is", null)
+    .overlaps("contact_emails", externalEmails)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  if (error || !data?.length) return null;
+  const startedMs = meetingStartedAt ? Date.parse(meetingStartedAt) : Number.NaN;
+  const candidates = (data as { id: string; hubspot_deal_id: string; meeting_date: string | null; mode: string }[])
+    .filter((r) => (testReplay ? r.mode === "test" : r.mode === "live"))
+    .filter((r) => !r.meeting_date || Number.isNaN(startedMs) || Math.abs(Date.parse(`${r.meeting_date}T12:00:00Z`) - startedMs) <= ANNOUNCEMENT_WINDOW_MS);
+  if (!candidates.length) return null;
+  const open = (await readDealsLite(candidates.map((c) => c.hubspot_deal_id))).filter(isOpenSalesMotion).filter(visibleFor(testReplay));
+  for (const c of candidates) {
+    const deal = open.find((d) => d.id === c.hubspot_deal_id);
+    if (deal) return { dealId: deal.id, method: "meeting_announcement", detail: { announcementId: c.id, meetingDate: c.meeting_date } };
+  }
+  return null;
+}
+
 /**
  * Résout la carte d'un meeting et la méthode qui l'a trouvée. claapDealId :
  * deal lié dans Claap, déjà vérifié par l'appelant.
@@ -161,10 +169,18 @@ export async function resolveMeetingCard(args: {
   titleHint: string | null;
   meetingTitle: string | null;
   recordingId: string;
+  /** Début du meeting (Claap), pour reconnaître le meeting annoncé. */
+  meetingStartedAt?: string | null;
 }): Promise<CardMatch> {
   if (args.claapDealId) return { dealId: args.claapDealId, method: "claap_link", detail: {} };
   const testReplay = isTestRecording(args.recordingId);
   const external = externalEmailsOf(args.participantEmails, args.recorderEmail);
+  try {
+    const a = await matchByAnnouncement(external, args.meetingStartedAt ?? null, testReplay);
+    if (a) return a;
+  } catch (e) {
+    console.warn("[deal-match] announcement stage failed:", e instanceof Error ? e.message : e);
+  }
   try {
     const m = await matchByLeadOrContact(external, testReplay);
     if (m) return m;
@@ -248,6 +264,10 @@ export async function evaluateSureMatch(input: SureMatchInput): Promise<SureMatc
   if (input.audience !== "prospect" || !input.meetingKind || !SALES_MEETING_KINDS.has(input.meetingKind)) reasons.push("not_a_sales_meeting");
   const present = input.participants.some((p) => p.attended === true) || input.presenceVerdict === "external";
   if (!present) reasons.push("prospect_presence_unproven");
+  // Carte validée par un ✅ pour CE meeting (#1y-new-meetings) : un commercial a
+  // déjà tranché la carte, le compte et le client. Restent le type de meeting et
+  // la présence du prospect.
+  if (input.method === "meeting_announcement") return { sure: reasons.length === 0, reasons };
 
   try {
     const contactIds = await contactIdsByEmails(input.externalEmails);

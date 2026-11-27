@@ -32,17 +32,18 @@ import { dealQualificationTools } from "@/lib/chat/tools/deal-qualification";
 import { teamPotTools } from "@/lib/chat/tools/team-pot";
 import { improvementPlanTools } from "@/lib/chat/tools/improvement-plan";
 import { pipelineSyncTools } from "@/lib/chat/tools/pipeline-sync";
+import { meetingAnnouncementsTools } from "@/lib/chat/tools/meeting-announcements";
 import type { ToolModule } from "@/lib/chat/tools/types";
 import type { AgentSourceKey } from "./sources";
 
 const BLOCKED_TOOLS = new Set(["send_slack_message"]);
 
 const MODULES_BY_SOURCE: Record<AgentSourceKey, ToolModule[]> = {
-  hubspot: [hubspotTools, salesActivityTools, lostDealsTools, dealQualificationTools, pipelineSyncTools],
+  hubspot: [hubspotTools, salesActivityTools, lostDealsTools, dealQualificationTools, pipelineSyncTools, meetingAnnouncementsTools],
   clients: [clientsTools],
   revenue: [billingTools, revenueKpisTools, invoicesTools, revenuePlanTools, teamPotTools],
   claap: [claapTools],
-  slack: [slackTools, slackFeedsTools],
+  slack: [slackTools, slackFeedsTools, meetingAnnouncementsTools],
   gmail: [gmailTools],
   drive: [driveTools],
   // Réservé aux agents : absent de CoachelloAI (registry.ts, AGENT_ONLY_MODULES).

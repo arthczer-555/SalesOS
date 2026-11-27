@@ -386,6 +386,8 @@ Tous dans `guide_defaults` (magasin clé/valeur déjà utilisé pour `model_pref
 
 ### 5.1 Création des cartes (schéma 2.2)
 
+> **Mise à jour du 27/11** : Arthur a changé la règle. Valider un lead crée le contact et une **tâche d'appel**, plus de carte (`hubspot_creation = contact_task` dès le 30/11). La seule création de carte devient l'annonce du meeting dans #1y-new-meetings (✅ sur la réponse du bot). Le détail est dans le README (Lead Manager, module New meetings). Le chemin décrit ci-dessous reste disponible en secours (`prospection`).
+
 Nouveau chemin dans `lib/leads/finalize.ts`, appelé par `app/api/marketing/leads/[id]/finalize/route.ts` quand `hubspot_creation = prospection` et par la case TEST. Le chemin actuel reste dans la route jusqu'à la bascule, puis est supprimé.
 
 **Création minimale, pour lundi** (un champ ajouté à la fenêtre actuelle, `app/marketing/leads/_components/lead-validation-modal.tsx`) :
@@ -666,7 +668,7 @@ Aucune écriture dans HubSpot sans le feu vert d'Arthur au moment de la lancer. 
 **Le branchement réel se teste ensuite sur cartes TEST, par Arthur seul** (vendredi, ou lundi matin avant l'activation), résultat envoyé à Gaëlle : case "Create as TEST" depuis la fenêtre ; rejeu Claap d'un rapprochement incertain d'abord (carte encore en R1 scheduled, participant absent de HubSpot, titre portant le nom de la carte) : aucune écriture, demande de confirmation, puis le bouton ; rejeu d'un rapprochement sûr (participant = contact de test) : Scoping et DM. `scripts/test-claap-webhook.sh` devient paramétrable : email du participant, titre, date du meeting, pas de lien de deal, enregistreur = Arthur, hôte, transcript assez long, identifiant `rec_test_`.
 
 **Jour de la bascule** :
-1. avant que Gaëlle commence : `hubspot_creation = prospection` (ou `frozen`), `contact_lifecycle_write = off`, `scoring_cron = skip` ;
+1. avant que Gaëlle commence : `hubspot_creation = contact_task` (ou `frozen`), `contact_lifecycle_write = off`, `scoring_cron = skip`, puis `status` pour vérifier que `cutoverAt` est posé ;
 2. elle migre les deals et renomme les étapes ;
 3. `assertPipelineModel`, et liste des deals créés dans `default` depuis dimanche à lui transmettre ;
 4. `hubspot_r1_move`, `r1_confirm_move` et `hubspot_score_write = on_new`, chacun si son test réel est passé ;

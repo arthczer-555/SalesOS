@@ -6,6 +6,7 @@ import { isThreadTracked } from "@/lib/slack/chat-thread";
 import { postMessage } from "@/lib/slack/api";
 import { findConfirmationByMessage, parseConfirmationAnswer } from "@/lib/slack/confirmations";
 import { loadCutoverState } from "@/lib/hubspot/cutover";
+import { ingestMeetingEvent, type MeetingSlackEvent } from "@/lib/meetings/ingest";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,9 @@ export const dynamic = "force-dynamic";
  *  - `app_home_opened`  : publie la vue Home Tab personnalisée.
  *  - `app_mention`      : @CoachelloAI dans un canal → déclenche CoachelloAI.
  *  - `message.im`       : DM direct au bot → déclenche CoachelloAI.
+ *  - `message.channels` dans #1y-new-meetings, réactions ✅ / ❌ sur le bot,
+ *    réponses dans le fil d'une annonce → flux "New meetings"
+ *    (lib/meetings/ingest.ts, création des cartes depuis le 30/11).
  *
  * Contraintes Slack :
  *  - ACK 200 en moins de 3s sinon retry automatique.
@@ -57,6 +61,18 @@ export async function POST(req: NextRequest) {
       if (handled) return NextResponse.json({ ok: true });
     } catch (e) {
       console.error("[slack/events] confirmation handler error:", e);
+    }
+  }
+
+  // ── Flux #1y-new-meetings (annonces, ✅ / ❌, fil) ────────────────────────
+  // Avant l'abandon des rejeux : l'enregistrement est idempotent (clé du
+  // message, event_id), un rejeu ne fait que relancer le traitement de fond.
+  if (payload.type === "event_callback" && payload.event) {
+    try {
+      const handled = await ingestMeetingEvent(payload.event_id, payload.event as MeetingSlackEvent, (id) => dispatchMeeting(req, id));
+      if (handled) return NextResponse.json({ ok: true });
+    } catch (e) {
+      console.error("[slack/events] meetings handler error:", e);
     }
   }
 
@@ -226,6 +242,31 @@ async function dispatchConfirmation(
   }
 }
 
+async function dispatchMeeting(req: NextRequest, id: string) {
+  const isNetlifyEnv = !!(process.env.NETLIFY || process.env.URL || process.env.DEPLOY_URL);
+  if (!isNetlifyEnv || process.env.NODE_ENV === "development") {
+    const { processAnnouncement } = await import("@/lib/meetings/process");
+    await processAnnouncement(id);
+    return;
+  }
+  const internalSecret = process.env.INTERNAL_SECRET;
+  if (!internalSecret) {
+    console.error("[slack/events] INTERNAL_SECRET manquant (annonce non traitée)");
+    return;
+  }
+  try {
+    await fetch(`${req.nextUrl.origin}/.netlify/functions/meeting-announcement-background`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-internal-secret": internalSecret },
+      body: JSON.stringify({ id }),
+      signal: AbortSignal.timeout(2000),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("aborted") && !msg.includes("timeout")) console.error("[slack/events] meeting dispatch failed:", msg);
+  }
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 async function handleAppHomeOpened(event: SlackEvent) {
@@ -311,9 +352,16 @@ type SlackEvent = {
   thread_ts?: string;
   bot_id?: string;
   subtype?: string;
+  event_ts?: string;
   // reaction_added
   reaction?: string;
   item?: { type?: string; channel?: string; ts?: string };
+  item_user?: string;
+  // message_changed / message_deleted, fichiers, messages transférés
+  message?: Record<string, unknown>;
+  deleted_ts?: string;
+  files?: Record<string, unknown>[];
+  attachments?: Record<string, unknown>[];
 };
 
 type SlackEventPayload =
@@ -321,6 +369,7 @@ type SlackEventPayload =
   | {
       type: "event_callback";
       event: SlackEvent;
+      event_id?: string;
       team_id?: string;
       api_app_id?: string;
     };

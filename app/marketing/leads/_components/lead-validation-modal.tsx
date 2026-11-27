@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Loader2, Check, X, Sparkles, FlaskConical, ExternalLink } from "lucide-react";
 import type { LeadWithAnalysis, LeadAnalysis } from "@/lib/marketing-types";
-import { DEAL_ORIGINS, DEFAULT_DEAL_ORIGIN, OFFER_TYPES, isDealOrigin, originNeedsPartner } from "@/lib/leads/origin";
+import { DEAL_ORIGINS, DEFAULT_DEAL_ORIGIN, DEFAULT_SALE_TYPE, OFFER_TYPES, SALE_TYPES, isDealOrigin, originNeedsPartner, type SaleType } from "@/lib/leads/origin";
 
 const ACCENT = "#f01563";
 const GREEN = "#10b981";
@@ -25,7 +25,7 @@ interface AnalyzeResponse {
   error?: string;
 }
 
-type CreationMode = "legacy" | "prospection" | "frozen";
+type CreationMode = "legacy" | "prospection" | "contact_task" | "frozen";
 
 interface CreationConfigResponse {
   creation: CreationMode | null;
@@ -34,9 +34,16 @@ interface CreationConfigResponse {
 
 interface FinalizeResponse {
   ok?: boolean;
-  dealId?: string;
-  dealName?: string;
+  /** card : carte créée ou reliée ; task : contact + tâche d'appel, pas de carte. */
+  kind?: "card" | "task";
+  dealId?: string | null;
+  dealName?: string | null;
   dealUrl?: string | null;
+  taskId?: string | null;
+  taskDueAt?: string | null;
+  contactUrl?: string | null;
+  reused?: boolean;
+  reassigned?: boolean;
   test?: boolean;
   linked?: boolean;
   contactId?: string;
@@ -51,7 +58,17 @@ interface FinalizeResponse {
 interface FinalizeStateResponse {
   validationStatus?: string;
   dealId?: string | null;
+  taskId?: string | null;
   finalized?: boolean;
+}
+
+/** Échéance lisible (heure de Paris). */
+function formatDue(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime())
+    ? null
+    : d.toLocaleString("en-GB", { timeZone: "Europe/Paris", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
 // Netlify coupe la réponse d'une fonction synchrone à ~26s alors que celle-ci
@@ -92,6 +109,8 @@ interface FormState {
   origin: string;
   offerTypes: string[];
   referringPartner: string;
+  /** Propriété HubSpot `sale_type` : Direct (défaut) ou RFP. */
+  saleType: SaleType;
   asTest: boolean;
   dealAction: "create" | "link";
 }
@@ -106,6 +125,7 @@ const EMPTY_FORM: FormState = {
   origin: DEFAULT_DEAL_ORIGIN,
   offerTypes: [],
   referringPartner: "",
+  saleType: DEFAULT_SALE_TYPE,
   asTest: false,
   dealAction: "create",
 };
@@ -138,7 +158,10 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
   const [warnings, setWarnings] = useState<string[]>([]);
   const [creationMode, setCreationMode] = useState<CreationMode | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<{ dealName: string; dealUrl: string | null } | null>(null);
+  const [testResult, setTestResult] = useState<{ kind: "card" | "task"; label: string; url: string | null; due: string | null } | null>(null);
+  // Validation faite mais avec des avertissements (ex. carte déjà ouverte) :
+  // la fenêtre reste ouverte pour qu'on les lise.
+  const [doneWithWarnings, setDoneWithWarnings] = useState(false);
 
   useEffect(() => {
     if (!lead) return;
@@ -151,6 +174,7 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
   useEffect(() => {
     if (!lead) return;
     setTestResult(null);
+    setDoneWithWarnings(false);
     setConfigError(null);
     fetch("/api/marketing/leads/creation-config")
       .then((r) => r.json())
@@ -226,11 +250,16 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
 
   const needsPartner = isDealOrigin(form.origin) && originNeedsPartner(form.origin);
   const existingDealId = analysis?.hubspot_deal_id ?? null;
-  const showLinkChoice = !form.asTest && creationMode === "prospection" && !!existingDealId;
+  // Mode tâche : la validation crée le contact et une tâche d'appel, pas de
+  // carte. "Create as TEST" suit le mode : carte de test en prospection
+  // seulement, tâche de test sinon.
+  const taskMode = creationMode === "contact_task" || (form.asTest && creationMode !== null && creationMode !== "prospection");
+  const showLinkChoice = !form.asTest && (creationMode === "prospection" || creationMode === "contact_task") && !!existingDealId;
   const frozen = creationMode === "frozen" && !form.asTest;
 
   const canSubmit =
     !submitting &&
+    !doneWithWarnings &&
     !loadingAnalysis &&
     creationMode !== null &&
     !frozen &&
@@ -238,7 +267,7 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
     !missingHubspotOwner &&
     form.companyName.trim().length > 0 &&
     form.contactEmail.trim().length > 0 &&
-    form.dealName.trim().length > 0 &&
+    (taskMode || form.dealName.trim().length > 0) &&
     isDealOrigin(form.origin) &&
     (!needsPartner || form.referringPartner.trim().length > 0);
 
@@ -262,11 +291,12 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
           companyName: form.companyName.trim(),
           contactName: form.contactName.trim(),
           contactEmail: form.contactEmail.trim().toLowerCase(),
-          dealName: form.dealName.trim(),
+          dealName: (form.dealName.trim() || form.companyName.trim()),
           source: form.source.trim() || null,
           origin: form.origin,
           offerTypes: form.offerTypes,
           referringPartner: needsPartner ? form.referringPartner.trim() : null,
+          saleType: form.saleType,
           asTest: form.asTest,
           dealAction: showLinkChoice ? form.dealAction : "create",
         }),
@@ -297,19 +327,26 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
         throw new Error(
           data?.error ??
             (res.status === 504 || res.status === 502
-              ? "The server took too long to respond (timeout) and the deal was not created. You can retry."
-              : `Deal creation failed (HTTP ${res.status})`),
+              ? "The server took too long to respond and the validation could not be confirmed. Retrying is safe: nothing is created twice."
+              : `Validation failed (HTTP ${res.status})`),
         );
       }
-      if (data.slackWarnings && data.slackWarnings.length > 0) {
-        setWarnings(data.slackWarnings);
-      }
+      const hasWarnings = !!data.slackWarnings && data.slackWarnings.length > 0;
+      if (hasWarnings) setWarnings(data.slackWarnings ?? []);
       if (data.test) {
-        // Carte TEST : le lead n'est pas consommé, on reste dans la fenêtre.
-        setTestResult({ dealName: data.dealName ?? form.dealName, dealUrl: data.dealUrl ?? null });
+        // Test : le lead n'est pas consommé, on reste dans la fenêtre.
+        setTestResult(
+          data.kind === "task"
+            ? { kind: "task", label: "Test Prospect A", url: data.contactUrl ?? null, due: formatDue(data.taskDueAt) }
+            : { kind: "card", label: data.dealName ?? form.dealName, url: data.dealUrl ?? null, due: null },
+        );
         return;
       }
       onSuccess();
+      if (hasWarnings) {
+        setDoneWithWarnings(true);
+        return;
+      }
       onClose();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unknown error");
@@ -349,7 +386,7 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h2 style={{ fontSize: 18, fontWeight: 600, color: "#111", margin: 0 }}>
-            Validate lead and create deal
+            {taskMode && !form.asTest ? "Validate lead and create the call task" : "Validate lead and create deal"}
           </h2>
           <button
             onClick={onClose}
@@ -451,15 +488,17 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
               />
             </Field>
 
-            <Field label="Deal name" required>
-              <input
-                type="text"
-                value={form.dealName}
-                onChange={(e) => setForm((prev) => ({ ...prev, dealName: e.target.value }))}
-                disabled={submitting}
-                style={inputStyle()}
-              />
-            </Field>
+            {!taskMode && (
+              <Field label="Deal name" required>
+                <input
+                  type="text"
+                  value={form.dealName}
+                  onChange={(e) => setForm((prev) => ({ ...prev, dealName: e.target.value }))}
+                  disabled={submitting}
+                  style={inputStyle()}
+                />
+              </Field>
+            )}
 
             <Field label="Source" required>
               <select
@@ -488,6 +527,26 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
                 />
               </Field>
             )}
+
+            <Field label="Sale type">
+              <select
+                value={form.saleType}
+                onChange={(e) => setForm((prev) => ({ ...prev, saleType: e.target.value === "rfp" ? "rfp" : "direct" }))}
+                disabled={submitting}
+                style={inputStyle()}
+              >
+                {SALE_TYPES.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              {form.saleType === "rfp" && (
+                <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>
+                  HubSpot does not move RFP cards with the score: the rep moves them by hand.
+                </div>
+              )}
+            </Field>
 
             <Field label="Offer">
               <div style={{ display: "flex", gap: 16, paddingTop: 2 }}>
@@ -530,11 +589,11 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
                 </div>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                   <input type="radio" checked={form.dealAction === "link"} onChange={() => setForm((prev) => ({ ...prev, dealAction: "link" }))} disabled={submitting} />
-                  Link to this deal (no new card)
+                  {taskMode ? "Link to this deal (no call task)" : "Link to this deal (no new card)"}
                 </label>
                 <label style={{ display: "inline-flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                   <input type="radio" checked={form.dealAction === "create"} onChange={() => setForm((prev) => ({ ...prev, dealAction: "create" }))} disabled={submitting} />
-                  Create a new card
+                  {taskMode ? "Create the call task" : "Create a new card"}
                 </label>
               </div>
             )}
@@ -552,7 +611,9 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
                   <FlaskConical size={12} /> Create as TEST
                 </span>
                 <br />
-                Creates a &quot;TEST - &quot; card in Prospection / R1 scheduled, linked to the test contact (never to this prospect).
+                {creationMode === "prospection"
+                  ? "Creates a \"TEST - \" card in Prospection / R1 scheduled, linked to the test contact (never to this prospect)."
+                  : "Creates a \"TEST - \" call task on the test contact (never on this prospect), assigned to you."}{" "}
                 The lead stays to validate and nothing is sent to the sales rep.
               </span>
             </label>
@@ -582,21 +643,22 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
 
         {frozen && (
           <div style={{ fontSize: 12, color: "#b45309", background: "#fef3c7", padding: 10, borderRadius: 6 }}>
-            Deal creation is paused during the HubSpot cutover. Create the card in HubSpot for now, or tick &quot;Create as TEST&quot;.
+            Lead validation is paused during the HubSpot cutover. Create the contact in HubSpot for now, or tick &quot;Create as TEST&quot;.
           </div>
         )}
 
         {testResult && (
           <div style={{ fontSize: 12, color: "#1e3a8a", background: "#eff6ff", padding: 10, borderRadius: 6, display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            <FlaskConical size={13} /> TEST card created:
-            {testResult.dealUrl ? (
-              <a href={testResult.dealUrl} target="_blank" rel="noreferrer" style={{ color: "#1d4ed8", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 3 }}>
-                {testResult.dealName} <ExternalLink size={11} />
+            <FlaskConical size={13} /> {testResult.kind === "task" ? "TEST call task created on" : "TEST card created:"}
+            {testResult.url ? (
+              <a href={testResult.url} target="_blank" rel="noreferrer" style={{ color: "#1d4ed8", fontWeight: 600, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                {testResult.label} <ExternalLink size={11} />
               </a>
             ) : (
-              <strong>{testResult.dealName}</strong>
+              <strong>{testResult.label}</strong>
             )}
-            <span style={{ color: "#555" }}>(the lead was not validated)</span>
+            {testResult.due && <span style={{ color: "#555" }}>· due {testResult.due} (Paris)</span>}
+            <span style={{ color: "#555" }}>(the lead was not validated, check your Slack DM)</span>
           </div>
         )}
 
@@ -624,7 +686,8 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
               borderRadius: 6,
             }}
           >
-            Deal created, but Slack returned: {warnings.join(" · ")}
+            {doneWithWarnings ? "Validated, with warnings: " : "Warnings: "}
+            {warnings.join(" · ")}
           </div>
         )}
 
@@ -651,7 +714,7 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
               cursor: submitting ? "not-allowed" : "pointer",
             }}
           >
-            Cancel
+            {doneWithWarnings ? "Close" : "Cancel"}
           </button>
           <button
             onClick={handleSubmit}
@@ -671,14 +734,26 @@ export default function LeadValidationModal({ lead, onClose, onSuccess }: Props)
             }}
           >
             {submitting ? <Loader2 size={14} className="animate-spin" /> : form.asTest ? <FlaskConical size={14} /> : <Check size={14} />}
-            {form.asTest ? "Create TEST card" : showLinkChoice && form.dealAction === "link" ? "Link and validate" : "Create deal and validate"}
+            {form.asTest
+              ? taskMode
+                ? "Create TEST call task"
+                : "Create TEST card"
+              : showLinkChoice && form.dealAction === "link"
+                ? "Link and validate"
+                : taskMode
+                  ? "Create call task and validate"
+                  : "Create deal and validate"}
           </button>
         </div>
 
         <div style={{ fontSize: 11, color: "#888", textAlign: "center" }}>
           {form.asTest
-            ? "TEST card on the test contact, Prospection pipeline, R1 scheduled. You get the Slack message in DM."
-            : creationMode === "prospection"
+            ? taskMode
+              ? "TEST call task on the test contact, assigned to you. You get the Slack message in DM."
+              : "TEST card on the test contact, Prospection pipeline, R1 scheduled. You get the Slack message in DM."
+            : taskMode
+              ? "This will create the contact on HubSpot (and the company if needed) and a call task for the owner, then notify them on Slack. No card is created: it comes when the meeting is booked. An existing company keeps its owner."
+              : creationMode === "prospection"
               ? "This will create the contact and the card on HubSpot (Prospection pipeline, R1 scheduled) and notify the owner on Slack. An existing company keeps its owner."
               : "This will create the company, contact, and deal on HubSpot (Sales pipeline, Discovery stage) and notify the owner on Slack. An existing company keeps its owner."}
         </div>

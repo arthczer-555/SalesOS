@@ -187,6 +187,7 @@ export async function POST(req: NextRequest) {
           titleHint,
           meetingTitle: rec.title ?? null,
           recordingId: rec.id,
+          meetingStartedAt: rec.meeting?.startingAt ?? null,
         })
           .then((m) => {
             matchMethod = m.method;
